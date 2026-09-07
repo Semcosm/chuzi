@@ -509,7 +509,7 @@ def upgrade_plan(target, package, context, command, overwrite_project_files):
         operations.append(make_operation(
             target,
             package["root"],
-            {"source": ".ugs/templates/policy.json", "target": ".ugs/policy.json", "mode": "0644", "ownership": "ugs", "kind": "core", "component": "core"},
+            {"source": "bootstrap/templates/policy.json", "target": ".ugs/policy.json", "mode": "0644", "ownership": "ugs", "kind": "core", "component": "core"},
         ))
     for entry in entries:
         operations.append(make_operation(target, package["root"], entry))
@@ -563,9 +563,9 @@ def activation_plan(target, package, context, profile):
     if missing:
         raise UpgradeError("profile components are not installed; run `ugs upgrade` first: " + ", ".join(sorted(missing)))
     template_name = {
-        "baseline": ".ugs/templates/policy.json",
-        "standard": ".ugs/templates/policy-standard.json",
-        "high-trust": ".ugs/templates/policy-high-trust.json",
+        "baseline": "bootstrap/templates/policy.json",
+        "standard": "bootstrap/templates/policy-standard.json",
+        "high-trust": "bootstrap/templates/policy-high-trust.json",
     }[profile]
     template = read_json(package["root"] / template_name, "profile template")
     updated = json.dumps(activation_policy(current, template, profile), indent=2, sort_keys=True).encode() + b"\n"

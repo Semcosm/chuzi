@@ -17,14 +17,14 @@ def git(target, *args):
     return subprocess.run(["git", "-C", str(target), *args], check=True, stdout=subprocess.PIPE, text=True).stdout.strip()
 
 def files(source, profile, with_document_map=False):
-    template = source / ".ugs" / "templates"
+    template = source / "bootstrap" / "templates"
     policy_name = {"baseline": "policy.json", "standard": "policy-standard.json", "high-trust": "policy-high-trust.json"}[profile]
     policy = json.loads((template / policy_name).read_text())
     signing_level = {"baseline": "unsigned", "standard": "commits-signed", "high-trust": "high-trust-commits-signed"}[profile]
     output = {
         ".ugs/policy.json": json.dumps(policy, indent=2) + "\n",
         ".ugs/bootstrap.json": "",
-        ".ugs/schema/policy.schema.json": (source / ".ugs/schema/policy.schema.json").read_text(),
+        ".ugs/schema/policy.schema.json": ((source / ".ugs/schema/policy.schema.json") if (source / ".ugs/schema/policy.schema.json").exists() else (source / "bootstrap/templates/policy.schema.json")).read_text(),
         ".githooks/README.md": "# UGS managed hooks\n\nInstall with `git config core.hooksPath .githooks`.\n",
         ".githooks/commit-msg": "#!/usr/bin/env bash\nset -euo pipefail\ngrep -Eq '^[a-z]+(\\([^)]+\\))?: .+' \"$1\" || { echo 'UGS: invalid commit subject' >&2; exit 1; }\n",
         "REPOSITORY_POLICY.md": "# Repository Policy\n\nUGS Profile: continuous\nMerge Strategy: rebase-ff\nVersioning: semver\nSigning Level: " + signing_level + "\nProtected Long-Lived Branches: main\nHooks Path: .githooks\n",
@@ -66,7 +66,7 @@ def files(source, profile, with_document_map=False):
             "SUPPORT.md": "# Support\n\nUse the repository issue tracker for support requests.\n",
             "RELEASE.md": "# Release Guide\n\nReleases use signed annotated semantic-version tags and the UGS release workflow.\n",
             ".ugs/supply-chain/README.md": "# Supply-chain evidence\n\nThis standard profile reserves this directory for release SBOMs, build records, and attestations.\n",
-            ".github/workflows/ugs-validate.yml": (source / ".ugs/templates/standard-workflow.yml").read_text(),
+            ".github/workflows/ugs-validate.yml": (source / "bootstrap/templates/standard-workflow.yml").read_text(),
         })
         for name in ("validate_quality_profile.sh", "validate_supply_chain_profile.sh",
                      "validate_supply_chain_evidence.sh", "validate_action_pinning.sh",
