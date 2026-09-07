@@ -1,0 +1,15 @@
+{
+  "$schema": "schema/policy.schema.json",
+  "format": "ugs-policy/v0.3",
+  "schema_version": 1,
+  "policy_version": "0.3",
+  "conformance_level": "baseline",
+  "migration": {"legacy_policy": "REPOSITORY_POLICY.md", "legacy_policy_mode": "warn"},
+  "branching": {"profile": "continuous", "merge_strategy": "rebase-ff", "protected_refs": ["main"], "topic_prefixes": ["feat/", "fix/", "docs/", "chore/", "test/"]},
+  "commits": {"signing_level": "unsigned", "core_types": ["feat", "fix", "refactor", "docs", "test", "build", "ci", "chore", "perf", "revert"], "extended_types": [], "trailers_required": true},
+  "review": {"model": "change-level", "human_review": {"maintainer_authored": false, "external_contributions": true}, "test_evidence_required": true, "maintainer_ack_sensitive_paths": true, "conclusion_storage": "trailers"},
+  "automation": {"required_checks": ["ugs-validate"], "hooks_path": ".githooks"},
+  "releases": {"versioning": "semver", "tag_pattern": "v<major>.<minor>.<patch>", "annotated_tags_required": true, "trusted_signatures_required": true, "notes_path": "releases/"},
+  "exceptions": {"emergency_direct_push": false, "post_event_review_required": true},
+  "extensions": {}
+}

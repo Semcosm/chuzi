@@ -1,0 +1,18 @@
+{
+  "$schema": "schema/policy.schema.json",
+  "format": "ugs-policy/v0.3",
+  "schema_version": 1,
+  "policy_version": "0.3",
+  "conformance_level": "high-trust",
+  "migration": {"legacy_policy": "REPOSITORY_POLICY.md", "legacy_policy_mode": "warn"},
+  "branching": {"profile": "continuous", "merge_strategy": "rebase-ff", "protected_refs": ["main"], "topic_prefixes": ["feat/", "fix/", "docs/", "chore/", "test/"]},
+  "commits": {"signing_level": "high-trust-commits-signed", "core_types": ["feat", "fix", "refactor", "docs", "test", "build", "ci", "chore", "perf", "revert"], "extended_types": [], "trailers_required": true},
+  "review": {"model": "change-level", "human_review": {"maintainer_authored": false, "external_contributions": true}, "test_evidence_required": true, "maintainer_ack_sensitive_paths": true, "conclusion_storage": "cr-record"},
+  "automation": {"required_checks": ["ugs-validate"], "hooks_path": ".githooks"},
+  "releases": {"versioning": "semver", "tag_pattern": "v<major>.<minor>.<patch>", "annotated_tags_required": true, "trusted_signatures_required": true, "notes_path": "releases/"},
+  "exceptions": {"emergency_direct_push": false, "post_event_review_required": true},
+  "quality": {"profile": "standard", "required_documents": ["README.md", "RELEASE.md", "LICENSE", "SECURITY.md", "CODE_OF_CONDUCT.md", "SUPPORT.md"], "test_entrypoints": ["scripts/validate_policy_manifest.sh", "scripts/validate_quality_profile.sh", "scripts/validate_supply_chain_profile.sh", "scripts/validate_action_pinning.sh"]},
+  "supply_chain": {"profile": "basic", "action_pinning": "full_sha", "sbom": "declared", "reproducible_builds": "declared", "release_attestations": "declared"},
+  "repository_shape": {"model": "single", "submodules": "none", "generated_files": "none", "large_files": "normal"},
+  "extensions": {}
+}

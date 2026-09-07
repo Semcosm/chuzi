@@ -1,0 +1,30 @@
+name: ugs-validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  ugs-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - name: Validate persisted CR and generated PR body
+        if: github.event_name == 'pull_request'
+        run: adapters/github/validate_pr.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" "$GITHUB_EVENT_PATH"
+      - name: Validate persisted CR coverage on main
+        if: github.ref == 'refs/heads/main'
+        run: scripts/validate_main_cr_range.sh "${{ github.event.before }}" "${{ github.sha }}"
+      - name: Validate UGS standard policy
+        run: |
+          scripts/validate_policy_manifest.sh
+          scripts/validate_quality_profile.sh
+          scripts/validate_supply_chain_profile.sh
+          scripts/validate_action_pinning.sh
+          scripts/validate_repository_shape.sh
+          if [ -f .ugs/document-map.json ]; then
+            scripts/validate_document_map.py
+          fi

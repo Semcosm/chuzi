@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+set -euo pipefail
+grep -Eq '^[a-z]+(\([^)]+\))?: .+' "$1" || { echo 'UGS: invalid commit subject' >&2; exit 1; }

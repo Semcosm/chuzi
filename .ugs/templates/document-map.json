@@ -1,0 +1,15 @@
+{
+  "$schema": "schema/document-map.schema.json",
+  "format": "ugs-document-map/v1",
+  "schema_version": 1,
+  "document": "README.md",
+  "heading": "Document Map",
+  "heading_zh": "文档映射",
+  "nodes": [
+    {
+      "title": "Repository README",
+      "title_zh": "仓库 README",
+      "path": "README.md"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "../.ugs/schema/signer-roles.schema.json",
+  "format": "ugs-signer-roles/v0.3",
+  "signers": [
+    {
+      "principal": "chenzhipeng.main@gmail.com",
+      "role": "maintainer",
+      "key_fingerprint": "SHA256:VWD+zcyeXSeY7RdeXxcnFYSt+r5DA4dhrYrNMfP5tjU",
+      "effective_from": "2026-09-04",
+      "effective_until": null,
+      "status": "active"
+    }
+  ]
+}

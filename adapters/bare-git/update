@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -ne 3 ]; then
+  echo "usage: $0 <ref-name> <old-object> <new-object>" >&2
+  exit 2
+fi
+ref_name="$1"
+old_object="$2"
+new_object="$3"
+repo_root="${UGS_REPOSITORY_ROOT:-}"
+if [ -z "$repo_root" ]; then
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+[ -n "$repo_root" ] || { echo "bare Git update validation failed: set UGS_REPOSITORY_ROOT for a bare repository" >&2; exit 1; }
+[ -x "$repo_root/scripts/validate_ref_update.sh" ] || { echo "bare Git update validation failed: Core scripts are unavailable" >&2; exit 1; }
+"$repo_root/scripts/validate_ref_update.sh" "$old_object" "$new_object" "$ref_name"
+if [ "$ref_name" = "refs/heads/main" ] && [ "$old_object" != "0000000000000000000000000000000000000000" ]; then
+  "$repo_root/scripts/validate_main_cr_range.sh" "$old_object" "$new_object"
+fi
+echo "bare Git update validation passed: $ref_name"

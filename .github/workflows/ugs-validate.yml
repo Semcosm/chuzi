@@ -1,0 +1,178 @@
+name: ugs-validate
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches:
+      - main
+      - 'feat/**'
+      - 'fix/**'
+      - 'docs/**'
+      - 'chore/**'
+      - 'refactor/**'
+      - 'test/**'
+      - 'build/**'
+      - 'ci/**'
+      - 'perf/**'
+    tags:
+      - 'v*'
+
+jobs:
+  validate:
+    name: ugs-validate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Validate repository policy files
+        run: scripts/validate_repo.sh
+
+      - name: Validate GitHub compatibility adapter
+        run: adapters/github/validate_adapter.sh
+
+      - name: Validate Git-native Core without GitHub files
+        run: scripts/test_core_bare_repository.sh
+
+      - name: Validate persisted CR and generated PR body
+        if: github.event_name == 'pull_request'
+        run: adapters/github/validate_pr.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" "$GITHUB_EVENT_PATH"
+
+      - name: Restore annotated release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: git fetch --force origin "refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+
+      - name: Validate release tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: scripts/validate_release_tag.sh "${GITHUB_REF_NAME}"
+
+      - name: Validate supply-chain release evidence
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: scripts/validate_supply_chain_release.sh "${GITHUB_REF_NAME}" .ugs/policy.json "${GITHUB_REPOSITORY}"
+
+      - name: Validate policy manifest fixtures
+        run: scripts/test_policy_manifest.sh
+
+      - name: Run UGS conformance check
+        run: scripts/ugs_check.sh
+
+      - name: Validate disposable Git fixtures
+        run: scripts/test_git_fixtures.sh
+
+      - name: Validate independent conformance fixtures
+        run: scripts/test_conformance.sh
+
+      - name: Validate all UGS profiles
+        run: scripts/test_profile_conformance.sh
+
+      - name: Validate bootstrap package fixtures
+        run: scripts/test_bootstrap_package.sh
+
+      - name: Validate bootstrap upgrade fixtures
+        run: scripts/test_bootstrap_upgrade.sh
+
+      - name: Validate review trailer fixtures
+        run: scripts/test_review_trailers.sh
+
+      - name: Validate release tag fixtures
+        run: scripts/test_release_tag.sh
+
+      - name: Validate ref update fixtures
+        run: scripts/test_ref_update.sh
+
+      - name: Validate equivalent CR records
+        run: |
+          set -euo pipefail
+          if compgen -G 'cr/CR-*.md' > /dev/null; then
+            for file in cr/CR-*.md; do
+              scripts/validate_cr_record.sh "$file"
+            done
+          fi
+
+      - name: Validate commit messages
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            # A newly-created branch has no push predecessor. Compare it with
+            # the protected baseline instead of handing a single SHA to
+            # git-rev-list, which would walk the entire historical ancestry.
+            if git rev-parse --quiet --verify refs/remotes/origin/main^{commit} >/dev/null 2>&1; then
+              range="refs/remotes/origin/main..${{ github.sha }}"
+            elif git rev-parse --quiet --verify "${{ github.sha }}^" >/dev/null 2>&1; then
+              range="${{ github.sha }}^..${{ github.sha }}"
+            else
+              range="${{ github.sha }}"
+            fi
+          else
+            if git rev-parse --quiet --verify "${{ github.event.before }}^{commit}" >/dev/null 2>&1; then
+              range="${{ github.event.before }}..${{ github.sha }}"
+            elif git rev-parse --quiet --verify refs/remotes/origin/main^{commit} >/dev/null 2>&1; then
+              range="refs/remotes/origin/main..${{ github.sha }}"
+            else
+              range="${{ github.sha }}"
+            fi
+          fi
+          scripts/validate_commit_range.sh "$range"
+
+      - name: Restore signed pull-request source refs
+        if: github.event_name == 'push'
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/origin/pr/*'
+
+      - name: Validate commit signatures
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            range="${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            # Keep signature validation aligned with commit-message validation
+            # for first pushes of a newly-created branch.
+            if git rev-parse --quiet --verify refs/remotes/origin/main^{commit} >/dev/null 2>&1; then
+              range="refs/remotes/origin/main..${{ github.sha }}"
+            elif git rev-parse --quiet --verify "${{ github.sha }}^" >/dev/null 2>&1; then
+              range="${{ github.sha }}^..${{ github.sha }}"
+            else
+              range="${{ github.sha }}"
+            fi
+          else
+            if git rev-parse --quiet --verify "${{ github.event.before }}^{commit}" >/dev/null 2>&1; then
+              range="${{ github.event.before }}..${{ github.sha }}"
+            elif git rev-parse --quiet --verify refs/remotes/origin/main^{commit} >/dev/null 2>&1; then
+              range="refs/remotes/origin/main..${{ github.sha }}"
+            else
+              range="${{ github.sha }}"
+            fi
+          fi
+          scripts/validate_commit_signatures.sh "$range"
+
+      - name: Validate pull request body
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          body="$(jq -r '.pull_request.body // ""' "$GITHUB_EVENT_PATH")"
+          headers=(
+            "## Summary"
+            "## Motivation"
+            "## Test Evidence"
+            "## Risk"
+            "## Rollback"
+            "## Breaking Change"
+            "## Backport Target"
+          )
+
+          for header in "${headers[@]}"; do
+            if ! printf '%s\n' "$body" | grep -Fq "$header"; then
+              echo "missing PR section: $header" >&2
+              exit 1
+            fi
+          done
+
+      - name: Validate persisted CR coverage on main
+        if: github.ref == 'refs/heads/main'
+        run: scripts/validate_main_cr_range.sh "${{ github.event.before }}" "${{ github.sha }}"

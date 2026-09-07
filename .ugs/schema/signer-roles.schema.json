@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://semcosm.github.io/UGS/schema/signer-roles/v0.3",
+  "title": "UGS signer roles v0.3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "format", "signers"],
+  "properties": {
+    "$schema": {"const": "../.ugs/schema/signer-roles.schema.json"},
+    "format": {"const": "ugs-signer-roles/v0.3"},
+    "signers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["principal", "role", "key_fingerprint", "effective_from", "effective_until", "status"],
+        "properties": {
+          "principal": {"type": "string", "format": "email"},
+          "role": {"enum": ["maintainer", "reviewer", "release-signer"]},
+          "key_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/=]+$"},
+          "effective_from": {"type": "string", "format": "date"},
+          "effective_until": {"type": ["string", "null"], "format": "date"},
+          "status": {"enum": ["active", "revoked"]}
+        }
+      }
+    }
+  }
+}

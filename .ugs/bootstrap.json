@@ -1,0 +1,18 @@
+{
+  "active_profile": "baseline",
+  "format": "ugs-bootstrap/v1",
+  "installed_components": [
+    "core",
+    "document-map",
+    "documentation",
+    "high-trust",
+    "standard",
+    "templates",
+    "tests"
+  ],
+  "name": "ugs-consumer-v0.3.27",
+  "profile": "baseline",
+  "profile_activation": "separate",
+  "source_commit": "33827e98046ee41c7b919700f681748871086400",
+  "version": "v0.3.27"
+}
