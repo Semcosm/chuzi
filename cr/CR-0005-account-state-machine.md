@@ -1,17 +1,17 @@
 # CR-0005: implement the account state-machine contract
 
 Base: main
-Head or Range: 35afde3c5699d81eb5ecc5c94321ff26c09a449e..22085cac0d6af12a5202b09324ee3dd9b7035a1b
+Head or Range: 35afde3c5699d81eb5ecc5c94321ff26c09a449e..87bcd9b3aa57326c45147f9f6ce0474bc421ecb9
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(account): implement account state-machine contract
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 35afde3c5699d81eb5ecc5c94321ff26c09a449e
-Head OID: 22085cac0d6af12a5202b09324ee3dd9b7035a1b
-Integrated Result: pending
+Base OID: 87bcd9b3aa57326c45147f9f6ce0474bc421ecb9
+Head OID: 87bcd9b3aa57326c45147f9f6ce0474bc421ecb9
+Integrated Result: main@87bcd9b3aa57326c45147f9f6ce0474bc421ecb9
 
 ## Summary
 
@@ -33,14 +33,18 @@ recovery from becoming component-specific behavior.
 
 ## Test Evidence
 
-Required before integration: run the account package unit tests, `go test ./...`,
-all repository policy, quality, supply-chain, Action pinning, repository-shape,
-build-contract, adapter, and CR validators, and `git diff --check`. Tests must
-cover every documented transition and invalid transition, duplicate and
-conflicting events, request/account correlation, revisioned audit output,
-retryable and non-retryable failures, exponential-backoff capping, lease
-contention, heartbeat ownership, expiry, and restart-style recovery using an
-injected time.
+Local Go 1.25.14 verification passed `gofmt -d internal/account/*.go`,
+`go test ./...`, and `go vet ./...`; Node 22 verification passed
+`npm --prefix browser-worker test`. Repository policy, quality, supply-chain,
+Action pinning, repository-shape, build-contract, adapter, CR, signer-role, and
+`git diff --check` validators also passed. PR #9 passed `ugs-validate` run
+`34222195790` and `chuzi-build` run `34222195741`, including
+`windows-amd64`, `linux-amd64`, `linux-arm64`, and `darwin-arm64`. GitHub's
+rebase integration produced `main@87bcd9b3aa57326c45147f9f6ce0474bc421ecb9`;
+the first post-merge `ugs-validate` run `34222445959` correctly rejected this
+pending record because it still named the topic SHA, while main
+`chuzi-build` run `34222446079` passed. This closure revision binds the record
+to the actual integrated main result.
 
 ## Risk
 
