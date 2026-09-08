@@ -5,13 +5,13 @@ Head or Range: 008b3141e7f4281aaac0eb31e516fa479ef84396..4461355f9cc22a53239872a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs: add repository evolution roadmap
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 008b3141e7f4281aaac0eb31e516fa479ef84396
-Head OID: 4461355f9cc22a53239872a7cc63d07e90fbbd05
-Integrated Result: pending
+Base OID: d7e09a000cd4bdade7440f608b530b83abcb476c
+Head OID: d7e09a000cd4bdade7440f608b530b83abcb476c
+Integrated Result: main@d7e09a000cd4bdade7440f608b530b83abcb476c
 
 ## Summary
 
@@ -32,11 +32,15 @@ under UGS.
 
 ## Test Evidence
 
-Run the repository policy, quality, supply-chain, Action pinning,
-repository-shape, build-contract, adapter, and CR validators, together with
-`git diff --check`. Confirm that the new document is linked from both README
-indexes and that no generated or secret files are added. GitHub required checks
-must pass for the pull request and the integrated main result.
+Local policy, quality, supply-chain, Action pinning, repository-shape,
+build-contract, adapter, CR, and `git diff --check` validations passed. PR #7
+passed `ugs-validate` run `34206755312` and `chuzi-build` run `34206755440`,
+including all four target jobs. The integrated main `chuzi-build` run
+`34206914708` passed. The first main `ugs-validate` run `34206914616` correctly
+rejected the still-pending record because GitHub's rebase produced
+`main@d7e09a0`; this closure revision binds the record to that integrated
+result. The closure PR and its resulting main checks are required to complete
+the governance record.
 
 ## Risk
 
