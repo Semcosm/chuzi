@@ -1,16 +1,16 @@
 # CR-0002: Establish the GitHub multi-platform build foundation
 
 Base: main
-Head or Range: 6ca7dd8fc30d9e2647f718ff164d6cf3e4eb792d
+Head or Range: 06f2958944cc316a9c6dc5101b395d9e83f3e2a0
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(platform): establish GitHub multi-platform build foundation
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6ca7dd8fc30d9e2647f718ff164d6cf3e4eb792d
-Head OID: 6ca7dd8fc30d9e2647f718ff164d6cf3e4eb792d
+Head OID: 06f2958944cc316a9c6dc5101b395d9e83f3e2a0
 Integrated Result: pending
 
 ## Summary
