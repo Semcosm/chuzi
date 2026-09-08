@@ -69,6 +69,60 @@ The policy validator requires `jq`. UGS upgrade/profile tooling uses `python3` a
 
 Application build prerequisites are Go 1.24+, Node.js 20+, npm, and a compatible shell. The local machine does not need to build every target; GitHub Actions is the authoritative four-target build environment.
 
+## GitHub CLI and Remote Workflow
+
+The GitHub repository is `Semcosm/chuzi`. Use the configured `gh` credential
+from the user's local GitHub CLI configuration (`~/.config/gh/hosts.yml`); do
+not copy a PAT into the repository, shell history, command output, or a new
+`.env` file. The repository's Git transport is SSH, and pushes use the
+GitHub host alias and topic branch:
+
+```bash
+gh auth status
+gh api user --jq .login
+git push git@github-account:Semcosm/chuzi.git HEAD:<topic-branch>
+```
+
+If `gh auth status` reports an invalid token in a restricted or offline shell,
+first retry from a network-enabled host environment and verify with
+`gh api user --jq .login`; do not immediately overwrite the stored
+credential. `gh auth login --with-token` is for an intentional credential
+rotation only. The dedicated commit-signing key remains
+`/home/chen/.ssh/chuzi-ugs-signing` and is unrelated to the GitHub API token.
+
+Use explicit repository selectors when inspecting PRs or Actions:
+
+```bash
+gh pr view <number> --repo Semcosm/chuzi --json statusCheckRollup,mergeCommit,headRefOid,baseRefOid
+gh run list --repo Semcosm/chuzi --branch <topic-branch>
+gh run view <run-id> --repo Semcosm/chuzi --log-failed
+gh run watch <run-id> --repo Semcosm/chuzi --exit-status
+```
+
+For an implementation CR, create the PR with the standard adapter so its body
+is sourced from the persisted CR:
+
+```bash
+./adapters/github/create_pr_from_cr.sh cr/CR-XXXX-slug.md <topic-branch> Semcosm/chuzi
+```
+
+If a CR is revised after PR creation, update the PR body with
+`gh pr edit <number> --repo Semcosm/chuzi --body-file cr/CR-XXXX-slug.md`.
+The PR body must exactly match the persisted CR for UGS validation. A closure
+PR may use a governance title while still using the CR file as its body.
+
+Only merge after `ugs-validate` and the aggregate `chuzi-build` check pass.
+The declared UGS strategy is `rebase-ff`; use the full, verified head SHA so
+the merge cannot silently target a changed branch:
+
+```bash
+gh pr merge <number> --repo Semcosm/chuzi --rebase --match-head-commit <full-head-sha>
+```
+
+After merging, inspect `mergeCommit.oid` and the post-merge main checks. Use
+that actual GitHub main commit when closing the CR's `Integrated Result`; do
+not substitute the pre-rebase topic SHA.
+
 For an existing consumer checkout, use an extracted official UGS release package for initialization. The checked-in `scripts/ugs_init.py` expects the release package's `bootstrap/templates/` directory, which is not part of this consumer checkout. Upgrades use the release archive explicitly and should be dry-run first:
 
 ```bash
