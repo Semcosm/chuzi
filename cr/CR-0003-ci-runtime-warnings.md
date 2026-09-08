@@ -1,16 +1,16 @@
 # CR-0003: remove GitHub Actions runtime warnings
 
 Base: main
-Head or Range: 41adfbdac92f836405e570aa11c9cd823608df11
+Head or Range: 41adfbdac92f836405e570aa11c9cd823608df11..4ec47337896050a329425691902b245514ccb979
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: ci: remove GitHub Actions runtime warnings
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 41adfbdac92f836405e570aa11c9cd823608df11
-Head OID: 41adfbdac92f836405e570aa11c9cd823608df11
+Head OID: 4ec47337896050a329425691902b245514ccb979
 Integrated Result: pending
 
 ## Summary
