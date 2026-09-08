@@ -1,2 +1,1 @@
-chenzhipeng.main@gmail.com namespaces="git" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIDZNN5Bx7Cg3ArZ2PpsRal80fW+Q9C4mVLz1fyk6NboF chen@Semcosm
-chenzhipeng.main@gmail.com namespaces="git,ugs-attestation" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIPARO9uw4arPwt32NlIWk7OVt2g5WNeogHZoe7HBLhGe UGS commit and release signing (SHA256:VWD+zcyeXSeY7RdeXxcnFYSt+r5DA4dhrYrNMfP5tjU)
+chenzhipeng.main@gmail.com namespaces="git,ugs-attestation" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIKh/6SnBies6zspwFt1gsfRihNw6ZrddEGoayL4iiraQ chuzi UGS commit and release signing (SHA256:QEc6AA8Qc/tEaLNkvhRjemILH5EVV8S4ogKIQb1cMks)

@@ -3,6 +3,6 @@
 UGS Profile: continuous
 Merge Strategy: rebase-ff
 Versioning: semver
-Signing Level: unsigned
+Signing Level: commits-signed
 Protected Long-Lived Branches: main
 Hooks Path: .githooks
