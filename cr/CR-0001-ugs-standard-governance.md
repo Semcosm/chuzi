@@ -1,17 +1,17 @@
 # CR-0001: Align the consumer repository with UGS standard governance
 
 Base: main
-Head or Range: 2c0ac9bcb9023b6d71643714c19d6cb11fa11ac3
+Head or Range: 30b2f127a0ccacd652fce0e475e0ebcddf1ad297
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: chore(governance): align repository with UGS standard profile
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: b2fc1e418b01f9cd69e91d024a1ba6f3374b97d5
-Head OID: 2c0ac9bcb9023b6d71643714c19d6cb11fa11ac3
-Integrated Result: pending
+Base OID: 30b2f127a0ccacd652fce0e475e0ebcddf1ad297
+Head OID: 30b2f127a0ccacd652fce0e475e0ebcddf1ad297
+Integrated Result: main@30b2f127a0ccacd652fce0e475e0ebcddf1ad297
 
 ## Summary
 
@@ -31,6 +31,16 @@ previous signing key was shared with another repository, so this revision
 rotates the active signer to a key generated specifically for chuzi and
 revokes the previous trust entries.
 
+The original governance change used base OID
+`b2fc1e418b01f9cd69e91d024a1ba6f3374b97d5` and signed source commits
+`2c0ac9bcb9023b6d71643714c19d6cb11fa11ac3` and
+`418dbdaf1e405bca86e9ca1d1508f1bb66c934b7`. GitHub's rebase integration
+generated `5415bd45ae2d4814385f1dfa1d68feb35518f4c1` and
+`30b2f127a0ccacd652fce0e475e0ebcddf1ad297`, which changed the commit object
+IDs and removed the source SSH signatures from the generated objects. This
+revision records the generated mainline result and closes the CR against the
+current main revision without rewriting any existing history.
+
 ## Test Evidence
 
 The official `ugs-bootstrap-v0.3.27.tar.gz` checksum and component manifests
@@ -44,6 +54,10 @@ were verified. The following checks pass in the working tree:
 - `scripts/validate_signer_roles.sh`
 - `scripts/validate_commit_signatures.sh`
 - `git diff --check`
+
+The original pull-request validation passed in run `34184200798`. The first
+post-merge main validation was run `34184304138` and failed only because the
+record still named the pre-rebase head `2c0ac9bcb9023b6d71643714c19d6cb11fa11ac3`.
 
 ## Risk
 
