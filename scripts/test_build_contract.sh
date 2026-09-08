@@ -16,6 +16,6 @@ done
 [ -f "$repo_root/.github/workflows/chuzi-build.yml" ] || fail "build workflow is missing"
 
 grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build check is missing"
-grep -Fq 'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow action is not pinned"
+grep -Eq 'actions/checkout@[0-9a-f]{40}' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow action is not pinned"
 
 echo "build contract validation passed"
