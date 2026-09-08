@@ -1,17 +1,17 @@
 # CR-0007: document the GitHub CLI repository workflow
 
 Base: main
-Head or Range: d86647ee4f4ae7f6bc2827174b269a93d5cf04f0..262a1a9686eb4b6762bc88f3374b4b76545e9579
+Head or Range: d86647ee4f4ae7f6bc2827174b269a93d5cf04f0..6eebd00877c2f73193804d193fdd2173253ee1d0
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs: document GitHub CLI repository workflow
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: d86647ee4f4ae7f6bc2827174b269a93d5cf04f0
-Head OID: 262a1a9686eb4b6762bc88f3374b4b76545e9579
-Integrated Result: pending
+Base OID: 6eebd00877c2f73193804d193fdd2173253ee1d0
+Head OID: 6eebd00877c2f73193804d193fdd2173253ee1d0
+Integrated Result: main@6eebd00877c2f73193804d193fdd2173253ee1d0
 
 ## Summary
 
@@ -33,9 +33,14 @@ topic branch during rebase integration.
 The policy, quality, supply-chain, Action pinning, repository-shape,
 build-contract, GitHub adapter, signer-role, CR, and `git diff --check`
 validators pass. The sensitive credential scan found no PAT, private key, or
-credential material in `AGENTS.md` or this CR. The already-integrated main
-checks remain green: `ugs-validate` run `34249990381` and aggregate
-`chuzi-build` run `34249990344`.
+credential material in `AGENTS.md` or this CR. PR #13 passed
+`ugs-validate` run `34251991461` and aggregate `chuzi-build` run
+`34251991010`. GitHub's rebase integration produced
+`main@6eebd00877c2f73193804d193fdd2173253ee1d0`; the first post-merge
+`ugs-validate` run `34252349831` correctly rejected the pending record because
+it still named the pre-rebase topic SHA, while main `chuzi-build` run
+`34252350444` passed. This closure revision binds the record to the actual
+integrated main result.
 
 ## Risk
 
