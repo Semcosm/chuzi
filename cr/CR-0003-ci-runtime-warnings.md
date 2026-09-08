@@ -5,13 +5,13 @@ Head or Range: 41adfbdac92f836405e570aa11c9cd823608df11..4ec47337896050a32942569
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: ci: remove GitHub Actions runtime warnings
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 41adfbdac92f836405e570aa11c9cd823608df11
-Head OID: 4ec47337896050a329425691902b245514ccb979
-Integrated Result: pending
+Base OID: 46aca883c154ab664d4af78194e9b33fbce895b4
+Head OID: 46aca883c154ab664d4af78194e9b33fbce895b4
+Integrated Result: main@46aca883c154ab664d4af78194e9b33fbce895b4
 
 ## Summary
 
@@ -34,11 +34,15 @@ the project's Node.js 20 worker compatibility boundary.
 
 ## Test Evidence
 
-Planned and required before integration: validate all action references with
-`scripts/validate_action_pinning.sh`, run the repository policy, quality,
-supply-chain, repository-shape, adapter, and build-contract checks, and verify
-`git diff --check`. GitHub pull-request and post-integration main-branch runs
-must pass both required checks.
+Local policy, quality, supply-chain, repository-shape, adapter,
+build-contract, CR, Action pinning, and `git diff --check` validations passed.
+PR #5 passed `ugs-validate` run `34203334930` and `chuzi-build` run
+`34203334911`, including all four target jobs. The integrated main
+`chuzi-build` run `34204060499` passed. The first main `ugs-validate` run
+`34204060530` correctly rejected the still-pending record because GitHub's
+rebase produced `main@46aca883`; this closure revision binds the record to that
+integrated result. The closure PR and its resulting main checks are required
+to complete the governance record.
 
 ## Risk
 
