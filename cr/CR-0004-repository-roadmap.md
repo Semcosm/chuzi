@@ -1,16 +1,16 @@
 # CR-0004: add the repository evolution roadmap
 
 Base: main
-Head or Range: 008b3141e7f4281aaac0eb31e516fa479ef84396
+Head or Range: 008b3141e7f4281aaac0eb31e516fa479ef84396..4461355f9cc22a53239872a7cc63d07e90fbbd05
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs: add repository evolution roadmap
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 008b3141e7f4281aaac0eb31e516fa479ef84396
-Head OID: 008b3141e7f4281aaac0eb31e516fa479ef84396
+Head OID: 4461355f9cc22a53239872a7cc63d07e90fbbd05
 Integrated Result: pending
 
 ## Summary
