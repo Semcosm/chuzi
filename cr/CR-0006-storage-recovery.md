@@ -1,17 +1,17 @@
 # CR-0006: implement single-node storage and recovery
 
 Base: main
-Head or Range: b351fb828802a6cafb254b252bc8966b1716ff9f..81a08063e77dcd57e40f2e70e080a66b8232c584
+Head or Range: b351fb828802a6cafb254b252bc8966b1716ff9f..b711455e5d8ece69885e9a6922436aed5b63be65
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(storage): implement single-node state storage and recovery
-Revision: 4
-Status: pending
-Decision: pending
+Revision: 5
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: b351fb828802a6cafb254b252bc8966b1716ff9f
-Head OID: b351fb828802a6cafb254b252bc8966b1716ff9f
-Integrated Result: pending
+Base OID: b711455e5d8ece69885e9a6922436aed5b63be65
+Head OID: b711455e5d8ece69885e9a6922436aed5b63be65
+Integrated Result: main@b711455e5d8ece69885e9a6922436aed5b63be65
 
 ## Summary
 
@@ -46,8 +46,12 @@ strict. GitHub Actions remains the integration gate for `ugs-validate` and all
 four `chuzi-build` targets. PR #11's first build run
 (`34246765349`) exposed the Windows-only permission-bit assumption; commit
 `81a0806` corrected it, and replacement run `34247491425` passed all four target
-jobs and the aggregate `chuzi-build` check. The UGS check will be re-evaluated
-after this CR/PR revision is synchronized.
+jobs and the aggregate `chuzi-build` check. The synchronized PR run
+`34247491425`/`34248488863` passed the aggregate build and UGS checks. GitHub's
+rebase integration produced `main@b711455e5d8ece69885e9a6922436aed5b63be65`;
+post-merge `ugs-validate` run `34249080848` and `chuzi-build` run
+`34249080816` also passed. This closure revision binds the record to the
+actual integrated main result.
 
 ## Risk
 
