@@ -31,6 +31,17 @@ jobs:
         with:
           fetch-depth: 0
 
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: browser-worker/package-lock.json
+
       - name: Verify host toolchain
         shell: bash
         run: |
