@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -374,8 +375,15 @@ func TestStoreBackupCanBeReopenedAndRejectsDuplicatePath(t *testing.T) {
 	if err != nil || backupPath != wantPath {
 		t.Fatalf("backup path = %q, %v; want %q", backupPath, err, wantPath)
 	}
-	if mode, err := os.Stat(backupPath); err != nil || mode.Mode().Perm() != 0o600 {
-		t.Fatalf("backup stat = mode %v, err %v; want 0600", mode, err)
+	mode, err := os.Stat(backupPath)
+	if err != nil {
+		t.Fatalf("backup stat: %v", err)
+	}
+	if !mode.Mode().IsRegular() {
+		t.Fatalf("backup mode = %v; want a regular file", mode.Mode())
+	}
+	if runtime.GOOS != "windows" && mode.Mode().Perm() != 0o600 {
+		t.Fatalf("backup permissions = %o; want 0600", mode.Mode().Perm())
 	}
 	if _, err := service.Backup(backupTime); !errors.Is(err, ErrBackupExists) {
 		t.Fatalf("duplicate backup error = %v, want ErrBackupExists", err)
