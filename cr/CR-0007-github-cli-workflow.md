@@ -1,16 +1,16 @@
 # CR-0007: document the GitHub CLI repository workflow
 
 Base: main
-Head or Range: d86647ee4f4ae7f6bc2827174b269a93d5cf04f0
+Head or Range: d86647ee4f4ae7f6bc2827174b269a93d5cf04f0..262a1a9686eb4b6762bc88f3374b4b76545e9579
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs: document GitHub CLI repository workflow
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: d86647ee4f4ae7f6bc2827174b269a93d5cf04f0
-Head OID: d86647ee4f4ae7f6bc2827174b269a93d5cf04f0
+Head OID: 262a1a9686eb4b6762bc88f3374b4b76545e9579
 Integrated Result: pending
 
 ## Summary
@@ -30,11 +30,12 @@ topic branch during rebase integration.
 
 ## Test Evidence
 
-Required before integration: run the policy, quality, supply-chain, Action
-pinning, repository-shape, build-contract, GitHub adapter, signer-role, CR,
-and `git diff --check` validators. Verify that the documented commands do not
-contain a token or private key and that the GitHub workflow continues to pass
-`ugs-validate` and the aggregate `chuzi-build` check.
+The policy, quality, supply-chain, Action pinning, repository-shape,
+build-contract, GitHub adapter, signer-role, CR, and `git diff --check`
+validators pass. The sensitive credential scan found no PAT, private key, or
+credential material in `AGENTS.md` or this CR. The already-integrated main
+checks remain green: `ugs-validate` run `34249990381` and aggregate
+`chuzi-build` run `34249990344`.
 
 ## Risk
 
