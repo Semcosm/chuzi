@@ -1,16 +1,16 @@
 # CR-0005: implement the account state-machine contract
 
 Base: main
-Head or Range: 35afde3c5699d81eb5ecc5c94321ff26c09a449e
+Head or Range: 35afde3c5699d81eb5ecc5c94321ff26c09a449e..22085cac0d6af12a5202b09324ee3dd9b7035a1b
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(account): implement account state-machine contract
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 35afde3c5699d81eb5ecc5c94321ff26c09a449e
-Head OID: 35afde3c5699d81eb5ecc5c94321ff26c09a449e
+Head OID: 22085cac0d6af12a5202b09324ee3dd9b7035a1b
 Integrated Result: pending
 
 ## Summary
