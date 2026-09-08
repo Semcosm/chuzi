@@ -14,5 +14,12 @@ artifact="$repo_root/dist/chuzi-${version}-${target}.tar.gz"
 
 [ -d "$stage_dir" ] || { echo "build stage does not exist: $stage_dir" >&2; exit 1; }
 tar -czf "$artifact" -C "$stage_dir" .
-sha256sum "$artifact" > "$artifact.sha256"
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256sum "$artifact" > "$artifact.sha256"
+elif command -v shasum >/dev/null 2>&1; then
+  shasum -a 256 "$artifact" > "$artifact.sha256"
+else
+  echo "no SHA256 utility is available" >&2
+  exit 1
+fi
 echo "packaged $artifact"
