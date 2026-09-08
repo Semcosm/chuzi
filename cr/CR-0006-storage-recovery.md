@@ -5,7 +5,7 @@ Head or Range: b351fb828802a6cafb254b252bc8966b1716ff9f..81a08063e77dcd57e40f2e7
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(storage): implement single-node state storage and recovery
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -43,7 +43,11 @@ build-contract, adapter, CR, signer-role, and `git diff --check` validators
 pass. The Windows runner's native filesystem permission semantics are covered
 by a portable regular-file assertion; Unix permission-bit validation remains
 strict. GitHub Actions remains the integration gate for `ugs-validate` and all
-four `chuzi-build` targets.
+four `chuzi-build` targets. PR #11's first build run
+(`34246765349`) exposed the Windows-only permission-bit assumption; commit
+`81a0806` corrected it, and replacement run `34247491425` passed all four target
+jobs and the aggregate `chuzi-build` check. The UGS check will be re-evaluated
+after this CR/PR revision is synchronized.
 
 ## Risk
 
