@@ -2,7 +2,7 @@
 
 ## Current State
 
-This repository is in the cross-platform foundation stage for the chuzi service. The Go control-service skeleton, Node.js browser-worker protocol boundary, build manifests, and contract tests are present. Business modules, persistence migrations, real browser automation, Matrix integration, and production packaging are still planned work.
+This repository is in the cross-platform foundation and domain-core stage for the chuzi service. The Go control-service skeleton, Node.js browser-worker protocol boundary, build manifests, contract tests, and deterministic account state-machine package are present. Persistence migrations, queue scheduling, credential storage, real browser automation, Matrix integration, and production packaging are still planned work.
 
 Read the chuzi project documents before adding implementation code:
 
@@ -24,7 +24,7 @@ The root `README.md` and `docs/` are chuzi documentation. `.ugs/docs/` contains 
 - `keys/`: public signer-role and allowed/revoked-signer metadata only. Never add private keys.
 - `.github/workflows/`: the checked-in UGS workflow.
 - `browser-worker/`: Node.js Worker protocol boundary and build package.
-- `cmd/` and `internal/`: Go control-service entry point and shared protocol package.
+- `cmd/` and `internal/`: Go control-service entry point, account domain package, and shared protocol package.
 
 Do not treat the UGS files as application modules. Keep credentials, cookies, browser profiles, runtime data, logs, and generated artifacts out of Git; the existing `.gitignore` covers the repository's secret and runtime directories.
 
@@ -91,8 +91,13 @@ The managed `commit-msg` hook checks the subject shape only; it does not replace
 - `scripts/ugs_check.sh` and the broad `test_*.sh` suite belong to the UGS source repository; this consumer checkout uses the standard profile workflow and its packaged validators.
 - When copied UGS reference docs conflict with the machine-readable policy or `REPOSITORY_POLICY.md`, follow the current `.ugs/policy.json` declaration for this repository.
 
-## Naming and Testing When Implementation Starts
+## Naming and Testing for Implementation
 
 Use descriptive domain module names matching the architecture (`account`, `browser`, `credential`, `queue`, `matrix`, `store`, `config`, and `observability`). Use lowercase `snake_case` for database fields and configuration keys. Keep browser/session code behind interfaces so the domain state machine remains deterministic and testable.
 
-Every state transition and retry/timeout path needs unit coverage. Add integration coverage for persistence, Matrix delivery, and browser-session lifecycle without using live accounts or external credentials. Place module tests beside the implementation and cross-module scenarios under `tests/` once those directories exist.
+Every state transition and retry/timeout path needs unit coverage. The account
+domain package is intentionally pure and uses caller-provided timestamps; keep
+that property when extending it. Add integration coverage for persistence,
+Matrix delivery, and browser-session lifecycle without using live accounts or
+external credentials. Place module tests beside the implementation and
+cross-module scenarios under `tests/` once those directories exist.

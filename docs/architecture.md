@@ -23,7 +23,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 
 ## 建议目录树
 
-以下是目标目录，当前阶段只提交文档和 UGS 文件；随着实现推进再创建代码目录。
+以下是目标目录。当前已实现 `internal/account` 的纯领域核心和
+`internal/protocol` 协议边界；其他运行时目录随着路线图推进再创建。
 
 ```text
 .
@@ -32,7 +33,7 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 ├── browser-worker/              # Node.js Worker 协议与浏览器适配边界
 ├── internal/
 │   └── protocol/                # 控制服务与 Worker 的版本化协议
-│   ├── account/                 # 账号实体与状态机
+│   ├── account/                 # 已实现：账号实体与状态机
 │   ├── browser/                 # Profile 生命周期与会话运行器
 │   ├── credential/              # 凭证加密、轮换和访问接口
 │   ├── queue/                   # 排队、租约、超时和重试
