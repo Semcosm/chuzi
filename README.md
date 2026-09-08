@@ -21,6 +21,7 @@ GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`li
 ## 文档入口
 
 - [项目文档总览](docs/README.md)
+- [长期演进路线图](docs/roadmap.md)
 - [架构与目录规划](docs/architecture.md)
 - [账号状态机](docs/account-state-machine.md)
 - [安全与凭证管理](docs/security.md)

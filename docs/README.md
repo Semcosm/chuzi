@@ -4,6 +4,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [roadmap.md](roadmap.md) | 长期演进阶段、依赖关系和验收门槛 |
 | [architecture.md](architecture.md) | 系统边界、模块职责和建议目录树 |
 | [account-state-machine.md](account-state-machine.md) | 账号业务状态、转换条件和异常处理 |
 | [security.md](security.md) | 凭证、浏览器 Profile、日志和权限安全 |
@@ -20,4 +21,5 @@
 
 ## 推荐阅读顺序
 
-先阅读架构和状态机，再阅读安全与 Matrix 接口。实现阶段应以状态机作为领域模块的单一事实来源。
+先阅读路线图了解阶段依赖，再阅读架构和状态机，最后阅读安全、Matrix
+接口与运维约束。实现阶段应以状态机作为领域模块的单一事实来源。
