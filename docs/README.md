@@ -7,6 +7,7 @@
 | [roadmap.md](roadmap.md) | 长期演进阶段、依赖关系和验收门槛 |
 | [architecture.md](architecture.md) | 系统边界、模块职责和建议目录树 |
 | [account-state-machine.md](account-state-machine.md) | 账号业务状态、转换条件和异常处理 |
+| [storage.md](storage.md) | 单节点存储拓扑、Schema、事务和恢复约定 |
 | [security.md](security.md) | 凭证、浏览器 Profile、日志和权限安全 |
 | [matrix-api.md](matrix-api.md) | Matrix 房间命令、事件和状态通知约定 |
 | [operations.md](operations.md) | 配置、部署、备份、监控和故障恢复 |

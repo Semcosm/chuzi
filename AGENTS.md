@@ -2,13 +2,14 @@
 
 ## Current State
 
-This repository is in the cross-platform foundation and domain-core stage for the chuzi service. The Go control-service skeleton, Node.js browser-worker protocol boundary, build manifests, contract tests, and deterministic account state-machine package are present. Persistence migrations, queue scheduling, credential storage, real browser automation, Matrix integration, and production packaging are still planned work.
+This repository is in the cross-platform foundation, domain-core, and storage-foundation stage for the chuzi service. The Go control-service skeleton, Node.js browser-worker protocol boundary, build manifests, contract tests, deterministic account state-machine package, configuration boundary, single-node bbolt store, and schema migrations are present. Queue scheduling, credential storage, real browser automation, Matrix integration, and production packaging are still planned work.
 
 Read the chuzi project documents before adding implementation code:
 
 - `README.md`: project scope and current stage.
 - `docs/architecture.md`: component boundaries and planned layout.
 - `docs/account-state-machine.md`: business-state source of truth.
+- `docs/storage.md`: single-node storage, transaction, and recovery contract.
 - `docs/security.md`, `docs/matrix-api.md`, and `docs/operations.md`: security, Matrix, and operational constraints.
 
 The root `README.md` and `docs/` are chuzi documentation. `.ugs/docs/` contains copied UGS guidance and is not the project design documentation.
@@ -24,7 +25,8 @@ The root `README.md` and `docs/` are chuzi documentation. `.ugs/docs/` contains 
 - `keys/`: public signer-role and allowed/revoked-signer metadata only. Never add private keys.
 - `.github/workflows/`: the checked-in UGS workflow.
 - `browser-worker/`: Node.js Worker protocol boundary and build package.
-- `cmd/` and `internal/`: Go control-service entry point, account domain package, and shared protocol package.
+- `cmd/` and `internal/`: Go control-service entry point, account domain, config, store, and shared protocol packages.
+- `migrations/`: repeatable bbolt schema migrations and version metadata.
 
 Do not treat the UGS files as application modules. Keep credentials, cookies, browser profiles, runtime data, logs, and generated artifacts out of Git; the existing `.gitignore` covers the repository's secret and runtime directories.
 
@@ -54,6 +56,10 @@ The current repository-level checks are:
 ./scripts/test_build_contract.sh
 git diff --check
 ```
+
+Application checks for the implemented Go boundaries are `go test ./...` and
+`go vet ./...`; storage integration tests use temporary data directories and
+never use production state.
 
 When `.ugs/document-map.json` is present, also run
 `./scripts/validate_document_map.py`. The standard GitHub workflow runs the
@@ -93,11 +99,13 @@ The managed `commit-msg` hook checks the subject shape only; it does not replace
 
 ## Naming and Testing for Implementation
 
-Use descriptive domain module names matching the architecture (`account`, `browser`, `credential`, `queue`, `matrix`, `store`, `config`, and `observability`). Use lowercase `snake_case` for database fields and configuration keys. Keep browser/session code behind interfaces so the domain state machine remains deterministic and testable.
+Use descriptive domain module names matching the architecture (`account`, `browser`, `credential`, `queue`, `matrix`, `store`, `config`, and `observability`). Use lowercase `snake_case` for database fields and configuration keys. Keep browser/session code behind interfaces so the domain state machine remains deterministic and testable. The current store is single-node bbolt; do not add multi-instance claims without a separate topology decision.
 
 Every state transition and retry/timeout path needs unit coverage. The account
 domain package is intentionally pure and uses caller-provided timestamps; keep
 that property when extending it. Add integration coverage for persistence,
 Matrix delivery, and browser-session lifecycle without using live accounts or
-external credentials. Place module tests beside the implementation and
-cross-module scenarios under `tests/` once those directories exist.
+external credentials. Storage tests must use temporary directories and cover
+migration repeatability, transaction atomicity, restart recovery, leases, and
+backup behavior. Place module tests beside the implementation and cross-module
+scenarios under `tests/` once those directories exist.

@@ -6,7 +6,11 @@
 - Secret 配置：数据库密码、Matrix access token、凭证加密主密钥。
 - 运行数据：数据库、浏览器 Profile、审计日志和待发送事件。
 
-普通配置提供 `configs/example.*` 示例，Secret 不进入 Git。生产环境至少限制服务账户、数据库和 Profile 目录的文件权限。
+普通配置提供 `configs/example.*` 示例，当前阶段使用
+`configs/example.json` 的 `data_dir` 字段。数据库路径固定由服务派生为
+`<data_dir>/chuzi.db`，备份目录固定为 `<data_dir>/backups/`；请求和账号
+输入不能覆盖这些路径。Secret 不进入 Git。生产环境至少限制服务账户、
+数据库和 Profile 目录的文件权限。
 
 ## 最低运行要求
 
@@ -15,6 +19,21 @@
 3. Matrix Bot 用户和授权房间。
 4. 浏览器运行时及其资源限制。
 5. 日志轮转、健康检查和任务租约回收。
+
+阶段二的默认存储拓扑是单节点纯 Go bbolt。一个数据目录只能由一个服务
+实例拥有；该文件锁不提供跨主机多实例一致性。服务启动时会运行可重复的
+schema 迁移并拒绝未知版本。多实例部署必须在单独的 CR 中选择外部数据
+库和并发/迁移策略。
+
+配置加载示例：
+
+```go
+cfg, err := config.Load("configs/example.json")
+store, err := store.Open(cfg)
+```
+
+备份由存储服务写入配置派生的 `backups/` 目录；恢复前应验证备份文件、
+权限和 schema 版本，不能用未验证的任意路径覆盖运行数据库。
 
 ## 构建与发布目标
 
