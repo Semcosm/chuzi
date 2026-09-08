@@ -23,8 +23,9 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 
 ## 建议目录树
 
-以下是目标目录。当前已实现 `internal/account` 的纯领域核心和
-`internal/protocol` 协议边界；其他运行时目录随着路线图推进再创建。
+以下是目标目录。当前已实现 `internal/account` 的纯领域核心、
+`internal/protocol` 协议边界，以及阶段二的配置、存储和迁移边界；其他
+运行时目录随着路线图推进再创建。
 
 ```text
 .
@@ -32,16 +33,16 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 │   └── service/
 ├── browser-worker/              # Node.js Worker 协议与浏览器适配边界
 ├── internal/
-│   └── protocol/                # 控制服务与 Worker 的版本化协议
+│   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
 │   ├── browser/                 # Profile 生命周期与会话运行器
 │   ├── credential/              # 凭证加密、轮换和访问接口
 │   ├── queue/                   # 排队、租约、超时和重试
 │   ├── matrix/                  # Matrix 适配器与事件格式化
-│   ├── store/                   # 数据库、迁移和事务封装
-│   ├── config/                  # 配置加载与校验
+│   ├── store/                   # 已实现：数据库与事务封装
+│   ├── config/                  # 已实现：配置加载与路径派生
 │   └── observability/           # 日志、指标、审计
-├── migrations/                  # 数据库迁移
+├── migrations/                  # 已实现：bbolt schema 迁移
 ├── tests/                       # 集成测试与端到端测试
 ├── configs/                     # 脱敏示例配置
 ├── deploy/                      # 容器、服务编排和运行时配置

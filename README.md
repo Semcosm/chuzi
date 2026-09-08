@@ -6,7 +6,7 @@
 
 ## 当前阶段
 
-目前仓库处于跨平台基础与领域核心实现阶段，已完成 UGS 治理脚手架、第一版 GitHub 构建契约和纯 Go 账号状态机。服务控制面采用 Go，浏览器 Worker 使用 Node.js；状态存储、队列、凭证、真实浏览器自动化和 Matrix 业务实现仍按路线图逐步加入。
+目前仓库处于跨平台基础、领域核心与持久化基础实现阶段，已完成 UGS 治理脚手架、第一版 GitHub 构建契约、纯 Go 账号状态机和单节点状态存储边界。服务控制面采用 Go，浏览器 Worker 使用 Node.js；队列、凭证、真实浏览器自动化和 Matrix 业务实现仍按路线图逐步加入。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
@@ -24,6 +24,7 @@ GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`li
 - [长期演进路线图](docs/roadmap.md)
 - [架构与目录规划](docs/architecture.md)
 - [账号状态机](docs/account-state-machine.md)
+- [状态存储与恢复](docs/storage.md)
 - [安全与凭证管理](docs/security.md)
 - [Matrix 服务接口](docs/matrix-api.md)
 - [部署与运维](docs/operations.md)
