@@ -6,7 +6,9 @@
 
 ## 当前阶段
 
-目前仓库处于架构规划阶段，已完成 UGS 治理脚手架，业务实现尚未开始。建议先根据文档确定存储、浏览器自动化运行时和 Matrix 部署方式，再进入编码阶段。
+目前仓库处于跨平台基础实现阶段，已完成 UGS 治理脚手架和第一版 GitHub 构建契约。服务控制面采用 Go，浏览器 Worker 使用 Node.js；真实浏览器自动化、存储和 Matrix 业务实现仍按状态机和安全文档逐步加入。
+
+GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
 ## 设计原则
 

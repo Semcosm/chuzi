@@ -1,0 +1,93 @@
+name: chuzi-build
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-matrix:
+    name: chuzi-build-${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-amd64
+            runner: windows-2022
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04
+          - target: darwin-arm64
+            runner: macos-14
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Verify host toolchain
+        shell: bash
+        run: |
+          go version
+          node --version
+          npm --version
+
+      - name: Validate build contract
+        shell: bash
+        run: scripts/test_build_contract.sh
+
+      - name: Build service and worker on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "dev-$($env:GITHUB_SHA.Substring(0,12))"
+          ./scripts/build.ps1 -Target "${{ matrix.target }}" -Version $version
+
+      - name: Build service and worker on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: scripts/build.sh "${{ matrix.target }}" "dev-${GITHUB_SHA:0:12}"
+
+      - name: Test Go service and worker contract
+        shell: bash
+        run: |
+          go test ./...
+          npm --prefix browser-worker test
+          go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
+
+      - name: Package Windows artifact
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = "dev-$($env:GITHUB_SHA.Substring(0,12))"
+          ./scripts/package.ps1 -Target "${{ matrix.target }}" -Version $version
+
+      - name: Package Unix artifact
+        if: runner.os != 'Windows'
+        shell: bash
+        run: scripts/package.sh "${{ matrix.target }}" "dev-${GITHUB_SHA:0:12}"
+
+      - name: Show artifact digest
+        shell: bash
+        run: cat dist/*.sha256
+
+  chuzi-build:
+    name: chuzi-build
+    if: always()
+    needs: build-matrix
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every target build
+        shell: bash
+        run: |
+          if [ "${{ needs.build-matrix.result }}" != "success" ]; then
+            echo "one or more chuzi target builds failed" >&2
+            exit 1
+          fi
+          echo "all chuzi target builds passed"

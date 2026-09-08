@@ -3,6 +3,7 @@
   "automation": {
     "hooks_path": ".githooks",
     "required_checks": [
+      "chuzi-build",
       "ugs-validate"
     ]
   },
@@ -63,7 +64,8 @@
       "scripts/validate_policy_manifest.sh",
       "scripts/validate_quality_profile.sh",
       "scripts/validate_supply_chain_profile.sh",
-      "scripts/validate_action_pinning.sh"
+      "scripts/validate_action_pinning.sh",
+      "scripts/test_build_contract.sh"
     ]
   },
   "releases": {

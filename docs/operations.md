@@ -16,6 +16,28 @@
 4. 浏览器运行时及其资源限制。
 5. 日志轮转、健康检查和任务租约回收。
 
+## 构建与发布目标
+
+GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链，目标矩阵为：
+
+| Target | Output | Build mode |
+| --- | --- | --- |
+| `windows-amd64` | `.zip` | Windows native runner |
+| `linux-amd64` | `.tar.gz` | Linux native runner |
+| `linux-arm64` | `.tar.gz` | Linux cross-build; native runtime coverage pending |
+| `darwin-arm64` | `.tar.gz` | Apple Silicon macOS runner |
+
+构建命令由以下脚本定义：
+
+```bash
+scripts/build.sh <target> [version]
+scripts/package.sh <target> <version>
+```
+
+Windows runner 使用对应的 `*.ps1` 脚本。构建产物必须包含 Go 服务、Worker 文件和 `build-manifest.json`，并生成 SHA256 校验文件。CI smoke test 只使用本地 Worker 和测试协议，不使用真实云游戏账号或生产凭证。
+
+当前 Worker 只提供协议和生命周期验证；Playwright/Chromium 适配必须在增加依赖、浏览器下载或原生模块前单独提交 CR，并为四个发布目标记录运行覆盖范围。
+
 ## 运维检查
 
 - 部署前运行 `scripts/validate_policy_manifest.sh`。

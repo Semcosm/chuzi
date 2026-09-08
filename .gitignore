@@ -15,6 +15,7 @@ logs/
 # Generated build and test output
 bin/
 dist/
+browser-worker/node_modules/
 coverage/
 tmp/
 *.log

@@ -2,7 +2,7 @@
 
 ## Current State
 
-This is a documentation and governance-stage repository for the chuzi service. No application implementation, build manifest, or application test suite exists yet. The planned `cmd/`, `internal/`, `migrations/`, `tests/`, `configs/`, and `deploy/` directories are described in `docs/architecture.md` but are not currently present.
+This repository is in the cross-platform foundation stage for the chuzi service. The Go control-service skeleton, Node.js browser-worker protocol boundary, build manifests, and contract tests are present. Business modules, persistence migrations, real browser automation, Matrix integration, and production packaging are still planned work.
 
 Read the chuzi project documents before adding implementation code:
 
@@ -23,6 +23,8 @@ The root `README.md` and `docs/` are chuzi documentation. `.ugs/docs/` contains 
 - `cr/`: UGS CR template and README; persisted change records use `cr/CR-*.md`.
 - `keys/`: public signer-role and allowed/revoked-signer metadata only. Never add private keys.
 - `.github/workflows/`: the checked-in UGS workflow.
+- `browser-worker/`: Node.js Worker protocol boundary and build package.
+- `cmd/` and `internal/`: Go control-service entry point and shared protocol package.
 
 Do not treat the UGS files as application modules. Keep credentials, cookies, browser profiles, runtime data, logs, and generated artifacts out of Git; the existing `.gitignore` covers the repository's secret and runtime directories.
 
@@ -39,7 +41,7 @@ The planned service has these logical boundaries: Matrix adapter, request servic
 
 ## Build, Test, and Local Checks
 
-There is no application build system, formatter, linter, or application test runner selected yet. Do not invent canonical commands until an implementation language and toolchain are added and documented in `docs/operations.md`.
+The initial application toolchains are Go 1.24 and Node.js 20+. The canonical cross-platform build commands are documented in `docs/operations.md` and are executed remotely by GitHub Actions.
 
 The current repository-level checks are:
 
@@ -49,6 +51,7 @@ The current repository-level checks are:
 ./scripts/validate_supply_chain_profile.sh
 ./scripts/validate_action_pinning.sh
 ./scripts/validate_repository_shape.sh
+./scripts/test_build_contract.sh
 git diff --check
 ```
 
@@ -57,6 +60,8 @@ When `.ugs/document-map.json` is present, also run
 same profile checks and validates persisted CR coverage on main.
 
 The policy validator requires `jq`. UGS upgrade/profile tooling uses `python3` and `git`; signature and attestation checks additionally use `ssh-keygen`, and GitHub adapters require the `gh` CLI.
+
+Application build prerequisites are Go 1.24+, Node.js 20+, npm, and a compatible shell. The local machine does not need to build every target; GitHub Actions is the authoritative four-target build environment.
 
 For an existing consumer checkout, use an extracted official UGS release package for initialization. The checked-in `scripts/ugs_init.py` expects the release package's `bootstrap/templates/` directory, which is not part of this consumer checkout. Upgrades use the release archive explicitly and should be dry-run first:
 

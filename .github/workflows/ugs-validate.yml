@@ -18,6 +18,12 @@ jobs:
       - name: Validate persisted CR coverage on main
         if: github.ref == 'refs/heads/main'
         run: scripts/validate_main_cr_range.sh "${{ github.event.before }}" "${{ github.sha }}"
+      - name: Validate pull request commit signatures
+        if: github.event_name == 'pull_request'
+        run: scripts/validate_commit_signatures.sh "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}"
+      - name: Validate main commit signatures
+        if: github.ref == 'refs/heads/main'
+        run: scripts/validate_commit_signatures.sh "${{ github.event.before }}..${{ github.sha }}"
       - name: Validate UGS standard policy
         run: |
           scripts/validate_policy_manifest.sh
@@ -25,6 +31,8 @@ jobs:
           scripts/validate_supply_chain_profile.sh
           scripts/validate_action_pinning.sh
           scripts/validate_repository_shape.sh
+          scripts/test_build_contract.sh
+          adapters/github/validate_adapter.sh
           if [ -f .ugs/document-map.json ]; then
             scripts/validate_document_map.py
           fi

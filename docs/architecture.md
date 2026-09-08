@@ -15,7 +15,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 - **Matrix Adapter**：验证房间/用户权限，解析命令，发送状态事件。
 - **Request Service**：创建请求、幂等检查、权限校验和结果查询。
 - **Queue/Scheduler**：按全局、账号和服务限制分配并发，处理超时与重试。
-- **Session Runner**：启动和回收浏览器实例，绑定账号 Profile，报告运行结果。
+- **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
+- **Browser Worker**：运行在独立 Node.js 进程中，负责浏览器自动化适配；不能直接决定账号业务状态。
 - **State Store**：持久化账号、请求、状态转换和审计信息。
 - **Credential Store**：提供加密凭证的读写，不向业务层暴露不必要的明文。
 - **Status Notifier**：将领域事件转换为 Matrix 可读消息。
@@ -28,7 +29,9 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 .
 ├── cmd/                         # 可执行程序入口
 │   └── service/
+├── browser-worker/              # Node.js Worker 协议与浏览器适配边界
 ├── internal/
+│   └── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 账号实体与状态机
 │   ├── browser/                 # Profile 生命周期与会话运行器
 │   ├── credential/              # 凭证加密、轮换和访问接口
@@ -47,6 +50,19 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 ├── .githooks/                   # UGS Git hooks
 └── .ugs/                        # UGS 版本与策略清单
 ```
+
+## 跨平台构建边界
+
+GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
+
+- `windows-amd64`
+- `linux-amd64`
+- `linux-arm64`
+- `darwin-arm64`
+
+Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布。`linux-arm64` 当前由 Linux runner 交叉编译，暂不宣称原生 ARM64 浏览器运行覆盖。引入 Playwright、Chromium 或其他原生依赖前，必须增加对应架构的运行 smoke test 和变更记录。
+
+控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
 
 ## 关键边界
 
