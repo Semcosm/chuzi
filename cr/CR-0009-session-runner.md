@@ -5,13 +5,13 @@ Head or Range: c8e9ca2ad846276981bad6683393d4e719956dcd..095ac67131d4dbb90a95fdc
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): implement session runner lifecycle
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 095ac67131d4dbb90a95fdce1632fac82df9ad22
-Head OID: 095ac67131d4dbb90a95fdce1632fac82df9ad22
-Integrated Result: pending
+Base OID: fa00b26f2667b7e6b6879e9934a7f959c0a445ab
+Head OID: fa00b26f2667b7e6b6879e9934a7f959c0a445ab
+Integrated Result: main@fa00b26f2667b7e6b6879e9934a7f959c0a445ab
 
 ## Summary
 
