@@ -82,3 +82,16 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
 仅提供协议和 deferred-browser failure/synthetic lifecycle 模式，真实浏览器
 运行时必须在后续独立变更中引入并验证。
+
+## Credential Store 生命周期契约
+
+`internal/credential` 使用部署环境提供的 Keyring，以 AES-GCM 加密每个账号的
+凭据 payload。bbolt 只保存密文、nonce、key ID、版本和时间戳；密钥不进入
+数据库、配置示例或 Git。调用方只能通过 `Use`/`Access` 回调获得一次性工作缓冲，
+回调返回后缓冲会被清零，业务层不能通过元数据读取长期明文。
+
+凭据写入、访问、密钥轮换和撤销都与 metadata-only audit 在同一存储事务中
+提交。撤销会先请求可选的 SessionInvalidator 停止账号会话，确认失败则不写入
+撤销状态；成功后清除 nonce 和密文并保持不可恢复状态。轮换需要 Keyring 同时
+保留旧 key ID 和当前 key。Credential Store 不决定账号业务状态，也不直接与
+Matrix 或浏览器 Worker 通信。

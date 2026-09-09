@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CurrentVersion uint64 = 2
+	CurrentVersion uint64 = 3
 
 	MetaBucket               = "meta"
 	AccountsBucket           = "accounts"
@@ -24,6 +24,8 @@ const (
 	EventsBucket             = "events"
 	LeasesBucket             = "leases"
 	QueueBucket              = "queue"
+	CredentialsBucket        = "credentials"
+	CredentialAuditsBucket   = "credential_audits"
 	VersionKey               = "version"
 )
 
@@ -64,6 +66,10 @@ func Apply(db *bbolt.DB) error {
 				if err := createVersionTwo(tx); err != nil {
 					return err
 				}
+			case 3:
+				if err := createVersionThree(tx); err != nil {
+					return err
+				}
 			default:
 				return fmt.Errorf("%w: migration %d", ErrUnsupportedVersion, version+1)
 			}
@@ -79,6 +85,15 @@ func Apply(db *bbolt.DB) error {
 func createVersionTwo(tx *bbolt.Tx) error {
 	if _, err := tx.CreateBucketIfNotExists([]byte(QueueBucket)); err != nil {
 		return fmt.Errorf("create %s bucket: %w", QueueBucket, err)
+	}
+	return nil
+}
+
+func createVersionThree(tx *bbolt.Tx) error {
+	for _, name := range []string{CredentialsBucket, CredentialAuditsBucket} {
+		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
+			return fmt.Errorf("create %s bucket: %w", name, err)
+		}
 	}
 	return nil
 }
