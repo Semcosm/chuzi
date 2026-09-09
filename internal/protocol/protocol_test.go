@@ -12,3 +12,22 @@ func TestRequestUsesCurrentProtocol(t *testing.T) {
 		t.Fatalf("unexpected request metadata: %#v", request)
 	}
 }
+
+func TestLifecycleMessageTypesAreVersionedConstants(t *testing.T) {
+	for name, value := range map[string]string{
+		"hello":            Hello,
+		"hello ack":        HelloAck,
+		"session start":    SessionStart,
+		"session started":  SessionStarted,
+		"session success":  SessionSuccess,
+		"session failure":  SessionFailure,
+		"session cancel":   SessionCancel,
+		"session cancelled": SessionCancelled,
+		"shutdown":         Shutdown,
+		"shutdown ack":     ShutdownAck,
+	} {
+		if value == "" {
+			t.Errorf("%s message type is empty", name)
+		}
+	}
+}

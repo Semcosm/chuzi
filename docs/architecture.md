@@ -69,3 +69,16 @@ Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码
 ## 关键边界
 
 浏览器模块不能直接决定对外业务状态；它只能报告运行事实，由账号状态机根据事件和持久化数据完成状态转换。Matrix 模块不能直接操作凭证，只能提交请求和消费脱敏后的领域事件。
+
+## Session Runner 生命周期契约
+
+Go Session Runner 为每次 queue claim 生成账号级 Profile 目录，并通过版本化
+JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
+`session_start`，等待 `session_started` 及 `session_succeeded`、
+`session_failed` 或 `session_cancelled`。取消、超时、租约心跳失败和父进程
+退出都会进入有界的 `session_cancel`/`shutdown` 流程；无法确认的进程退出只
+返回脱敏的 transient runtime fact。
+
+Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
+仅提供协议和 deferred-browser failure/synthetic lifecycle 模式，真实浏览器
+运行时必须在后续独立变更中引入并验证。
