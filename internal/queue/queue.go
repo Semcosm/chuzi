@@ -156,6 +156,16 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		return Outcome{}, ErrInvalidConfig
 	}
 	if runnerErr != nil || runnerContextErr != nil {
+		// A request cancellation is durable and may race with the worker's
+		// terminal event. Do not turn that expected lifecycle into LOGIN_FAILED
+		// or a retry after the cancellation transaction released its lease.
+		current, readErr := s.store.GetRequest(claim.Request.RequestID)
+		if readErr != nil {
+			return Outcome{}, readErr
+		}
+		if current.State == account.Cancelled {
+			return Outcome{Request: current}, nil
+		}
 		runnerResult = Result{Failure: account.TransientFailure}
 	}
 	if runnerResult.Succeeded {
