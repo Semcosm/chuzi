@@ -1,16 +1,16 @@
 # CR-0009: implement session runner and browser-worker lifecycle
 
 Base: main
-Head or Range: pending
+Head or Range: c8e9ca2ad846276981bad6683393d4e719956dcd..095ac67131d4dbb90a95fdce1632fac82df9ad22
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): implement session runner lifecycle
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: c8e9ca2ad846276981bad6683393d4e719956dcd
-Head OID: c8e9ca2ad846276981bad6683393d4e719956dcd
+Base OID: 095ac67131d4dbb90a95fdce1632fac82df9ad22
+Head OID: 095ac67131d4dbb90a95fdce1632fac82df9ad22
 Integrated Result: pending
 
 ## Summary
@@ -38,11 +38,12 @@ The change adds deterministic fake-worker tests for successful completion,
 classified failure, crash, context timeout/cancellation, expired leases,
 service-generated Profile isolation, durable request cancellation, and queue
 integration. Node protocol tests cover session start, cancellation, deferred
-runtime failure, and shutdown. CI must run `gofmt`, `go test ./...`,
-`go test -race ./...`, `go vet ./...`, `npm --prefix browser-worker test`, the
-repository validators, and the four-target build/self-test matrix. The local
-restricted shell has no Go or Node toolchain, so local execution evidence is
-limited to source and diff checks.
+runtime failure, and shutdown. PR #17 passed `ugs-validate` run
+`34379491262` and aggregate `chuzi-build` run `34379491256`, including Go
+tests, Node tests, service self-test, and all four target builds. The initial
+Windows permission assertion was corrected for Windows ACL semantics before the
+passing run. The local restricted shell has no Go or Node toolchain, so local
+execution evidence is limited to source and diff checks.
 
 ## Risk
 
