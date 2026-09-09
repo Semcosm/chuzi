@@ -5,13 +5,13 @@ Head or Range: 22b05fd02ad64cff9c2e1c6241a4e65ec1ae2a76..fe5c4b2c89f37f74b9ece44
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(credential): add encrypted credential store and audit boundary
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: fe5c4b2c89f37f74b9ece441255faa2611ad7b0a
-Head OID: fe5c4b2c89f37f74b9ece441255faa2611ad7b0a
-Integrated Result: pending
+Base OID: 9ff32725314f930322cea73a1d09e12ef373ad19
+Head OID: 9ff32725314f930322cea73a1d09e12ef373ad19
+Integrated Result: main@9ff32725314f930322cea73a1d09e12ef373ad19
 
 ## Summary
 
