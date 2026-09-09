@@ -1,16 +1,16 @@
 # CR-0010: implement encrypted credential storage and security audit boundary
 
 Base: main
-Head or Range: pending
+Head or Range: 22b05fd02ad64cff9c2e1c6241a4e65ec1ae2a76..fe5c4b2c89f37f74b9ece441255faa2611ad7b0a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(credential): add encrypted credential store and audit boundary
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 22b05fd02ad64cff9c2e1c6241a4e65ec1ae2a76
-Head OID: 22b05fd02ad64cff9c2e1c6241a4e65ec1ae2a76
+Base OID: fe5c4b2c89f37f74b9ece441255faa2611ad7b0a
+Head OID: fe5c4b2c89f37f74b9ece441255faa2611ad7b0a
 Integrated Result: pending
 
 ## Summary
@@ -36,11 +36,11 @@ Tests cover AES-GCM round trips, ciphertext-only persistence, callback plaintext
 clearing, tamper and missing-key failure, historical-key rotation, idempotent
 revocation, fail-closed session invalidation, environment key parsing, bbolt
 persistence and restart recovery, schema migration repeatability, and
-audit/version conflict handling. CI must
-run `gofmt`, `go test ./...`, `go test -race ./...`, `go vet ./...`, the
-repository validators, and the four-target build/self-test matrix. The local
-restricted shell has no Go or Node toolchain, so local execution evidence is
-limited to source and diff checks.
+audit/version conflict handling. PR #20 passed `ugs-validate` run
+`34417178278` and aggregate `chuzi-build` run `34417178209`, including Go
+tests, Node tests, service self-test, schema migration coverage, and all four
+target builds. The local restricted shell has no Go or Node toolchain, so local
+execution evidence is limited to source and diff checks.
 
 ## Risk
 
