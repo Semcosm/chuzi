@@ -7,6 +7,21 @@
 - 支持凭证轮换、撤销和审计；删除账号前先撤销关联会话。
 - 日志、错误堆栈、截图和 Matrix 消息均需脱敏。
 
+当前 Credential Store 使用 AES-GCM，附加数据绑定 `account_id`、凭证版本和
+`key_id`，因此跨账号、跨版本或跨密钥替换会认证失败。bbolt `credentials`
+桶只保存密文和元数据，`credential_audits` 桶只保存操作、操作者、版本、key ID
+和时间，不保存密码、Token、Cookie 或页面内容。
+
+密钥通过 `Keyring` 接口提供；`EnvKeyring` 默认读取部署环境的
+`CHUZI_CREDENTIAL_KEY_ID` 与 `CHUZI_CREDENTIAL_KEY`，后者使用 base64 或十六进制
+编码。环境适配器只提供当前 key；生产轮换必须使用能保留历史 key 的 Secret
+管理器实现。缺少 key、篡改密文或认证标签错误都会安全失败且不返回明文。
+
+撤销会先要求可选的会话失效边界停止关联会话；失效失败时凭据保持可用并且
+不会写入撤销审计。成功后才擦除 nonce 和密文，之后访问和轮换都会被拒绝。
+`Use` 回调收到的工作缓冲在返回后清零，调用方不得保留该 slice；审计记录在
+授权访问前写入并与相关记录变更使用同一事务。
+
 ## 浏览器 Profile
 
 每个账号绑定独立 Profile 目录和互斥租约，避免 Cookie、缓存和 LocalStorage 串号。Profile 路径只能由服务生成，禁止把任意用户输入直接拼接为文件路径。任务结束后按保留策略清理临时数据，持久会话数据应加密或置于受限目录。

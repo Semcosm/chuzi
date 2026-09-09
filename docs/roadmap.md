@@ -80,7 +80,7 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 
 ### 阶段四：Session Runner 与 Worker 生命周期
 
-状态：进行中（CR-0009）。
+状态：已完成（CR-0009）。
 
 扩展现有 Worker 协议和 `internal/browser`，实现每账号独立 Profile、路径
 生成、互斥租约、Worker 启停、心跳、超时、取消和崩溃回收。先使用 fake Worker
@@ -96,11 +96,11 @@ Playwright/Chromium 下载不属于本阶段。
 
 ### 阶段五：加密凭证与安全审计
 
-状态：规划中，依赖阶段二的存储接口。
+状态：进行中（CR-0010）。
 
-实现 `internal/credential`，提供加密存储、最小权限访问句柄、轮换、撤销
-和审计。密钥只能来自部署环境的 Secret 管理，不能写入仓库、配置示例、
-日志、截图或 Matrix 消息。
+实现 `internal/credential`，提供 AES-GCM 加密存储、最小权限回调访问、轮换、
+撤销和 metadata-only 审计。密钥只能来自部署环境的 Secret 管理，不能写入
+仓库、配置示例、日志、截图或 Matrix 消息。当前实现不接入浏览器或 Matrix。
 
 完成标准：
 
