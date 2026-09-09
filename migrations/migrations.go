@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CurrentVersion uint64 = 1
+	CurrentVersion uint64 = 2
 
 	MetaBucket               = "meta"
 	AccountsBucket           = "accounts"
@@ -23,6 +23,7 @@ const (
 	AuditsBucket             = "audits"
 	EventsBucket             = "events"
 	LeasesBucket             = "leases"
+	QueueBucket              = "queue"
 	VersionKey               = "version"
 )
 
@@ -59,6 +60,10 @@ func Apply(db *bbolt.DB) error {
 				if err := createVersionOne(tx); err != nil {
 					return err
 				}
+			case 2:
+				if err := createVersionTwo(tx); err != nil {
+					return err
+				}
 			default:
 				return fmt.Errorf("%w: migration %d", ErrUnsupportedVersion, version+1)
 			}
@@ -69,6 +74,13 @@ func Apply(db *bbolt.DB) error {
 		}
 		return nil
 	})
+}
+
+func createVersionTwo(tx *bbolt.Tx) error {
+	if _, err := tx.CreateBucketIfNotExists([]byte(QueueBucket)); err != nil {
+		return fmt.Errorf("create %s bucket: %w", QueueBucket, err)
+	}
+	return nil
 }
 
 // Version returns the recorded schema version. A database without metadata

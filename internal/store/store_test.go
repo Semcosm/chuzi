@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -154,6 +155,11 @@ func TestStoreRequestIdempotencyUsesImmutableIdentityAfterStateChanges(t *testin
 		UpdatedAt:      request.UpdatedAt,
 	}); !errors.Is(err, ErrRequestConflict) {
 		t.Fatalf("conflicting request id error = %v, want ErrRequestConflict", err)
+	}
+	deadlineConflict := request
+	deadlineConflict.Deadline = request.CreatedAt.Add(time.Minute)
+	if _, _, err := service.CreateRequest(deadlineConflict); !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("different deadline error = %v, want ErrIdempotencyConflict", err)
 	}
 }
 
@@ -400,5 +406,335 @@ func TestStoreBackupCanBeReopenedAndRejectsDuplicatePath(t *testing.T) {
 	}
 	if err := migrations.Apply(backupDB); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestStoreSubmitRequestIsAtomicAndIdempotent(t *testing.T) {
+	service, _ := openTestStore(t)
+	if _, err := service.CreateAccount("account-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.CreateAccount("account-2"); err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest(t, service, "request-1", "account-1", "idem-1", storeTestTime)
+	event := account.Event{
+		EventID:    "submit-1",
+		AccountID:  request.AccountID,
+		RequestID:  request.RequestID,
+		From:       account.NoRequest,
+		To:         account.Queued,
+		Reason:     "submit",
+		Actor:      "test",
+		OccurredAt: storeTestTime.Add(time.Second),
+	}
+	created, idempotent, err := service.SubmitRequest(request, event)
+	if err != nil || idempotent || created.State != account.Queued {
+		t.Fatalf("SubmitRequest() = %#v, %t, %v", created, idempotent, err)
+	}
+	repeated, idempotent, err := service.SubmitRequest(request, event)
+	if err != nil || !idempotent || repeated.State != account.Queued {
+		t.Fatalf("idempotent SubmitRequest() = %#v, %t, %v", repeated, idempotent, err)
+	}
+	laterRequest := request
+	laterRequest.CreatedAt = request.CreatedAt.Add(time.Hour)
+	laterRequest.UpdatedAt = laterRequest.CreatedAt
+	laterRequest.NotBefore = laterRequest.CreatedAt
+	later, idempotent, err := service.SubmitRequest(laterRequest, event)
+	if err != nil || !idempotent || later.RequestID != request.RequestID || later.State != account.Queued {
+		t.Fatalf("late idempotent SubmitRequest() = %#v, %t, %v", later, idempotent, err)
+	}
+	if state, err := service.GetAccount(request.AccountID); err != nil || state.Revision != 1 || state.Status != account.Queued {
+		t.Fatalf("state after duplicate submit = %#v, %v", state, err)
+	}
+
+	failedRequest := createRequest(t, service, "request-2", "account-2", "idem-2", storeTestTime.Add(2*time.Second))
+	badEvent := event
+	badEvent.EventID = "submit-invalid"
+	badEvent.RequestID = failedRequest.RequestID
+	badEvent.AccountID = failedRequest.AccountID
+	badEvent.ExpectedRevision = 99
+	if _, _, err := service.SubmitRequest(failedRequest, badEvent); !errors.Is(err, account.ErrStaleEvent) {
+		t.Fatalf("invalid submit error = %v, want stale event", err)
+	}
+	if _, err := service.GetRequest(failedRequest.RequestID); !errors.Is(err, ErrRequestNotFound) {
+		t.Fatalf("failed submit request lookup = %v, want ErrRequestNotFound", err)
+	}
+}
+
+func TestStoreQueuedRequestsUseCreatedAtFIFOAndClaimLeaseAtomically(t *testing.T) {
+	service, _ := openTestStore(t)
+	for _, accountID := range []string{"account-a", "account-b"} {
+		if _, err := service.CreateAccount(accountID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := createRequest(t, service, "request-a", "account-a", "idem-a", storeTestTime)
+	second := createRequest(t, service, "request-b", "account-b", "idem-b", storeTestTime)
+	for _, submitted := range []struct {
+		request Request
+		eventID string
+		at      time.Time
+	}{
+		{first, "submit-a", storeTestTime.Add(3 * time.Second)},
+		{second, "submit-b", storeTestTime.Add(time.Second)},
+	} {
+		if _, _, err := service.SubmitRequest(submitted.request, account.Event{
+			EventID:    submitted.eventID,
+			AccountID:  submitted.request.AccountID,
+			RequestID:  submitted.request.RequestID,
+			From:       account.NoRequest,
+			To:         account.Queued,
+			Reason:     "submit",
+			Actor:      "test",
+			OccurredAt: submitted.at,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	queued, err := service.ListQueuedRequests(storeTestTime.Add(time.Minute))
+	if err != nil || len(queued) != 2 || queued[0].RequestID != "request-a" || queued[1].RequestID != "request-b" {
+		t.Fatalf("queued FIFO = %#v, %v", queued, err)
+	}
+	claim, err := service.ClaimNext(storeTestTime.Add(time.Minute), "lease-1", "worker-1", time.Minute, "claim-1", "worker-1", "claim", QueueOptions{MaxGlobalConcurrency: 1})
+	if err != nil || claim.Request.RequestID != "request-a" || claim.Request.Attempt != 1 || claim.Request.State != account.Starting {
+		t.Fatalf("ClaimNext() = %#v, %v", claim, err)
+	}
+	duplicateClaim, err := service.ClaimNext(storeTestTime.Add(time.Minute), "lease-1", "worker-1", time.Minute, "claim-1", "worker-1", "claim", QueueOptions{MaxGlobalConcurrency: 1})
+	if err != nil || !duplicateClaim.Transition.Idempotent || duplicateClaim.Request.RequestID != claim.Request.RequestID {
+		t.Fatalf("idempotent ClaimNext() = %#v, %v", duplicateClaim, err)
+	}
+	if _, err := service.ClaimNext(storeTestTime.Add(time.Minute), "lease-2", "worker-2", time.Minute, "claim-2", "worker-2", "claim", QueueOptions{MaxGlobalConcurrency: 1}); !errors.Is(err, ErrQueueCapacity) {
+		t.Fatalf("capacity claim error = %v, want ErrQueueCapacity", err)
+	}
+	if _, exists, err := service.GetLease("account-a"); err != nil || !exists {
+		t.Fatalf("claim lease = exists:%t err:%v", exists, err)
+	}
+	if _, err := service.ClaimNext(storeTestTime.Add(2*time.Minute), "lease-1", "worker-1", time.Minute, "claim-1", "worker-1", "claim", QueueOptions{MaxGlobalConcurrency: 1}); !errors.Is(err, account.ErrLeaseExpired) {
+		t.Fatalf("expired duplicate claim error = %v, want ErrLeaseExpired", err)
+	}
+}
+
+func TestStoreRetryKeepsQueueIndexAtCreatedAt(t *testing.T) {
+	service, _ := openTestStore(t)
+	if _, err := service.CreateAccount("account-1"); err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest(t, service, "request-1", "account-1", "idem-1", storeTestTime)
+	if _, _, err := service.SubmitRequest(request, account.Event{
+		EventID:    "submit-1",
+		AccountID:  request.AccountID,
+		RequestID:  request.RequestID,
+		From:       account.NoRequest,
+		To:         account.Queued,
+		Reason:     "submit",
+		Actor:      "test",
+		OccurredAt: storeTestTime,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := service.ClaimNext(storeTestTime.Add(time.Second), "lease-1", "worker-1", time.Minute, "claim-1", "worker-1", "claim", QueueOptions{MaxGlobalConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := account.Event{
+		EventID:          "start-1",
+		AccountID:        request.AccountID,
+		RequestID:        request.RequestID,
+		From:             account.Starting,
+		ExpectedRevision: claim.Transition.State.Revision,
+		To:               account.LoggingIn,
+		Reason:           "start",
+		Actor:            "test",
+		OccurredAt:       storeTestTime.Add(2 * time.Second),
+	}
+	if _, err := service.ApplyEvent(started); err != nil {
+		t.Fatal(err)
+	}
+	failure := account.Event{
+		EventID:          "failure-1",
+		AccountID:        request.AccountID,
+		RequestID:        request.RequestID,
+		From:             account.LoggingIn,
+		ExpectedRevision: started.ExpectedRevision + 1,
+		To:               account.LoginFailed,
+		Reason:           "transient failure",
+		Actor:            "test",
+		OccurredAt:       storeTestTime.Add(3 * time.Second),
+	}
+	retry := account.Event{
+		EventID:          "retry-1",
+		AccountID:        request.AccountID,
+		RequestID:        request.RequestID,
+		From:             account.LoginFailed,
+		ExpectedRevision: failure.ExpectedRevision + 1,
+		To:               account.Queued,
+		Reason:           "retry",
+		Actor:            "test",
+		OccurredAt:       failure.OccurredAt,
+	}
+	nextAttemptAt := storeTestTime.Add(time.Minute)
+	if _, err := service.RecordFailure(failure, account.TransientFailure, nextAttemptAt, &retry); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := service.RecordFailure(failure, account.TransientFailure, nextAttemptAt, &retry)
+	if err != nil || repeated.Retried == nil || !repeated.Retried.Idempotent {
+		t.Fatalf("idempotent failure retry = %#v, %v", repeated, err)
+	}
+	queued, err := service.GetRequest(request.RequestID)
+	if err != nil || queued.State != account.Queued || !queued.NotBefore.Equal(nextAttemptAt) {
+		t.Fatalf("retry request = %#v, %v", queued, err)
+	}
+	err = service.db.View(func(tx *bbolt.Tx) error {
+		bucket := tx.Bucket([]byte(migrations.QueueBucket))
+		var keys [][]byte
+		var values []string
+		if err := bucket.ForEach(func(key, value []byte) error {
+			if value != nil {
+				keys = append(keys, append([]byte(nil), key...))
+				values = append(values, string(value))
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+		if len(keys) != 1 || string(keys[0]) != string(queueKey(request.CreatedAt, request.RequestID)) || len(values) != 1 || values[0] != request.RequestID {
+			return fmt.Errorf("queue entries = %#v/%#v", keys, values)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStoreOwnedCancellationDoesNotDeleteReplacementLease(t *testing.T) {
+	service, _ := openTestStore(t)
+	if _, err := service.CreateAccount("account-1"); err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest(t, service, "request-1", "account-1", "idem-1", storeTestTime)
+	if _, _, err := service.SubmitRequest(request, account.Event{
+		EventID:    "submit-1",
+		AccountID:  request.AccountID,
+		RequestID:  request.RequestID,
+		From:       account.NoRequest,
+		To:         account.Queued,
+		Reason:     "submit",
+		Actor:      "test",
+		OccurredAt: storeTestTime,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := service.ClaimNext(storeTestTime, "lease-1", "worker-1", time.Minute, "claim-1", "worker-1", "claim", QueueOptions{MaxGlobalConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.AcquireLease(request.AccountID, storeTestTime.Add(time.Minute), "lease-2", "worker-2", time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	state, err := service.GetAccount(request.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel := account.Event{
+		EventID:          "recovery-1",
+		AccountID:        request.AccountID,
+		RequestID:        request.RequestID,
+		From:             account.Starting,
+		ExpectedRevision: state.Revision,
+		To:               account.Cancelled,
+		Reason:           "expired starting lease",
+		Actor:            "recovery",
+		OccurredAt:       storeTestTime.Add(time.Minute),
+	}
+	if _, err := service.CancelRequestOwned(cancel, claim.Lease, true); !errors.Is(err, account.ErrLeaseNotOwned) {
+		t.Fatalf("stale owned cancellation error = %v, want ErrLeaseNotOwned", err)
+	}
+	if lease, exists, err := service.GetLease(request.AccountID); err != nil || !exists || lease.LeaseID != "lease-2" {
+		t.Fatalf("replacement lease after stale cancellation = %#v, %t, %v", lease, exists, err)
+	}
+	if current, err := service.GetAccount(request.AccountID); err != nil || current.Status != account.Starting {
+		t.Fatalf("state after stale cancellation = %#v, %v", current, err)
+	}
+}
+
+func TestStoreIdempotentCompletionDoesNotReleaseNewLease(t *testing.T) {
+	service, _ := openTestStore(t)
+	if _, err := service.CreateAccount("account-1"); err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest(t, service, "request-1", "account-1", "idem-1", storeTestTime)
+	submit := account.Event{
+		EventID:    "submit-1",
+		AccountID:  request.AccountID,
+		RequestID:  request.RequestID,
+		From:       account.NoRequest,
+		To:         account.Queued,
+		Reason:     "submit",
+		Actor:      "test",
+		OccurredAt: storeTestTime,
+	}
+	if _, _, err := service.SubmitRequest(request, submit); err != nil {
+		t.Fatal(err)
+	}
+	claim, err := service.ClaimNext(storeTestTime.Add(time.Second), "lease-1", "worker-1", time.Minute, "claim-1", "worker-1", "claim", QueueOptions{MaxGlobalConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := account.Event{
+		EventID:          "start-1",
+		AccountID:        request.AccountID,
+		RequestID:        request.RequestID,
+		From:             account.Starting,
+		ExpectedRevision: claim.Transition.State.Revision,
+		To:               account.LoggingIn,
+		Reason:           "start",
+		Actor:            "test",
+		OccurredAt:       storeTestTime.Add(2 * time.Second),
+	}
+	if _, err := service.ApplyEvent(started); err != nil {
+		t.Fatal(err)
+	}
+	success := account.Event{
+		EventID:          "success-1",
+		AccountID:        request.AccountID,
+		RequestID:        request.RequestID,
+		From:             account.LoggingIn,
+		ExpectedRevision: started.ExpectedRevision + 1,
+		To:               account.LoginSucceeded,
+		Reason:           "success",
+		Actor:            "test",
+		OccurredAt:       storeTestTime.Add(3 * time.Second),
+	}
+	if _, err := service.CompleteRequest(success); err != nil {
+		t.Fatal(err)
+	}
+	applyEvent(t, service, "expire-1", request.AccountID, request.RequestID, account.LoginSucceeded, account.Expired, storeTestTime.Add(4*time.Second))
+	applyEvent(t, service, "retry-1", request.AccountID, request.RequestID, account.Expired, account.Queued, storeTestTime.Add(5*time.Second))
+	claim, err = service.ClaimNext(storeTestTime.Add(6*time.Second), "lease-2", "worker-2", time.Minute, "claim-2", "worker-2", "claim", QueueOptions{MaxGlobalConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	started2 := account.Event{
+		EventID:          "start-2",
+		AccountID:        request.AccountID,
+		RequestID:        request.RequestID,
+		From:             account.Starting,
+		ExpectedRevision: claim.Transition.State.Revision,
+		To:               account.LoggingIn,
+		Reason:           "start",
+		Actor:            "test",
+		OccurredAt:       storeTestTime.Add(7 * time.Second),
+	}
+	if _, err := service.ApplyEvent(started2); err != nil {
+		t.Fatal(err)
+	}
+	duplicate, err := service.CompleteRequest(success)
+	if err != nil || !duplicate.Idempotent {
+		t.Fatalf("duplicate completion = %#v, %v", duplicate, err)
+	}
+	if lease, exists, err := service.GetLease(request.AccountID); err != nil || !exists || lease.LeaseID != "lease-2" {
+		t.Fatalf("lease after duplicate completion = %#v, %t, %v", lease, exists, err)
 	}
 }
