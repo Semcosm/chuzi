@@ -1,17 +1,17 @@
 # CR-0008: implement deterministic request service and queue scheduling
 
 Base: main
-Head or Range: pending
+Head or Range: a131dcd87e00cd4d10c30cf876262d8700688f91..cf9b7cc61ba3d83ec045574ebe46ff04f625d25e
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(queue): implement deterministic request service and scheduling
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: a131dcd87e00cd4d10c30cf876262d8700688f91
-Head OID: a131dcd87e00cd4d10c30cf876262d8700688f91
-Integrated Result: pending
+Base OID: cf9b7cc61ba3d83ec045574ebe46ff04f625d25e
+Head OID: cf9b7cc61ba3d83ec045574ebe46ff04f625d25e
+Integrated Result: main@cf9b7cc61ba3d83ec045574ebe46ff04f625d25e
 
 ## Summary
 
@@ -40,9 +40,12 @@ replacement races, runner timeout/expiry handling, duplicate events, and
 restart recovery. Repository policy, quality, supply-chain, Action pinning,
 repository-shape, build-contract, CR, and `git diff --check` validators pass.
 The local restricted shell cannot complete the Node worker child-process
-stdio handshake; `npm --prefix browser-worker test` remains a required GitHub
-Actions check. No live accounts, credentials, Matrix tokens, or browser
-downloads are used.
+stdio handshake. PR #15 passed `ugs-validate` run `34374192483` and aggregate
+`chuzi-build` run `34374192438`; the GitHub rebase integration produced
+`main@cf9b7cc61ba3d83ec045574ebe46ff04f625d25e`. The post-merge
+`ugs-validate` run `34374394656` and aggregate `chuzi-build` run
+`34374394826` both passed, including all four target builds. No live accounts,
+credentials, Matrix tokens, or browser downloads are used.
 
 ## Risk
 
