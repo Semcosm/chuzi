@@ -45,7 +45,7 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 
 ### 阶段二：配置、状态存储与恢复
 
-状态：进行中（CR-0006），已确定单节点 bbolt 拓扑。
+状态：已完成（CR-0006，main 集成结果已记录），已确定单节点 bbolt 拓扑。
 
 实现 `internal/config`、`internal/store` 和 `migrations`，持久化账号、
 请求、状态转换、租约和审计记录。存储必须支持原子状态转换、迁移、备份
@@ -65,7 +65,7 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 
 ### 阶段三：请求服务与队列调度
 
-状态：规划中。
+状态：进行中（CR-0008）。
 
 实现 `internal/queue` 和 Request Service，负责请求幂等、账号级和全局并发
 限制、取消、超时、重试和租约分配。调度器只能提交状态机定义的事件，不能

@@ -82,6 +82,12 @@ func (e Event) validFields() error {
 	return nil
 }
 
+// Validate checks the event's independent fields without applying it to a
+// snapshot. Storage boundaries use this before handling idempotent requests.
+func (e Event) Validate() error {
+	return e.validFields()
+}
+
 func (e Event) equal(other Event) bool {
 	return e.EventID == other.EventID &&
 		e.AccountID == other.AccountID &&

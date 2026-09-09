@@ -23,7 +23,7 @@ Darwin arm64 的构建契约。
 调用方不能通过请求、账号 ID 或其他外部字段指定数据库或备份路径。配置
 示例只包含普通配置，不包含密码、Token、Cookie、密钥或其他 Secret。
 
-## Schema v1
+## Schema v2
 
 迁移在数据库的 `meta/version` 中记录当前版本，并可重复执行。v1 建立
 以下 bbolt bucket：
@@ -36,6 +36,11 @@ Darwin arm64 的构建契约。
 | `audits` | 按账号分桶、按 revision 保存的不可变状态事件 |
 | `events` | event ID 到审计记录的去重索引 |
 | `leases` | 按账号保存的租约、owner、心跳和过期时间 |
+| `queue` | 按 `created_at`、请求 ID 建立的确定性待调度索引 |
+
+v2 在请求投影中加入 `attempt`、`not_before`、`deadline` 和最后失败分类，
+并建立可重建的 `queue` 索引。打开旧 v1 数据库时，服务先执行可重复迁移
+并根据请求投影重建该索引；索引不是业务状态来源，启动时会重新生成。
 
 账号投影不是第二套业务状态来源。读取账号时，存储层会由审计记录重建
 `account.Snapshot` 并执行其完整性校验；状态机仍负责判断转换是否合法。
