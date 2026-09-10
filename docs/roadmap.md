@@ -22,9 +22,9 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 | 账号领域核心 | 已完成 | CR-0005：纯 Go 状态机、幂等事件、审计、重试策略和租约原语 |
 | 业务运行时 | 边界已完成 | 状态存储、队列、凭证和 Matrix transport-neutral 边界已接入；真实浏览器和生产传输仍未接入 |
 
-当前四个平台的构建通过不代表四个平台都具备真实浏览器运行覆盖。`linux-arm64`
-的 Go、Node.js 和协议 smoke test 已在 GitHub `ubuntu-24.04-arm` 原生 ARM64
-runner 执行，但真实浏览器/WebView 运行仍需单独验证。
+当前四个平台的构建通过不代表四个平台都具备无显示环境 headless 浏览器覆盖。
+`linux-arm64` 的 Go、Node.js、WebKitGTK 编译和 X11/Wayland smoke test 在 GitHub
+`ubuntu-24.04-arm` 原生 ARM64 runner 执行；真正 headless 仍需单独验证。
 
 ## 演进阶段
 
@@ -130,8 +130,8 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
 ### 阶段七：真实浏览器运行时
 
 状态：进行中，拆分为独立 CR。CR-0014-A 已完成 Rust helper 和协议边界；
-CR-0014-B 在本分支接入 Windows/macOS 桌面 WebView；Linux WebKitGTK 和真正
-headless 仍未完成。
+CR-0014-B 已接入 Windows/macOS 桌面 WebView；CR-0014-C 在本分支接入 Linux
+WebKitGTK 的 X11/Wayland 桌面 WebView，真正 headless 仍未完成。
 
 #### 7A：Rust runtime boundary（CR-0014-A）
 
@@ -145,14 +145,15 @@ Worker 保留为 fake/deferred 生命周期替身。完成标准是协议兼容�
 使用 Wry 的平台后端，Windows 10/11 检测 WebView2 Runtime，macOS 首批覆盖
 11+ Apple Silicon 的 WKWebView。visible/hidden 模式都必须验证 GUI session、
 主线程和事件循环；当前 Windows 使用服务派生 WebContext，macOS 使用 ephemeral
-store；测试只使用内嵌本地测试页。Wry helper 随 Windows/macOS 发布 stage，
-Linux 继续使用 deferred helper。
+store；测试只使用内嵌本地测试页。Wry helper 随 Windows/macOS/Linux 发布
+stage；Linux 首批同时覆盖 X11 与 Wayland GUI session。
 
 #### 7C：Linux Ubuntu WebKitGTK（CR-0014-C）
 
-首批只承诺 Ubuntu 24.04 LTS amd64/arm64、WebKitGTK 4.1 和 X11。Wayland、
+首批只承诺 Ubuntu 24.04 LTS amd64/arm64、WebKitGTK 4.1、X11 和 Wayland。
 Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩展。原生
-`ubuntu-24.04-arm` 构建不能替代真实 ARM64 图形 smoke test。
+`ubuntu-24.04-arm` 构建与 Xvfb/Weston smoke test 证明了 ARM64 图形路径，但
+不能替代所有部署环境的运行验证。
 
 #### 7D：真正 headless backend（CR-0014-D）
 

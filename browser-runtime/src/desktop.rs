@@ -1,7 +1,8 @@
 //! Wry-backed desktop WebView runtime.
 //!
-//! This module is intentionally target-gated. Linux keeps using the deferred
-//! helper until the WebKitGTK/X11 runtime receives its own change record.
+//! The module is target-gated to the platforms with a Wry desktop backend.
+//! Linux uses WebKitGTK through Tao's GTK container path, which supports both
+//! X11 and Wayland when a graphical session is available.
 
 use std::{
     io::{self, BufRead, Write},
@@ -10,21 +11,28 @@ use std::{
     thread,
 };
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "linux"))]
 use std::path::PathBuf;
 
 use serde::Deserialize;
+#[cfg(target_os = "linux")]
+use tao::platform::unix::WindowExtUnix;
 use tao::{
     dpi::LogicalSize,
     event::{Event, WindowEvent},
     event_loop::{ControlFlow, EventLoop, EventLoopBuilder, EventLoopProxy},
     window::{Window, WindowBuilder},
 };
+#[cfg(target_os = "linux")]
+use wry::WebViewBuilderExtUnix;
 use wry::{NewWindowResponse, PermissionResponse, WebContext, WebView, WebViewBuilder};
 
 use crate::{Envelope, PROTOCOL_VERSION};
 
 const BROWSER_RUNTIME: &str = "wry-desktop";
+#[cfg(target_os = "linux")]
+const CAPABILITIES: &str = "protocol.v1,browser-runtime.contract,browser-runtime.desktop-webview,browser-runtime.linux-webkitgtk,browser-runtime.linux-x11,browser-runtime.linux-wayland";
+#[cfg(not(target_os = "linux"))]
 const CAPABILITIES: &str = "protocol.v1,browser-runtime.contract,browser-runtime.desktop-webview";
 const TEST_PAGE_RESULT: &str = "local-test-page-ready";
 const TEST_PAGE_HTML: &str = r#"<!doctype html>
@@ -55,14 +63,14 @@ struct ActiveSession {
     session_id: String,
     window: Window,
     _webview: WebView,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     _context: WebContext,
 }
 
 struct DesktopSession {
     window: Window,
     webview: WebView,
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
     context: WebContext,
 }
 
@@ -325,7 +333,7 @@ impl DesktopHost {
                     session_id,
                     window: session.window,
                     _webview: session.webview,
-                    #[cfg(target_os = "windows")]
+                    #[cfg(any(target_os = "windows", target_os = "linux"))]
                     _context: session.context,
                 });
                 Ok(())
@@ -401,6 +409,26 @@ impl DesktopHost {
         })
     }
 
+    #[cfg(target_os = "linux")]
+    fn build_session(
+        &self,
+        _session_id: &str,
+        profile_dir: &str,
+        visible: bool,
+        event_loop_window: &tao::event_loop::EventLoopWindowTarget<Command>,
+    ) -> Result<DesktopSession, BuildError> {
+        ensure_runtime()?;
+        let mut context = WebContext::new(Some(PathBuf::from(profile_dir)));
+        let builder = WebViewBuilder::new_with_web_context(&mut context);
+        let (window, webview) =
+            self.build_window_and_webview(builder, visible, event_loop_window)?;
+        Ok(DesktopSession {
+            window,
+            webview,
+            context,
+        })
+    }
+
     #[cfg(target_os = "macos")]
     fn build_session(
         &self,
@@ -443,6 +471,16 @@ impl DesktopHost {
             .with_ipc_handler(move |request| {
                 let _ = proxy.send_event(Command::Ipc(request.body().clone()));
             });
+        #[cfg(target_os = "linux")]
+        let webview = {
+            let vbox = window
+                .default_vbox()
+                .ok_or(BuildError::GuiSessionUnavailable)?;
+            builder
+                .build_gtk(vbox)
+                .map_err(|_| BuildError::WebViewUnavailable)?
+        };
+        #[cfg(not(target_os = "linux"))]
         let webview = builder
             .build(&window)
             .map_err(|_| BuildError::WebViewUnavailable)?;

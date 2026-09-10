@@ -48,9 +48,11 @@ headless 安全边界。真正 headless 后端必须单独审查已安装 Chromi
 截图或下载内容。页面内容、脚本错误、Cookie、请求头和运行时堆栈不得进入日志、
 Matrix 消息或 metadata-only 审计。
 
-当前 Windows backend 将服务派生的 `profile_dir` 交给独立 WebContext；macOS
+当前 Windows backend 将服务派生的 `profile_dir` 交给独立 WebContext；Linux
+WebKitGTK backend 也使用服务派生的 `profile_dir` 和独立 WebContext；macOS
 11+ backend 使用 WKWebView ephemeral store，因此本 CR 不宣称 macOS 持久 Profile
-或凭证会话已经可用。Linux deferred helper 不创建 WebView。
+或凭证会话已经可用。Linux X11/Wayland backend 仍需要 GUI session，不创建真正
+headless 浏览器。
 
 平台运行时缺失（WebView2、GTK/WebKitGTK、图形会话）必须 fail closed，并映射
 为分类 runtime/configuration fact；不能自动下载未知浏览器、回退到系统任意

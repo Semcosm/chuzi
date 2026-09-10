@@ -42,6 +42,13 @@ jobs:
           cache: npm
           cache-dependency-path: browser-worker/package-lock.json
 
+      - name: Install Linux WebView dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev weston xvfb xauth dbus-x11
+
       - name: Verify host toolchain
         shell: bash
         run: |
@@ -84,24 +91,76 @@ jobs:
           go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
 
       - name: Test native desktop WebView helper contract
-        if: runner.os == 'Windows' || runner.os == 'macOS'
+        if: runner.os == 'Windows' || runner.os == 'macOS' || runner.os == 'Linux'
         shell: bash
         run: |
           cargo test --locked --manifest-path browser-runtime/Cargo.toml --features desktop-webview
           if [ "${{ runner.os }}" = "Windows" ]; then
             test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime.exe"
+          elif [ "${{ runner.os }}" = "macOS" ]; then
+            test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
           else
             test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
           fi
 
-      - name: Test deferred Linux helper contract
+      - name: Smoke test Linux WebKitGTK on X11
         if: runner.os == 'Linux'
         shell: bash
         run: |
-          test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
-          printf '%s\n' '{"protocol":"v1","id":"hello-1","type":"hello"}' \
-            | ./dist/${{ matrix.target }}/stage/chuzi-browser-runtime \
-            | grep -Fq 'browser-runtime.deferred'
+          profile_dir="$(mktemp -d)"
+          output_file="$(mktemp)"
+          trap 'rm -rf "$profile_dir" "$output_file"' EXIT
+          printf '%s\n' \
+            '{"protocol":"v1","id":"hello-x11","type":"hello"}' \
+            "{\"protocol\":\"v1\",\"id\":\"start-x11\",\"type\":\"session_start\",\"payload\":{\"session_id\":\"session-x11\",\"account_id\":\"account-x11\",\"request_id\":\"request-x11\",\"profile_dir\":\"$profile_dir\"}}" \
+            | timeout 30s xvfb-run -a dbus-run-session -- env GDK_BACKEND=x11 WINIT_UNIX_BACKEND=x11 \
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+                "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime" >"$output_file"
+          grep -Fq 'browser-runtime.linux-x11' "$output_file"
+          grep -Fq 'local-test-page-ready' "$output_file"
+
+      - name: Smoke test Linux WebKitGTK on Wayland
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          runtime_dir="$(mktemp -d)"
+          profile_dir="$(mktemp -d)"
+          weston_log="$(mktemp)"
+          output_file="$(mktemp)"
+          chmod 700 "$runtime_dir"
+          weston_pid=""
+          cleanup() {
+            if [ -n "$weston_pid" ] && kill -0 "$weston_pid" 2>/dev/null; then
+              kill "$weston_pid" 2>/dev/null || true
+              wait "$weston_pid" 2>/dev/null || true
+            fi
+            rm -rf "$runtime_dir" "$profile_dir" "$weston_log" "$output_file"
+          }
+          trap cleanup EXIT
+          XDG_RUNTIME_DIR="$runtime_dir" weston \
+            --backend=headless-backend.so --renderer=pixman --socket=wayland-1 --idle-time=0 \
+            >"$weston_log" 2>&1 &
+          weston_pid=$!
+          for _ in $(seq 1 50); do
+            if [ -S "$runtime_dir/wayland-1" ]; then
+              break
+            fi
+            if ! kill -0 "$weston_pid" 2>/dev/null; then
+              sed -n '1,160p' "$weston_log" >&2
+              exit 1
+            fi
+            sleep 0.2
+          done
+          test -S "$runtime_dir/wayland-1"
+          printf '%s\n' \
+            '{"protocol":"v1","id":"hello-wayland","type":"hello"}' \
+            "{\"protocol\":\"v1\",\"id\":\"start-wayland\",\"type\":\"session_start\",\"payload\":{\"session_id\":\"session-wayland\",\"account_id\":\"account-wayland\",\"request_id\":\"request-wayland\",\"profile_dir\":\"$profile_dir\"}}" \
+            | timeout 30s dbus-run-session -- env XDG_RUNTIME_DIR="$runtime_dir" WAYLAND_DISPLAY=wayland-1 \
+                XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland WINIT_UNIX_BACKEND=wayland \
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
+                "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime" >"$output_file"
+          grep -Fq 'browser-runtime.linux-wayland' "$output_file"
+          grep -Fq 'local-test-page-ready' "$output_file"
 
       - name: Package Windows artifact
         if: runner.os == 'Windows'

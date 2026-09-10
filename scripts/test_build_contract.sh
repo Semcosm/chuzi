@@ -27,5 +27,9 @@ grep -Fq 'browserRuntime' "$repo_root/scripts/build.ps1" || fail "build.ps1 mani
 grep -Fq 'desktop-webview' "$repo_root/scripts/build.sh" || fail "build.sh misses desktop feature"
 grep -Fq 'desktop-webview' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses desktop feature"
 grep -Fq 'Test native desktop WebView helper contract' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses desktop helper contract"
+grep -Fq 'linux-amd64) goos=linux; goarch=amd64; binary=chuzi; runtime_backend=wry-desktop; runtime_features=desktop-webview' "$repo_root/scripts/build.sh" || fail "build.sh keeps Linux amd64 deferred"
+grep -Fq 'linux-arm64) goos=linux; goarch=arm64; binary=chuzi; runtime_backend=wry-desktop; runtime_features=desktop-webview' "$repo_root/scripts/build.sh" || fail "build.sh keeps Linux arm64 deferred"
+grep -Fq 'Smoke test Linux WebKitGTK on X11' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Linux X11 smoke test"
+grep -Fq 'Smoke test Linux WebKitGTK on Wayland' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Linux Wayland smoke test"
 
 echo "build contract validation passed"

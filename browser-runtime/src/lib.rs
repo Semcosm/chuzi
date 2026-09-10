@@ -7,7 +7,7 @@ pub const BROWSER_RUNTIME: &str = "deferred";
 
 #[cfg(all(
     feature = "desktop-webview",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
 ))]
 pub mod desktop;
 
