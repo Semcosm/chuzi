@@ -5,13 +5,13 @@ Head or Range: 3a9f03f915db5b9bf8cae67c3d98ab34f7be9e28..44c142e12449d47d511bd02
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(matrix): add authorized command adapter and durable notifications
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 44c142e12449d47d511bd0290bcbd21528a58d54
-Head OID: 44c142e12449d47d511bd0290bcbd21528a58d54
-Integrated Result: pending
+Base OID: 1e975f97c7c394ac74dcaf41a38e1120daaca15d
+Head OID: 1e975f97c7c394ac74dcaf41a38e1120daaca15d
+Integrated Result: main@1e975f97c7c394ac74dcaf41a38e1120daaca15d
 
 ## Summary
 
