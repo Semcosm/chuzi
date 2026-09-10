@@ -5,13 +5,13 @@ Head or Range: b4fb833c4a8e173b4802285705a119e733fde8fe..db1645583f2339b378bb90a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): establish Rust runtime helper boundary
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 2dc741b0d64eb5a85394fe9c2cbae7e9f06d7f6d
-Head OID: 2dc741b0d64eb5a85394fe9c2cbae7e9f06d7f6d
-Integrated Result: pending
+Base OID: b9295d088c5ec40f5c66ee8714bed460948374fd
+Head OID: b9295d088c5ec40f5c66ee8714bed460948374fd
+Integrated Result: main@b9295d088c5ec40f5c66ee8714bed460948374fd
 
 ## Summary
 
@@ -44,7 +44,11 @@ shutdown. Existing Go and Node lifecycle tests remain the fake-worker contract.
 PR #32 passed `ugs-validate` run `34439879210` and aggregate `chuzi-build` run
 `34439879127`; all four target jobs passed, including the locked Cargo tests.
 The post-merge main `ugs-validate` run `34440206891` and `chuzi-build` run
-`34440206851` also passed. Local checks included `cargo fmt --check`, `cargo
+`34440206851` also passed. Acceptance PR #33 passed `ugs-validate` run
+`34440653787` and aggregate `chuzi-build` run `34440653773`; the post-merge
+main checks for `b9295d088c5ec40f5c66ee8714bed460948374fd` passed as
+`ugs-validate` run `34440822589` and `chuzi-build` run `34440822454`, with
+aggregate job `102755623448`. Local checks included `cargo fmt --check`, `cargo
 clippy --locked --all-targets -- -D warnings`, `cargo test --locked`, all
 repository validators, and `git diff --check`.
 
