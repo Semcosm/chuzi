@@ -485,7 +485,7 @@ impl DesktopHost {
             .with_clipboard(false)
             .with_autoplay(false)
             .with_general_autofill_enabled(false)
-            .with_navigation_handler(|_| false)
+            .with_navigation_handler(allow_embedded_navigation)
             .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
             .with_permission_handler(|_| PermissionResponse::Deny)
             .with_download_started_handler(|_, _| false)
@@ -521,6 +521,13 @@ fn ensure_runtime() -> Result<(), BuildError> {
     wry::webview_version()
         .map(|_| ())
         .map_err(|_| BuildError::RuntimeUnavailable)
+}
+
+fn allow_embedded_navigation(url: String) -> bool {
+    // WebKitGTK reports the null-base `load_html` document as about:blank.
+    // Allow that synthetic initial navigation, while keeping external and
+    // user-triggered navigations denied by default.
+    url == "about:blank"
 }
 
 fn valid_profile_dir(value: &str) -> bool {
@@ -692,5 +699,16 @@ mod tests {
         )
         .and_then(|result| result);
         assert!(matches!(result, Err(BuildError::WebViewUnavailable)));
+    }
+
+    #[test]
+    fn navigation_policy_allows_only_the_embedded_initial_document() {
+        assert!(allow_embedded_navigation("about:blank".to_owned()));
+        assert!(!allow_embedded_navigation(
+            "https://example.invalid".to_owned()
+        ));
+        assert!(!allow_embedded_navigation(
+            "file:///tmp/page.html".to_owned()
+        ));
     }
 }
