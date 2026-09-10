@@ -1,16 +1,16 @@
 # CR-0014: establish the Rust browser runtime boundary
 
 Base: main
-Head or Range: b4fb833c4a8e173b4802285705a119e733fde8fe
+Head or Range: b4fb833c4a8e173b4802285705a119e733fde8fe..db1645583f2339b378bb90a0f4a495139c60a377
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): establish Rust runtime helper boundary
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: b4fb833c4a8e173b4802285705a119e733fde8fe
-Head OID: b4fb833c4a8e173b4802285705a119e733fde8fe
+Base OID: 2dc741b0d64eb5a85394fe9c2cbae7e9f06d7f6d
+Head OID: 2dc741b0d64eb5a85394fe9c2cbae7e9f06d7f6d
 Integrated Result: pending
 
 ## Summary
@@ -41,10 +41,12 @@ headless claim from leaking into scheduling and security behavior.
 The Rust helper's protocol tests cover versioned hello, capability reporting,
 session start, deferred failure, synthetic success/hold modes, cancellation, and
 shutdown. Existing Go and Node lifecycle tests remain the fake-worker contract.
-Documentation and CR validators must pass, with `cargo fmt --check`, `cargo test
---locked --manifest-path browser-runtime/Cargo.toml`, `go test ./...`, `npm
---prefix browser-worker test`, and `git diff --check` recorded when the relevant
-toolchains are available.
+PR #32 passed `ugs-validate` run `34439879210` and aggregate `chuzi-build` run
+`34439879127`; all four target jobs passed, including the locked Cargo tests.
+The post-merge main `ugs-validate` run `34440206891` and `chuzi-build` run
+`34440206851` also passed. Local checks included `cargo fmt --check`, `cargo
+clippy --locked --all-targets -- -D warnings`, `cargo test --locked`, all
+repository validators, and `git diff --check`.
 
 ## Risk
 
