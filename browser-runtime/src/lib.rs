@@ -5,6 +5,12 @@ use serde::{Deserialize, Serialize};
 pub const PROTOCOL_VERSION: &str = "v1";
 pub const BROWSER_RUNTIME: &str = "deferred";
 
+#[cfg(all(
+    feature = "desktop-webview",
+    any(target_os = "windows", target_os = "macos")
+))]
+pub mod desktop;
+
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct Envelope {
     #[serde(default)]
@@ -31,7 +37,7 @@ impl Envelope {
         }
     }
 
-    fn response(
+    pub(crate) fn response(
         request: &Self,
         kind: impl Into<String>,
         payload: BTreeMap<String, String>,
@@ -45,7 +51,7 @@ impl Envelope {
         }
     }
 
-    fn error(request: &Self, message: impl Into<String>) -> Self {
+    pub(crate) fn error(request: &Self, message: impl Into<String>) -> Self {
         Self {
             protocol: PROTOCOL_VERSION.to_owned(),
             id: if request.id.is_empty() {

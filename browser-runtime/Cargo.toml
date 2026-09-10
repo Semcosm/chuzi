@@ -2,10 +2,19 @@
 name = "chuzi-browser-runtime"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 publish = false
 description = "Protocol boundary for the chuzi browser runtime helper"
 license = "Apache-2.0"
 
+[features]
+default = []
+desktop-webview = ["dep:tao", "dep:wry"]
+
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tao = { version = "0.37", default-features = false, features = ["rwh_06"], optional = true }
+wry = { version = "0.57", default-features = false, features = ["os-webview"], optional = true }
