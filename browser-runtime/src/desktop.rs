@@ -24,6 +24,8 @@ use tao::{
     window::{Window, WindowBuilder},
 };
 #[cfg(target_os = "linux")]
+use wry::PageLoadEvent;
+#[cfg(target_os = "linux")]
 use wry::WebViewBuilderExtUnix;
 use wry::{NewWindowResponse, PermissionResponse, WebContext, WebView, WebViewBuilder};
 
@@ -471,6 +473,8 @@ impl DesktopHost {
             .map_err(|_| BuildError::GuiSessionUnavailable)?;
 
         let proxy = self.proxy.clone();
+        #[cfg(target_os = "linux")]
+        let load_proxy = self.proxy.clone();
         let builder = builder
             .with_visible(if cfg!(target_os = "linux") {
                 true
@@ -488,6 +492,14 @@ impl DesktopHost {
             .with_ipc_handler(move |request| {
                 let _ = proxy.send_event(Command::Ipc(request.body().clone()));
             });
+        #[cfg(target_os = "linux")]
+        let builder = builder.with_on_page_load_handler(move |event, _url| {
+            if matches!(event, PageLoadEvent::Finished) {
+                let _ = load_proxy.send_event(Command::Ipc(
+                    r#"{"event":"ready","result":"ok"}"#.to_owned(),
+                ));
+            }
+        });
         #[cfg(target_os = "linux")]
         let webview = {
             let vbox = window
