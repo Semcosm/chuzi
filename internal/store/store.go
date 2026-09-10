@@ -47,16 +47,17 @@ var (
 // after an accepted event; a newly-created request starts at NO_REQUEST until
 // its queue event is applied.
 type Request struct {
-	RequestID      string               `json:"request_id"`
-	AccountID      string               `json:"account_id"`
-	IdempotencyKey string               `json:"idempotency_key"`
-	State          account.Status       `json:"state"`
-	CreatedAt      time.Time            `json:"created_at"`
-	UpdatedAt      time.Time            `json:"updated_at"`
-	Attempt        int                  `json:"attempt"`
-	NotBefore      time.Time            `json:"not_before,omitempty"`
-	Deadline       time.Time            `json:"deadline,omitempty"`
-	LastFailure    account.FailureClass `json:"last_failure,omitempty"`
+	RequestID            string               `json:"request_id"`
+	AccountID            string               `json:"account_id"`
+	IdempotencyKey       string               `json:"idempotency_key"`
+	NotificationRoomID   string               `json:"notification_room_id,omitempty"`
+	State                account.Status       `json:"state"`
+	CreatedAt            time.Time            `json:"created_at"`
+	UpdatedAt            time.Time            `json:"updated_at"`
+	Attempt              int                  `json:"attempt"`
+	NotBefore            time.Time            `json:"not_before,omitempty"`
+	Deadline             time.Time            `json:"deadline,omitempty"`
+	LastFailure          account.FailureClass `json:"last_failure,omitempty"`
 }
 
 // NewRequest creates the initial request projection for an account.
@@ -86,6 +87,9 @@ func (r Request) Validate() error {
 	}
 	if r.UpdatedAt.Before(r.CreatedAt) {
 		return fmt.Errorf("%w: updated_at precedes created_at", ErrInvalidRequest)
+	}
+	if r.NotificationRoomID != "" && !safeNotificationRoom(r.NotificationRoomID) {
+		return fmt.Errorf("%w: invalid notification room", ErrInvalidRequest)
 	}
 	if r.Attempt < 0 {
 		return fmt.Errorf("%w: attempt must not be negative", ErrInvalidRequest)
@@ -287,6 +291,9 @@ func applyEventTx(tx *bbolt.Tx, event account.Event) (account.TransitionResult, 
 		return account.TransitionResult{}, err
 	}
 	if err := putAccountProjection(tx.Bucket([]byte(migrations.AccountsBucket)), result.State); err != nil {
+		return account.TransitionResult{}, err
+	}
+	if err := enqueueNotificationTx(tx, result.Audit.Event, request); err != nil {
 		return account.TransitionResult{}, err
 	}
 	return result, nil
@@ -866,6 +873,9 @@ func (s *Store) recordFailure(event account.Event, class account.FailureClass, n
 		if err := putRequest(tx.Bucket([]byte(migrations.RequestsBucket)), request); err != nil {
 			return err
 		}
+		if err := setNotificationFailureTx(tx, event.EventID, class); err != nil {
+			return err
+		}
 		result.Request = request
 		return nil
 	})
@@ -1431,6 +1441,7 @@ func requestIdentityEqual(left, right Request) bool {
 	return left.RequestID == right.RequestID &&
 		left.AccountID == right.AccountID &&
 		left.IdempotencyKey == right.IdempotencyKey &&
+		left.NotificationRoomID == right.NotificationRoomID &&
 		left.CreatedAt.Equal(right.CreatedAt) &&
 		left.Deadline.Equal(right.Deadline)
 }
@@ -1439,5 +1450,6 @@ func requestSubmissionEqual(left, right Request) bool {
 	return left.RequestID == right.RequestID &&
 		left.AccountID == right.AccountID &&
 		left.IdempotencyKey == right.IdempotencyKey &&
+		left.NotificationRoomID == right.NotificationRoomID &&
 		left.Deadline.Equal(right.Deadline)
 }

@@ -20,7 +20,7 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 | CI 运行时治理 | 已完成 | CR-0003：Node.js 24-compatible Actions 和 Go cache warning 清理 |
 | Go 控制面与 Node Worker | 基础边界已完成 | 版本化 JSON Lines 协议、Worker 生命周期 smoke test |
 | 账号领域核心 | 已完成 | CR-0005：纯 Go 状态机、幂等事件、审计、重试策略和租约原语 |
-| 业务运行时 | 尚未完成 | 状态存储、队列、凭证、Matrix 和真实浏览器仍未接入 |
+| 业务运行时 | 边界已完成 | 状态存储、队列、凭证和 Matrix transport-neutral 边界已接入；真实浏览器和生产传输仍未接入 |
 
 当前四个平台的构建通过不代表四个平台都具备真实浏览器运行覆盖。尤其
 `linux-arm64` 当前是交叉编译结果，原生浏览器运行仍需单独验证。
@@ -96,11 +96,11 @@ Playwright/Chromium 下载不属于本阶段。
 
 ### 阶段五：加密凭证与安全审计
 
-状态：进行中（CR-0010）。
+状态：已完成（CR-0010）。
 
 实现 `internal/credential`，提供 AES-GCM 加密存储、最小权限回调访问、轮换、
 撤销和 metadata-only 审计。密钥只能来自部署环境的 Secret 管理，不能写入
-仓库、配置示例、日志、截图或 Matrix 消息。当前实现不接入浏览器或 Matrix。
+仓库、配置示例、日志、截图或 Matrix 消息。实现不接入真实浏览器或生产 Matrix。
 
 完成标准：
 
@@ -111,11 +111,13 @@ Playwright/Chromium 下载不属于本阶段。
 
 ### 阶段六：Matrix 适配器与状态通知
 
-状态：规划中，依赖请求服务和状态事件模型。
+状态：进行中（CR-0011），本变更仅完成 transport-neutral 边界；生产 Matrix 客户端仍待阶段八部署接入。
 
 实现 `internal/matrix` 和 `internal/observability` 的基础能力，处理房间/用户
 授权、`status`、`request`、`cancel`、`help` 命令，以及脱敏状态通知和断线
-后的待发送事件。Matrix 层不能直接访问凭证或决定账号业务状态。
+后的持久化 outbox。请求状态转换在 bbolt 事务内生成 event-ID 去重的通知记录；
+Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不能直接访问凭证
+或决定账号业务状态，当前不包含生产网络客户端。
 
 完成标准：
 

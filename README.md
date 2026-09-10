@@ -6,10 +6,10 @@
 
 ## 当前阶段
 
-目前仓库已完成跨平台基础、领域核心、单节点存储、请求队列和 Session
-Runner/browser-worker 生命周期边界，正在实现加密凭证与安全审计契约。服务
-控制面采用 Go，浏览器 Worker 使用 Node.js；真实浏览器自动化和 Matrix 业务
-实现仍按路线图逐步加入。
+目前仓库已完成跨平台基础、领域核心、单节点存储、请求队列、Session
+Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 transport-neutral
+的 Matrix 命令与状态通知边界。服务控制面采用 Go，浏览器 Worker 使用 Node.js；
+真实浏览器自动化、生产 Matrix 传输客户端和部署编排仍按路线图逐步加入。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 

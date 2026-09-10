@@ -44,10 +44,12 @@ func New(database *store.Store, clock Clock, newID IDGenerator, defaultActor str
 // SubmitInput describes one login request. RequestID is supplied by the
 // caller so retries can preserve a stable public correlation ID.
 type SubmitInput struct {
-	RequestID      string
-	AccountID      string
-	IdempotencyKey string
-	Deadline       time.Time
+	RequestID          string
+	AccountID          string
+	IdempotencyKey     string
+	NotificationRoomID string
+	Actor              string
+	Deadline           time.Time
 }
 
 // Submit creates and queues a request atomically. The returned boolean is true
@@ -65,6 +67,7 @@ func (s *Service) Submit(input SubmitInput) (store.Request, bool, error) {
 	if err != nil {
 		return store.Request{}, false, err
 	}
+	request.NotificationRoomID = input.NotificationRoomID
 	if !input.Deadline.IsZero() {
 		if input.Deadline.Before(now) {
 			return store.Request{}, false, fmt.Errorf("%w: deadline is in the past", ErrInvalidInput)
@@ -74,6 +77,10 @@ func (s *Service) Submit(input SubmitInput) (store.Request, bool, error) {
 	if err := request.Validate(); err != nil {
 		return store.Request{}, false, err
 	}
+	actor := strings.TrimSpace(input.Actor)
+	if actor == "" {
+		actor = s.defaultActor
+	}
 	event := account.Event{
 		EventID:    s.newID("queue"),
 		AccountID:  input.AccountID,
@@ -81,7 +88,7 @@ func (s *Service) Submit(input SubmitInput) (store.Request, bool, error) {
 		From:       account.NoRequest,
 		To:         account.Queued,
 		Reason:     "request submitted",
-		Actor:      s.defaultActor,
+		Actor:      actor,
 		OccurredAt: now,
 	}
 	result, idempotent, err := s.store.SubmitRequest(request, event)
