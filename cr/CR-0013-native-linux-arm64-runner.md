@@ -1,0 +1,64 @@
+# CR-0013: run Linux ARM64 builds on a native GitHub runner
+
+Base: main
+Head or Range: pending
+Integration Strategy: rebase-ff
+Review Evidence: trailers
+Title: chore(ci): run Linux ARM64 builds on a native runner
+Revision: 1
+Status: pending
+Decision: pending
+Policy Version: v0.3
+Base OID: 3308750ec6e66a6433839c43bcb0ca31b9b6f06a
+Head OID: 3308750ec6e66a6433839c43bcb0ca31b9b6f06a
+Integrated Result: pending
+
+## Summary
+
+Run the `linux-arm64` build matrix entry on GitHub's public-repository
+`ubuntu-24.04-arm` hosted runner. Add explicit checks for the ARM64 host,
+Node.js architecture, and Go architecture, and update the architecture,
+operations, and roadmap documents to distinguish native ARM64 CI from the
+still-unimplemented browser/WebView runtime.
+
+## Motivation
+
+The existing `linux-arm64` entry used an x86_64 Ubuntu runner while forcing
+`GOARCH=arm64`, so it validated a cross-compiled artifact but not the host
+toolchain or Node.js execution environment for ARM64. GitHub documents
+`ubuntu-24.04-arm` as an available standard ARM64 runner for public
+repositories, and `Semcosm/chuzi` is public. Native CI reduces this gap before
+introducing platform-specific WebView or other native dependencies.
+
+## Test Evidence
+
+Local `scripts/test_build_contract.sh`,
+`scripts/validate_repository_shape.sh`, and `git diff --check` pass. The
+workflow adds runtime assertions for `uname -m=aarch64`, Node.js
+`process.arch=arm64`, and `go env GOARCH=arm64`; the authoritative build,
+Go/Node tests, and packaging evidence must come from the GitHub Actions run on
+the new runner. The change does not add a browser binary, WebView dependency,
+or real-account test.
+
+## Risk
+
+The ARM64 hosted image or an action's architecture support could change and
+make the target job unavailable. The explicit assertions fail closed rather
+than silently treating an x86 runner as native. This change also does not
+provide Linux WebView libraries, display support, or browser runtime coverage.
+
+## Rollback
+
+Restore the `linux-arm64` matrix entry to `ubuntu-24.04` and revert the
+documentation and assertion changes in a subsequent CR. No application data
+or schema is changed.
+
+## Breaking Change
+
+The Linux ARM64 CI job now requires GitHub's `ubuntu-24.04-arm` label and
+executes tests on an ARM64 host. Release artifact names and the application
+protocol remain unchanged; native browser/WebView support is still deferred.
+
+## Backport Target
+
+none
