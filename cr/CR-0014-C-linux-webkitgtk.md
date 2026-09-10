@@ -5,7 +5,7 @@ Head or Range: pending
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add Linux WebKitGTK desktop WebView
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -66,7 +66,9 @@ through the normal Wry JavaScript IPC path; on Linux, `PageLoadEvent::Finished`
 also reports the same redacted readiness fact as a WebKitGTK fallback when the
 page's JavaScript IPC callback is not delivered. The active session consumes
 only the first valid readiness event, so the two paths cannot duplicate the
-successful response.
+successful response. The navigation policy explicitly allows only WebKitGTK's
+`about:blank` URI for the null-base embedded document; external, file, and
+user-triggered navigations remain denied.
 
 ## Risk
 
