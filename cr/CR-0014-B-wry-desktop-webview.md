@@ -5,13 +5,13 @@ Head or Range: fb34e81e9922aead7aae0518b0ef55bcdd419b4d..ffac3fb814090abf2aad130
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add Wry desktop WebView vertical slice
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 8051e82b4305ee280e0b0ba0f85502e46f4af488
-Head OID: 8051e82b4305ee280e0b0ba0f85502e46f4af488
-Integrated Result: pending
+Base OID: c76ebe55e7baac06e9f4586038ff02a408331780
+Head OID: c76ebe55e7baac06e9f4586038ff02a408331780
+Integrated Result: main@c76ebe55e7baac06e9f4586038ff02a408331780
 
 ## Summary
 
@@ -56,7 +56,19 @@ and GUI execution require the Windows/macOS runners. The native four-target
 Actions run must therefore verify Windows/macOS Wry compilation and helper
 packaging, plus Linux amd64/arm64 deferred smoke tests, before integration.
 Desktop runtime execution remains conditional on a GUI session and uses only
-the embedded local page.
+the embedded local page. PR #35 passed `ugs-validate` run `34476467457` and
+aggregate `chuzi-build` run `34476467484`; all four target jobs passed,
+including the native Wry compile and helper packaging checks. The post-merge
+main checks for `8051e82b4305ee280e0b0ba0f85502e46f4af488` passed as
+`ugs-validate` run `34477425445` and `chuzi-build` run `34477425405`, with
+aggregate job `102872693798`. Acceptance PR #36 passed `ugs-validate` run
+`34478267442` and aggregate `chuzi-build` run `34478267520` on attempt 2;
+the initial attempt was cancelled after a stalled macOS runner and the rerun
+passed all four target jobs. The post-merge main checks for
+`c76ebe55e7baac06e9f4586038ff02a408331780` passed as `ugs-validate` run
+`34481771496` and `chuzi-build` run `34481771368`, with all four target jobs
+passing. Local checks included the same locked Cargo tests, repository
+validators, build contract, and `git diff --check`.
 
 ## Risk
 
