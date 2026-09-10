@@ -5,7 +5,7 @@ Head or Range: pending
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add Linux WebKitGTK desktop WebView
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -58,6 +58,9 @@ Ubuntu GitHub runners. The workflow installs `libgtk-3-dev`,
 the locked Cargo tests and local-page smoke tests under both X11/Xvfb and
 Wayland/Weston. The native
 `ubuntu-24.04-arm` job verifies the same build and smoke contract on arm64.
+Linux hidden-mode construction first realizes the GTK/WebKitGTK view visibly,
+then hides it immediately, matching the backend's hidden-window startup
+requirement.
 
 ## Risk
 
