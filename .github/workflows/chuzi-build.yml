@@ -109,13 +109,24 @@ jobs:
         run: |
           profile_dir="$(mktemp -d)"
           output_file="$(mktemp)"
-          trap 'rm -rf "$profile_dir" "$output_file"' EXIT
+          error_file="$(mktemp)"
+          trap 'rm -rf "$profile_dir" "$output_file" "$error_file"' EXIT
+          run_x11() {
+            timeout 30s xvfb-run -a dbus-run-session -- env GDK_BACKEND=x11 WINIT_UNIX_BACKEND=x11 \
+              WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+              LIBGL_ALWAYS_SOFTWARE=1 \
+              "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
+          }
           printf '%s\n' \
             '{"protocol":"v1","id":"hello-x11","type":"hello"}' \
             "{\"protocol\":\"v1\",\"id\":\"start-x11\",\"type\":\"session_start\",\"payload\":{\"session_id\":\"session-x11\",\"account_id\":\"account-x11\",\"request_id\":\"request-x11\",\"profile_dir\":\"$profile_dir\"}}" \
-            | timeout 30s xvfb-run -a dbus-run-session -- env GDK_BACKEND=x11 WINIT_UNIX_BACKEND=x11 \
-                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-                "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime" >"$output_file"
+            | run_x11 >"$output_file" 2>"$error_file" || {
+              status=$?
+              echo "Linux X11 helper exited with status $status" >&2
+              sed -n '1,160p' "$output_file" >&2
+              sed -n '1,160p' "$error_file" >&2
+              exit "$status"
+            }
           grep -Fq 'browser-runtime.linux-x11' "$output_file"
           grep -Fq 'local-test-page-ready' "$output_file"
 
@@ -127,6 +138,7 @@ jobs:
           profile_dir="$(mktemp -d)"
           weston_log="$(mktemp)"
           output_file="$(mktemp)"
+          error_file="$(mktemp)"
           chmod 700 "$runtime_dir"
           weston_pid=""
           cleanup() {
@@ -134,7 +146,7 @@ jobs:
               kill "$weston_pid" 2>/dev/null || true
               wait "$weston_pid" 2>/dev/null || true
             fi
-            rm -rf "$runtime_dir" "$profile_dir" "$weston_log" "$output_file"
+            rm -rf "$runtime_dir" "$profile_dir" "$weston_log" "$output_file" "$error_file"
           }
           trap cleanup EXIT
           XDG_RUNTIME_DIR="$runtime_dir" weston \
@@ -157,8 +169,16 @@ jobs:
             "{\"protocol\":\"v1\",\"id\":\"start-wayland\",\"type\":\"session_start\",\"payload\":{\"session_id\":\"session-wayland\",\"account_id\":\"account-wayland\",\"request_id\":\"request-wayland\",\"profile_dir\":\"$profile_dir\"}}" \
             | timeout 30s dbus-run-session -- env XDG_RUNTIME_DIR="$runtime_dir" WAYLAND_DISPLAY=wayland-1 \
                 XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland WINIT_UNIX_BACKEND=wayland \
-                WEBKIT_DISABLE_DMABUF_RENDERER=1 \
-                "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime" >"$output_file"
+                WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
+                LIBGL_ALWAYS_SOFTWARE=1 \
+                "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime" >"$output_file" 2>"$error_file" || {
+              status=$?
+              echo "Linux Wayland helper exited with status $status" >&2
+              sed -n '1,160p' "$output_file" >&2
+              sed -n '1,160p' "$error_file" >&2
+              sed -n '1,160p' "$weston_log" >&2
+              exit "$status"
+            }
           grep -Fq 'browser-runtime.linux-wayland' "$output_file"
           grep -Fq 'local-test-page-ready' "$output_file"
 
