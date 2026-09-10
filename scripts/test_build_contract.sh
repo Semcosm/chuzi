@@ -13,9 +13,12 @@ done
 [ -f "$repo_root/go.mod" ] || fail "go.mod is missing"
 [ -f "$repo_root/browser-worker/package.json" ] || fail "browser worker package manifest is missing"
 [ -f "$repo_root/browser-worker/package-lock.json" ] || fail "browser worker lockfile is missing"
+[ -f "$repo_root/browser-runtime/Cargo.toml" ] || fail "browser runtime Cargo manifest is missing"
+[ -f "$repo_root/browser-runtime/Cargo.lock" ] || fail "browser runtime Cargo lockfile is missing"
 [ -f "$repo_root/.github/workflows/chuzi-build.yml" ] || fail "build workflow is missing"
 
 grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build check is missing"
 grep -Eq 'actions/checkout@[0-9a-f]{40}' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow action is not pinned"
+grep -Fq 'cargo test --locked --manifest-path browser-runtime/Cargo.toml' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses browser runtime tests"
 
 echo "build contract validation passed"

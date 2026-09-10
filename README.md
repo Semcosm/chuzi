@@ -10,6 +10,8 @@
 Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 transport-neutral
 的 Matrix 命令与状态通知边界。服务控制面采用 Go，浏览器 Worker 使用 Node.js；
 真实浏览器自动化、生产 Matrix 传输客户端和部署编排仍按路线图逐步加入。
+当前新增的 Rust browser-runtime 仅是独立协议 helper 边界；Wry 桌面 WebView
+和真正 headless backend 尚未进入发布产物。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
@@ -19,6 +21,7 @@ GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`li
 - 账号状态由统一状态机驱动，避免队列、浏览器和通知模块各自维护状态。
 - 凭证默认加密存储，日志和 Matrix 消息不得泄露明文凭证。
 - 调度、会话运行和外部通知解耦，支持失败重试、超时回收和服务重启恢复。
+- 桌面 WebView 与真正 headless 使用不同 backend；隐藏窗口不被当作无显示环境。
 - 只自动化用户有权使用的账号与服务，不实现凭证窃取、访问控制绕过或攻击能力。
 
 ## 文档入口
