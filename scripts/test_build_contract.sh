@@ -20,5 +20,12 @@ done
 grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build check is missing"
 grep -Eq 'actions/checkout@[0-9a-f]{40}' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow action is not pinned"
 grep -Fq 'cargo test --locked --manifest-path browser-runtime/Cargo.toml' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses browser runtime tests"
+grep -Fq 'chuzi-browser-runtime' "$repo_root/scripts/build.sh" || fail "build.sh misses Rust helper"
+grep -Fq 'chuzi-browser-runtime' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses Rust helper"
+grep -Fq 'browserRuntime' "$repo_root/scripts/build.sh" || fail "build.sh manifest misses runtime backend"
+grep -Fq 'browserRuntime' "$repo_root/scripts/build.ps1" || fail "build.ps1 manifest misses runtime backend"
+grep -Fq 'desktop-webview' "$repo_root/scripts/build.sh" || fail "build.sh misses desktop feature"
+grep -Fq 'desktop-webview' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses desktop feature"
+grep -Fq 'Test native desktop WebView helper contract' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses desktop helper contract"
 
 echo "build contract validation passed"

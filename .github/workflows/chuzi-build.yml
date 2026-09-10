@@ -83,6 +83,26 @@ jobs:
           cargo test --locked --manifest-path browser-runtime/Cargo.toml
           go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
 
+      - name: Test native desktop WebView helper contract
+        if: runner.os == 'Windows' || runner.os == 'macOS'
+        shell: bash
+        run: |
+          cargo test --locked --manifest-path browser-runtime/Cargo.toml --features desktop-webview
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime.exe"
+          else
+            test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
+          fi
+
+      - name: Test deferred Linux helper contract
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
+          printf '%s\n' '{"protocol":"v1","id":"hello-1","type":"hello"}' \
+            | ./dist/${{ matrix.target }}/stage/chuzi-browser-runtime \
+            | grep -Fq 'browser-runtime.deferred'
+
       - name: Package Windows artifact
         if: runner.os == 'Windows'
         shell: pwsh

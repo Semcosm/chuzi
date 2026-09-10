@@ -64,7 +64,7 @@ GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
 - `linux-arm64`
 - `darwin-arm64`
 
-Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布。Rust helper 先作为独立的协议边界验证，尚未进入发布产物；Wry 原生依赖在后续平台 CR 中按目标分别引入。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js 和协议 smoke test 在 ARM64 主机执行；当前仍没有真实浏览器或 WebView 运行覆盖。引入 WebView、CDP/WebDriver、Chromium 或其他原生依赖前，必须增加对应架构的运行 smoke test 和变更记录。
+Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布，Rust `chuzi-browser-runtime` helper 也随四个目标的 stage 发布。Windows/macOS stage 启用 Wry 桌面 WebView feature；Linux stage 保持 deferred helper，不引入 GTK/WebKitGTK。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js 和 deferred 协议 smoke test 在 ARM64 主机执行；这仍不等同于真实 ARM64 图形 WebView 运行覆盖。
 
 控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
 
@@ -74,7 +74,7 @@ Rust helper 继续通过现有 Go Worker 的版本化 JSON Lines 边界运行，
 Go/Rust FFI。helper 内部的运行时接口只返回 capability 和脱敏运行事实，业务
 状态、租约、重试和 Profile 路径仍由 Go 控制面决定。
 
-桌面 WebView 后端计划使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
+桌面 WebView 后端使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
 WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 WebView
 创建和页面操作 API，不是一个跨平台 headless 浏览器。隐藏窗口仍需要有效的
 用户图形会话、主线程和事件循环。
@@ -87,13 +87,14 @@ WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 We
 
 | 后端 | 平台基线 | 首批承诺 | 当前状态 |
 | --- | --- | --- | --- |
-| Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式 | CR-0014-B 规划中 |
-| Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop | CR-0014-B 规划中 |
+| Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式；服务派生 WebContext | CR-0014-B 本分支已实现，待原生 CI 验证 |
+| Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop；当前 ephemeral store | CR-0014-B 本分支已实现，待原生 CI 验证 |
 | Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；首期 X11 | CR-0014-C 规划中 |
 | Headless browser | 部署环境提供 Chromium/Edge | CDP/WebDriver 独立后端 | CR-0014-D 规划中 |
 
-CR-0014-A 只建立 Rust helper、capability/error 契约和本地协议测试页路径，
-不宣称任何真实 WebView 或无显示环境能力已经接入。
+CR-0014-A 建立 Rust helper、capability/error 契约和本地协议测试页路径；
+CR-0014-B 在 Windows/macOS target-gated 接入真实 Wry WebView，但只加载内嵌
+本地测试页。Linux WebKitGTK 和真正 headless 仍未接入。
 
 ## 关键边界
 
@@ -121,9 +122,9 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 返回脱敏的 transient runtime fact。
 
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
-仅提供协议和 deferred-browser failure/synthetic lifecycle 模式，Rust helper
-提供同一协议的独立进程边界；Wry 和 headless backend 必须在后续平台 CR 中
-显式启用并验证。
+继续提供协议和 deferred-browser failure/synthetic lifecycle 模式，Rust helper
+提供同一协议的独立进程边界；Windows/macOS 的 Wry feature 已显式启用，Linux
+仍是 deferred，headless backend 需要独立 CR。
 
 ## Credential Store 生命周期契约
 

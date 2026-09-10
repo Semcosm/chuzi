@@ -129,8 +129,9 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
 
 ### 阶段七：真实浏览器运行时
 
-状态：规划中，拆分为独立 CR；CR-0014-A 只建立 Rust helper 和协议边界，
-不提前宣称真实 WebView 或 headless 能力完成。
+状态：进行中，拆分为独立 CR。CR-0014-A 已完成 Rust helper 和协议边界；
+CR-0014-B 在本分支接入 Windows/macOS 桌面 WebView；Linux WebKitGTK 和真正
+headless 仍未完成。
 
 #### 7A：Rust runtime boundary（CR-0014-A）
 
@@ -143,7 +144,9 @@ Worker 保留为 fake/deferred 生命周期替身。完成标准是协议兼容�
 
 使用 Wry 的平台后端，Windows 10/11 检测 WebView2 Runtime，macOS 首批覆盖
 11+ Apple Silicon 的 WKWebView。visible/hidden 模式都必须验证 GUI session、
-主线程和事件循环；测试只使用本地测试页。
+主线程和事件循环；当前 Windows 使用服务派生 WebContext，macOS 使用 ephemeral
+store；测试只使用内嵌本地测试页。Wry helper 随 Windows/macOS 发布 stage，
+Linux 继续使用 deferred helper。
 
 #### 7C：Linux Ubuntu WebKitGTK（CR-0014-C）
 

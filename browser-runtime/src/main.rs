@@ -1,7 +1,19 @@
+#[cfg(not(all(
+    feature = "desktop-webview",
+    any(target_os = "windows", target_os = "macos")
+)))]
 use std::io::{self, BufRead, Write};
 
+#[cfg(not(all(
+    feature = "desktop-webview",
+    any(target_os = "windows", target_os = "macos")
+)))]
 use chuzi_browser_runtime::{Action, Envelope, Runtime};
 
+#[cfg(not(all(
+    feature = "desktop-webview",
+    any(target_os = "windows", target_os = "macos")
+)))]
 fn write_responses(
     stdout: &mut io::BufWriter<io::Stdout>,
     responses: Vec<Envelope>,
@@ -13,6 +25,18 @@ fn write_responses(
     stdout.flush()
 }
 
+#[cfg(all(
+    feature = "desktop-webview",
+    any(target_os = "windows", target_os = "macos")
+))]
+fn main() -> std::io::Result<()> {
+    chuzi_browser_runtime::desktop::run()
+}
+
+#[cfg(not(all(
+    feature = "desktop-webview",
+    any(target_os = "windows", target_os = "macos")
+)))]
 fn main() -> io::Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::BufWriter::new(io::stdout());
