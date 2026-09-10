@@ -64,7 +64,7 @@ GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
 - `linux-arm64`
 - `darwin-arm64`
 
-Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布，Rust `chuzi-browser-runtime` helper 也随四个目标的 stage 发布。Windows/macOS stage 启用 Wry 桌面 WebView feature；Linux stage 保持 deferred helper，不引入 GTK/WebKitGTK。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js 和 deferred 协议 smoke test 在 ARM64 主机执行；这仍不等同于真实 ARM64 图形 WebView 运行覆盖。
+Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布，Rust `chuzi-browser-runtime` helper 也随四个目标的 stage 发布。Windows/macOS stage 启用 Wry 桌面 WebView feature；Ubuntu 24.04 Linux stage 也启用 Wry 的 WebKitGTK feature，并在 X11 与 Wayland 图形会话中运行本地测试页。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js、WebKitGTK 编译和 X11/Wayland smoke test 在 ARM64 主机执行；这仍不等同于无显示环境 headless 浏览器。
 
 控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
 
@@ -89,12 +89,13 @@ WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 We
 | --- | --- | --- | --- |
 | Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式；服务派生 WebContext | CR-0014-B 本分支已实现，待原生 CI 验证 |
 | Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop；当前 ephemeral store | CR-0014-B 本分支已实现，待原生 CI 验证 |
-| Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；首期 X11 | CR-0014-C 规划中 |
+| Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；X11 与 Wayland GUI session | CR-0014-C 本分支实现，待 CI 验证 |
 | Headless browser | 部署环境提供 Chromium/Edge | CDP/WebDriver 独立后端 | CR-0014-D 规划中 |
 
 CR-0014-A 建立 Rust helper、capability/error 契约和本地协议测试页路径；
-CR-0014-B 在 Windows/macOS target-gated 接入真实 Wry WebView，但只加载内嵌
-本地测试页。Linux WebKitGTK 和真正 headless 仍未接入。
+CR-0014-B 在 Windows/macOS target-gated 接入真实 Wry WebView，CR-0014-C 在
+Ubuntu 24.04 target-gated 接入 WebKitGTK，并在 X11/Wayland GUI session 中只加载
+内嵌本地测试页。真正 headless 仍未接入。
 
 ## 关键边界
 
@@ -123,8 +124,9 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
 继续提供协议和 deferred-browser failure/synthetic lifecycle 模式，Rust helper
-提供同一协议的独立进程边界；Windows/macOS 的 Wry feature 已显式启用，Linux
-仍是 deferred，headless backend 需要独立 CR。
+提供同一协议的独立进程边界；Windows/macOS/Linux 的 Wry feature 已显式启用，
+Linux WebKitGTK 同时支持 X11 与 Wayland GUI session，headless backend 需要独立
+CR。
 
 ## Credential Store 生命周期契约
 

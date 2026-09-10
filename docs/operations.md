@@ -30,7 +30,7 @@ WebView 都需要图形会话和平台事件循环；hidden 只是不向用户�
 | --- | --- | --- |
 | Windows 10/11 | WebView2 Evergreen 或 Fixed Version Runtime | 启动前检测 Runtime；Windows 10 不能假定系统已有；不依赖普通 Edge 浏览器本体 |
 | macOS 11+ Apple Silicon | 系统 WKWebView | 需要 GUI session/run loop；首批只覆盖 Apple Silicon 原生构建 |
-| Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1 | 需要 GTK/WebKitGTK 4.1 开发与运行库；首期只承诺 X11，Wayland 另行验证 |
+| Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1 | 需要 GTK/WebKitGTK 4.1 开发与运行库和有效 GUI session；首期覆盖 X11 与 Wayland，其他发行版另行验证 |
 
 WebView2 缺失、GTK/WebKitGTK 缺失、图形会话缺失和权限错误必须返回稳定的
 分类错误，不能伪装成普通账号失败。Profile 由服务生成并保存在受限数据目录，
@@ -51,9 +51,9 @@ schema 迁移并拒绝未知版本。多实例部署必须在单独的 CR 中选
 库和并发/迁移策略。
 
 Rust helper 在构建阶段由 stable Rust/Cargo 编译，发布包携带编译后的
-`chuzi-browser-runtime`，部署主机不需要安装 Rust。Windows/macOS 构建启用
-Wry；Linux 构建保持 deferred helper。Wry、GTK/WebKitGTK 和 headless 浏览器
-的运行库要求仍按各自平台和 CR 声明。
+`chuzi-browser-runtime`，部署主机不需要安装 Rust。Windows/macOS/Linux 构建启用
+Wry；Linux 运行时需要 WebKitGTK 4.1、GTK 和有效的 X11 或 Wayland 图形会话。
+Wry、GTK/WebKitGTK 和 headless 浏览器的运行库要求仍按各自平台和 CR 声明。
 
 凭证密钥由部署环境注入。默认环境适配器读取 `CHUZI_CREDENTIAL_KEY_ID` 和
 `CHUZI_CREDENTIAL_KEY`；生产环境进行轮换时，Secret 管理器必须在切换期间
@@ -77,7 +77,7 @@ GitHub Actions 负责远端构建，不要求开发者在本地安装完整的�
 | --- | --- | --- |
 | `windows-amd64` | `.zip` | Windows native runner |
 | `linux-amd64` | `.tar.gz` | Linux native runner |
-| `linux-arm64` | `.tar.gz` | Linux native ARM64 runner (`ubuntu-24.04-arm`); deferred helper only, WebKitGTK coverage pending |
+| `linux-arm64` | `.tar.gz` | Linux native ARM64 runner (`ubuntu-24.04-arm`); WebKitGTK desktop helper with X11/Wayland smoke |
 | `darwin-arm64` | `.tar.gz` | Apple Silicon macOS runner |
 
 构建命令由以下脚本定义：
@@ -92,17 +92,17 @@ Windows runner 使用对应的 `*.ps1` 脚本。构建产物必须包含 Go 服�
 manifest 标明 `browserRuntime` 为 `wry-desktop` 或 `deferred`。CI smoke test 只
 使用本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 
-当前 Node Worker 继续提供协议和生命周期替身；Windows/macOS 的 Rust/Wry helper
-已接入构建，原生编译由对应 Windows/macOS runner 验证。Linux ARM64 的 Go、
-Node.js 和 deferred 协议 smoke test 已在原生 ARM64 runner 执行，但真实
-WebKitGTK/WebView 仍未接入。CDP/WebDriver、浏览器下载或其他原生模块必须在
-单独 CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和 smoke test
-覆盖范围。
+当前 Node Worker 继续提供协议和生命周期替身；四个目标的 Rust/Wry helper
+已接入构建，原生编译由对应 runner 验证。Linux amd64/arm64 在原生 runner 上
+安装 WebKitGTK 4.1，并使用 Xvfb 与 Weston headless compositor 分别覆盖 X11
+和 Wayland 的本地测试页 smoke test。CDP/WebDriver、浏览器下载或其他原生模块
+必须在单独 CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和
+smoke test 覆盖范围。
 
-CR-0014-B 合并后，Windows/macOS 发布包携带 Wry helper；其运行仍要求对应平台
-WebView2/WKWebView 和 GUI session。Linux ARM64 runner 只能证明原生 ARM64 构建
-和无 GUI deferred 协议测试；它不能替代真实 ARM64 图形环境的 WebKitGTK smoke
-test。
+CR-0014-B 合并后，Windows/macOS 发布包携带 Wry helper；CR-0014-C 使 Linux
+发布包也携带 WebKitGTK helper。Windows/macOS/Linux 的运行仍要求对应平台
+WebView2/WKWebView/WebKitGTK 和 GUI session；Wayland smoke 使用 Weston headless
+compositor，不能被误解为真正 headless 浏览器。真正 headless 仍需 CR-0014-D。
 
 ## 运维检查
 

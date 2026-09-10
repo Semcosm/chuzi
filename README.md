@@ -12,8 +12,9 @@ Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 
 真实浏览器自动化、生产 Matrix 传输客户端和部署编排仍按路线图逐步加入。
 当前 Rust browser-runtime 已保留独立协议 helper 边界；Windows 10/11 和
 macOS 11+ Apple Silicon 的 Wry 桌面 WebView vertical slice 已进入构建与发布
-stage，Linux 仍使用 deferred helper。真正 headless backend 尚未接入，也不把
-桌面隐藏窗口当作无显示环境浏览器。
+stage，Ubuntu 24.04 amd64/arm64 也使用 WebKitGTK Wry desktop backend，并覆盖
+X11 与 Wayland 图形会话。真正 headless backend 尚未接入，也不把桌面隐藏窗口
+当作无显示环境浏览器。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 

@@ -14,8 +14,8 @@ host_arch="$(uname -m)"
 
 case "$target" in
   windows-amd64) goos=windows; goarch=amd64; binary=chuzi.exe; runtime_backend=wry-desktop; runtime_features=desktop-webview ;;
-  linux-amd64) goos=linux; goarch=amd64; binary=chuzi; runtime_backend=deferred; runtime_features= ;;
-  linux-arm64) goos=linux; goarch=arm64; binary=chuzi; runtime_backend=deferred; runtime_features= ;;
+  linux-amd64) goos=linux; goarch=amd64; binary=chuzi; runtime_backend=wry-desktop; runtime_features=desktop-webview ;;
+  linux-arm64) goos=linux; goarch=arm64; binary=chuzi; runtime_backend=wry-desktop; runtime_features=desktop-webview ;;
   darwin-arm64) goos=darwin; goarch=arm64; binary=chuzi; runtime_backend=wry-desktop; runtime_features=desktop-webview ;;
   *) echo "unsupported build target: $target" >&2; exit 2 ;;
 esac

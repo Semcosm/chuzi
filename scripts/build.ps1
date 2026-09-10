@@ -30,8 +30,8 @@ $runtimeFeatures = @()
 $binary = "chuzi"
 switch ($Target) {
     "windows-amd64" { $goos = "windows"; $goarch = "amd64"; $binary = "chuzi.exe"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
-    "linux-amd64" { $goos = "linux"; $goarch = "amd64" }
-    "linux-arm64" { $goos = "linux"; $goarch = "arm64" }
+    "linux-amd64" { $goos = "linux"; $goarch = "amd64"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
+    "linux-arm64" { $goos = "linux"; $goarch = "arm64"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
     "darwin-arm64" { $goos = "darwin"; $goarch = "arm64"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
 }
 

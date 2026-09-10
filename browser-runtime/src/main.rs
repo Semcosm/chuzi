@@ -1,18 +1,18 @@
 #[cfg(not(all(
     feature = "desktop-webview",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
 )))]
 use std::io::{self, BufRead, Write};
 
 #[cfg(not(all(
     feature = "desktop-webview",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
 )))]
 use chuzi_browser_runtime::{Action, Envelope, Runtime};
 
 #[cfg(not(all(
     feature = "desktop-webview",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
 )))]
 fn write_responses(
     stdout: &mut io::BufWriter<io::Stdout>,
@@ -27,7 +27,7 @@ fn write_responses(
 
 #[cfg(all(
     feature = "desktop-webview",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
 ))]
 fn main() -> std::io::Result<()> {
     chuzi_browser_runtime::desktop::run()
@@ -35,7 +35,7 @@ fn main() -> std::io::Result<()> {
 
 #[cfg(not(all(
     feature = "desktop-webview",
-    any(target_os = "windows", target_os = "macos")
+    any(target_os = "windows", target_os = "macos", target_os = "linux")
 )))]
 fn main() -> io::Result<()> {
     let stdin = io::stdin();

@@ -16,6 +16,7 @@ logs/
 bin/
 dist/
 browser-worker/node_modules/
+browser-runtime/target/
 coverage/
 tmp/
 *.log
