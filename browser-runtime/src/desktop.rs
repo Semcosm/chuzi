@@ -61,6 +61,7 @@ struct IpcMessage {
 struct ActiveSession {
     request_id: String,
     session_id: String,
+    hidden: bool,
     window: Window,
     _webview: WebView,
     #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -192,6 +193,10 @@ impl DesktopHost {
         let Some(active) = self.active.take() else {
             return Ok(());
         };
+        if active.hidden {
+            let _ = active._webview.set_visible(false);
+            active.window.set_visible(false);
+        }
         let mut payload = std::collections::BTreeMap::new();
         payload.insert("session_id".to_owned(), active.session_id);
         payload.insert("result".to_owned(), TEST_PAGE_RESULT.to_owned());
@@ -331,6 +336,7 @@ impl DesktopHost {
                 self.active = Some(ActiveSession {
                     request_id: request.id,
                     session_id,
+                    hidden: !visible,
                     window: session.window,
                     _webview: session.webview,
                     #[cfg(any(target_os = "windows", target_os = "linux"))]
@@ -453,9 +459,9 @@ impl DesktopHost {
         let window = WindowBuilder::new()
             .with_title("chuzi browser runtime")
             .with_inner_size(LogicalSize::new(800.0, 600.0))
-            // GTK/WebKitGTK needs one realized visible pass before a hidden
+            // GTK/WebKitGTK needs a realized visible pass before a hidden
             // WebView reliably starts loading its local document and emits
-            // readiness IPC. Hide it immediately after construction below.
+            // readiness IPC. Hidden mode is applied after that IPC arrives.
             .with_visible(if cfg!(target_os = "linux") {
                 true
             } else {
@@ -495,13 +501,6 @@ impl DesktopHost {
         let webview = builder
             .build(&window)
             .map_err(|_| BuildError::WebViewUnavailable)?;
-        #[cfg(target_os = "linux")]
-        if !visible {
-            webview
-                .set_visible(false)
-                .map_err(|_| BuildError::WebViewUnavailable)?;
-            window.set_visible(false);
-        }
         Ok((window, webview))
     }
 }
