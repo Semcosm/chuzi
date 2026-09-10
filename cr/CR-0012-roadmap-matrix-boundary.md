@@ -5,7 +5,7 @@ Head or Range: pending
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs(roadmap): mark Matrix boundary complete
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -30,9 +30,9 @@ not add runtime behavior or claim a production Matrix connection.
 ## Test Evidence
 
 The updated roadmap cites CR-0011 and preserves its transport-neutral scope.
-Run `./scripts/validate_cr_record.sh cr/CR-0012-roadmap-matrix-boundary.md`,
-the repository policy, quality, supply-chain, action-pinning, shape, and build
-contract validators, plus `git diff --check`.
+Local CR, policy, quality, supply-chain, action-pinning, repository-shape, and
+build-contract validators pass, as does `git diff --check`; remote application
+build evidence remains the already-passing CR-0011 matrix.
 
 ## Risk
 
