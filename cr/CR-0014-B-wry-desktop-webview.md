@@ -1,16 +1,16 @@
 # CR-0014: add the Wry desktop WebView vertical slice
 
 Base: main
-Head or Range: pending
+Head or Range: fb34e81e9922aead7aae0518b0ef55bcdd419b4d..ffac3fb814090abf2aad13013cef1be35c10ba76
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add Wry desktop WebView vertical slice
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: fb34e81e9922aead7aae0518b0ef55bcdd419b4d
-Head OID: fb34e81e9922aead7aae0518b0ef55bcdd419b4d
+Base OID: 8051e82b4305ee280e0b0ba0f85502e46f4af488
+Head OID: 8051e82b4305ee280e0b0ba0f85502e46f4af488
 Integrated Result: pending
 
 ## Summary
