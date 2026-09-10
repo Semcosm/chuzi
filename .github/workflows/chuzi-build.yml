@@ -22,7 +22,7 @@ jobs:
           - target: linux-amd64
             runner: ubuntu-24.04
           - target: linux-arm64
-            runner: ubuntu-24.04
+            runner: ubuntu-24.04-arm
           - target: darwin-arm64
             runner: macos-14
 
@@ -48,6 +48,14 @@ jobs:
           go version
           node --version
           npm --version
+
+      - name: Verify native Linux ARM64 runner
+        if: matrix.target == 'linux-arm64'
+        shell: bash
+        run: |
+          test "$(uname -m)" = "aarch64"
+          test "$(node -p 'process.arch')" = "arm64"
+          test "$(go env GOARCH)" = "arm64"
 
       - name: Validate build contract
         shell: bash

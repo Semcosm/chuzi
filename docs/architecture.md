@@ -63,7 +63,7 @@ GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
 - `linux-arm64`
 - `darwin-arm64`
 
-Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布。`linux-arm64` 当前由 Linux runner 交叉编译，暂不宣称原生 ARM64 浏览器运行覆盖。引入 Playwright、Chromium 或其他原生依赖前，必须增加对应架构的运行 smoke test 和变更记录。
+Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js 和协议 smoke test 在 ARM64 主机执行；当前仍没有真实浏览器或 WebView 运行覆盖。引入 WebView、Playwright、Chromium 或其他原生依赖前，必须增加对应架构的运行 smoke test 和变更记录。
 
 控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
 
