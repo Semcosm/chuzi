@@ -1,16 +1,16 @@
 # CR-0013: run Linux ARM64 builds on a native GitHub runner
 
 Base: main
-Head or Range: pending
+Head or Range: 3308750ec6e66a6433839c43bcb0ca31b9b6f06a..fe91a203f97424012a8bc3debb39f4b5fcbb40d7
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: chore(ci): run Linux ARM64 builds on a native runner
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 3308750ec6e66a6433839c43bcb0ca31b9b6f06a
-Head OID: 3308750ec6e66a6433839c43bcb0ca31b9b6f06a
+Base OID: fe91a203f97424012a8bc3debb39f4b5fcbb40d7
+Head OID: fe91a203f97424012a8bc3debb39f4b5fcbb40d7
 Integrated Result: pending
 
 ## Summary
