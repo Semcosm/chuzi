@@ -1,16 +1,16 @@
 # CR-0012: record the integrated Matrix boundary in the roadmap
 
 Base: main
-Head or Range: pending
+Head or Range: ff6b02901e05b07c7b9133e5c3774613bda25565..7fbc00df3e1d493b745bca645b1895300d223235
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs(roadmap): mark Matrix boundary complete
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: ff6b02901e05b07c7b9133e5c3774613bda25565
-Head OID: ff6b02901e05b07c7b9133e5c3774613bda25565
+Base OID: 7fbc00df3e1d493b745bca645b1895300d223235
+Head OID: 7fbc00df3e1d493b745bca645b1895300d223235
 Integrated Result: pending
 
 ## Summary
