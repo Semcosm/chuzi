@@ -111,7 +111,7 @@ Playwright/Chromium 下载不属于本阶段。
 
 ### 阶段六：Matrix 适配器与状态通知
 
-状态：进行中（CR-0011），本变更仅完成 transport-neutral 边界；生产 Matrix 客户端仍待阶段八部署接入。
+状态：已完成（CR-0011），本阶段完成 transport-neutral 边界；生产 Matrix 客户端仍待阶段八部署接入。
 
 实现 `internal/matrix` 和 `internal/observability` 的基础能力，处理房间/用户
 授权、`status`、`request`、`cancel`、`help` 命令，以及脱敏状态通知和断线
