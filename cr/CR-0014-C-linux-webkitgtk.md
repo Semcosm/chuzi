@@ -5,7 +5,7 @@ Head or Range: pending
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add Linux WebKitGTK desktop WebView
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -61,7 +61,12 @@ Wayland/Weston. The native
 Linux hidden-mode construction first realizes the GTK/WebKitGTK view visibly,
 keeps it loadable until the local readiness IPC arrives, and then hides it,
 matching the backend's hidden-window startup requirement without suppressing
-the initial WebKitGTK page load.
+the initial WebKitGTK page load. The embedded page still reports readiness
+through the normal Wry JavaScript IPC path; on Linux, `PageLoadEvent::Finished`
+also reports the same redacted readiness fact as a WebKitGTK fallback when the
+page's JavaScript IPC callback is not delivered. The active session consumes
+only the first valid readiness event, so the two paths cannot duplicate the
+successful response.
 
 ## Risk
 
