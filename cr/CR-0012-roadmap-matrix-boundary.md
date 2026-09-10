@@ -5,13 +5,13 @@ Head or Range: ff6b02901e05b07c7b9133e5c3774613bda25565..7fbc00df3e1d493b745bca6
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs(roadmap): mark Matrix boundary complete
-Revision: 3
-Status: accepted
+Revision: 4
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 7fbc00df3e1d493b745bca645b1895300d223235
-Head OID: 7fbc00df3e1d493b745bca645b1895300d223235
-Integrated Result: pending
+Base OID: 2b871c8f564e767261c7686c9bab8f1f09d7291a
+Head OID: 2b871c8f564e767261c7686c9bab8f1f09d7291a
+Integrated Result: main@2b871c8f564e767261c7686c9bab8f1f09d7291a
 
 ## Summary
 
