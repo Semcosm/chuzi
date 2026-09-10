@@ -1,16 +1,16 @@
 # CR-0014: add the Linux WebKitGTK desktop WebView backend
 
 Base: main
-Head or Range: pending
+Head or Range: 2ba510b9bdca27aefb654e4d0f200fca4b64d2aa..7e9da3ae8afa2e5269051fdd9f40073d03ae1543
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add Linux WebKitGTK desktop WebView
-Revision: 5
-Status: pending
-Decision: pending
+Revision: 6
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 2ba510b9bdca27aefb654e4d0f200fca4b64d2aa
-Head OID: 2ba510b9bdca27aefb654e4d0f200fca4b64d2aa
+Base OID: 306440815b93e87f00f5b90df6993bb67a375c18
+Head OID: 306440815b93e87f00f5b90df6993bb67a375c18
 Integrated Result: pending
 
 ## Summary
@@ -69,6 +69,14 @@ only the first valid readiness event, so the two paths cannot duplicate the
 successful response. The navigation policy explicitly allows only WebKitGTK's
 `about:blank` URI for the null-base embedded document; external, file, and
 user-triggered navigations remain denied.
+
+The implementation PR #38 passed `ugs-validate` run `34507141950` and
+aggregate `chuzi-build` run `34507141938`; its Linux amd64 and native Linux
+arm64 jobs passed both X11 and Wayland smoke tests. The post-merge main checks
+for `306440815b93e87f00f5b90df6993bb67a375c18` passed as `ugs-validate` run
+`34507812757` and `chuzi-build` run `34507812839`, with aggregate job
+`102975549388` and all four target jobs passing. This acceptance record keeps
+the integrated result pending until the separate closure CR is merged.
 
 ## Risk
 
