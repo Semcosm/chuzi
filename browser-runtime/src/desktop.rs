@@ -453,13 +453,24 @@ impl DesktopHost {
         let window = WindowBuilder::new()
             .with_title("chuzi browser runtime")
             .with_inner_size(LogicalSize::new(800.0, 600.0))
-            .with_visible(visible)
+            // GTK/WebKitGTK needs one realized visible pass before a hidden
+            // WebView reliably starts loading its local document and emits
+            // readiness IPC. Hide it immediately after construction below.
+            .with_visible(if cfg!(target_os = "linux") {
+                true
+            } else {
+                visible
+            })
             .build(event_loop_window)
             .map_err(|_| BuildError::GuiSessionUnavailable)?;
 
         let proxy = self.proxy.clone();
         let builder = builder
-            .with_visible(visible)
+            .with_visible(if cfg!(target_os = "linux") {
+                true
+            } else {
+                visible
+            })
             .with_html(TEST_PAGE_HTML)
             .with_clipboard(false)
             .with_autoplay(false)
@@ -484,6 +495,13 @@ impl DesktopHost {
         let webview = builder
             .build(&window)
             .map_err(|_| BuildError::WebViewUnavailable)?;
+        #[cfg(target_os = "linux")]
+        if !visible {
+            webview
+                .set_visible(false)
+                .map_err(|_| BuildError::WebViewUnavailable)?;
+            window.set_visible(false);
+        }
         Ok((window, webview))
     }
 }
