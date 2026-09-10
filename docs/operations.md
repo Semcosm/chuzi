@@ -20,6 +20,11 @@
 4. 浏览器运行时及其资源限制。
 5. 日志轮转、健康检查和任务租约回收。
 
+Matrix 适配器当前只提供可注入的 transport-neutral Sender 边界；生产部署还
+需要在后续阶段选择 Matrix SDK、access token Secret 和连接/同步策略。通知
+outbox 保存在同一 bbolt 数据库，发送 worker 必须使用稳定 event ID 并在网络
+失败后保留记录。
+
 阶段二的默认存储拓扑是单节点纯 Go bbolt。一个数据目录只能由一个服务
 实例拥有；该文件锁不提供跨主机多实例一致性。服务启动时会运行可重复的
 schema 迁移并拒绝未知版本。多实例部署必须在单独的 CR 中选择外部数据
@@ -65,5 +70,6 @@ Windows runner 使用对应的 `*.ps1` 脚本。构建产物必须包含 Go 服�
 
 - 部署前运行 `scripts/validate_policy_manifest.sh`。
 - 定期检查悬挂任务、过期凭证、Profile 磁盘占用和 Matrix 发送失败数。
+- 定期检查 Matrix outbox 的待发送数量、过期 claim 和按分类统计的发送失败。
 - 备份状态数据库前确认凭证密文与密钥分离保存；撤销后的凭据密文已擦除且不可恢复。
 - 发布遵循 UGS 的版本和变更记录规则。

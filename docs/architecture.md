@@ -24,7 +24,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 ## 建议目录树
 
 以下是目标目录。当前已实现 `internal/account` 的纯领域核心、
-`internal/protocol` 协议边界，以及阶段二的配置、存储和迁移边界；其他
+`internal/protocol` 协议边界，以及阶段二的配置、存储和迁移边界；Matrix
+适配和观测边界已在 `internal/matrix`、`internal/observability` 创建，其他
 运行时目录随着路线图推进再创建。
 
 ```text
@@ -69,6 +70,18 @@ Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码
 ## 关键边界
 
 浏览器模块不能直接决定对外业务状态；它只能报告运行事实，由账号状态机根据事件和持久化数据完成状态转换。Matrix 模块不能直接操作凭证，只能提交请求和消费脱敏后的领域事件。
+
+## Matrix 适配与通知契约
+
+`internal/matrix` 只接收已抽取的 Matrix event 字段，先检查房间/用户白名单，
+再解析固定命令并调用 Request Service。请求创建时绑定通知房间，普通用户的
+`status`/`cancel` 只能访问同一房间；管理员跨房间访问必须由策略显式授予。
+适配器和 notifier 都只记录分类错误与脱敏标识，不能把命令正文、凭证、房间
+原始 ID 或内部堆栈写入观测事件。
+
+状态事件由 Store 在同一事务写入 `matrix_notifications` outbox。Notifier 使用
+短期 claim、稳定 event ID 和可注入 Sender 进行发送；网络失败不会删除记录，
+重试或服务重启会重新使用同一 event ID。当前边界不实现生产 Matrix 网络客户端。
 
 ## Session Runner 生命周期契约
 

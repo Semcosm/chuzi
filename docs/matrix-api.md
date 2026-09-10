@@ -25,3 +25,15 @@ time=2026-09-06T12:00:00+08:00
 ```
 
 Matrix 连接断开时，事件写入待发送队列；恢复后按事件 ID 去重发送。敏感信息只通过受控的管理界面或安全人工流程处理，不通过公共房间广播。
+
+## 当前实现边界
+
+`internal/matrix` 当前是 transport-neutral 适配器。它通过显式房间/用户白名单
+调用 Request Service，并使用事件 ID 派生稳定的 request/reply ID；普通用户只能
+访问请求创建时绑定的房间，管理员角色可按策略跨房间查询。`request`、`status`
+和 `cancel` 的回复只包含脱敏账号标识、request ID、状态和错误分类。
+
+状态通知由 bbolt 的 `matrix_notifications` outbox 驱动。每个 domain event 在
+状态事务内只生成一条记录，Notifier claim 后调用注入的 `Sender`，发送参数包含
+稳定 event ID；失败会按退避重试，重启可回收过期 claim。仓库不包含生产 Matrix
+SDK、access token 或网络连接实现，fake Sender 集成测试不访问外部服务。

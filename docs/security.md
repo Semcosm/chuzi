@@ -7,6 +7,11 @@
 - 支持凭证轮换、撤销和审计；删除账号前先撤销关联会话。
 - 日志、错误堆栈、截图和 Matrix 消息均需脱敏。
 
+Matrix command/notification 边界只允许固定命令和显式白名单房间/用户。账号在
+回复和通知中使用稳定 hash 标签；状态消息不包含凭证、Cookie、页面内容、房间
+原始 ID、操作者或内部错误文本。观测事件只保存操作、结果、request ID、hash
+资源标签和分类错误。
+
 当前 Credential Store 使用 AES-GCM，附加数据绑定 `account_id`、凭证版本和
 `key_id`，因此跨账号、跨版本或跨密钥替换会认证失败。bbolt `credentials`
 桶只保存密文和元数据，`credential_audits` 桶只保存操作、操作者、版本、key ID

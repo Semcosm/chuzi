@@ -41,6 +41,7 @@ func TestApplyIsRepeatableAndRecordsVersion(t *testing.T) {
 			QueueBucket,
 			CredentialsBucket,
 			CredentialAuditsBucket,
+			MatrixNotificationsBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				t.Errorf("bucket %q is missing", name)
@@ -49,6 +50,55 @@ func TestApplyIsRepeatableAndRecordsVersion(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyUpgradesVersionThreeWithMatrixNotificationsBucket(t *testing.T) {
+	db, err := bbolt.Open(filepath.Join(t.TempDir(), "schema-v3.db"), 0o600, &bbolt.Options{Timeout: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Update(func(tx *bbolt.Tx) error {
+		meta, err := tx.CreateBucket([]byte(MetaBucket))
+		if err != nil {
+			return err
+		}
+		if err := writeVersion(meta, 3); err != nil {
+			return err
+		}
+		for _, name := range []string{
+			AccountsBucket,
+			RequestsBucket,
+			RequestIdempotencyBucket,
+			AuditsBucket,
+			EventsBucket,
+			LeasesBucket,
+			QueueBucket,
+			CredentialsBucket,
+			CredentialAuditsBucket,
+		} {
+			if _, err := tx.CreateBucket([]byte(name)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(db); err != nil {
+		t.Fatal(err)
+	}
+	if version, err := Version(db); err != nil || version != CurrentVersion {
+		t.Fatalf("upgraded version = %d, %v", version, err)
+	}
+	if err := db.View(func(tx *bbolt.Tx) error {
+		if tx.Bucket([]byte(MatrixNotificationsBucket)) == nil {
+			return fmt.Errorf("matrix notification bucket missing after v3 upgrade")
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

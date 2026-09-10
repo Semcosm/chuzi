@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CurrentVersion uint64 = 3
+	CurrentVersion uint64 = 4
 
 	MetaBucket               = "meta"
 	AccountsBucket           = "accounts"
@@ -26,6 +26,7 @@ const (
 	QueueBucket              = "queue"
 	CredentialsBucket        = "credentials"
 	CredentialAuditsBucket   = "credential_audits"
+	MatrixNotificationsBucket = "matrix_notifications"
 	VersionKey               = "version"
 )
 
@@ -70,6 +71,10 @@ func Apply(db *bbolt.DB) error {
 				if err := createVersionThree(tx); err != nil {
 					return err
 				}
+			case 4:
+				if err := createVersionFour(tx); err != nil {
+					return err
+				}
 			default:
 				return fmt.Errorf("%w: migration %d", ErrUnsupportedVersion, version+1)
 			}
@@ -94,6 +99,13 @@ func createVersionThree(tx *bbolt.Tx) error {
 		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 			return fmt.Errorf("create %s bucket: %w", name, err)
 		}
+	}
+	return nil
+}
+
+func createVersionFour(tx *bbolt.Tx) error {
+	if _, err := tx.CreateBucketIfNotExists([]byte(MatrixNotificationsBucket)); err != nil {
+		return fmt.Errorf("create %s bucket: %w", MatrixNotificationsBucket, err)
 	}
 	return nil
 }
