@@ -5,13 +5,13 @@ Head or Range: 3308750ec6e66a6433839c43bcb0ca31b9b6f06a..fe91a203f97424012a8bc3d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: chore(ci): run Linux ARM64 builds on a native runner
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: fe91a203f97424012a8bc3debb39f4b5fcbb40d7
-Head OID: fe91a203f97424012a8bc3debb39f4b5fcbb40d7
-Integrated Result: pending
+Base OID: 819b7df879075227d51060ea8bef685b303cbe65
+Head OID: 819b7df879075227d51060ea8bef685b303cbe65
+Integrated Result: main@819b7df879075227d51060ea8bef685b303cbe65
 
 ## Summary
 
@@ -33,12 +33,15 @@ introducing platform-specific WebView or other native dependencies.
 ## Test Evidence
 
 Local `scripts/test_build_contract.sh`,
-`scripts/validate_repository_shape.sh`, and `git diff --check` pass. The
-workflow adds runtime assertions for `uname -m=aarch64`, Node.js
-`process.arch=arm64`, and `go env GOARCH=arm64`; the authoritative build,
-Go/Node tests, and packaging evidence must come from the GitHub Actions run on
-the new runner. The change does not add a browser binary, WebView dependency,
-or real-account test.
+`scripts/validate_repository_shape.sh`, `scripts/validate_cr_record.sh`, and
+`git diff --check` pass. PR #29 passed `ugs-validate` and the aggregate
+`chuzi-build` run `34432714222`; its Linux ARM64 job passed the explicit
+`uname -m=aarch64`, Node.js `process.arch=arm64`, and Go `GOARCH=arm64`
+assertions, plus Go/Node tests and packaging. The acceptance PR #30 passed
+`ugs-validate` run `34434591926` and `chuzi-build` run `34434591930`; the
+post-merge main checks passed as `ugs-validate` run `34434694051` and
+`chuzi-build` run `34434694058`. The change does not add a browser binary,
+WebView dependency, or real-account test.
 
 ## Risk
 
