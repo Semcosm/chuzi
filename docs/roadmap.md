@@ -129,11 +129,36 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
 
 ### 阶段七：真实浏览器运行时
 
-状态：规划中，必须单独建立风险边界。
+状态：规划中，拆分为独立 CR；CR-0014-A 只建立 Rust helper 和协议边界，
+不提前宣称真实 WebView 或 headless 能力完成。
 
-在 Worker 协议和 Session Runner 稳定后，再引入 Playwright、Chromium 或
-其他浏览器运行时。需要分别记录浏览器版本、下载方式、原生依赖、资源
-限制、Profile 保留策略和每个平台的运行覆盖。
+#### 7A：Rust runtime boundary（CR-0014-A）
+
+建立不依赖平台 GUI 库的 Rust helper、capability negotiation、运行时错误
+分类和本地测试页协议路径。它继续由 Go Session Runner 以独立进程管理；Node
+Worker 保留为 fake/deferred 生命周期替身。完成标准是协议兼容、Profile 参数
+边界、取消/关闭和单元测试可重复，不能把 deferred backend 报告为浏览器成功。
+
+#### 7B：Windows/macOS desktop WebView（CR-0014-B）
+
+使用 Wry 的平台后端，Windows 10/11 检测 WebView2 Runtime，macOS 首批覆盖
+11+ Apple Silicon 的 WKWebView。visible/hidden 模式都必须验证 GUI session、
+主线程和事件循环；测试只使用本地测试页。
+
+#### 7C：Linux Ubuntu WebKitGTK（CR-0014-C）
+
+首批只承诺 Ubuntu 24.04 LTS amd64/arm64、WebKitGTK 4.1 和 X11。Wayland、
+Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩展。原生
+`ubuntu-24.04-arm` 构建不能替代真实 ARM64 图形 smoke test。
+
+#### 7D：真正 headless backend（CR-0014-D）
+
+独立实现控制部署环境已安装 Chromium/Edge 的 CDP/WebDriver 后端，不打包完整
+Chromium，不把桌面隐藏 WebView 作为 headless，也不假设 Safari/WKWebView
+可 headless。平台覆盖、浏览器版本、端口和进程隔离另行定义。
+
+所有 7B-7D 变更都必须记录浏览器/运行时版本、下载或安装来源、原生依赖、
+资源限制、Profile 保留策略和每个平台的构建与运行覆盖。
 
 完成标准：
 

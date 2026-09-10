@@ -16,7 +16,7 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 - **Request Service**：创建请求、幂等检查、权限校验和结果查询。
 - **Queue/Scheduler**：按全局、账号和服务限制分配并发，处理超时与重试。
 - **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
-- **Browser Worker**：运行在独立 Node.js 进程中，负责浏览器自动化适配；不能直接决定账号业务状态。
+- **Browser Worker**：运行在独立进程中，负责浏览器自动化适配；不能直接决定账号业务状态。当前 Node.js Worker 是协议和生命周期测试替身；真实运行时由独立 Rust helper 承载。
 - **State Store**：持久化账号、请求、状态转换和审计信息。
 - **Credential Store**：提供加密凭证的读写，不向业务层暴露不必要的明文。
 - **Status Notifier**：将领域事件转换为 Matrix 可读消息。
@@ -32,7 +32,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 .
 ├── cmd/                         # 可执行程序入口
 │   └── service/
-├── browser-worker/              # Node.js Worker 协议与浏览器适配边界
+├── browser-worker/              # Node.js Worker 协议与生命周期测试替身
+├── browser-runtime/             # Rust 运行时 helper；桌面 WebView/headless 后端边界
 ├── internal/
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
@@ -63,9 +64,36 @@ GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
 - `linux-arm64`
 - `darwin-arm64`
 
-Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js 和协议 smoke test 在 ARM64 主机执行；当前仍没有真实浏览器或 WebView 运行覆盖。引入 WebView、Playwright、Chromium 或其他原生依赖前，必须增加对应架构的运行 smoke test 和变更记录。
+Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布。Rust helper 先作为独立的协议边界验证，尚未进入发布产物；Wry 原生依赖在后续平台 CR 中按目标分别引入。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js 和协议 smoke test 在 ARM64 主机执行；当前仍没有真实浏览器或 WebView 运行覆盖。引入 WebView、CDP/WebDriver、Chromium 或其他原生依赖前，必须增加对应架构的运行 smoke test 和变更记录。
 
 控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
+
+## 真实 WebView 与 headless 边界
+
+Rust helper 继续通过现有 Go Worker 的版本化 JSON Lines 边界运行，不使用
+Go/Rust FFI。helper 内部的运行时接口只返回 capability 和脱敏运行事实，业务
+状态、租约、重试和 Profile 路径仍由 Go 控制面决定。
+
+桌面 WebView 后端计划使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
+WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 WebView
+创建和页面操作 API，不是一个跨平台 headless 浏览器。隐藏窗口仍需要有效的
+用户图形会话、主线程和事件循环。
+
+真正的 headless 后端单独建模，优先控制部署环境已安装的 Chromium/Edge（CDP
+或 WebDriver），不由 Wry、WebKitGTK 或 WKWebView 假设提供。该后端不会打包
+完整 Chromium，也不会把桌面隐藏窗口标记为 headless。
+
+首批平台基线如下：
+
+| 后端 | 平台基线 | 首批承诺 | 当前状态 |
+| --- | --- | --- | --- |
+| Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式 | CR-0014-B 规划中 |
+| Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop | CR-0014-B 规划中 |
+| Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；首期 X11 | CR-0014-C 规划中 |
+| Headless browser | 部署环境提供 Chromium/Edge | CDP/WebDriver 独立后端 | CR-0014-D 规划中 |
+
+CR-0014-A 只建立 Rust helper、capability/error 契约和本地协议测试页路径，
+不宣称任何真实 WebView 或无显示环境能力已经接入。
 
 ## 关键边界
 
@@ -93,8 +121,9 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 返回脱敏的 transient runtime fact。
 
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
-仅提供协议和 deferred-browser failure/synthetic lifecycle 模式，真实浏览器
-运行时必须在后续独立变更中引入并验证。
+仅提供协议和 deferred-browser failure/synthetic lifecycle 模式，Rust helper
+提供同一协议的独立进程边界；Wry 和 headless backend 必须在后续平台 CR 中
+显式启用并验证。
 
 ## Credential Store 生命周期契约
 

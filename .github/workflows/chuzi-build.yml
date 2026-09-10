@@ -48,6 +48,7 @@ jobs:
           go version
           node --version
           npm --version
+          cargo --version
 
       - name: Verify native Linux ARM64 runner
         if: matrix.target == 'linux-arm64'
@@ -78,6 +79,8 @@ jobs:
         run: |
           go test ./...
           npm --prefix browser-worker test
+          cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
+          cargo test --locked --manifest-path browser-runtime/Cargo.toml
           go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
 
       - name: Package Windows artifact

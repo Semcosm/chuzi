@@ -33,6 +33,25 @@ Matrix command/notification 边界只允许固定命令和显式白名单房间/
 
 本项目支持“每线程独立会话标识”和正常的浏览器配置隔离；不把伪造设备信息、规避风控或绕过验证码作为需求。
 
+## 浏览器运行时边界
+
+Rust runtime helper 通过独立进程和版本化 JSON Lines 与 Go 控制面通信。它只能
+使用 Go 传入的服务派生 Profile 和受限 session 参数，不能把请求输入解释为
+任意文件路径，也不能直接读取 Credential Store 或写入账号状态。
+
+桌面 WebView 的 visible/hidden 模式都依赖操作系统图形会话；隐藏窗口不是
+headless 安全边界。真正 headless 后端必须单独审查已安装 Chromium/Edge 的
+可执行文件、CDP/WebDriver 端口、Profile 权限、网络范围和进程隔离。
+
+首个真实 WebView vertical slice 只允许本地测试页、显式导航、有限 JS 执行和
+固定结果读取。不得在 CI 或 smoke test 中注入真实凭证、Cookie、生产 URL、
+截图或下载内容。页面内容、脚本错误、Cookie、请求头和运行时堆栈不得进入日志、
+Matrix 消息或 metadata-only 审计。
+
+平台运行时缺失（WebView2、GTK/WebKitGTK、图形会话）必须 fail closed，并映射
+为分类 runtime/configuration fact；不能自动下载未知浏览器、回退到系统任意
+可执行文件，或借助 CAPTCHA、风控和反检测技术改变第三方服务行为。
+
 ## 权限与审计
 
 Matrix 用户/房间采用白名单或角色授权。管理命令（添加账号、读取状态、取消任务、轮换凭证）必须记录审计事件。默认拒绝跨账号查询，服务端校验请求者权限而不是信任客户端字段。
