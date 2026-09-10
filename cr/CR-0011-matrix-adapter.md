@@ -1,16 +1,16 @@
 # CR-0011: implement authorized Matrix adapter and durable status notifications
 
 Base: main
-Head or Range: pending
+Head or Range: 3a9f03f915db5b9bf8cae67c3d98ab34f7be9e28..44c142e12449d47d511bd0290bcbd21528a58d54
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(matrix): add authorized command adapter and durable notifications
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 3a9f03f915db5b9bf8cae67c3d98ab34f7be9e28
-Head OID: 3a9f03f915db5b9bf8cae67c3d98ab34f7be9e28
+Base OID: 44c142e12449d47d511bd0290bcbd21528a58d54
+Head OID: 44c142e12449d47d511bd0290bcbd21528a58d54
 Integrated Result: pending
 
 ## Summary
@@ -39,11 +39,11 @@ room-scoped status/cancel access, administrator cross-room access, duplicate
 Matrix event idempotency, stable reply/request IDs, transactional notification
 creation, schema v3-to-v4 migration, restart recovery, claim ownership and
 expiry, classified failure rendering, disconnect retry, event-ID delivery
-deduplication, and redacted observability events. CI must run `gofmt`,
-`go test ./...`, `go test -race ./...`, `go vet ./...`, repository validators,
-and the four-target build/self-test matrix. The local restricted shell may not
-have Go or Node toolchains, so remote CI remains authoritative for application
-tests and builds.
+deduplication, and redacted observability events. PR #23 passed `ugs-validate`
+run `34420687016` and aggregate `chuzi-build` run `34420686993`, including Go
+tests, Node tests, schema migration coverage, and all four target builds. The
+local restricted shell has no Go or Node toolchains, so remote CI remains
+authoritative for application tests and builds.
 
 ## Risk
 
