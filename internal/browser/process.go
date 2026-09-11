@@ -248,7 +248,8 @@ func (w *processWorker) Run(ctx context.Context) (WorkerResult, error) {
 		return message.Type == protocol.SessionStarted ||
 			message.Type == protocol.SessionFailure ||
 			message.Type == protocol.SessionCancelled
-	}); err != nil {
+	})
+	if err != nil {
 		return WorkerResult{}, err
 	}
 	if started.Type == protocol.SessionFailure {
