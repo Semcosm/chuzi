@@ -45,6 +45,7 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 │   └── service/
 ├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
 ├── browser-runtime/             # Rust helper；deferred/Wry 桌面 WebView
+├── cmd/launcher/                # UI-neutral 最小启动器入口
 ├── internal/
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
@@ -55,7 +56,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 │   ├── matrix/                  # Matrix 适配器与事件格式化
 │   ├── store/                   # 已实现：数据库与事务封装
 │   ├── config/                  # 已实现：配置加载与路径派生
-│   └── observability/           # 已实现：脱敏观测事件边界；日志/指标接入规划中
+│   ├── observability/           # 已实现：脱敏观测事件边界；日志/指标接入规划中
+│   └── launcher/                # release manifest、校验和组件/插件管理接口
 ├── migrations/                  # 已实现：bbolt schema 迁移
 ├── tests/                       # 规划中：集成测试与端到端测试（当前不存在）
 ├── configs/                     # 脱敏示例配置
@@ -79,6 +81,19 @@ GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
 Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布，Rust `chuzi-browser-runtime` helper 也随四个目标的 stage 发布。Windows/macOS stage 启用 Wry 桌面 WebView feature；Ubuntu 24.04 Linux stage 也启用 Wry 的 WebKitGTK feature，并在 X11 与 Wayland 图形会话中运行本地测试页。Windows/macOS helper 已由对应原生 CI 构建并打包；Linux amd64/arm64 还通过了 X11/Wayland smoke。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js、WebKitGTK 编译和 smoke test 在 ARM64 主机执行；这仍不等同于无显示环境 headless 浏览器。上述 helper 构建和 smoke 测试不改变 `cmd/service` 默认仍使用 Node deferred Worker、且 Rust 只能显式选择的事实。
 
 控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
+
+## 组件化发布与启动器边界
+
+Nightly release 的最小安装单元是启动器。发布 stage 同时携带服务、Node
+browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成独立组件归档，
+让安装者可以按需安装而不必把所有运行资源放入本地安装。完整包的
+`release-manifest.json` 记录每个组件的版本、依赖、入口和资源 SHA-256/大小；组件
+包本身不是信任凭证，插件仍须通过未来的签名/权限策略审查。
+
+`internal/launcher` 是 transport-neutral 的后台接口：`UpdateChecker` 负责查询更新，
+`ResourceVerifier`/`ResourceRepairer` 负责完整性检查与修复，`ComponentManager` 和
+`PluginManager` 负责安装状态，`SettingsStore` 保存启动行为设置。接口不假设 UI
+技术、网络协议或插件进程模型；当前 `cmd/launcher` 只实现 manifest 读取和只读校验。
 
 ## 真实 WebView 与 headless 边界
 

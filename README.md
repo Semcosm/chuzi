@@ -31,6 +31,11 @@ amd64/arm64 的 WebKitGTK Wry desktop backend 还在 X11 与 Wayland 图形会�
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
+当前首个 release 流程是 nightly：GitHub Actions 每日自动构建并上传四个平台的限期
+artifact，不创建 Git tag 或 GitHub Release。每个目标包含最小启动器、服务、浏览器
+Worker、桌面运行时以及 `release-manifest.json`；同时提供按组件拆分的归档，安装者不
+必安装全部运行资源。启动器后台契约位于 `internal/launcher`，UI 暂未定型。
+
 ## 设计原则
 
 - 每个账号使用独立浏览器 Profile，隔离 Cookie、LocalStorage、缓存和会话生命周期。
