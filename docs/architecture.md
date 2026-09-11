@@ -19,8 +19,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 - **Queue/Scheduler**：按全局并发上限和账号级租约分配工作，处理超时与重试；
   服务级限流尚未实现。
 - **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
-- **Browser Worker**：运行在独立进程中，负责浏览器自动化适配；不能直接决定账号业务状态。
-  当前 Node.js Worker 是协议和生命周期测试替身；Rust helper 已提供同一协议的独立
+- **Browser Worker**：运行在独立进程中，负责浏览器运行时和自动化适配边界；不能直接决定账号业务状态。
+  当前 Node.js Worker 提供 deferred 生命周期替身和 headless-CDP runtime adapter；Rust helper 已提供同一协议的独立
   Wry/deferred 实现。原生 CI 对 Windows/macOS 执行 Wry 编译与打包检查，对 Linux
   amd64/arm64 另执行 WebKitGTK 的 X11/Wayland smoke；`cmd/service` 默认使用 Node
   backend，Rust helper 通过显式 `-browser-backend rust` 选择。
@@ -43,8 +43,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 .
 ├── cmd/                         # 可执行程序入口
 │   └── service/
-├── browser-worker/              # Node.js Worker 协议与生命周期测试替身
-├── browser-runtime/             # Rust helper；当前 deferred/Wry 桌面 WebView，headless 规划中
+├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
+├── browser-runtime/             # Rust helper；deferred/Wry 桌面 WebView
 ├── internal/
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
@@ -92,8 +92,12 @@ WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 We
 用户图形会话、主线程和事件循环。
 
 真正的 headless 后端单独建模，优先控制部署环境已安装的 Chromium/Edge（CDP
-或 WebDriver），不由 Wry、WebKitGTK 或 WKWebView 假设提供。该后端不会打包
-完整 Chromium，也不会把桌面隐藏窗口标记为 headless。
+或 WebDriver），不由 Wry、WebKitGTK 或 WKWebView 假设提供。当前 Node
+headless-CDP worker 已实现外部命令启动、动态 loopback CDP 端口、`/json/version`
+发现与 endpoint 校验、服务派生 Profile 传递以及取消/关闭回收。该后端不会打包
+完整 Chromium，也不会把桌面隐藏窗口标记为 headless；发现 CDP 后如果没有上层
+自动化操作模型，worker 会报告 `configuration/automation_not_configured`，不会
+报告业务成功。
 
 首批平台基线如下：
 
@@ -102,7 +106,7 @@ WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 We
 | Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式；服务派生 WebContext | 已集成；原生编译/打包检查通过（CR-0014-B） |
 | Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop；当前 ephemeral store | 已集成；原生编译/打包检查通过（CR-0014-B） |
 | Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；X11 与 Wayland GUI session | 已集成；原生编译及 X11/Wayland smoke 通过（CR-0014-C） |
-| Headless browser | 部署环境提供 Chromium/Edge | CDP/WebDriver 独立后端 | CR-0014-D 规划中 |
+| Headless browser | 部署环境提供 Chromium/Edge | Node headless-CDP worker；动态 loopback 端口、独立 Profile、CDP discovery 和有界进程回收 | CR-0017 第一增量已集成；业务自动化适配器仍未实现 |
 
 CR-0014-A 建立 Rust helper、capability/error 契约和本地协议测试页路径；
 CR-0014-B 已在 Windows/macOS target-gated 接入真实 Wry WebView，CR-0014-C 已在
@@ -110,7 +114,8 @@ Ubuntu 24.04 target-gated 接入 WebKitGTK，并在 X11/Wayland GUI session 中�
 内嵌本地测试页。CR-0014-B/C 的证据覆盖 helper 的原生构建、打包，以及 Linux
 X11/Wayland smoke 路径；Windows/macOS 的构建证据不表示 GUI 运行时 smoke 已完成，
 也不表示 Go 服务默认选择该 helper；服务入口只有显式选择 Rust backend 时才会
-启动它，真正 headless 仍未接入。
+启动它；headless-CDP worker 已在 CR-0017 第一增量中接入，但业务自动化适配器
+和生产浏览器操作仍未接入。
 
 ## 关键边界
 
@@ -139,12 +144,15 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 返回脱敏的 transient runtime fact。
 
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
-继续提供协议和 deferred-browser failure/synthetic lifecycle 模式，Rust helper
+继续提供协议和 deferred-browser failure/synthetic lifecycle 模式，并提供独立的
+headless-CDP 进程边界；Rust helper
 提供同一协议的独立进程边界；Windows/macOS/Linux 的 Wry feature 已显式启用，
 Linux WebKitGTK 同时支持 X11 与 Wayland GUI session。`ProcessFactory` 会启动
 调用方指定的可执行文件和脚本，或启动不带脚本参数的 helper；`cmd/service` 默认
-仍指定 Node Worker，`-browser-backend rust` 才会选择 Rust helper。headless backend
-需要独立 CR。
+仍指定 Node deferred Worker，`-browser-backend rust` 选择 Rust helper，
+`-browser-backend headless` 选择 Node headless-CDP worker，并通过
+`-headless-browser-command` 指定部署环境已安装的 Chromium/Edge 可执行文件。
+headless worker 的 session handle 只代表已验证的运行时连接，不代表业务操作已完成。
 
 ## Credential Store 生命周期契约
 

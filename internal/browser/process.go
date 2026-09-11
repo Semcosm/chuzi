@@ -36,6 +36,10 @@ type ProcessFactory struct {
 type ProcessConfig struct {
 	Command    string
 	Script     string
+	// ScriptArgs are appended after the standard --stdio argument. They are
+	// restricted to the worker's own startup configuration and are not shell
+	// parsed. Args and ScriptArgs cannot be combined.
+	ScriptArgs []string
 	// Args contains the complete argument list for helpers that do not use a
 	// script entry point, such as the Rust browser runtime. A nil Args value
 	// retains compatibility with Script and invokes <command> <script> --stdio;
@@ -48,7 +52,8 @@ type ProcessConfig struct {
 func NewProcessFactory(config ProcessConfig) (*ProcessFactory, error) {
 	if strings.TrimSpace(config.Command) == "" ||
 		(config.Args == nil && strings.TrimSpace(config.Script) == "") ||
-		(config.Args != nil && strings.TrimSpace(config.Script) != "") {
+		(config.Args != nil && strings.TrimSpace(config.Script) != "") ||
+		(config.Args != nil && len(config.ScriptArgs) != 0) {
 		return nil, ErrInvalidProcessConfig
 	}
 	if config.Stderr == nil {
@@ -57,6 +62,7 @@ func NewProcessFactory(config ProcessConfig) (*ProcessFactory, error) {
 	var args []string
 	if config.Args == nil {
 		args = []string{config.Script, "--stdio"}
+		args = append(args, config.ScriptArgs...)
 	} else {
 		args = make([]string, len(config.Args))
 		copy(args, config.Args)
@@ -238,10 +244,18 @@ func (w *processWorker) Run(ctx context.Context) (WorkerResult, error) {
 	if w.spec.Mode != "" {
 		request.Payload["mode"] = w.spec.Mode
 	}
-	if _, err := w.await(ctx, request, func(message protocol.Envelope) bool {
-		return message.Type == protocol.SessionStarted
+	started, err := w.await(ctx, request, func(message protocol.Envelope) bool {
+		return message.Type == protocol.SessionStarted ||
+			message.Type == protocol.SessionFailure ||
+			message.Type == protocol.SessionCancelled
 	}); err != nil {
 		return WorkerResult{}, err
+	}
+	if started.Type == protocol.SessionFailure {
+		return WorkerResult{Failure: failureClass(started.Payload["failure"])}, nil
+	}
+	if started.Type == protocol.SessionCancelled {
+		return WorkerResult{Failure: account.TransientFailure}, context.Canceled
 	}
 	for {
 		select {

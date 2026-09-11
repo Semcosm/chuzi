@@ -71,7 +71,7 @@ func TestNewWorkerFactoryRejectsUnknownBackend(t *testing.T) {
 }
 
 func TestNewWorkerFactorySupportsConfiguredBackends(t *testing.T) {
-	for _, backend := range []string{backendNode, backendRust} {
+	for _, backend := range []string{backendNode, backendHeadless, backendRust} {
 		t.Run(backend, func(t *testing.T) {
 			options := testServiceOptions()
 			options.backend = backend
@@ -83,6 +83,28 @@ func TestNewWorkerFactorySupportsConfiguredBackends(t *testing.T) {
 				t.Fatalf("newWorkerFactory(%q) returned nil factory", backend)
 			}
 		})
+	}
+}
+
+func TestHeadlessWorkerFactoryUsesExplicitBrowserCommand(t *testing.T) {
+	options := testServiceOptions()
+	options.backend = backendHeadless
+	options.headlessBrowserCommand = "/usr/bin/chromium"
+	factory, err := newWorkerFactory(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if factory == nil {
+		t.Fatal("headless factory is nil")
+	}
+}
+
+func TestHeadlessBackendRejectsEmptyBrowserCommand(t *testing.T) {
+	options := testServiceOptions()
+	options.backend = backendHeadless
+	options.headlessBrowserCommand = "  "
+	if _, err := newWorkerFactory(options); !errors.Is(err, errInvalidOptions) {
+		t.Fatalf("newWorkerFactory() error = %v, want errInvalidOptions", err)
 	}
 }
 

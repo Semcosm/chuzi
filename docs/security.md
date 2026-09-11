@@ -45,8 +45,12 @@ CI 构建；Linux amd64/arm64 还通过 X11/Wayland WebKitGTK smoke，Windows/ma
 Node deferred Worker；Rust helper 只有通过 `-browser-backend rust` 才会被显式选择。
 
 桌面 WebView 的 visible/hidden 模式都依赖操作系统图形会话；隐藏窗口不是
-headless 安全边界。真正 headless 后端必须单独审查已安装 Chromium/Edge 的
-可执行文件、CDP/WebDriver 端口、Profile 权限、网络范围和进程隔离。
+headless 安全边界。真正 headless 后端必须单独审查已安装 Chromium/Edge 的可执行文件、CDP 端口、
+Profile 权限、网络范围和进程隔离。当前 headless worker 只接受服务配置的浏览器
+命令，固定使用 `--headless=new`、loopback CDP 地址、动态端口和服务派生
+`--user-data-dir`，通过 `/json/version` 严格校验 loopback `ws:` endpoint；命令参数
+不经过 shell，浏览器 stdout/stderr 不进入协议。worker 只返回 `session_handle`、
+主机/端口元数据和分类运行事实，不接触 Credential Store。
 
 首个真实 WebView vertical slice 只允许本地测试页、显式导航、有限 JS 执行和
 固定结果读取。不得在 CI 或 smoke test 中注入真实凭证、Cookie、生产 URL、
@@ -59,7 +63,8 @@ WebKitGTK backend 也使用服务派生的 `profile_dir` 和独立 WebContext；
 macOS 持久 Profile 或凭证会话已经可用。Linux X11/Wayland backend 仍需要 GUI
 session，不创建真正 headless 浏览器。
 
-平台运行时缺失（WebView2、GTK/WebKitGTK、图形会话）必须 fail closed，并映射
+headless 浏览器缺失、CDP endpoint 超时/非法、Profile 路径不合法和进程崩溃必须
+fail closed，并映射为分类 runtime/configuration fact。平台运行时缺失（WebView2、GTK/WebKitGTK、图形会话）也必须 fail closed，并映射
 为分类 runtime/configuration fact；不能自动下载未知浏览器、回退到系统任意
 可执行文件，或借助 CAPTCHA、风控和反检测技术改变第三方服务行为。
 

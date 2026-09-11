@@ -42,9 +42,13 @@ WebView2 缺失、GTK/WebKitGTK 缺失、图形会话缺失和权限错误必须
 分类错误，不能伪装成普通账号失败。Profile 由服务生成并保存在受限数据目录，
 运行时不接受请求方提供的文件系统路径。
 
-真正 headless 后端另行依赖部署环境已安装的 Chromium/Edge，通过 CDP 或
-WebDriver 控制；它不复用桌面 WebView 的“隐藏窗口”模式，也不承诺 Safari 或
-WKWebView 可 headless。
+真正 headless 后端依赖部署环境已安装的 Chromium/Edge，通过独立 Node worker 的
+CDP 连接控制；它不复用桌面 WebView 的“隐藏窗口”模式，也不承诺 Safari 或
+WKWebView 可 headless。`-browser-backend headless` 选择该 worker，
+`-headless-browser-command` 必须是部署方明确配置的单一可执行文件路径/名称，参数
+由 worker 固定生成且不经过 shell。worker 使用动态 loopback 端口和服务派生的
+`--user-data-dir`，只轮询 `/json/version`；发现成功后仍须由上层自动化适配器执行
+页面操作，当前 worker 不报告业务成功。
 
 当前 Rust helper 已在发布 stage 中构建；Linux amd64/arm64 的原生 CI 已在
 X11/Wayland 下执行 WebKitGTK smoke，Windows/macOS 则执行 Wry 编译与打包检查，
@@ -102,22 +106,24 @@ scripts/package.sh <target> <version>
 Windows runner 使用对应的 `*.ps1` 脚本。构建产物必须包含 Go 服务、Worker 文件、
 `chuzi-browser-runtime` 和 `build-manifest.json`，并生成 SHA256 校验文件。
 发布脚本生成的 manifest 将 `browserRuntime` 标为 `wry-desktop`；源码中的
-无 feature Rust helper 和 Node Worker 才使用 `deferred`。CI smoke test 只使用
+无 feature Rust helper 和 Node Worker 才使用 `deferred`，Node 包同时携带
+`headless-cdp` 适配器。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 
-当前 Node Worker 继续提供协议和生命周期替身；四个目标的 Rust/Wry helper
+当前 Node Worker 继续提供 deferred 协议和生命周期替身，并提供 headless-CDP
+进程边界；四个目标的 Rust/Wry helper
 已接入构建，原生编译由对应 runner 验证。Linux amd64/arm64 在原生 runner 上
 安装 WebKitGTK 4.1，并使用 Xvfb 与 Weston headless compositor 分别覆盖 X11
 和 Wayland 的本地测试页 smoke test；Windows/macOS 没有对应的 GUI 运行时 smoke
-步骤。CDP/WebDriver、浏览器下载或其他原生模块
-必须在单独 CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和
-smoke test 覆盖范围。
+步骤。CDP 的业务操作适配器、WebDriver、浏览器下载或其他原生模块必须在单独
+CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和 smoke test 覆盖范围。
 
 CR-0014-B 合并后，Windows/macOS 发布包携带 Wry helper；CR-0014-C 使 Linux
 发布包也携带 WebKitGTK helper。Windows/macOS/Linux 的运行仍要求对应平台
 WebView2/WKWebView/WebKitGTK 和 GUI session；Wayland smoke 使用 Weston headless
 compositor，不能被误解为真正 headless 浏览器。helper 不会自动替代默认 Node
-backend，只有 `-browser-backend rust` 才会显式组装；真正 headless 仍需 CR-0014-D。
+backend，只有 `-browser-backend rust` 才会显式组装；headless 则通过
+`-browser-backend headless` 显式选择，业务自动化仍待后续 CR。
 
 ## 运维检查
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -43,6 +44,13 @@ func TestNewProcessFactorySupportsScriptAndArgumentListModes(t *testing.T) {
 	if len(scriptFactory.args) != 2 || scriptFactory.args[0] != "worker.mjs" || scriptFactory.args[1] != "--stdio" {
 		t.Fatalf("script process args = %#v", scriptFactory.args)
 	}
+	withArgs, err := NewProcessFactory(ProcessConfig{Command: "node", Script: "worker.mjs", ScriptArgs: []string{"--browser-command", "chromium"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := withArgs.args, []string{"worker.mjs", "--stdio", "--browser-command", "chromium"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("script process args = %#v, want %#v", got, want)
+	}
 
 	runtimeFactory, err := NewProcessFactory(ProcessConfig{Command: "chuzi-browser-runtime", Args: []string{}})
 	if err != nil {
@@ -54,6 +62,9 @@ func TestNewProcessFactorySupportsScriptAndArgumentListModes(t *testing.T) {
 
 	if _, err := NewProcessFactory(ProcessConfig{Command: "node", Script: "worker.mjs", Args: []string{}}); !errors.Is(err, ErrInvalidProcessConfig) {
 		t.Fatalf("mixed process arguments error = %v, want ErrInvalidProcessConfig", err)
+	}
+	if _, err := NewProcessFactory(ProcessConfig{Command: "node", Script: "worker.mjs", Args: []string{}, ScriptArgs: []string{"--x"}}); !errors.Is(err, ErrInvalidProcessConfig) {
+		t.Fatalf("mixed argument modes error = %v, want ErrInvalidProcessConfig", err)
 	}
 }
 
