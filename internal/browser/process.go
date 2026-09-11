@@ -21,11 +21,11 @@ var (
 	ErrWorkerNotRunning     = errors.New("browser: worker is not running")
 )
 
-// ProcessFactory starts the versioned Node.js worker over JSON Lines. It is a
+// ProcessFactory starts a versioned JSON Lines worker process. It is a
 // protocol adapter only; it does not download or launch a browser runtime.
 type ProcessFactory struct {
 	command    string
-	script     string
+	args       []string
 	stderr     io.Writer
 	workerMode string
 }
@@ -36,20 +36,34 @@ type ProcessFactory struct {
 type ProcessConfig struct {
 	Command    string
 	Script     string
+	// Args contains the complete argument list for helpers that do not use a
+	// script entry point, such as the Rust browser runtime. A nil Args value
+	// retains compatibility with Script and invokes <command> <script> --stdio;
+	// a non-nil empty slice intentionally invokes the command with no args.
+	Args       []string
 	Stderr     io.Writer
 	WorkerMode string
 }
 
 func NewProcessFactory(config ProcessConfig) (*ProcessFactory, error) {
-	if strings.TrimSpace(config.Command) == "" || strings.TrimSpace(config.Script) == "" {
+	if strings.TrimSpace(config.Command) == "" ||
+		(config.Args == nil && strings.TrimSpace(config.Script) == "") ||
+		(config.Args != nil && strings.TrimSpace(config.Script) != "") {
 		return nil, ErrInvalidProcessConfig
 	}
 	if config.Stderr == nil {
 		config.Stderr = io.Discard
 	}
+	var args []string
+	if config.Args == nil {
+		args = []string{config.Script, "--stdio"}
+	} else {
+		args = make([]string, len(config.Args))
+		copy(args, config.Args)
+	}
 	return &ProcessFactory{
 		command:    config.Command,
-		script:     config.Script,
+		args:       args,
 		stderr:     config.Stderr,
 		workerMode: config.WorkerMode,
 	}, nil
@@ -65,7 +79,7 @@ func (f *ProcessFactory) Start(ctx context.Context, spec WorkerSpec) (Worker, er
 	if f.workerMode != "" {
 		spec.Mode = f.workerMode
 	}
-	command := exec.Command(f.command, f.script, "--stdio")
+	command := exec.Command(f.command, f.args...)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("create worker stdout pipe: %w", err)

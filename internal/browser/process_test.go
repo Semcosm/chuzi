@@ -35,6 +35,28 @@ func newProcessTestFactory(t *testing.T, mode string) (*ProcessFactory, *Profile
 	return factory, profiles
 }
 
+func TestNewProcessFactorySupportsScriptAndArgumentListModes(t *testing.T) {
+	scriptFactory, err := NewProcessFactory(ProcessConfig{Command: "node", Script: "worker.mjs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scriptFactory.args) != 2 || scriptFactory.args[0] != "worker.mjs" || scriptFactory.args[1] != "--stdio" {
+		t.Fatalf("script process args = %#v", scriptFactory.args)
+	}
+
+	runtimeFactory, err := NewProcessFactory(ProcessConfig{Command: "chuzi-browser-runtime", Args: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtimeFactory.args == nil || len(runtimeFactory.args) != 0 {
+		t.Fatalf("runtime process args = %#v, want explicit empty argument list", runtimeFactory.args)
+	}
+
+	if _, err := NewProcessFactory(ProcessConfig{Command: "node", Script: "worker.mjs", Args: []string{}}); !errors.Is(err, ErrInvalidProcessConfig) {
+		t.Fatalf("mixed process arguments error = %v, want ErrInvalidProcessConfig", err)
+	}
+}
+
 func processTestSpec(t *testing.T, profiles *Profiles) WorkerSpec {
 	t.Helper()
 	profile, err := profiles.Prepare("account-1")

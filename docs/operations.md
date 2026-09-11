@@ -2,23 +2,29 @@
 
 ## 配置分类
 
-- 普通配置：服务地址、并发上限、超时、重试策略。
-- Secret 配置：数据库密码、Matrix access token、凭证加密主密钥（不进入普通配置文件）。
+- 规划中的普通配置：服务地址、并发上限、超时、重试策略。
+  当前 `internal/config.Config` 只实现 `data_dir`，其余字段尚未存在。
+- 规划中的 Secret 配置：数据库密码、Matrix access token、凭证加密主密钥（不进入普通配置文件）。
 - 运行数据：数据库、浏览器 Profile、审计日志和待发送事件。
 
-普通配置提供 `configs/example.*` 示例，当前阶段使用
-`configs/example.json` 的 `data_dir` 字段。数据库路径固定由服务派生为
+普通配置示例位于 `configs/example.json`，当前仅包含 `data_dir` 字段。数据库
+路径固定由存储层派生为
 `<data_dir>/chuzi.db`，备份目录固定为 `<data_dir>/backups/`；请求和账号
-输入不能覆盖这些路径。Secret 不进入 Git。生产环境至少限制服务账户、
-数据库和 Profile 目录的文件权限。
+输入不能覆盖这些路径。`cmd/service` 普通启动默认加载该文件，也可通过 `-config`
+指定路径；Store、Profile 和队列都从同一 `data_dir` 派生。Secret 不进入 Git。
+生产环境至少限制服务账户、数据库和 Profile 目录的文件权限。
 
-## 最低运行要求
+## 目标部署的最低运行要求
 
 1. 可持久化的状态数据库。
 2. 可持久化且受限的凭证/会话存储。
 3. Matrix Bot 用户和授权房间。
 4. 与运行模式匹配的浏览器运行时及其资源限制。
 5. 日志轮转、健康检查和任务租约回收。
+
+以上是生产组装完成后的目标要求。当前 `cmd/service` 已运行持久化 Store、Queue
+和 Session Runner 调度循环；默认 Node backend 仍是 deferred/合成 Worker。它还
+不连接生产 Matrix 网络客户端、凭证入口、通知发送 worker 或真实账号自动化。
 
 ## 浏览器运行时前置条件
 
@@ -30,7 +36,7 @@ WebView 都需要图形会话和平台事件循环；hidden 只是不向用户�
 | --- | --- | --- |
 | Windows 10/11 | WebView2 Evergreen 或 Fixed Version Runtime | 启动前检测 Runtime；Windows 10 不能假定系统已有；不依赖普通 Edge 浏览器本体 |
 | macOS 11+ Apple Silicon | 系统 WKWebView | 需要 GUI session/run loop；首批只覆盖 Apple Silicon 原生构建 |
-| Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1 | 需要 GTK/WebKitGTK 4.1 开发与运行库和有效 GUI session；首期覆盖 X11 与 Wayland，其他发行版另行验证 |
+| Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1 | 构建需要 GTK/WebKitGTK 4.1 开发包，运行需要对应运行库和有效 GUI session；首期覆盖 X11 与 Wayland，其他发行版另行验证 |
 
 WebView2 缺失、GTK/WebKitGTK 缺失、图形会话缺失和权限错误必须返回稳定的
 分类错误，不能伪装成普通账号失败。Profile 由服务生成并保存在受限数据目录，
@@ -40,15 +46,21 @@ WebView2 缺失、GTK/WebKitGTK 缺失、图形会话缺失和权限错误必须
 WebDriver 控制；它不复用桌面 WebView 的“隐藏窗口”模式，也不承诺 Safari 或
 WKWebView 可 headless。
 
+当前 Rust helper 已在发布 stage 中构建；Linux amd64/arm64 的原生 CI 已在
+X11/Wayland 下执行 WebKitGTK smoke，Windows/macOS 则执行 Wry 编译与打包检查，
+尚未完成 Windows/macOS 的 GUI 运行时 smoke。服务入口仍未将 helper 设为默认
+Worker；部署时不能仅凭 stage 中存在 helper 就推断服务具备真实浏览器自动化能力。
+
 Matrix 适配器当前只提供可注入的 transport-neutral Sender 边界；生产部署还
 需要在后续阶段选择 Matrix SDK、access token Secret 和连接/同步策略。通知
 outbox 保存在同一 bbolt 数据库，发送 worker 必须使用稳定 event ID 并在网络
 失败后保留记录。
 
 阶段二的默认存储拓扑是单节点纯 Go bbolt。一个数据目录只能由一个服务
-实例拥有；该文件锁不提供跨主机多实例一致性。服务启动时会运行可重复的
-schema 迁移并拒绝未知版本。多实例部署必须在单独的 CR 中选择外部数据
-库和并发/迁移策略。
+实例拥有；该文件锁不提供跨主机多实例一致性。服务入口组装 `Store` 后，
+`Store.Open` 会运行可重复的 schema 迁移并拒绝未知版本；调度器在每次循环开始
+时恢复过期租约并处理截止时间。多实例部署必须在单独的 CR 中选择外部数据库
+和并发/迁移策略。
 
 Rust helper 在构建阶段由 stable Rust/Cargo 编译，发布包携带编译后的
 `chuzi-browser-runtime`，部署主机不需要安装 Rust。Windows/macOS/Linux 构建启用
@@ -59,7 +71,7 @@ Wry、GTK/WebKitGTK 和 headless 浏览器的运行库要求仍按各自平台�
 `CHUZI_CREDENTIAL_KEY`；生产环境进行轮换时，Secret 管理器必须在切换期间
 同时提供旧 key 和当前 key。密钥缺失时服务应安全失败，不能创建明文回退。
 
-配置加载示例：
+配置/存储库层加载示例（`cmd/service` 普通启动使用同一顺序）：
 
 ```go
 cfg, err := config.Load("configs/example.json")
@@ -89,20 +101,23 @@ scripts/package.sh <target> <version>
 
 Windows runner 使用对应的 `*.ps1` 脚本。构建产物必须包含 Go 服务、Worker 文件、
 `chuzi-browser-runtime` 和 `build-manifest.json`，并生成 SHA256 校验文件。
-manifest 标明 `browserRuntime` 为 `wry-desktop` 或 `deferred`。CI smoke test 只
-使用本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
+发布脚本生成的 manifest 将 `browserRuntime` 标为 `wry-desktop`；源码中的
+无 feature Rust helper 和 Node Worker 才使用 `deferred`。CI smoke test 只使用
+本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 
 当前 Node Worker 继续提供协议和生命周期替身；四个目标的 Rust/Wry helper
 已接入构建，原生编译由对应 runner 验证。Linux amd64/arm64 在原生 runner 上
 安装 WebKitGTK 4.1，并使用 Xvfb 与 Weston headless compositor 分别覆盖 X11
-和 Wayland 的本地测试页 smoke test。CDP/WebDriver、浏览器下载或其他原生模块
+和 Wayland 的本地测试页 smoke test；Windows/macOS 没有对应的 GUI 运行时 smoke
+步骤。CDP/WebDriver、浏览器下载或其他原生模块
 必须在单独 CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和
 smoke test 覆盖范围。
 
 CR-0014-B 合并后，Windows/macOS 发布包携带 Wry helper；CR-0014-C 使 Linux
 发布包也携带 WebKitGTK helper。Windows/macOS/Linux 的运行仍要求对应平台
 WebView2/WKWebView/WebKitGTK 和 GUI session；Wayland smoke 使用 Weston headless
-compositor，不能被误解为真正 headless 浏览器。真正 headless 仍需 CR-0014-D。
+compositor，不能被误解为真正 headless 浏览器。helper 不会自动替代默认 Node
+backend，只有 `-browser-backend rust` 才会显式组装；真正 headless 仍需 CR-0014-D。
 
 ## 运维检查
 
