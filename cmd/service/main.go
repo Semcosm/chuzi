@@ -24,8 +24,9 @@ import (
 var version = "dev"
 
 const (
-	backendNode = "node"
-	backendRust = "rust"
+	backendNode     = "node"
+	backendHeadless = "headless"
+	backendRust     = "rust"
 )
 
 var (
@@ -39,6 +40,7 @@ type serviceOptions struct {
 	backend         string
 	workerCommand   string
 	workerScript    string
+	headlessBrowserCommand string
 	browserRuntime  string
 	owner           string
 	pollInterval    time.Duration
@@ -66,6 +68,7 @@ func defaultServiceOptions() serviceOptions {
 		backend:         backendNode,
 		workerCommand:   "node",
 		workerScript:    "browser-worker/src/worker.mjs",
+		headlessBrowserCommand: "chromium",
 		browserRuntime:  "chuzi-browser-runtime",
 		owner:           "service",
 		pollInterval:    500 * time.Millisecond,
@@ -102,8 +105,18 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 			Args:    []string{},
 			Stderr:  os.Stderr,
 		})
+	case backendHeadless:
+		if strings.TrimSpace(options.headlessBrowserCommand) == "" {
+			return nil, fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
+		}
+		return browser.NewProcessFactory(browser.ProcessConfig{
+			Command: options.workerCommand,
+			Script:  "browser-worker/src/headless.mjs",
+			ScriptArgs: []string{"--browser-command", options.headlessBrowserCommand},
+			Stderr:  os.Stderr,
+		})
 	default:
-		return nil, fmt.Errorf("%w: %q (want %s or %s)", errInvalidBackend, options.backend, backendNode, backendRust)
+		return nil, fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, options.backend, backendNode, backendHeadless, backendRust)
 	}
 }
 
@@ -115,8 +128,11 @@ func (o serviceOptions) validate() error {
 		(o.heartbeat > 0 && o.heartbeat >= o.leaseTTL) {
 		return fmt.Errorf("%w: invalid service timing or concurrency settings", errInvalidOptions)
 	}
-	if o.backend != backendNode && o.backend != backendRust {
-		return fmt.Errorf("%w: %q (want %s or %s)", errInvalidBackend, o.backend, backendNode, backendRust)
+	if o.backend != backendNode && o.backend != backendHeadless && o.backend != backendRust {
+		return fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, o.backend, backendNode, backendHeadless, backendRust)
+	}
+	if o.backend == backendHeadless && strings.TrimSpace(o.headlessBrowserCommand) == "" {
+		return fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
 	}
 	return nil
 }
@@ -280,9 +296,10 @@ func run(ctx context.Context, options serviceOptions) error {
 func main() {
 	options := defaultServiceOptions()
 	flag.StringVar(&options.configPath, "config", "configs/example.json", "JSON deployment configuration")
-	flag.StringVar(&options.backend, "browser-backend", backendNode, "browser worker backend (node or rust)")
+	flag.StringVar(&options.backend, "browser-backend", backendNode, "browser worker backend (node, headless, or rust)")
 	flag.StringVar(&options.workerCommand, "worker-command", "node", "Node browser worker executable")
 	flag.StringVar(&options.workerScript, "worker-script", "browser-worker/src/worker.mjs", "Node browser worker script")
+	flag.StringVar(&options.headlessBrowserCommand, "headless-browser-command", "chromium", "externally installed Chromium/Edge executable for the headless backend")
 	flag.StringVar(&options.browserRuntime, "browser-runtime", "chuzi-browser-runtime", "Rust browser runtime executable")
 	flag.StringVar(&options.owner, "owner", "service", "scheduler and audit owner")
 	flag.DurationVar(&options.pollInterval, "poll-interval", 500*time.Millisecond, "queue polling interval")

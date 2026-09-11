@@ -135,7 +135,7 @@ CR-0014-B、CR-0014-C 已集成。Windows/macOS 已由对应原生 CI 完成 Wry
 feature 编译与 helper 打包检查；Ubuntu 24.04 Linux amd64/arm64 已由原生 CI
 执行 WebKitGTK 的 X11/Wayland 本地测试页 smoke。Windows/macOS 的 CI 证据不等于
 GUI 运行时 smoke。这些 helper 不会自动替代服务默认路径；`cmd/service` 只有显式
-选择 Rust backend 才会启动 helper，真正 headless 仍未完成。
+选择 Rust backend 才会启动 helper；CR-0017 已接入 headless-CDP 的运行时发现和进程边界，业务自动化仍未完成。
 
 #### 7A：Rust runtime boundary（CR-0014-A）
 
@@ -161,11 +161,14 @@ Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩�
 `ubuntu-24.04-arm` 构建与 Xvfb/Weston smoke test 已通过，证明了 ARM64 图形
 路径；这仍不能替代所有部署环境的运行验证。
 
-#### 7D：真正 headless backend（CR-0014-D）
+#### 7D：真正 headless backend（CR-0017，第一增量）
 
-独立实现控制部署环境已安装 Chromium/Edge 的 CDP/WebDriver 后端，不打包完整
-Chromium，不把桌面隐藏 WebView 作为 headless，也不假设 Safari/WKWebView
-可 headless。平台覆盖、浏览器版本、端口和进程隔离另行定义。
+第一增量已实现 Node headless-CDP worker：它控制部署环境已安装的 Chromium/Edge，
+不打包完整 Chromium；使用动态 loopback CDP 端口、服务派生 Profile 和固定安全参数，
+轮询 `/json/version` 并校验 endpoint，覆盖启动失败、发现超时、非法 endpoint、取消、
+关闭和崩溃回收。它不把桌面隐藏 WebView 作为 headless，也不假设 Safari/WKWebView
+可 headless。当前没有业务操作描述，因此发现 CDP 后只返回 session handle；业务自动化
+适配器、WebDriver、浏览器版本策略、资源限制和四平台运行证据仍需后续独立 CR。
 
 所有 7B-7D 变更都必须记录浏览器/运行时版本、下载或安装来源、原生依赖、
 资源限制、Profile 保留策略和每个平台的构建与运行覆盖。

@@ -25,8 +25,9 @@ Rust `browser-runtime` 已建立独立协议 helper。Windows 10/11、macOS 11+
 Apple Silicon 的 Wry 桌面 WebView 已由对应原生 CI 构建并打包；Ubuntu 24.04
 amd64/arm64 的 WebKitGTK Wry desktop backend 还在 X11 与 Wayland 图形会话中
 通过了内嵌本地测试页 smoke。helper 只能通过显式 backend 选择接入 Go 服务；默认
-仍使用 Node deferred Worker。真正 headless backend 尚未接入，也不把桌面隐藏窗口
-当作无显示环境浏览器。
+仍使用 Node deferred Worker。显式 `-browser-backend headless` 可选择使用部署环境
+提供的 Chromium/Edge；该 backend 只完成 CDP endpoint discovery 和进程/Profile
+生命周期，不包含业务自动化操作，也不把桌面隐藏窗口当作无显示环境浏览器。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
@@ -37,6 +38,7 @@ GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`li
 - 凭证默认加密存储，日志和 Matrix 消息不得泄露明文凭证。
 - 调度、会话运行和外部通知解耦，支持失败重试、超时回收和服务重启恢复。
 - 桌面 WebView 与真正 headless 使用不同 backend；隐藏窗口不被当作无显示环境。
+- headless backend 不下载或打包 Chromium/Edge，只使用显式配置的外部可执行文件。
 - 只自动化用户有权使用的账号与服务，不实现凭证窃取、访问控制绕过或攻击能力。
 
 ## 文档入口
