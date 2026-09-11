@@ -5,13 +5,13 @@ Head or Range: 7bd1999d15f7e10254cee0271f3df1d2295d3d9a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add external Chromium headless CDP boundary
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 0ae0f9a26be5277d5223e0e00c101d38dc48258d
-Head OID: 0ae0f9a26be5277d5223e0e00c101d38dc48258d
-Integrated Result: pending
+Base OID: 54ff8ebf521ebfe7d1934941de9edbe551c75e56
+Head OID: 54ff8ebf521ebfe7d1934941de9edbe551c75e56
+Integrated Result: main@54ff8ebf521ebfe7d1934941de9edbe551c75e56
 
 ## Summary
 
@@ -71,8 +71,15 @@ Windows test step waiting; commit `891dad8a1770fd70d200c92bde3a34012f352784`
 fixed the cross-platform startup and test discovery boundary. Rebase-ff
 integration produced main commit `0ae0f9a26be5277d5223e0e00c101d38dc48258d`.
 Its post-merge checks passed as `ugs-validate` run `34595109091` and aggregate
-`chuzi-build` run `34595109096`, with all four target jobs passing. This closure
-records that verified main result as the integrated outcome.
+`chuzi-build` run `34595109096`, with all four target jobs passing. Acceptance PR
+#45 then recorded the verified implementation result and passed
+`ugs-validate` run `34596117035` and aggregate `chuzi-build` run
+`34596117020`; all four target jobs passed again. Its rebase-ff integration
+produced main commit `54ff8ebf521ebfe7d1934941de9edbe551c75e56`, carrying the
+required governance trailers. The post-merge checks for that acceptance commit
+passed as `ugs-validate` run `34596575453` and aggregate `chuzi-build` run
+`34596575456`, with all four target jobs passing. This closure records that
+verified main result as the integrated outcome.
 
 ## Risk
 
