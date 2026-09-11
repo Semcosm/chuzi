@@ -1,7 +1,7 @@
 # CR-0016: assemble the persistent service runtime entry point
 
 Base: main
-Head or Range: 09a7a6237a97ca6c6e87727cffa4948684f0ad1b..12d5f0bc43acb47b759848bb0fc7003e1057a4c6
+Head or Range: 09a7a6237a97ca6c6e87727cffa4948684f0ad1b..86837faf593c3f3932efd46eaa4a75658677ce66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): assemble persistent scheduler runtime
