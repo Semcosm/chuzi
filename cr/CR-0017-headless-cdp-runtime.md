@@ -5,12 +5,12 @@ Head or Range: 7bd1999d15f7e10254cee0271f3df1d2295d3d9a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add external Chromium headless CDP boundary
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 7bd1999d15f7e10254cee0271f3df1d2295d3d9a
-Head OID: 7bd1999d15f7e10254cee0271f3df1d2295d3d9a
+Base OID: 0ae0f9a26be5277d5223e0e00c101d38dc48258d
+Head OID: 0ae0f9a26be5277d5223e0e00c101d38dc48258d
 Integrated Result: pending
 
 ## Summary
@@ -44,7 +44,11 @@ loopback endpoint discovery, endpoint validation, discovery timeout, Profile
 argument isolation, cancellation, shutdown, and relative-path rejection. Added
 Go ProcessFactory coverage for safe script argument forwarding and service
 backend selection/rejection. Updated the build contract to require the
-headless worker and capability marker.
+headless worker and capability marker. The follow-up fix uses an explicit
+non-shell browser argument list so the fake `.mjs` browser starts on Windows,
+and limits Node test discovery to the actual worker contract so the fixture is
+not executed as a standalone test. Test cleanup now terminates failed child
+workers.
 
 Local evidence:
 
@@ -58,6 +62,17 @@ The local environment does not provide Go, Node.js, npm, or Linux GTK/WebKitGTK
 development packages; Go/Node tests and the four-target native build remain
 GitHub Actions evidence. No live browser, account, credential, production URL,
 or Matrix token is used.
+
+Implementation PR #44 passed `ugs-validate` run `34592489904` and aggregate
+`chuzi-build` run `34592490010`; Windows amd64, Linux amd64, native Linux arm64,
+and Darwin arm64 all passed, including Linux X11 and Wayland smoke tests.
+The initial run was cancelled after the fixture discovery failure left the
+Windows test step waiting; commit `891dad8a1770fd70d200c92bde3a34012f352784`
+fixed the cross-platform startup and test discovery boundary. Rebase-ff
+integration produced main commit `0ae0f9a26be5277d5223e0e00c101d38dc48258d`.
+Its post-merge checks passed as `ugs-validate` run `34595109091` and aggregate
+`chuzi-build` run `34595109096`, with all four target jobs passing. This closure
+records that verified main result as the integrated outcome.
 
 ## Risk
 
