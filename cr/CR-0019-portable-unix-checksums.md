@@ -1,16 +1,16 @@
 # CR-0019: make Unix artifact checksums portable
 
 Base: main
-Head or Range: 292f5a86a52229bff88baf1777fc12ff48bfc1d9
+Head or Range: c3e33eba60d1943df1a4d64bc16f1988aba1173b..18f9136c251e8acc9184f201baf2513bb2b45854
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(build): write portable Unix artifact checksums
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 2c84b88c86f98ded1349027c0159ec1aa40e6901
-Head OID: 292f5a86a52229bff88baf1777fc12ff48bfc1d9
+Base OID: 18f9136c251e8acc9184f201baf2513bb2b45854
+Head OID: 18f9136c251e8acc9184f201baf2513bb2b45854
 Integrated Result: pending
 
 ## Summary
@@ -30,9 +30,10 @@ writes portable basenames; Unix packaging should provide the same contract.
 
 The package script is syntax-checked locally and a temporary stage produces all
 component archives whose sidecars pass `sha256sum -c` after packaging. The build
-contract validator and `git diff --check` pass locally. The GitHub Actions matrix
-uses `sha256sum -c` on Linux and `shasum -a 256 -c` on macOS, and verifies the
-Unix checksum step on Linux amd64, Linux arm64, and macOS arm64.
+contract validator and `git diff --check` pass locally. PR #50 passed
+`ugs-validate`, the aggregate build, and every Windows, Linux amd64, Linux
+arm64, and macOS arm64 build. The GitHub Actions matrix uses `sha256sum -c` on
+Linux and `shasum -a 256 -c` on macOS.
 
 ## Risk
 
