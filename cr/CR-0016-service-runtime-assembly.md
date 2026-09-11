@@ -5,12 +5,12 @@ Head or Range: 09a7a6237a97ca6c6e87727cffa4948684f0ad1b..86837faf593c3f3932efd46
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): assemble persistent scheduler runtime
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 09a7a6237a97ca6c6e87727cffa4948684f0ad1b
-Head OID: 86837faf593c3f3932efd46eaa4a75658677ce66
+Base OID: e3f95abd778a3c6c29588b8716afbd27e920b376
+Head OID: e3f95abd778a3c6c29588b8716afbd27e920b376
 Integrated Result: pending
 
 ## Summary
@@ -60,6 +60,15 @@ The local environment does not provide Go, gofmt, Node.js, or npm; therefore
 Actions toolchain. The desktop-feature Cargo test was attempted but is blocked
 locally by missing GTK/WebKitGTK/libsoup development packages; native target CI
 remains authoritative for that feature and Linux X11/Wayland smoke coverage.
+
+Implementation PR #41 passed `ugs-validate` run `34573451087` and aggregate
+`chuzi-build` run `34573451099`; Windows amd64, Linux amd64, native Linux
+arm64, and Darwin arm64 all passed. Its rebase-ff integration produced the
+actual implementation commit `e3f95abd778a3c6c29588b8716afbd27e920b376` on
+main. The immediate post-merge four-target build run `34574329822` also
+passed. The corresponding post-merge UGS run identified that the pending CR
+still named the pre-rebase topic SHA; this acceptance record binds the CR to
+the reachable main implementation commit before final integration closure.
 
 ## Risk
 
