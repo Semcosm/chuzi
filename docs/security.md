@@ -4,7 +4,8 @@
 
 - 数据库存储密文，密钥通过部署环境的 Secret 管理，不与代码或示例配置一起提交。
 - 业务代码通过最小权限接口获取短时使用句柄；默认不返回明文凭证。
-- 支持凭证轮换、撤销和审计；删除账号前先撤销关联会话。
+- 支持凭证轮换、撤销和审计；撤销时可先调用可选的会话失效边界。账号删除
+  流程当前尚未实现。
 - 日志、错误堆栈、截图和 Matrix 消息均需脱敏。
 
 Matrix command/notification 边界只允许固定命令和显式白名单房间/用户。账号在
@@ -29,15 +30,19 @@ Matrix command/notification 边界只允许固定命令和显式白名单房间/
 
 ## 浏览器 Profile
 
-每个账号绑定独立 Profile 目录和互斥租约，避免 Cookie、缓存和 LocalStorage 串号。Profile 路径只能由服务生成，禁止把任意用户输入直接拼接为文件路径。任务结束后按保留策略清理临时数据，持久会话数据应加密或置于受限目录。
+每个账号绑定独立 Profile 目录和互斥租约，避免 Cookie、缓存和 LocalStorage 串号。Profile 路径只能由服务生成，禁止把任意用户输入直接拼接为文件路径。当前 `Profiles.Prepare/Acquire` 会保留目录供后续尝试复用，清理和保留策略仍是显式的后续运维层；持久会话数据应加密或置于受限目录。
 
 本项目支持“每线程独立会话标识”和正常的浏览器配置隔离；不把伪造设备信息、规避风控或绕过验证码作为需求。
 
 ## 浏览器运行时边界
 
-Rust runtime helper 通过独立进程和版本化 JSON Lines 与 Go 控制面通信。它只能
-使用 Go 传入的服务派生 Profile 和受限 session 参数，不能把请求输入解释为
-任意文件路径，也不能直接读取 Credential Store 或写入账号状态。
+Rust runtime helper 通过独立进程和版本化 JSON Lines 与 Go 控制面通信。Go
+Profile 边界只向它传入服务派生的路径和受限 session 参数；helper 对路径再做
+绝对路径、无父目录跳转的协议校验，不能把请求输入解释为任意文件路径，也不能
+直接读取 Credential Store 或写入账号状态。helper 已由原生
+CI 构建；Linux amd64/arm64 还通过 X11/Wayland WebKitGTK smoke，Windows/macOS
+目前只有 Wry 编译与打包检查，尚未完成 GUI 运行时 smoke。`cmd/service` 默认仍启动
+Node deferred Worker；Rust helper 只有通过 `-browser-backend rust` 才会被显式选择。
 
 桌面 WebView 的 visible/hidden 模式都依赖操作系统图形会话；隐藏窗口不是
 headless 安全边界。真正 headless 后端必须单独审查已安装 Chromium/Edge 的
@@ -50,9 +55,9 @@ Matrix 消息或 metadata-only 审计。
 
 当前 Windows backend 将服务派生的 `profile_dir` 交给独立 WebContext；Linux
 WebKitGTK backend 也使用服务派生的 `profile_dir` 和独立 WebContext；macOS
-11+ backend 使用 WKWebView ephemeral store，因此本 CR 不宣称 macOS 持久 Profile
-或凭证会话已经可用。Linux X11/Wayland backend 仍需要 GUI session，不创建真正
-headless 浏览器。
+11+ backend 使用 WKWebView ephemeral store，因此当前 helper slice 不宣称
+macOS 持久 Profile 或凭证会话已经可用。Linux X11/Wayland backend 仍需要 GUI
+session，不创建真正 headless 浏览器。
 
 平台运行时缺失（WebView2、GTK/WebKitGTK、图形会话）必须 fail closed，并映射
 为分类 runtime/configuration fact；不能自动下载未知浏览器、回退到系统任意
@@ -60,4 +65,8 @@ headless 浏览器。
 
 ## 权限与审计
 
-Matrix 用户/房间采用白名单或角色授权。管理命令（添加账号、读取状态、取消任务、轮换凭证）必须记录审计事件。默认拒绝跨账号查询，服务端校验请求者权限而不是信任客户端字段。
+Matrix 用户/房间采用白名单或角色授权。目标部署中的管理命令（添加账号、读取
+状态、取消任务、轮换凭证）必须记录审计事件。当前适配器只实现 `request`、
+`status`、`cancel` 和 `help`，并通过注入的脱敏 `observability.Sink` 记录操作；
+账号管理、凭证轮换命令及生产审计接入尚未组装。默认拒绝跨账号查询，服务端
+校验请求者权限而不是信任客户端字段。

@@ -12,42 +12,54 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
        └──── Status Notifier <──── State Store ┴──── Credential Store
 ```
 
-- **Matrix Adapter**：验证房间/用户权限，解析命令，发送状态事件。
-- **Request Service**：创建请求、幂等检查、权限校验和结果查询。
-- **Queue/Scheduler**：按全局、账号和服务限制分配并发，处理超时与重试。
+- **Matrix Adapter**：验证房间/用户权限，解析固定命令，生成安全回复并调用
+  Request Service。
+- **Request Service**：创建请求、幂等检查、结果查询和取消；房间/用户授权由
+  外部适配器执行。
+- **Queue/Scheduler**：按全局并发上限和账号级租约分配工作，处理超时与重试；
+  服务级限流尚未实现。
 - **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
-- **Browser Worker**：运行在独立进程中，负责浏览器自动化适配；不能直接决定账号业务状态。当前 Node.js Worker 是协议和生命周期测试替身；真实运行时由独立 Rust helper 承载。
-- **State Store**：持久化账号、请求、状态转换和审计信息。
+- **Browser Worker**：运行在独立进程中，负责浏览器自动化适配；不能直接决定账号业务状态。
+  当前 Node.js Worker 是协议和生命周期测试替身；Rust helper 已提供同一协议的独立
+  Wry/deferred 实现。原生 CI 对 Windows/macOS 执行 Wry 编译与打包检查，对 Linux
+  amd64/arm64 另执行 WebKitGTK 的 X11/Wayland smoke；`cmd/service` 默认使用 Node
+  backend，Rust helper 通过显式 `-browser-backend rust` 选择。
+- **State Store**：持久化账号、请求、状态转换、租约、队列索引、审计、凭证
+  密文和 Matrix 通知 outbox。
 - **Credential Store**：提供加密凭证的读写，不向业务层暴露不必要的明文。
-- **Status Notifier**：将领域事件转换为 Matrix 可读消息。
+- **Status Notifier**：将领域事件转换为 Matrix 可读消息；当前通过注入的
+  Sender 交付，不包含 Matrix 网络客户端。
 
 ## 建议目录树
 
-以下是目标目录。当前已实现 `internal/account` 的纯领域核心、
-`internal/protocol` 协议边界，以及阶段二的配置、存储和迁移边界；Matrix
-适配和观测边界已在 `internal/matrix`、`internal/observability` 创建，其他
-运行时目录随着路线图推进再创建。
+以下是目标目录。`internal/account`、`internal/protocol`、`internal/browser`、
+`internal/request`、`internal/queue`、`internal/credential`、`internal/matrix`、
+`internal/observability`、`internal/store`、`internal/config` 和 `migrations/`
+均已有实现与测试；`tests/`、`deploy/` 当前尚不存在，仍是规划目录。`cmd/service`
+已把配置、Store、Request Service、Session Runner 和 Queue Scheduler 组装成持久化
+调度入口；Matrix 网络客户端、凭证入口、通知 worker 和部署编排仍未接入。
 
 ```text
 .
 ├── cmd/                         # 可执行程序入口
 │   └── service/
 ├── browser-worker/              # Node.js Worker 协议与生命周期测试替身
-├── browser-runtime/             # Rust 运行时 helper；桌面 WebView/headless 后端边界
+├── browser-runtime/             # Rust helper；当前 deferred/Wry 桌面 WebView，headless 规划中
 ├── internal/
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
 │   ├── browser/                 # Profile 生命周期与会话运行器
+│   ├── request/                 # 已实现：请求创建、查询和取消服务
 │   ├── credential/              # 凭证加密、轮换和访问接口
 │   ├── queue/                   # 排队、租约、超时和重试
 │   ├── matrix/                  # Matrix 适配器与事件格式化
 │   ├── store/                   # 已实现：数据库与事务封装
 │   ├── config/                  # 已实现：配置加载与路径派生
-│   └── observability/           # 日志、指标、审计
+│   └── observability/           # 已实现：脱敏观测事件边界；日志/指标接入规划中
 ├── migrations/                  # 已实现：bbolt schema 迁移
-├── tests/                       # 集成测试与端到端测试
+├── tests/                       # 规划中：集成测试与端到端测试（当前不存在）
 ├── configs/                     # 脱敏示例配置
-├── deploy/                      # 容器、服务编排和运行时配置
+├── deploy/                      # 规划中：容器、服务编排和运行时配置（当前不存在）
 ├── docs/                        # 项目文档与 ADR
 ├── scripts/                     # 开发和治理脚本
 ├── cr/                          # UGS 变更记录
@@ -64,7 +76,7 @@ GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
 - `linux-arm64`
 - `darwin-arm64`
 
-Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布，Rust `chuzi-browser-runtime` helper 也随四个目标的 stage 发布。Windows/macOS stage 启用 Wry 桌面 WebView feature；Ubuntu 24.04 Linux stage 也启用 Wry 的 WebKitGTK feature，并在 X11 与 Wayland 图形会话中运行本地测试页。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js、WebKitGTK 编译和 X11/Wayland smoke test 在 ARM64 主机执行；这仍不等同于无显示环境 headless 浏览器。
+Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布，Rust `chuzi-browser-runtime` helper 也随四个目标的 stage 发布。Windows/macOS stage 启用 Wry 桌面 WebView feature；Ubuntu 24.04 Linux stage 也启用 Wry 的 WebKitGTK feature，并在 X11 与 Wayland 图形会话中运行本地测试页。Windows/macOS helper 已由对应原生 CI 构建并打包；Linux amd64/arm64 还通过了 X11/Wayland smoke。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js、WebKitGTK 编译和 smoke test 在 ARM64 主机执行；这仍不等同于无显示环境 headless 浏览器。上述 helper 构建和 smoke 测试不改变 `cmd/service` 默认仍使用 Node deferred Worker、且 Rust 只能显式选择的事实。
 
 控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
 
@@ -87,15 +99,18 @@ WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 We
 
 | 后端 | 平台基线 | 首批承诺 | 当前状态 |
 | --- | --- | --- | --- |
-| Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式；服务派生 WebContext | CR-0014-B 本分支已实现，待原生 CI 验证 |
-| Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop；当前 ephemeral store | CR-0014-B 本分支已实现，待原生 CI 验证 |
-| Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；X11 与 Wayland GUI session | CR-0014-C 本分支实现，待 CI 验证 |
+| Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式；服务派生 WebContext | 已集成；原生编译/打包检查通过（CR-0014-B） |
+| Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop；当前 ephemeral store | 已集成；原生编译/打包检查通过（CR-0014-B） |
+| Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；X11 与 Wayland GUI session | 已集成；原生编译及 X11/Wayland smoke 通过（CR-0014-C） |
 | Headless browser | 部署环境提供 Chromium/Edge | CDP/WebDriver 独立后端 | CR-0014-D 规划中 |
 
 CR-0014-A 建立 Rust helper、capability/error 契约和本地协议测试页路径；
-CR-0014-B 在 Windows/macOS target-gated 接入真实 Wry WebView，CR-0014-C 在
+CR-0014-B 已在 Windows/macOS target-gated 接入真实 Wry WebView，CR-0014-C 已在
 Ubuntu 24.04 target-gated 接入 WebKitGTK，并在 X11/Wayland GUI session 中只加载
-内嵌本地测试页。真正 headless 仍未接入。
+内嵌本地测试页。CR-0014-B/C 的证据覆盖 helper 的原生构建、打包，以及 Linux
+X11/Wayland smoke 路径；Windows/macOS 的构建证据不表示 GUI 运行时 smoke 已完成，
+也不表示 Go 服务默认选择该 helper；服务入口只有显式选择 Rust backend 时才会
+启动它，真正 headless 仍未接入。
 
 ## 关键边界
 
@@ -109,13 +124,14 @@ Ubuntu 24.04 target-gated 接入 WebKitGTK，并在 X11/Wayland GUI session 中�
 适配器和 notifier 都只记录分类错误与脱敏标识，不能把命令正文、凭证、房间
 原始 ID 或内部堆栈写入观测事件。
 
-状态事件由 Store 在同一事务写入 `matrix_notifications` outbox。Notifier 使用
-短期 claim、稳定 event ID 和可注入 Sender 进行发送；网络失败不会删除记录，
-重试或服务重启会重新使用同一 event ID。当前边界不实现生产 Matrix 网络客户端。
+状态事件在请求带有通知房间时由 Store 在同一事务至多写入一条
+`matrix_notifications` outbox 记录。Notifier 使用短期 claim、稳定 event ID
+和可注入 Sender 进行发送；网络失败不会删除记录，重试或服务重启会重新使用
+同一 event ID。当前边界不实现生产 Matrix 网络客户端。
 
 ## Session Runner 生命周期契约
 
-Go Session Runner 为每次 queue claim 生成账号级 Profile 目录，并通过版本化
+Go Session Runner 为每次 queue claim 派生并独占账号级 Profile 目录（必要时创建），并通过版本化
 JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 `session_start`，等待 `session_started` 及 `session_succeeded`、
 `session_failed` 或 `session_cancelled`。取消、超时、租约心跳失败和父进程
@@ -125,8 +141,10 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
 继续提供协议和 deferred-browser failure/synthetic lifecycle 模式，Rust helper
 提供同一协议的独立进程边界；Windows/macOS/Linux 的 Wry feature 已显式启用，
-Linux WebKitGTK 同时支持 X11 与 Wayland GUI session，headless backend 需要独立
-CR。
+Linux WebKitGTK 同时支持 X11 与 Wayland GUI session。`ProcessFactory` 会启动
+调用方指定的可执行文件和脚本，或启动不带脚本参数的 helper；`cmd/service` 默认
+仍指定 Node Worker，`-browser-backend rust` 才会选择 Rust helper。headless backend
+需要独立 CR。
 
 ## Credential Store 生命周期契约
 

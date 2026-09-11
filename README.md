@@ -10,10 +10,22 @@
 Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 transport-neutral
 的 Matrix 命令与状态通知边界。服务控制面采用 Go，浏览器 Worker 使用 Node.js；
 真实浏览器自动化、生产 Matrix 传输客户端和部署编排仍按路线图逐步加入。
-当前 Rust browser-runtime 已保留独立协议 helper 边界；Windows 10/11 和
-macOS 11+ Apple Silicon 的 Wry 桌面 WebView vertical slice 已进入构建与发布
-stage，Ubuntu 24.04 amd64/arm64 也使用 WebKitGTK Wry desktop backend，并覆盖
-X11 与 Wayland 图形会话。真正 headless backend 尚未接入，也不把桌面隐藏窗口
+
+`cmd/service` 现在负责加载 `configs/example.json`（也可通过 `-config` 指定），打开
+持久化 bbolt Store，并组装 Request Service、Session Runner 和 Queue Scheduler。
+普通启动只运行持久化调度循环；没有排队请求时保持 idle，收到中断后关闭 Store。
+默认 backend 仍是 Node.js deferred Worker；`-browser-backend rust` 才会显式选择
+Rust helper，路径由 `-browser-runtime` 指定。`-self-test` 继续使用临时目录运行
+一次 Node Worker 协议 smoke test，不代表生产服务入口或真实浏览器自动化。
+
+当前入口还没有接入生产 Matrix 网络客户端、凭证注入/使用、账号管理 API 或通知
+发送 worker，因此它可以恢复和调度已有 Store 中的请求，但不会自行创建账号或请求。
+
+Rust `browser-runtime` 已建立独立协议 helper。Windows 10/11、macOS 11+
+Apple Silicon 的 Wry 桌面 WebView 已由对应原生 CI 构建并打包；Ubuntu 24.04
+amd64/arm64 的 WebKitGTK Wry desktop backend 还在 X11 与 Wayland 图形会话中
+通过了内嵌本地测试页 smoke。helper 只能通过显式 backend 选择接入 Go 服务；默认
+仍使用 Node deferred Worker。真正 headless backend 尚未接入，也不把桌面隐藏窗口
 当作无显示环境浏览器。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。

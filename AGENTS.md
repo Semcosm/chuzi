@@ -2,7 +2,7 @@
 
 ## Current State
 
-This repository is in the cross-platform foundation, domain-core, and storage-foundation stage for the chuzi service. The Go control-service skeleton, Node.js browser-worker protocol boundary, build manifests, contract tests, deterministic account state-machine package, configuration boundary, single-node bbolt store, and schema migrations are present. Queue scheduling, credential storage, real browser automation, Matrix integration, and production packaging are still planned work.
+This repository is in the cross-platform foundation and domain-boundary stage for the chuzi service. The Go control-service entry point now loads deployment configuration, opens the single-node bbolt store, and assembles the request, queue, and session-runner boundaries into a persistent scheduler loop. The Node.js browser-worker protocol boundary, Rust/Wry browser-runtime helper, build manifests, contract tests, deterministic account state-machine package, encrypted credential boundary, and transport-neutral Matrix boundary are also present. The default service backend remains the Node deferred worker; Rust selection is explicit. Real account browser automation, a production Matrix network client, credential ingress/use, and deployment/operations integration remain planned work; the existing build/package scripts are not a complete production deployment workflow.
 
 Read the chuzi project documents before adding implementation code:
 

@@ -18,9 +18,9 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 | 仓库治理 | 已完成 | CR-0001：UGS standard profile、签名和保护分支 |
 | 跨平台构建 | 已完成 | CR-0002：Windows amd64、Linux amd64、Linux arm64、Darwin arm64 |
 | CI 运行时治理 | 已完成 | CR-0003：Node.js 24-compatible Actions 和 Go cache warning 清理 |
-| Go 控制面与 Node Worker | 基础边界已完成 | 版本化 JSON Lines 协议、Worker 生命周期 smoke test |
+| Go 控制面与 Node Worker | 基础边界已完成（持久化调度入口已组装） | 版本化 JSON Lines 协议、Worker 生命周期 smoke test、配置/Store/Queue/Session Runner 入口组装；默认仍使用 Node deferred Worker |
 | 账号领域核心 | 已完成 | CR-0005：纯 Go 状态机、幂等事件、审计、重试策略和租约原语 |
-| 业务运行时 | 边界已完成 | 状态存储、队列、凭证和 Matrix transport-neutral 边界已接入；真实浏览器和生产传输仍未接入 |
+| 业务运行时 | 边界已完成（持久化调度已组装） | 状态存储、队列、凭证和 Matrix transport-neutral 边界已接入并有测试；入口可恢复/调度请求，真实账号浏览器、生产传输和凭证入口仍未接入 |
 
 当前四个平台的构建通过不代表四个平台都具备无显示环境 headless 浏览器覆盖。
 `linux-arm64` 的 Go、Node.js、WebKitGTK 编译和 X11/Wayland smoke test 在 GitHub
@@ -49,8 +49,9 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 状态：已完成（CR-0006，main 集成结果已记录），已确定单节点 bbolt 拓扑。
 
 实现 `internal/config`、`internal/store` 和 `migrations`，持久化账号、
-请求、状态转换、租约和审计记录。存储必须支持原子状态转换、迁移、备份
-和服务重启后的悬挂任务恢复。
+请求、状态转换、租约和审计记录。存储边界支持原子状态转换、迁移、备份
+和服务重启后的悬挂任务恢复；`cmd/service` 已加载配置、打开 Store 并让 Scheduler
+在循环中执行恢复。
 
 当前实现方向是先支持单节点部署，并保持 `CGO_ENABLED=0` 的跨平台构建。
 数据库路径由 `data_dir` 派生为固定文件名，备份路径由服务派生；若目标
@@ -68,9 +69,9 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 
 状态：已完成（CR-0008）。
 
-实现 `internal/queue` 和 Request Service，负责请求幂等、账号级和全局并发
-限制、取消、超时、重试和租约分配。调度器只能提交状态机定义的事件，不能
-自行维护第二套业务状态。
+实现 `internal/queue` 和 Request Service，负责请求幂等、账号级租约和全局并发
+上限、取消、超时、重试和租约分配。服务级限流尚未实现。调度器只能提交状态机
+定义的事件，不能自行维护第二套业务状态。
 
 完成标准：
 
@@ -108,7 +109,7 @@ Playwright/Chromium 下载不属于本阶段。
 - 加密数据与密钥分离保存，密钥缺失或轮换失败会安全失败。
 - 业务调用方无法默认读取长期明文凭证。
 - 日志、错误、审计和通知都有脱敏测试。
-- 账号删除、撤销和会话失效的顺序有明确测试覆盖。
+- 撤销和会话失效的顺序有明确测试覆盖；账号删除流程尚未实现。
 
 ### 阶段六：Matrix 适配器与状态通知
 
@@ -130,8 +131,11 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
 ### 阶段七：真实浏览器运行时
 
 状态：进行中，拆分为独立 CR。CR-0014-A 已完成 Rust helper 和协议边界；
-CR-0014-B 已接入 Windows/macOS 桌面 WebView；CR-0014-C 在本分支接入 Linux
-WebKitGTK 的 X11/Wayland 桌面 WebView，真正 headless 仍未完成。
+CR-0014-B、CR-0014-C 已集成。Windows/macOS 已由对应原生 CI 完成 Wry
+feature 编译与 helper 打包检查；Ubuntu 24.04 Linux amd64/arm64 已由原生 CI
+执行 WebKitGTK 的 X11/Wayland 本地测试页 smoke。Windows/macOS 的 CI 证据不等于
+GUI 运行时 smoke。这些 helper 不会自动替代服务默认路径；`cmd/service` 只有显式
+选择 Rust backend 才会启动 helper，真正 headless 仍未完成。
 
 #### 7A：Rust runtime boundary（CR-0014-A）
 
@@ -145,15 +149,17 @@ Worker 保留为 fake/deferred 生命周期替身。完成标准是协议兼容�
 使用 Wry 的平台后端，Windows 10/11 检测 WebView2 Runtime，macOS 首批覆盖
 11+ Apple Silicon 的 WKWebView。visible/hidden 模式都必须验证 GUI session、
 主线程和事件循环；当前 Windows 使用服务派生 WebContext，macOS 使用 ephemeral
-store；测试只使用内嵌本地测试页。Wry helper 随 Windows/macOS/Linux 发布
-stage；Linux 首批同时覆盖 X11 与 Wayland GUI session。
+store；测试只使用内嵌本地测试页。Wry helper 随四个目标的发布 stage；Linux
+首批同时覆盖 X11 与 Wayland GUI session。helper 的 stage 构建不等于 Go 服务
+默认选择该 backend；服务入口只有显式 backend 选择时才会启动它。当前 Actions 对 Windows/macOS 只执行原生编译与打包
+检查，没有 GUI 会话运行步骤；实际桌面运行仍需目标环境验证。
 
 #### 7C：Linux Ubuntu WebKitGTK（CR-0014-C）
 
 首批只承诺 Ubuntu 24.04 LTS amd64/arm64、WebKitGTK 4.1、X11 和 Wayland。
 Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩展。原生
-`ubuntu-24.04-arm` 构建与 Xvfb/Weston smoke test 证明了 ARM64 图形路径，但
-不能替代所有部署环境的运行验证。
+`ubuntu-24.04-arm` 构建与 Xvfb/Weston smoke test 已通过，证明了 ARM64 图形
+路径；这仍不能替代所有部署环境的运行验证。
 
 #### 7D：真正 headless backend（CR-0014-D）
 
@@ -175,8 +181,10 @@ Chromium，不把桌面隐藏 WebView 作为 headless，也不假设 Safari/WKWe
 
 状态：规划中。
 
-补齐 `configs`、`deploy`、健康检查、日志轮转、指标、审计查询、数据库和
-Profile 备份恢复，以及签名版本发布、校验和、供应链证据和回滚流程。
+补齐围绕现有 `configs/example.json` 的部署校验与运行配置、`deploy`、健康检查、
+日志轮转、指标、审计查询、数据库和 Profile 备份恢复，以及生产级签名版本发布、
+供应链证据和回滚流程。当前构建/打包脚本已经生成四目标产物和 SHA256 校验文件，
+但 `deploy/` 与完整生产发布流程尚不存在。
 
 完成标准：
 
@@ -190,7 +198,7 @@ Profile 备份恢复，以及签名版本发布、校验和、供应链证据和
 ```text
 状态机 -> 状态存储 -> 请求/队列 -> Session Runner -> 真实浏览器
                     \-> Matrix 适配器与通知
-凭证存储 ------------------------------------^ 
+凭证存储 ------------------------------------^
 配置与观测能力贯穿所有阶段
 ```
 
