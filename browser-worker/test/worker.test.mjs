@@ -25,9 +25,25 @@ function readMessage(lines) {
 }
 
 function spawnHeadless(mode = "valid", timeoutMs = "1000") {
-  return spawn(process.execPath, [headlessWorker, "--stdio", "--browser-command", fakeBrowser, "--cdp-timeout-ms", timeoutMs], {
+  return spawn(process.execPath, [
+    headlessWorker,
+    "--stdio",
+    "--browser-command",
+    process.execPath,
+    "--browser-command-arg",
+    fakeBrowser,
+    "--cdp-timeout-ms",
+    timeoutMs,
+  ], {
     stdio: ["pipe", "pipe", "pipe"],
     env: { ...process.env, FAKE_CDP_MODE: mode, NODE_OPTIONS: "", CHUZI_FAKE_BROWSER_SCRIPT: fakeBrowser },
+  });
+}
+
+function cleanupChild(testContext, child, lines) {
+  testContext.after(() => {
+    lines.close();
+    if (child.exitCode === null && child.signalCode === null) child.kill();
   });
 }
 
@@ -127,6 +143,7 @@ test("headless worker discovers a loopback CDP endpoint and exposes a session ha
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  cleanupChild(t, child, lines);
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "hello-1", type: "hello" })}\n`);
   const hello = await readMessage(lines);
   assert.equal(hello.payload.browserRuntime, "headless-cdp");
@@ -151,6 +168,7 @@ test("headless worker fails closed for invalid or unavailable CDP endpoints", as
       t.after(() => rm(profile, { recursive: true, force: true }));
       const child = spawnHeadless(mode, "250");
       const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+      cleanupChild(t, child, lines);
       child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "session-1", type: "session_start", payload: {
         session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile,
       } })}\n`);
@@ -168,6 +186,7 @@ test("headless worker cancellation terminates the external browser", async (t) =
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  cleanupChild(t, child, lines);
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "session-1", type: "session_start", payload: {
     session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "hold",
   } })}\n`);
@@ -178,9 +197,10 @@ test("headless worker cancellation terminates the external browser", async (t) =
   await stopChild(child, lines);
 });
 
-test("headless worker rejects caller-provided relative Profile paths", async () => {
+test("headless worker rejects caller-provided relative Profile paths", async (t) => {
   const child = spawnHeadless("valid");
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  cleanupChild(t, child, lines);
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "session-1", type: "session_start", payload: {
     session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: "./not-allowed",
   } })}\n`);

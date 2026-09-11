@@ -18,7 +18,19 @@ function option(name, fallback) {
   return value === undefined ? fallback : value;
 }
 
+function options(name) {
+  const values = [];
+  for (let index = 0; index < process.argv.length; index += 1) {
+    if (process.argv[index] !== name) continue;
+    const value = process.argv[index + 1];
+    if (value !== undefined) values.push(value);
+    index += 1;
+  }
+  return values;
+}
+
 const browserCommand = option("--browser-command", process.env.CHUZI_HEADLESS_BROWSER_COMMAND || defaults.browserCommand);
+const browserCommandArgs = options("--browser-command-arg");
 const cdpTimeoutMs = boundedNumber(option("--cdp-timeout-ms", defaults.cdpTimeoutMs), defaults.cdpTimeoutMs, 100, 120000);
 const pollIntervalMs = boundedNumber(option("--poll-interval-ms", defaults.pollIntervalMs), defaults.pollIntervalMs, 10, 2000);
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -133,6 +145,7 @@ async function startBrowser(session) {
   if (!validProfileDir(session.profileDir)) throw runtimeFailure("configuration", "profile_path_invalid");
   session.port = await loopbackPort();
   const args = [
+    ...browserCommandArgs,
     "--headless=new",
     "--remote-debugging-address=127.0.0.1",
     `--remote-debugging-port=${session.port}`,
