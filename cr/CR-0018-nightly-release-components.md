@@ -5,12 +5,12 @@ Head or Range: c4eecb0afaec975067e82ed890f636eef10c3ade
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: build: add componentized nightly release and launcher contract
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: c4eecb0afaec975067e82ed890f636eef10c3ade
-Head OID: c4eecb0afaec975067e82ed890f636eef10c3ade
+Base OID: 408a1eecb72da92b9314ac1a394469d11aa8f95b
+Head OID: 408a1eecb72da92b9314ac1a394469d11aa8f95b
 Integrated Result: pending
 
 ## Summary
@@ -36,6 +36,17 @@ model.
 manifest generation check passes for Linux amd64 and Windows amd64 naming.
 Go and npm are unavailable in this checkout; the required GitHub Actions matrix
 must run Go, Node, native Rust, WebView smoke, packaging, and artifact checks.
+
+Implementation PR #47 passed `ugs-validate` and the four-target `chuzi-build`
+matrix, then rebase-ff integration produced main commit
+`408a1eecb72da92b9314ac1a394469d11aa8f95b`. The post-merge push workflow
+`34604284393` passed with all target jobs and the aggregate check. Manual nightly
+run `34604395276` also passed for Windows amd64, Linux amd64, Linux arm64, and
+Darwin arm64. Its four artifacts were present with 14-day retention; the
+Darwin arm64 `nightly-118` manifest listed launcher, service, browser-worker,
+and desktop-runtime components, and the downloaded archive hashes matched the
+sidecars. Unix sidecars currently retain runner-absolute filenames, so making
+plain `sha256sum -c` portable is tracked as a separate follow-up fix.
 
 ## Risk
 
