@@ -9,8 +9,8 @@ Revision: 2
 Status: accepted
 Decision: accepted
 Policy Version: v0.3
-Base OID: e3f95abd778a3c6c29588b8716afbd27e920b376
-Head OID: e3f95abd778a3c6c29588b8716afbd27e920b376
+Base OID: 126702585abd26820dc715c8fb4ca04a93fbc3d4
+Head OID: 126702585abd26820dc715c8fb4ca04a93fbc3d4
 Integrated Result: pending
 
 ## Summary
@@ -68,7 +68,7 @@ actual implementation commit `e3f95abd778a3c6c29588b8716afbd27e920b376` on
 main. The immediate post-merge four-target build run `34574329822` also
 passed. The corresponding post-merge UGS run identified that the pending CR
 still named the pre-rebase topic SHA; this acceptance record binds the CR to
-the reachable main implementation commit before final integration closure.
+the reachable main integration result before final integration closure.
 
 ## Risk
 
