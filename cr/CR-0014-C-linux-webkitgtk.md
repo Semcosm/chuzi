@@ -5,13 +5,13 @@ Head or Range: 2ba510b9bdca27aefb654e4d0f200fca4b64d2aa..7e9da3ae8afa2e5269051fd
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add Linux WebKitGTK desktop WebView
-Revision: 6
-Status: accepted
+Revision: 7
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 306440815b93e87f00f5b90df6993bb67a375c18
-Head OID: 306440815b93e87f00f5b90df6993bb67a375c18
-Integrated Result: pending
+Base OID: 4edad028599ed664d3f8699bdf2c3105555047d9
+Head OID: 4edad028599ed664d3f8699bdf2c3105555047d9
+Integrated Result: main@4edad028599ed664d3f8699bdf2c3105555047d9
 
 ## Summary
 
@@ -75,8 +75,15 @@ aggregate `chuzi-build` run `34507141938`; its Linux amd64 and native Linux
 arm64 jobs passed both X11 and Wayland smoke tests. The post-merge main checks
 for `306440815b93e87f00f5b90df6993bb67a375c18` passed as `ugs-validate` run
 `34507812757` and `chuzi-build` run `34507812839`, with aggregate job
-`102975549388` and all four target jobs passing. This acceptance record keeps
-the integrated result pending until the separate closure CR is merged.
+`102975549388` and all four target jobs passing. The implementation and
+acceptance stages were then closed through the separate closure record below.
+
+Acceptance PR #39 passed `ugs-validate` run `34508656550` and aggregate
+`chuzi-build` run `34508656457`; its four target jobs passed. The post-merge
+main checks for `4edad028599ed664d3f8699bdf2c3105555047d9` passed as
+`ugs-validate` run `34514560655` and `chuzi-build` run `34514560327`, with
+aggregate job `102997993686`; the Linux amd64 and native Linux arm64 jobs also
+passed the X11 and Wayland WebKitGTK smoke tests.
 
 ## Risk
 
