@@ -5,13 +5,13 @@ Head or Range: 09a7a6237a97ca6c6e87727cffa4948684f0ad1b..86837faf593c3f3932efd46
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): assemble persistent scheduler runtime
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 126702585abd26820dc715c8fb4ca04a93fbc3d4
-Head OID: 126702585abd26820dc715c8fb4ca04a93fbc3d4
-Integrated Result: pending
+Base OID: 40260b0125202013aff87a98af591c6e086b9726
+Head OID: 40260b0125202013aff87a98af591c6e086b9726
+Integrated Result: main@40260b0125202013aff87a98af591c6e086b9726
 
 ## Summary
 
@@ -67,8 +67,15 @@ arm64, and Darwin arm64 all passed. Its rebase-ff integration produced the
 actual implementation commit `e3f95abd778a3c6c29588b8716afbd27e920b376` on
 main. The immediate post-merge four-target build run `34574329822` also
 passed. The corresponding post-merge UGS run identified that the pending CR
-still named the pre-rebase topic SHA; this acceptance record binds the CR to
-the reachable main integration result before final integration closure.
+still named the pre-rebase topic SHA; the acceptance record then bound the CR
+to the reachable main integration result. Acceptance PR #42 passed
+`ugs-validate` run `34576079428` and aggregate `chuzi-build` run
+`34576079321`; all four target jobs passed, including Linux X11 and Wayland
+smoke tests on the native Linux arm64 runner. Its post-merge main checks for
+`40260b0125202013aff87a98af591c6e086b9726` passed as `ugs-validate` run
+`34576469631` and `chuzi-build` run `34576469633`, with all four target jobs
+passing. This closure records that verified main result as the integrated
+outcome.
 
 ## Risk
 
