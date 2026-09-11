@@ -201,6 +201,14 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}"; else version="dev-${GITHUB_SHA:0:12}"; fi
           scripts/package.sh "${{ matrix.target }}" "$version"
 
+      - name: Verify Unix artifact checksums
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          for checksum in dist/*.tar.gz.sha256; do
+            (cd "$(dirname "$checksum")" && sha256sum -c "$(basename "$checksum")")
+          done
+
       - name: Upload nightly target bundle
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02

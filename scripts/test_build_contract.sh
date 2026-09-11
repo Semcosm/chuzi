@@ -43,5 +43,6 @@ grep -Fq 'actions/upload-artifact@' "$repo_root/.github/workflows/chuzi-build.ym
 grep -Fq 'generate_release_manifest.py' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses release manifest generation"
 grep -Fq 'release-manifest.json' "$repo_root/scripts/package.sh" || fail "package.sh misses release manifest sidecar"
 grep -Fq 'release-manifest.json' "$repo_root/scripts/package.ps1" || fail "package.ps1 misses release manifest sidecar"
+grep -Fq 'Verify Unix artifact checksums' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Unix checksum verification"
 
 echo "build contract validation passed"
