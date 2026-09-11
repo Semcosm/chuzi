@@ -38,7 +38,7 @@ case "$target:$host_os:$host_arch" in
 esac
 
 case "$version" in
-  dev|dev-*|v[0-9]*.[0-9]*.[0-9]*) ;;
+  dev|dev-*|nightly-*|v[0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "invalid build version: $version" >&2; exit 2 ;;
 esac
 
@@ -52,6 +52,14 @@ CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   -ldflags "-s -w -X github.com/Semcosm/chuzi/cmd/service.version=$version" \
   -o "$stage_dir/$binary" \
   "$repo_root/cmd/service"
+
+launcher_binary="chuzi-launcher"
+if [ "$target" = "windows-amd64" ]; then launcher_binary="chuzi-launcher.exe"; fi
+CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
+  -trimpath \
+  -ldflags "-s -w -X main.version=$version" \
+  -o "$stage_dir/$launcher_binary" \
+  "$repo_root/cmd/launcher"
 
 npm --prefix "$repo_root/browser-worker" ci --ignore-scripts
 npm --prefix "$repo_root/browser-worker" run build
@@ -68,5 +76,8 @@ cp "$runtime_binary" "$stage_dir/chuzi-browser-runtime"
 commit="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
 printf '{\n  "target": "%s",\n  "version": "%s",\n  "commit": "%s",\n  "goos": "%s",\n  "goarch": "%s",\n  "cgo": false,\n  "rustHelper": "chuzi-browser-runtime",\n  "browserRuntime": "%s"\n}\n' \
   "$target" "$version" "$commit" "$goos" "$goarch" "$runtime_backend" > "$stage_dir/build-manifest.json"
+
+python3 "$repo_root/scripts/generate_release_manifest.py" \
+  --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit"
 
 echo "built $target at $stage_dir"

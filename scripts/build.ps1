@@ -14,7 +14,7 @@ if ($Target -ne "windows-amd64") {
     throw "build.ps1 runs the native Windows desktop target only; use the matching Unix runner for $Target"
 }
 
-if ($Version -notmatch '^(dev|dev-|v[0-9]+\.[0-9]+\.[0-9]+)') {
+if ($Version -notmatch '^(dev|dev-|nightly-|v[0-9]+\.[0-9]+\.[0-9]+)') {
     throw "invalid build version: $Version"
 }
 
@@ -41,6 +41,9 @@ $env:GOARCH = $goarch
 $ldflags = "-s -w -X github.com/Semcosm/chuzi/cmd/service.version=$Version"
 & go build -trimpath "-ldflags=$ldflags" -o (Join-Path $stageDir $binary) ./cmd/service
 if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+$launcherLdflags = "-s -w -X main.version=$Version"
+& go build -trimpath "-ldflags=$launcherLdflags" -o (Join-Path $stageDir "chuzi-launcher.exe") ./cmd/launcher
+if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
 
 & npm --prefix (Join-Path $repoRoot "browser-worker") ci --ignore-scripts
 if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
@@ -67,5 +70,8 @@ if ([string]::IsNullOrWhiteSpace($commit)) {
     rustHelper = "chuzi-browser-runtime"
     browserRuntime = $runtimeBackend
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
+
+& python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit
+if ($LASTEXITCODE -ne 0) { throw "release manifest generation failed" }
 
 Write-Output "built $Target at $stageDir"

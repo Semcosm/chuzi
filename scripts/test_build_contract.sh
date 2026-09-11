@@ -16,6 +16,8 @@ done
 [ -f "$repo_root/browser-worker/src/headless.mjs" ] || fail "headless worker is missing"
 [ -f "$repo_root/browser-runtime/Cargo.toml" ] || fail "browser runtime Cargo manifest is missing"
 [ -f "$repo_root/browser-runtime/Cargo.lock" ] || fail "browser runtime Cargo lockfile is missing"
+[ -f "$repo_root/cmd/launcher/main.go" ] || fail "launcher command is missing"
+[ -f "$repo_root/scripts/generate_release_manifest.py" ] || fail "release manifest generator is missing"
 [ -f "$repo_root/.github/workflows/chuzi-build.yml" ] || fail "build workflow is missing"
 
 grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build check is missing"
@@ -34,5 +36,12 @@ grep -Fq 'Smoke test Linux WebKitGTK on X11' "$repo_root/.github/workflows/chuzi
 grep -Fq 'Smoke test Linux WebKitGTK on Wayland' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Linux Wayland smoke test"
 grep -Fq 'headless-browser-command' "$repo_root/cmd/service/main.go" || fail "service misses headless browser command option"
 grep -Fq 'browser-runtime.headless-cdp' "$repo_root/browser-worker/src/headless.mjs" || fail "headless worker capability is missing"
+grep -Fq 'chuzi-launcher' "$repo_root/scripts/build.sh" || fail "build.sh misses launcher"
+grep -Fq 'schedule:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "nightly schedule is missing"
+grep -Fq 'workflow_dispatch:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "manual nightly trigger is missing"
+grep -Fq 'actions/upload-artifact@' "$repo_root/.github/workflows/chuzi-build.yml" || fail "nightly artifact upload is missing"
+grep -Fq 'generate_release_manifest.py' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses release manifest generation"
+grep -Fq 'release-manifest.json' "$repo_root/scripts/package.sh" || fail "package.sh misses release manifest sidecar"
+grep -Fq 'release-manifest.json' "$repo_root/scripts/package.ps1" || fail "package.ps1 misses release manifest sidecar"
 
 echo "build contract validation passed"

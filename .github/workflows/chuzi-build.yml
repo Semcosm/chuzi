@@ -1,6 +1,8 @@
 name: chuzi-build
 
 on:
+  schedule:
+    - cron: '17 2 * * *'
   pull_request:
   push:
     branches: [main]
@@ -8,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   build-matrix:
@@ -73,13 +76,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = "dev-$($env:GITHUB_SHA.Substring(0,12))"
+          $version = if ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
           ./scripts/build.ps1 -Target "${{ matrix.target }}" -Version $version
 
       - name: Build service and worker on Unix
         if: runner.os != 'Windows'
         shell: bash
-        run: scripts/build.sh "${{ matrix.target }}" "dev-${GITHUB_SHA:0:12}"
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}"; else version="dev-${GITHUB_SHA:0:12}"; fi
+          scripts/build.sh "${{ matrix.target }}" "$version"
 
       - name: Test Go service and worker contract
         shell: bash
@@ -186,13 +191,28 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = "dev-$($env:GITHUB_SHA.Substring(0,12))"
+          $version = if ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
           ./scripts/package.ps1 -Target "${{ matrix.target }}" -Version $version
 
       - name: Package Unix artifact
         if: runner.os != 'Windows'
         shell: bash
-        run: scripts/package.sh "${{ matrix.target }}" "dev-${GITHUB_SHA:0:12}"
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}"; else version="dev-${GITHUB_SHA:0:12}"; fi
+          scripts/package.sh "${{ matrix.target }}" "$version"
+
+      - name: Upload nightly target bundle
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chuzi-nightly-${{ matrix.target }}
+          path: |
+            dist/chuzi-nightly-*.tar.gz
+            dist/chuzi-nightly-*.zip
+            dist/chuzi-nightly-*.sha256
+            dist/chuzi-nightly-*.manifest.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Show artifact digest
         shell: bash

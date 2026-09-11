@@ -87,6 +87,19 @@ store, err := store.Open(cfg)
 
 ## 构建与发布目标
 
+### Nightly release（当前首个 release 流程）
+
+`.github/workflows/chuzi-build.yml` 每天 `02:17 UTC` 自动运行，也支持手动
+触发。Nightly 不创建 Git tag 或 GitHub Release，而是为四个平台上传保留 14 天
+的 Actions artifact，并使用 `nightly-<run-number>` 版本号。每个平台同时生成完整
+包和按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的组件包。
+
+完整包内的 `release-manifest.json` 是启动器与未来 UI 的稳定输入，声明目标平台、
+版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 目前只提供
+manifest 展示与本地资源校验；更新源、下载、修复写入、组件/插件安装和行为设置都
+通过 `internal/launcher` 的注入接口保留给后续适配器。Nightly 的 `plugins` 列表
+默认为空，不能将组件包误认为已实现插件生态。
+
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：
 
 | Target | Output | Build mode |
