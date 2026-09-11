@@ -5,13 +5,13 @@ Head or Range: c4eecb0afaec975067e82ed890f636eef10c3ade
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: build: add componentized nightly release and launcher contract
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 408a1eecb72da92b9314ac1a394469d11aa8f95b
-Head OID: 408a1eecb72da92b9314ac1a394469d11aa8f95b
-Integrated Result: pending
+Base OID: e1ac295237354b298b34d1ce0bb148142f137f93
+Head OID: e1ac295237354b298b34d1ce0bb148142f137f93
+Integrated Result: main@e1ac295237354b298b34d1ce0bb148142f137f93
 
 ## Summary
 
@@ -47,6 +47,14 @@ Darwin arm64 `nightly-118` manifest listed launcher, service, browser-worker,
 and desktop-runtime components, and the downloaded archive hashes matched the
 sidecars. Unix sidecars currently retain runner-absolute filenames, so making
 plain `sha256sum -c` portable is tracked as a separate follow-up fix.
+
+Acceptance PR #48 recorded the verified implementation result and passed all
+required checks. Its rebase-ff integration produced main commit
+`e1ac295237354b298b34d1ce0bb148142f137f93` with the required governance
+trailers. The post-merge main workflow `34606814297` passed `ugs-validate`,
+Windows amd64, Linux amd64, Linux arm64, Darwin arm64, and the aggregate
+`chuzi-build` check. This closure records that verified main result as the
+integrated outcome.
 
 ## Risk
 
