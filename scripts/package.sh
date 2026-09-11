@@ -26,20 +26,25 @@ for component in launcher service browser-worker desktop-runtime; do
   rm -rf "$component_dir"
 done
 cp "$stage_dir/release-manifest.json" "$repo_root/dist/chuzi-${version}-${target}.manifest.json"
-if command -v sha256sum >/dev/null 2>&1; then
-  sha256sum "$artifact" > "$artifact.sha256"
-  for component_artifact in "$repo_root/dist/chuzi-${version}-${target}-"*.tar.gz; do
-    [ "$component_artifact" = "$artifact" ] && continue
-    sha256sum "$component_artifact" > "$component_artifact.sha256"
-  done
-elif command -v shasum >/dev/null 2>&1; then
-  shasum -a 256 "$artifact" > "$artifact.sha256"
-  for component_artifact in "$repo_root/dist/chuzi-${version}-${target}-"*.tar.gz; do
-    [ "$component_artifact" = "$artifact" ] && continue
-    shasum -a 256 "$component_artifact" > "$component_artifact.sha256"
-  done
-else
-  echo "no SHA256 utility is available" >&2
-  exit 1
-fi
+write_sha256() {
+  local file="$1"
+  local directory
+  local filename
+  directory="$(dirname "$file")"
+  filename="$(basename "$file")"
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$directory" && sha256sum "$filename" > "$filename.sha256")
+  elif command -v shasum >/dev/null 2>&1; then
+    (cd "$directory" && shasum -a 256 "$filename" > "$filename.sha256")
+  else
+    echo "no SHA256 utility is available" >&2
+    exit 1
+  fi
+}
+
+write_sha256 "$artifact"
+for component_artifact in "$repo_root/dist/chuzi-${version}-${target}-"*.tar.gz; do
+  [ "$component_artifact" = "$artifact" ] && continue
+  write_sha256 "$component_artifact"
+done
 echo "packaged $artifact"
