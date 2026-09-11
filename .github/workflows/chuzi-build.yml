@@ -205,8 +205,16 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            checksum_command=(sha256sum -c)
+          elif command -v shasum >/dev/null 2>&1; then
+            checksum_command=(shasum -a 256 -c)
+          else
+            echo "no SHA256 checksum verifier is available" >&2
+            exit 1
+          fi
           for checksum in dist/*.tar.gz.sha256; do
-            (cd "$(dirname "$checksum")" && sha256sum -c "$(basename "$checksum")")
+            (cd "$(dirname "$checksum")" && "${checksum_command[@]}" "$(basename "$checksum")")
           done
 
       - name: Upload nightly target bundle
