@@ -1,16 +1,16 @@
 # CR-0020: establish the automation adapter and plugin process contract
 
 Base: main
-Head or Range: bec87cc6c815875a97682987bba871119fd34cd4
+Head or Range: a0c10f02822f856bf12e3d3e7607709a3c68de2b
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): establish automation adapter and plugin process contract
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 0230ad8426c7c7b5642c755e48c6c5dc43d0231b
-Head OID: bec87cc6c815875a97682987bba871119fd34cd4
+Head OID: a0c10f02822f856bf12e3d3e7607709a3c68de2b
 Integrated Result: pending
 
 ## Summary
@@ -41,9 +41,11 @@ Added Go unit and helper-process coverage for contract validation, capability
 negotiation, normal and classified failure results, cancellation, timeout,
 malformed advertisements, crash/exit handling, idempotent close, shell-free
 native/Wine invocation, Wine prefix isolation, and rejection of credential
-fields in operation/result payloads. Extended the build contract to require the
-adapter, plugin, and BetterGI boundary files. Updated architecture, operations,
-and roadmap documentation to match the implementation.
+fields in operation/result payloads. Test fixtures use platform-neutral
+absolute temporary paths so the same contract tests run on Windows, macOS,
+and Linux. Extended the build contract to require the adapter, plugin, and
+BetterGI boundary files. Updated architecture, operations, and roadmap
+documentation to match the implementation.
 
 Local evidence is limited because this checkout does not provide Go or
 gofmt. `git diff --check`, shell syntax checks, and the build-contract checks
