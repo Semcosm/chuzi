@@ -76,6 +76,7 @@ func TestPluginHelperProcess(t *testing.T) {
 }
 
 func TestClientSpeaksAdapterProtocolAndKeepsRuntimeFactsRedacted(t *testing.T) {
+	t.Log("starting fake adapter for protocol and redaction checks")
 	client, err := StartAdapter(context.Background(), Command{
 		Mode:        Native,
 		Executable:  os.Args[0],
@@ -85,7 +86,9 @@ func TestClientSpeaksAdapterProtocolAndKeepsRuntimeFactsRedacted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Log("fake adapter handshake completed")
 	defer func() {
+		t.Log("closing fake adapter")
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = client.Close(ctx)
@@ -103,10 +106,12 @@ func TestClientSpeaksAdapterProtocolAndKeepsRuntimeFactsRedacted(t *testing.T) {
 		Handle:     "handle-1",
 	}
 	result, err := client.Execute(context.Background(), session, automation.Operation{ID: "op-1", Name: "probe"})
+	t.Logf("probe operation returned: success=%v failure=%#v err=%v", result.Succeeded, result.Failure, err)
 	if err != nil || !result.Succeeded || result.Facts["adapter"] != "fake-plugin" {
 		t.Fatalf("Execute() = %#v, %v", result, err)
 	}
 	result, err = client.Execute(context.Background(), session, automation.Operation{ID: "op-2", Name: "fail"})
+	t.Logf("failure operation returned: success=%v failure=%#v err=%v", result.Succeeded, result.Failure, err)
 	if err != nil || result.Succeeded || result.Failure == nil || result.Failure.Code != "fake_unavailable" {
 		t.Fatalf("failed Execute() = %#v, %v", result, err)
 	}
@@ -116,15 +121,18 @@ func TestClientSpeaksAdapterProtocolAndKeepsRuntimeFactsRedacted(t *testing.T) {
 }
 
 func TestClientTimeoutAndPluginCrashAreTerminal(t *testing.T) {
+	t.Log("starting fake adapter for timeout and crash checks")
 	client, err := StartAdapter(context.Background(), Command{
 		Mode: Native, Executable: os.Args[0],
-		Args: []string{"-test.run=TestPluginHelperProcess", "--"},
+		Args:        []string{"-test.run=TestPluginHelperProcess", "--"},
 		Environment: []string{"CHUZI_PLUGIN_HELPER=1"},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Log("fake adapter handshake completed")
 	defer func() {
+		t.Log("closing fake adapter after terminal checks")
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = client.Close(ctx)
@@ -135,18 +143,21 @@ func TestClientTimeoutAndPluginCrashAreTerminal(t *testing.T) {
 	}
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
+	t.Log("executing hold operation with a caller deadline")
 	if _, err := client.Execute(timeoutCtx, session, automation.Operation{ID: "op-hold", Name: "hold"}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout Execute() error = %v", err)
 	}
+	t.Log("hold operation reached caller deadline; executing crash operation")
 	if _, err := client.Execute(context.Background(), session, automation.Operation{ID: "op-crash", Name: "crash"}); !errors.Is(err, ErrProcessExited) {
 		t.Fatalf("crashed Execute() error = %v", err)
 	}
 }
 
 func TestClientRejectsMalformedCapabilityAdvertisement(t *testing.T) {
+	t.Log("starting fake adapter with malformed capabilities")
 	client, err := StartAdapter(context.Background(), Command{
 		Mode: Native, Executable: os.Args[0],
-		Args: []string{"-test.run=TestPluginHelperProcess", "--"},
+		Args:        []string{"-test.run=TestPluginHelperProcess", "--"},
 		Environment: []string{"CHUZI_PLUGIN_HELPER=1", "CHUZI_PLUGIN_BAD_CAPS=1"},
 	})
 	if err == nil || !errors.Is(err, ErrProtocol) {
@@ -155,9 +166,11 @@ func TestClientRejectsMalformedCapabilityAdvertisement(t *testing.T) {
 		}
 		t.Fatalf("malformed capability error = %v, want ErrProtocol", err)
 	}
+	t.Logf("malformed capability rejected: %v", err)
 }
 
 func TestClientRunsHeadlessCDPLocalTestAdapter(t *testing.T) {
+	t.Log("locating Node and local CDP fixtures")
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is not installed")
@@ -166,12 +179,14 @@ func TestClientRunsHeadlessCDPLocalTestAdapter(t *testing.T) {
 	adapter := filepath.Join(root, "browser-worker", "src", "headless-adapter.mjs")
 	fakeBrowser := filepath.Join(root, "browser-worker", "test", "fixtures", "fake-cdp-browser.mjs")
 	profile := filepath.Join(t.TempDir(), "profile-1")
+	t.Log("starting local headless-CDP adapter")
 	client, err := StartAdapter(context.Background(), Command{
 		Mode:       Native,
 		Executable: node,
 		Args: []string{adapter, "--browser-command", node,
 			"--browser-command-arg", fakeBrowser,
 			"--cdp-timeout-ms", "500", "--operation-timeout-ms", "1000"},
+		Stderr: os.Stderr,
 		Environment: []string{
 			"FAKE_CDP_MODE=valid",
 			"FAKE_CDP_ACCOUNT_ID=fake-account-1",
@@ -181,7 +196,9 @@ func TestClientRunsHeadlessCDPLocalTestAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Log("adapter process started and capability handshake completed")
 	defer func() {
+		t.Log("closing local headless-CDP adapter")
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		_ = client.Close(ctx)
@@ -198,10 +215,12 @@ func TestClientRunsHeadlessCDPLocalTestAdapter(t *testing.T) {
 	result, err := client.Execute(context.Background(), session, automation.Operation{
 		ID: "op-1", Name: "local.test_page_probe",
 	})
+	t.Logf("local.test_page_probe returned: success=%v failure=%#v err=%v", result.Succeeded, result.Failure, err)
 	if err != nil || !result.Succeeded || result.Facts["marker"] != "ready" || result.Facts["account_id"] != "fake-account-1" {
 		t.Fatalf("local adapter Execute() = %#v failure=%#v, %v", result, result.Failure, err)
 	}
 	failed, err := client.Execute(context.Background(), session, automation.Operation{ID: "op-2", Name: "probe"})
+	t.Logf("unsupported operation returned: success=%v failure=%#v err=%v", failed.Succeeded, failed.Failure, err)
 	if err != nil || failed.Succeeded || failed.Failure == nil || failed.Failure.Code != "unsupported_operation" {
 		t.Fatalf("unsupported operation = %#v, %v", failed, err)
 	}
