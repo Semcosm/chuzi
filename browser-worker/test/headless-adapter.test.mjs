@@ -101,7 +101,7 @@ test("headless-CDP adapter performs a local test-page operation with a fake acco
     runtime: "headless-cdp",
     operation_id: "operation-1",
     operation: "local.test_page_probe",
-    parameters: "{}",
+    parameters: "null",
   });
   assert.equal((await readType(lines, "operation_started")).payload.operation_id, "operation-1");
   const succeeded = await readType(lines, "operation_succeeded");

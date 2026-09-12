@@ -92,9 +92,11 @@ function wait(milliseconds, signal) {
 }
 
 function parseParameters(request) {
+  const raw = value(request, "parameters");
+  if (!raw || raw === "null") return {};
   let parameters;
   try {
-    parameters = JSON.parse(value(request, "parameters") || "{}");
+    parameters = JSON.parse(raw);
   } catch {
     throw classified("configuration", "operation_parameters_invalid");
   }
