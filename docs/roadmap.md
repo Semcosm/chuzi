@@ -175,10 +175,16 @@ Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩�
 不打包完整 Chromium；使用动态 loopback CDP 端口、服务派生 Profile 和固定安全参数，
 轮询 `/json/version` 并校验 endpoint，覆盖启动失败、发现超时、非法 endpoint、取消、
 关闭和崩溃回收。它不把桌面隐藏 WebView 作为 headless，也不假设 Safari/WKWebView
-可 headless。当前没有业务操作描述，因此发现 CDP 后只返回 session handle；业务自动化
-适配器、WebDriver、浏览器版本策略、资源限制和四平台运行证据仍需后续独立 CR。
+可 headless。CR-0021 已实现首个 `chuzi.adapter/v1` 适配器：只服务仓库内本地
+测试页并用假账号读取 marker 验证操作链路，endpoint discovery 不被视为业务成功。
+更广泛的业务自动化适配器、WebDriver、浏览器版本策略、资源限制和四平台运行证据
+仍需后续独立 CR。
 
 #### 7E：业务自动化适配器与插件进程边界（CR-0020 第一增量）
+
+CR-0021 在该契约之上完成首个 Node headless-CDP 适配器的本地垂直切片；它只
+通过显式入口、fake CDP 浏览器和仓库内测试页验证操作链路，不改变服务默认的
+deferred backend，也不扩展生产账号自动化支持。
 
 先建立 `internal/automation` 的跨平台适配器契约和 `internal/plugin` 的原生/Wine
 进程后端。Windows 原生进程是首个正式运行目标；Linux amd64 的 Wine 和

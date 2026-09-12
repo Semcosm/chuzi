@@ -116,8 +116,14 @@ async function discoverCdp(session) {
     if (session.child.exitCode !== null || session.child.signalCode !== null) {
       throw runtimeFailure("transient", "browser_crashed");
     }
+    const requestController = new AbortController();
+    const remainingMs = Math.max(1, deadline - Date.now());
+    const abortRequest = () => requestController.abort();
+    const timeout = setTimeout(abortRequest, remainingMs);
+    const abortSession = () => requestController.abort();
+    session.abortController.signal.addEventListener("abort", abortSession, { once: true });
     try {
-      const response = await fetch(endpoint, { signal: session.abortController.signal });
+      const response = await fetch(endpoint, { signal: requestController.signal });
       if (!response.ok) throw new Error("http status");
       const version = await response.json();
       const websocket = typeof version.webSocketDebuggerUrl === "string" ? new URL(version.webSocketDebuggerUrl) : null;
@@ -135,6 +141,9 @@ async function discoverCdp(session) {
       if (error?.failure) throw error;
       if (Date.now() >= deadline) break;
       await new Promise((resolveDelay) => setTimeout(resolveDelay, pollIntervalMs));
+    } finally {
+      clearTimeout(timeout);
+      session.abortController.signal.removeEventListener("abort", abortSession);
     }
   }
   throw runtimeFailure("transient", "cdp_endpoint_timeout");

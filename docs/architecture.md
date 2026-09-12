@@ -127,10 +127,11 @@ WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 We
 真正的 headless 后端单独建模，优先控制部署环境已安装的 Chromium/Edge（CDP
 或 WebDriver），不由 Wry、WebKitGTK 或 WKWebView 假设提供。当前 Node
 headless-CDP worker 已实现外部命令启动、动态 loopback CDP 端口、`/json/version`
-发现与 endpoint 校验、服务派生 Profile 传递以及取消/关闭回收。该后端不会打包
-完整 Chromium，也不会把桌面隐藏窗口标记为 headless；发现 CDP 后如果没有上层
-自动化操作模型，worker 会报告 `configuration/automation_not_configured`，不会
-报告业务成功。
+发现与 endpoint 校验、服务派生 Profile 传递以及取消/关闭回收。CR-0021 的首个
+适配器复用该生命周期，通过已验证的 WebSocket 只操作仓库内本地测试页，并要求
+页面 marker 和假账号标识经 CDP 读取后才报告业务成功。该后端不会打包完整
+Chromium，也不会把桌面隐藏窗口标记为 headless；endpoint discovery 只报告运行时
+事实，不会报告业务成功。
 
 首批平台基线如下：
 

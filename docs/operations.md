@@ -145,6 +145,11 @@ Wine 可执行文件、Windows 运行库、图形会话和目标插件版本。W
 Linux ARM64/macOS arm64 可运行 BetterGI。插件协议使用 `chuzi.adapter/v1`，只传递
 服务派生的 session/request 标识和脱敏运行事实，凭证不得进入 JSONL payload。
 
+CR-0021 的首个适配器通过显式 Node 入口运行，不改变服务默认的 deferred backend：
+`node browser-worker/src/headless-adapter.mjs --browser-command <installed-browser>`。
+测试和 smoke 只把仓库内 fake CDP fixture 作为 `--browser-command`，并使用
+`local.test_page_probe` 与假账号；部署不得把该测试入口解释为生产账号自动化能力。
+
 ## 运维检查
 
 - 部署前运行 `scripts/validate_policy_manifest.sh`。
