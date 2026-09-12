@@ -54,8 +54,9 @@ function spawnAdapter(mode = "valid", account = "fake-account-1") {
 }
 
 function waitForExit(child) {
+  const exited = once(child, "exit");
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return once(child, "exit");
+  return exited;
 }
 
 function cleanup(testContext, child, lines) {
