@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: d532dbcc2da9203ffbde79275c4a308b1569e7fe
-Head OID: beee5c16ea83cc9f6507ede7bcc9a27844dd5a3c
+Head OID: f090e6d54ecbe74b0dfcea23cf87f5adb6a0a277
 Integrated Result: pending
 
 ## Summary
@@ -39,11 +39,14 @@ operations after endpoint discovery, marker failure, cancellation, and clean
 shutdown. Added Go `internal/plugin.Client` coverage that launches the adapter
 as a real child process and verifies the same success/failure facts. The build
 contract requires the adapter and local page, and the worker manifest records
-the adapter entry point. `git diff --check`, shell syntax validation, and
-`./scripts/test_build_contract.sh` pass locally.
-The local environment does not provide Node.js, npm, or Go; Node/Go tests and
-the cross-platform build remain GitHub Actions evidence. No Chromium is
-downloaded or packaged.
+the adapter entry point. The adapter keeps stdin alive before the first
+request; the test reader queues every JSONL message and reports child
+`error`/`exit` instead of waiting indefinitely. Contract tests run serially
+with opt-in, stderr-only diagnostics, while production worker stderr remains
+discarded by default. Local evidence includes `node --check`, five repeated
+Node contract runs, `GOCACHE=/tmp/chuzi-go-cache go test -count=1 ./...`,
+`go vet ./...`, Rust tests with `--nocapture`, `git diff --check`, and
+`./scripts/test_build_contract.sh`. No Chromium is downloaded or packaged.
 
 ## Risk
 
