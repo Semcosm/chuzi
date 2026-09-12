@@ -199,7 +199,7 @@ func TestClientRunsHeadlessCDPLocalTestAdapter(t *testing.T) {
 		ID: "op-1", Name: "local.test_page_probe",
 	})
 	if err != nil || !result.Succeeded || result.Facts["marker"] != "ready" || result.Facts["account_id"] != "fake-account-1" {
-		t.Fatalf("local adapter Execute() = %#v, %v", result, err)
+		t.Fatalf("local adapter Execute() = %#v failure=%#v, %v", result, result.Failure, err)
 	}
 	failed, err := client.Execute(context.Background(), session, automation.Operation{ID: "op-2", Name: "probe"})
 	if err != nil || failed.Succeeded || failed.Failure == nil || failed.Failure.Code != "unsupported_operation" {
