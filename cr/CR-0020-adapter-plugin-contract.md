@@ -1,16 +1,16 @@
 # CR-0020: establish the automation adapter and plugin process contract
 
 Base: main
-Head or Range: a0c10f06db53a3b0cce6e39291a799e7b2c82e1c
+Head or Range: 82a06fa71e32bf248705ddb7a2e55fb0d01a3ea6..3957d7cd24181fb3934c32c6789e8b3fd9330cbf
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): establish automation adapter and plugin process contract
-Revision: 3
-Status: pending
-Decision: pending
+Revision: 4
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 0230ad8426c7c7b5642c755e48c6c5dc43d0231b
-Head OID: a0c10f06db53a3b0cce6e39291a799e7b2c82e1c
+Base OID: 3957d7cd24181fb3934c32c6789e8b3fd9330cbf
+Head OID: 3957d7cd24181fb3934c32c6789e8b3fd9330cbf
 Integrated Result: pending
 
 ## Summary
