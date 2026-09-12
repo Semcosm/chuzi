@@ -48,8 +48,9 @@ function cleanupChild(testContext, child, lines) {
 }
 
 function waitForExit(child) {
+  const exited = once(child, "exit");
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return once(child, "exit");
+  return exited;
 }
 
 async function stopChild(child, lines) {
