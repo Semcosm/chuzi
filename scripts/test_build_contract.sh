@@ -46,7 +46,7 @@ grep -Fq 'browser-runtime.headless-cdp' "$repo_root/browser-worker/src/headless.
 grep -Fq 'chuzi.adapter/v1' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter protocol is missing"
 grep -Fq 'local.test_page_probe' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter operation is missing"
 grep -Fq 'local-test-page.html' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter test page is missing"
-grep -Fq 'node --test test' "$repo_root/browser-worker/package.json" || fail "headless adapter test is not in package test command"
+grep -Fq 'node --test test/headless-adapter.test.mjs test/worker.test.mjs' "$repo_root/browser-worker/package.json" || fail "browser worker tests are not in package test command"
 grep -Fq 'chuzi.adapter/v1' "$repo_root/internal/automation/contract.go" || fail "adapter protocol version is missing"
 grep -Fq 'LaunchMode' "$repo_root/internal/plugin/process.go" || fail "plugin launch modes are missing"
 grep -Fq 'chuzi-launcher' "$repo_root/scripts/build.sh" || fail "build.sh misses launcher"

@@ -723,6 +723,7 @@ async function shutdown(request) {
 }
 
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+process.stdin.resume();
 input.on("line", (line) => {
   if (!line.trim()) return;
   let request;

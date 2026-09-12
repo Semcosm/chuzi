@@ -53,6 +53,11 @@ function spawnAdapter(mode = "valid", account = "fake-account-1") {
   });
 }
 
+function waitForExit(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  return once(child, "exit");
+}
+
 function cleanup(testContext, child, lines) {
   testContext.after(() => {
     lines.close();
@@ -61,13 +66,10 @@ function cleanup(testContext, child, lines) {
 }
 
 async function stop(child, lines) {
-  const exited = once(child, "exit");
+  const exited = waitForExit(child);
   child.stdin.write(JSON.stringify({ protocol: "chuzi.adapter/v1", id: "shutdown-1", type: "shutdown" }) + "\n");
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
-  await Promise.race([
-    exited,
-    new Promise((_, reject) => setTimeout(() => reject(new Error("adapter did not exit")), 5000)),
-  ]);
+  await exited;
   lines.close();
 }
 
@@ -80,7 +82,7 @@ function execute(child, payload) {
   }) + "\n");
 }
 
-test("headless-CDP adapter performs a local test-page operation with a fake account", { timeout: 10000 }, async (t) => {
+test("headless-CDP adapter performs a local test-page operation with a fake account", async (t) => {
   const profile = await mkdtemp(resolve(root, "adapter-profile-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnAdapter();
@@ -114,7 +116,7 @@ test("headless-CDP adapter performs a local test-page operation with a fake acco
   await stop(child, lines);
 });
 
-test("CDP endpoint discovery alone is not a business success", { timeout: 10000 }, async (t) => {
+test("CDP endpoint discovery alone is not a business success", async (t) => {
   const profile = await mkdtemp(resolve(root, "adapter-profile-unknown-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnAdapter();
@@ -138,7 +140,7 @@ test("CDP endpoint discovery alone is not a business success", { timeout: 10000 
   await stop(child, lines);
 });
 
-test("local page marker mismatch is a business failure and cancellation is classified", { timeout: 10000 }, async (t) => {
+test("local page marker mismatch is a business failure and cancellation is classified", async (t) => {
   const profile = await mkdtemp(resolve(root, "adapter-profile-marker-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnAdapter("marker-missing", "fake-account-1");

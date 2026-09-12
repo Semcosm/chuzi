@@ -34,6 +34,7 @@ const browserCommandArgs = options("--browser-command-arg");
 const cdpTimeoutMs = boundedNumber(option("--cdp-timeout-ms", defaults.cdpTimeoutMs), defaults.cdpTimeoutMs, 100, 120000);
 const pollIntervalMs = boundedNumber(option("--poll-interval-ms", defaults.pollIntervalMs), defaults.pollIntervalMs, 10, 2000);
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+process.stdin.resume();
 const sessions = new Map();
 
 function boundedNumber(value, fallback, minimum, maximum) {

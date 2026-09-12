@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 const protocolVersion = "v1";
 const capabilities = ["protocol.v1", "browser-runtime.contract"];
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
+process.stdin.resume();
 const sessions = new Map();
 
 function send(message) {
