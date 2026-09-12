@@ -138,6 +138,13 @@ compositor，不能被误解为真正 headless 浏览器。helper 不会自动�
 backend，只有 `-browser-backend rust` 才会显式组装；headless 则通过
 `-browser-backend headless` 显式选择，业务自动化仍待后续 CR。
 
+业务自动化插件是独立于浏览器 Worker 的进程边界。Windows 可直接启动原生插件
+进程；macOS/Linux 如使用 Wine，必须为每个插件派生独立的 Wine prefix，并验证
+Wine 可执行文件、Windows 运行库、图形会话和目标插件版本。Wine 启动不是当前四
+平台 release 的既定能力，尤其不能从 WebKitGTK 或 Rust helper 的构建结果推断
+Linux ARM64/macOS arm64 可运行 BetterGI。插件协议使用 `chuzi.adapter/v1`，只传递
+服务派生的 session/request 标识和脱敏运行事实，凭证不得进入 JSONL payload。
+
 ## 运维检查
 
 - 部署前运行 `scripts/validate_policy_manifest.sh`。

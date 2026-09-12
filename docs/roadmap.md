@@ -178,6 +178,15 @@ Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩�
 可 headless。当前没有业务操作描述，因此发现 CDP 后只返回 session handle；业务自动化
 适配器、WebDriver、浏览器版本策略、资源限制和四平台运行证据仍需后续独立 CR。
 
+#### 7E：业务自动化适配器与插件进程边界（CR-0020 第一增量）
+
+先建立 `internal/automation` 的跨平台适配器契约和 `internal/plugin` 的原生/Wine
+进程后端。Windows 原生进程是首个正式运行目标；Linux amd64 的 Wine 和
+macOS/Linux arm64 的 Wine 只在获得真实运行证据后单独提升支持级别。fake plugin
+必须覆盖能力协商、正常结果、稳定错误、取消、超时、崩溃回收和凭证不出现在协议
+payload 中。BetterGI 只作为后续通信插件，不在本增量内实现自动化本体或假定其
+具体私有协议。
+
 所有 7B-7D 变更都必须记录浏览器/运行时版本、下载或安装来源、原生依赖、
 资源限制、Profile 保留策略和每个平台的构建与运行覆盖。
 
