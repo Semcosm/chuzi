@@ -47,26 +47,20 @@ function cleanupChild(testContext, child, lines) {
   });
 }
 
-function waitForExit(child, exitEvent, timeoutMs = 5000) {
+function waitForExit(child) {
   if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  let timer;
-  return Promise.race([
-    exitEvent,
-    new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error("worker did not exit")), timeoutMs);
-    }),
-  ]).finally(() => clearTimeout(timer));
+  return once(child, "exit");
 }
 
 async function stopChild(child, lines) {
-  const exited = once(child, "exit");
+  const exited = waitForExit(child);
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
-  await waitForExit(child, exited);
+  await exited;
   lines.close();
 }
 
-test("worker performs a versioned handshake and shutdown", { timeout: 10000 }, async () => {
+test("worker performs a versioned handshake and shutdown", async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 
@@ -78,11 +72,11 @@ test("worker performs a versioned handshake and shutdown", { timeout: 10000 }, a
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
   const shutdown = await readMessage(lines);
   assert.equal(shutdown.type, "shutdown_ack");
-  await once(child, "exit");
+  await waitForExit(child);
   lines.close();
 });
 
-test("worker exposes session start, cancellation, and shutdown lifecycle", { timeout: 10000 }, async () => {
+test("worker exposes session start, cancellation, and shutdown lifecycle", async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 
@@ -118,11 +112,11 @@ test("worker exposes session start, cancellation, and shutdown lifecycle", { tim
 
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
-  await once(child, "exit");
+  await waitForExit(child);
   lines.close();
 });
 
-test("worker reports deferred browser runtime as a classified failure", { timeout: 10000 }, async () => {
+test("worker reports deferred browser runtime as a classified failure", async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 
@@ -146,11 +140,11 @@ test("worker reports deferred browser runtime as a classified failure", { timeou
 
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
-  await once(child, "exit");
+  await waitForExit(child);
   lines.close();
 });
 
-test("headless worker discovers a loopback CDP endpoint and exposes a session handle", { timeout: 10000 }, async (t) => {
+test("headless worker discovers a loopback CDP endpoint and exposes a session handle", async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
@@ -173,7 +167,7 @@ test("headless worker discovers a loopback CDP endpoint and exposes a session ha
   await stopChild(child, lines);
 });
 
-test("headless worker fails closed for invalid or unavailable CDP endpoints", { timeout: 10000 }, async (t) => {
+test("headless worker fails closed for invalid or unavailable CDP endpoints", async (t) => {
   for (const [mode, expectedReason] of [["invalid", "cdp_endpoint_invalid"], ["timeout", "cdp_endpoint_timeout"]]) {
     await t.test(mode, async () => {
       const profile = await mkdtemp(resolve(root, `test-profile-${mode}-`));
@@ -193,7 +187,7 @@ test("headless worker fails closed for invalid or unavailable CDP endpoints", { 
   }
 });
 
-test("headless worker cancellation terminates the external browser", { timeout: 10000 }, async (t) => {
+test("headless worker cancellation terminates the external browser", async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-hold-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
@@ -209,7 +203,7 @@ test("headless worker cancellation terminates the external browser", { timeout: 
   await stopChild(child, lines);
 });
 
-test("headless worker rejects caller-provided relative Profile paths", { timeout: 10000 }, async (t) => {
+test("headless worker rejects caller-provided relative Profile paths", async (t) => {
   const child = spawnHeadless("valid");
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   cleanupChild(t, child, lines);

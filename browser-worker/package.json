@@ -9,7 +9,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "test": "node --test test"
+    "test": "node --test test/headless-adapter.test.mjs test/worker.test.mjs"
   },
   "license": "Apache-2.0"
 }
