@@ -14,7 +14,7 @@ func validSession(t *testing.T) Session {
 		SessionID:  "session-1",
 		AccountID:  "account-1",
 		RequestID:  "request-1",
-		ProfileDir: filepath.Join(string(filepath.Separator), "var", "lib", "chuzi", "profiles", "session-1"),
+		ProfileDir: filepath.Join(t.TempDir(), "profiles", "session-1"),
 		Runtime:    "headless-cdp",
 		Handle:     "handle-1",
 	}

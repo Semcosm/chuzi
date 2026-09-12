@@ -20,7 +20,7 @@ func TestInvocationUsesNativeExecutableWithoutShell(t *testing.T) {
 }
 
 func TestInvocationWrapsExecutableWithWineAndRequiresServiceDerivedPrefix(t *testing.T) {
-	prefix := filepath.Join(string(filepath.Separator), "var", "lib", "chuzi", "wine", "bettergi")
+	prefix := filepath.Join(t.TempDir(), "wine", "bettergi")
 	command := Command{Mode: Wine, WineExecutable: "wine", WinePrefix: prefix, Executable: "C:/BetterGI/BetterGI.exe", Args: []string{"--stdio"}}
 	name, args, err := command.Invocation()
 	if err != nil {
