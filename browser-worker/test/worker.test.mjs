@@ -14,49 +14,47 @@ const fakeBrowser = resolve(root, "test", "fixtures", "fake-cdp-browser.mjs");
 const testDebug = process.env.CHUZI_TEST_DEBUG === "1";
 
 function readMessage(lines) {
-  const child = lines.child;
-  const label = lines.label;
-  return new Promise((resolveMessage, reject) => {
-    let settled = false;
-    const cleanup = () => {
-      lines.removeListener("line", onLine);
-      child?.removeListener("error", onError);
-      child?.removeListener("exit", onExit);
-    };
-    const fail = (error) => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      reject(error);
-    };
-    const onLine = (line) => {
-      try {
-        const message = JSON.parse(line);
-        settled = true;
-        cleanup();
-        if (testDebug) process.stderr.write(`[${label}] <- ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
-        resolveMessage(message);
-      } catch (error) {
-        fail(new Error(`${label} emitted invalid JSON: ${error.message}; line=${line}`));
-      }
-    };
-    const onError = (error) => fail(new Error(`${label} child error: ${error.message}`));
-    const onExit = (code, signal) => fail(new Error(`${label} child exited before protocol message: code=${code ?? "null"} signal=${signal ?? "null"}`));
-    lines.once("line", onLine);
-    child?.once("error", onError);
-    child?.once("exit", onExit);
-    if (child && (child.exitCode !== null || child.signalCode !== null)) onExit(child.exitCode, child.signalCode);
-  });
+  return lines.nextMessage();
 }
 
 function createReader(child, label) {
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   lines.child = child;
   lines.label = label;
-  child.stderr?.setEncoding("utf8");
-  child.stderr?.on("data", (chunk) => {
-    if (testDebug) process.stderr.write(`[${label}:stderr] ${chunk}`);
+  const queue = [];
+  const waiters = [];
+  let closed = false;
+  let closeError;
+  const fail = (error) => {
+    if (closed) return;
+    closed = true;
+    closeError = error;
+    for (const waiter of waiters.splice(0)) waiter.reject(error);
+  };
+  lines.on("line", (line) => {
+    if (!line.trim()) return;
+    let message;
+    try {
+      message = JSON.parse(line);
+    } catch (error) {
+      fail(new Error(`${label} emitted invalid JSON: ${error.message}; line=${line}`));
+      return;
+    }
+    if (testDebug) process.stderr.write(`[${label}] <- ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
+    const waiter = waiters.shift();
+    if (waiter) waiter.resolve(message);
+    else queue.push(message);
   });
+  child.once("error", (error) => fail(new Error(`${label} child error: ${error.message}`)));
+  child.once("exit", (code, signal) => fail(new Error(`${label} child exited before protocol message: code=${code ?? "null"} signal=${signal ?? "null"}`)));
+  lines.nextMessage = () => {
+    if (queue.length) return Promise.resolve(queue.shift());
+    if (closed) return Promise.reject(closeError);
+    return new Promise((resolveMessage, rejectMessage) => waiters.push({ resolve: resolveMessage, reject: rejectMessage }));
+  };
+  child.stderr?.setEncoding("utf8");
+  if (testDebug) child.stderr?.on("data", (chunk) => process.stderr.write(`[${label}:stderr] ${chunk}`));
+  else child.stderr?.resume();
   return lines;
 }
 
