@@ -189,6 +189,11 @@ class JsonLinePeer {
     }
   }
 
+  send(message) {
+    if (this.closed) return;
+    this.child.stdin.write(JSON.stringify(message) + "\n");
+  }
+
   close() {
     this.lines.close();
     this.fail(new Error("lifecycle_process_exited"));
@@ -286,9 +291,9 @@ class HeadlessLifecycle {
     this.closed = true;
     if (this.peer && !this.peer.closed) {
       try {
-        await this.peer.request({
+        this.peer.send({
           protocol: lifecycleProtocol, id: this.nextID("shutdown"), type: "shutdown",
-        }, ["shutdown_ack"]);
+        });
       } catch {
         // the lifecycle process may already have exited
       }

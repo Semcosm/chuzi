@@ -37,6 +37,24 @@ const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
 process.stdin.resume();
 const sessions = new Map();
 
+function terminateSessions() {
+  for (const session of sessions.values()) {
+    session.cancelled = true;
+    session.abortController.abort();
+    terminateBrowser(session.child);
+  }
+  sessions.clear();
+}
+
+process.once("SIGTERM", () => {
+  terminateSessions();
+  process.exit(0);
+});
+process.once("SIGINT", () => {
+  terminateSessions();
+  process.exit(0);
+});
+
 function boundedNumber(value, fallback, minimum, maximum) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.min(maximum, Math.max(minimum, number)) : fallback;
@@ -291,12 +309,7 @@ input.on("line", (line) => {
       handleCancel(request);
       break;
     case "shutdown":
-      for (const session of sessions.values()) {
-        session.cancelled = true;
-        session.abortController.abort();
-        terminateBrowser(session.child);
-      }
-      sessions.clear();
+      terminateSessions();
       reply(request, "shutdown_ack");
       setImmediate(() => process.exit(0));
       break;
