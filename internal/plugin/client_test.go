@@ -87,7 +87,7 @@ func TestClientSpeaksAdapterProtocolAndKeepsRuntimeFactsRedacted(t *testing.T) {
 		SessionID:  "session-1",
 		AccountID:  "account-1",
 		RequestID:  "request-1",
-		ProfileDir: filepath.Join(string(filepath.Separator), "tmp", "chuzi", "profile-1"),
+		ProfileDir: filepath.Join(t.TempDir(), "profile-1"),
 		Runtime:    "headless-cdp",
 		Handle:     "handle-1",
 	}
@@ -120,7 +120,7 @@ func TestClientTimeoutAndPluginCrashAreTerminal(t *testing.T) {
 	}()
 	session := automation.Session{
 		SessionID: "session-1", AccountID: "account-1", RequestID: "request-1",
-		ProfileDir: filepath.Join(string(filepath.Separator), "tmp", "chuzi", "profile-1"),
+		ProfileDir: filepath.Join(t.TempDir(), "profile-1"),
 	}
 	timeoutCtx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
