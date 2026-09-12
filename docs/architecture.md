@@ -50,6 +50,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
 │   ├── browser/                 # Profile 生命周期与会话运行器
+│   ├── automation/              # 业务自动化适配器契约与 JSONL 协议
+│   ├── plugin/                  # 原生/Wine 插件进程启动与回收边界
 │   ├── request/                 # 已实现：请求创建、查询和取消服务
 │   ├── credential/              # 凭证加密、轮换和访问接口
 │   ├── queue/                   # 排队、租约、超时和重试
@@ -68,6 +70,22 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 ├── .githooks/                   # UGS Git hooks
 └── .ugs/                        # UGS 版本与策略清单
 ```
+
+## 业务自动化适配器与插件
+
+`internal/browser` 只管理浏览器 Worker 的生命周期；业务自动化操作必须通过
+`internal/automation.Adapter` 执行。该接口描述能力、服务派生的会话标识、操作、
+取消、关闭和稳定错误分类，适配器只能返回脱敏运行事实，不能直接写账号状态、
+队列或审计记录。
+
+需要独立进程时，`internal/plugin` 通过版本化 JSONL 协议承载同一接口。原生进程和
+Wine 进程都使用参数数组启动，不经过 shell；Wine prefix 必须是服务派生的绝对
+路径。平台差异只存在于进程启动后端，不能扩散到 BetterGI 等业务协议中。
+
+`plugins/bettergi` 是 BetterGI 通信插件的预留目录。它不包含 BetterGI 自动化本体
+或二进制，只负责将 `chuzi.adapter/v1` 映射到 BetterGI 的公开集成接口。BetterGI
+具体协议、版本兼容性和 Wine 运行要求必须在独立实现 CR 中以证据确认；当前不能
+把该目录解释为已经支持 BetterGI 自动化。
 
 ## 跨平台构建边界
 

@@ -68,3 +68,20 @@ func TestBehaviorSettingsValidation(t *testing.T) {
 		t.Fatal("unknown channel was accepted")
 	}
 }
+
+func TestManifestValidatesPluginCapabilities(t *testing.T) {
+	manifest := ReleaseManifest{
+		Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-1", Target: "windows-amd64",
+		Plugins: []PluginDescriptor{{
+			ID: "bettergi", Version: "0.1.0", API: PluginAPIV1,
+			Capabilities: []string{"bettergi.session.v1"}, Installable: true,
+		}},
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Plugins[0].Capabilities = []string{"bettergi.session.v1", "bettergi.session.v1"}
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("duplicate plugin capability was accepted")
+	}
+}

@@ -66,6 +66,7 @@ type PluginDescriptor struct {
 	Target          string   `json:"target,omitempty"`
 	Archive         string   `json:"archive,omitempty"`
 	SHA256          string   `json:"sha256,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
 	Permissions     []string `json:"permissions,omitempty"`
 	SignedBy        string   `json:"signed_by,omitempty"`
 	Installable     bool     `json:"installable"`
@@ -108,6 +109,16 @@ func (m ReleaseManifest) Validate() error {
 			return fmt.Errorf("%w: duplicate plugin %q", ErrInvalidManifest, plugin.ID)
 		}
 		seenPlugins[plugin.ID] = struct{}{}
+		seenCapabilities := make(map[string]struct{}, len(plugin.Capabilities))
+		for _, capability := range plugin.Capabilities {
+			if strings.TrimSpace(capability) == "" {
+				return fmt.Errorf("%w: plugin %s has an empty capability", ErrInvalidManifest, plugin.ID)
+			}
+			if _, ok := seenCapabilities[capability]; ok {
+				return fmt.Errorf("%w: plugin %s has duplicate capability %q", ErrInvalidManifest, plugin.ID, capability)
+			}
+			seenCapabilities[capability] = struct{}{}
+		}
 		if plugin.Archive != "" {
 			if err := validateRelativePath(plugin.Archive); err != nil {
 				return fmt.Errorf("%w: plugin %s archive: %v", ErrInvalidManifest, plugin.ID, err)
