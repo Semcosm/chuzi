@@ -5,7 +5,7 @@ Head or Range: a0c10f06db53a3b0cce6e39291a799e7b2c82e1c
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): establish automation adapter and plugin process contract
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -52,7 +52,9 @@ gofmt. `git diff --check`, shell syntax checks, and the build-contract checks
 are run locally where their dependencies are available. GitHub Actions remains
 the authoritative Go compile/test/vet and four-target build evidence. No live
 account, credential, BetterGI binary, Wine runtime, or external service is
-used.
+used. Revision 2 specifically corrected the test fixtures after the first
+Windows matrix run exposed POSIX-only absolute paths; the production path
+validation remains unchanged.
 
 ## Risk
 
