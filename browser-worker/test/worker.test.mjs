@@ -47,14 +47,26 @@ function cleanupChild(testContext, child, lines) {
   });
 }
 
+function waitForExit(child, exitEvent, timeoutMs = 5000) {
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  let timer;
+  return Promise.race([
+    exitEvent,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("worker did not exit")), timeoutMs);
+    }),
+  ]).finally(() => clearTimeout(timer));
+}
+
 async function stopChild(child, lines) {
+  const exited = once(child, "exit");
   child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
-  await once(child, "exit");
+  await waitForExit(child, exited);
   lines.close();
 }
 
-test("worker performs a versioned handshake and shutdown", async () => {
+test("worker performs a versioned handshake and shutdown", { timeout: 10000 }, async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 
@@ -70,7 +82,7 @@ test("worker performs a versioned handshake and shutdown", async () => {
   lines.close();
 });
 
-test("worker exposes session start, cancellation, and shutdown lifecycle", async () => {
+test("worker exposes session start, cancellation, and shutdown lifecycle", { timeout: 10000 }, async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 
@@ -110,7 +122,7 @@ test("worker exposes session start, cancellation, and shutdown lifecycle", async
   lines.close();
 });
 
-test("worker reports deferred browser runtime as a classified failure", async () => {
+test("worker reports deferred browser runtime as a classified failure", { timeout: 10000 }, async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
 
@@ -138,7 +150,7 @@ test("worker reports deferred browser runtime as a classified failure", async ()
   lines.close();
 });
 
-test("headless worker discovers a loopback CDP endpoint and exposes a session handle", async (t) => {
+test("headless worker discovers a loopback CDP endpoint and exposes a session handle", { timeout: 10000 }, async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
@@ -161,7 +173,7 @@ test("headless worker discovers a loopback CDP endpoint and exposes a session ha
   await stopChild(child, lines);
 });
 
-test("headless worker fails closed for invalid or unavailable CDP endpoints", async (t) => {
+test("headless worker fails closed for invalid or unavailable CDP endpoints", { timeout: 10000 }, async (t) => {
   for (const [mode, expectedReason] of [["invalid", "cdp_endpoint_invalid"], ["timeout", "cdp_endpoint_timeout"]]) {
     await t.test(mode, async () => {
       const profile = await mkdtemp(resolve(root, `test-profile-${mode}-`));
@@ -181,7 +193,7 @@ test("headless worker fails closed for invalid or unavailable CDP endpoints", as
   }
 });
 
-test("headless worker cancellation terminates the external browser", async (t) => {
+test("headless worker cancellation terminates the external browser", { timeout: 10000 }, async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-hold-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
@@ -197,7 +209,7 @@ test("headless worker cancellation terminates the external browser", async (t) =
   await stopChild(child, lines);
 });
 
-test("headless worker rejects caller-provided relative Profile paths", async (t) => {
+test("headless worker rejects caller-provided relative Profile paths", { timeout: 10000 }, async (t) => {
   const child = spawnHeadless("valid");
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
   cleanupChild(t, child, lines);
