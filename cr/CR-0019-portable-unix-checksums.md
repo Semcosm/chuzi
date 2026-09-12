@@ -5,13 +5,13 @@ Head or Range: c3e33eba60d1943df1a4d64bc16f1988aba1173b..18f9136c251e8acc9184f20
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(build): write portable Unix artifact checksums
-Revision: 3
-Status: accepted
+Revision: 4
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 18f9136c251e8acc9184f201baf2513bb2b45854
-Head OID: 18f9136c251e8acc9184f201baf2513bb2b45854
-Integrated Result: pending
+Base OID: 22013595e8a6f4344d8587e299279c5255512bc9
+Head OID: 22013595e8a6f4344d8587e299279c5255512bc9
+Integrated Result: main@22013595e8a6f4344d8587e299279c5255512bc9
 
 ## Summary
 
