@@ -90,11 +90,67 @@ jobs:
       - name: Test Go service and worker contract
         shell: bash
         run: |
-          go test ./...
-          npm --prefix browser-worker test
-          cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
-          cargo test --locked --manifest-path browser-runtime/Cargo.toml
-          go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
+          set -euo pipefail
+          export CHUZI_TEST_DEBUG=1
+          export CHUZI_WORKER_DEBUG=1
+
+          # Keep long-running contract tests observable without imposing a business timeout.
+          phase_file="$(mktemp)"
+          watchdog_pid=""
+          cleanup_debug() {
+            if [ -n "${watchdog_pid:-}" ]; then
+              kill "$watchdog_pid" 2>/dev/null || true
+              wait "$watchdog_pid" 2>/dev/null || true
+            fi
+            rm -f "$phase_file"
+          }
+          trap cleanup_debug EXIT
+
+          now() {
+            date -u '+%Y-%m-%dT%H:%M:%SZ'
+          }
+
+          debug_watchdog() {
+            while sleep 15; do
+              current_phase="$(cat "$phase_file" 2>/dev/null || printf '%s' 'unknown')"
+              printf '[contract-debug] %s phase=%s\n' "$(now)" "$current_phase"
+              printf '[contract-debug] process snapshot\n'
+              if command -v ps >/dev/null 2>&1; then
+                ps -ef 2>&1 || true
+              elif command -v tasklist.exe >/dev/null 2>&1; then
+                tasklist.exe 2>&1 || true
+              else
+                printf '[contract-debug] no process-list command available\n'
+              fi
+            done
+          }
+          debug_watchdog &
+          watchdog_pid=$!
+
+          run_phase() {
+            phase_name="$1"
+            shift
+            printf '%s\n' "$phase_name" >"$phase_file"
+            phase_started="$(now)"
+            printf '[contract] START %s at %s\n' "$phase_name" "$phase_started"
+            phase_status=0
+            if "$@"; then
+              phase_status=0
+            else
+              phase_status=$?
+            fi
+            phase_finished="$(now)"
+            printf '[contract] END %s at %s exit=%s\n' "$phase_name" "$phase_finished" "$phase_status"
+            return "$phase_status"
+          }
+
+          run_phase 'go-test' go test -count=1 -v ./...
+          run_phase 'node-test' npm --prefix browser-worker test
+          run_phase 'cargo-fmt-check' cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
+          run_phase 'cargo-test' cargo test --locked --manifest-path browser-runtime/Cargo.toml -- --nocapture
+          run_phase 'service-self-test' go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
+          printf '%s\n' 'complete' >"$phase_file"
+          printf '[contract] all phases passed at %s\n' "$(now)"
 
       - name: Test native desktop WebView helper contract
         if: runner.os == 'Windows' || runner.os == 'macOS' || runner.os == 'Linux'

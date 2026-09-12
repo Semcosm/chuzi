@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -32,27 +33,27 @@ const (
 var (
 	errInvalidBackend = errors.New("service: invalid browser backend")
 	errInvalidOptions = errors.New("service: invalid runtime options")
-	serviceSequence  atomic.Uint64
+	serviceSequence   atomic.Uint64
 )
 
 type serviceOptions struct {
-	configPath      string
-	backend         string
-	workerCommand   string
-	workerScript    string
+	configPath             string
+	backend                string
+	workerCommand          string
+	workerScript           string
 	headlessBrowserCommand string
-	browserRuntime  string
-	owner           string
-	pollInterval    time.Duration
-	leaseTTL        time.Duration
-	runTimeout      time.Duration
-	heartbeat       time.Duration
-	cancelTimeout   time.Duration
-	shutdownTimeout time.Duration
-	maxConcurrency  int
-	maxAttempts     int
-	retryBaseDelay  time.Duration
-	retryMaxDelay   time.Duration
+	browserRuntime         string
+	owner                  string
+	pollInterval           time.Duration
+	leaseTTL               time.Duration
+	runTimeout             time.Duration
+	heartbeat              time.Duration
+	cancelTimeout          time.Duration
+	shutdownTimeout        time.Duration
+	maxConcurrency         int
+	maxAttempts            int
+	retryBaseDelay         time.Duration
+	retryMaxDelay          time.Duration
 }
 
 type serviceRuntime struct {
@@ -64,28 +65,38 @@ type serviceRuntime struct {
 
 func defaultServiceOptions() serviceOptions {
 	return serviceOptions{
-		configPath:      "configs/example.json",
-		backend:         backendNode,
-		workerCommand:   "node",
-		workerScript:    "browser-worker/src/worker.mjs",
+		configPath:             "configs/example.json",
+		backend:                backendNode,
+		workerCommand:          "node",
+		workerScript:           "browser-worker/src/worker.mjs",
 		headlessBrowserCommand: "chromium",
-		browserRuntime:  "chuzi-browser-runtime",
-		owner:           "service",
-		pollInterval:    500 * time.Millisecond,
-		leaseTTL:        2 * time.Minute,
-		runTimeout:      5 * time.Minute,
-		heartbeat:       30 * time.Second,
-		cancelTimeout:   5 * time.Second,
-		shutdownTimeout: 5 * time.Second,
-		maxConcurrency:  1,
-		maxAttempts:     3,
-		retryBaseDelay:  time.Second,
-		retryMaxDelay:   time.Minute,
+		browserRuntime:         "chuzi-browser-runtime",
+		owner:                  "service",
+		pollInterval:           500 * time.Millisecond,
+		leaseTTL:               2 * time.Minute,
+		runTimeout:             5 * time.Minute,
+		heartbeat:              30 * time.Second,
+		cancelTimeout:          5 * time.Second,
+		shutdownTimeout:        5 * time.Second,
+		maxConcurrency:         1,
+		maxAttempts:            3,
+		retryBaseDelay:         time.Second,
+		retryMaxDelay:          time.Minute,
 	}
 }
 
 func newID(kind string) string {
 	return fmt.Sprintf("%s-%d-%d", kind, time.Now().UnixNano(), serviceSequence.Add(1))
+}
+
+// workerStderr keeps browser/worker diagnostics out of service logs by
+// default. CI and local debugging may opt in explicitly; protocol stdout is
+// never used for diagnostics.
+func workerStderr() io.Writer {
+	if os.Getenv("CHUZI_WORKER_DEBUG") == "1" {
+		return os.Stderr
+	}
+	return io.Discard
 }
 
 func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
@@ -94,7 +105,7 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 		return browser.NewProcessFactory(browser.ProcessConfig{
 			Command: options.workerCommand,
 			Script:  options.workerScript,
-			Stderr:  os.Stderr,
+			Stderr:  workerStderr(),
 		})
 	case backendRust:
 		// The Rust helper is a JSONL stdin/stdout process and does not accept
@@ -103,17 +114,17 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 		return browser.NewProcessFactory(browser.ProcessConfig{
 			Command: options.browserRuntime,
 			Args:    []string{},
-			Stderr:  os.Stderr,
+			Stderr:  workerStderr(),
 		})
 	case backendHeadless:
 		if strings.TrimSpace(options.headlessBrowserCommand) == "" {
 			return nil, fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
 		}
 		return browser.NewProcessFactory(browser.ProcessConfig{
-			Command: options.workerCommand,
-			Script:  "browser-worker/src/headless.mjs",
+			Command:    options.workerCommand,
+			Script:     "browser-worker/src/headless.mjs",
 			ScriptArgs: []string{"--browser-command", options.headlessBrowserCommand},
-			Stderr:  os.Stderr,
+			Stderr:     workerStderr(),
 		})
 	default:
 		return nil, fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, options.backend, backendNode, backendHeadless, backendRust)
@@ -224,7 +235,7 @@ func runSelfTest(ctx context.Context, command, script string) error {
 	factory, err := browser.NewProcessFactory(browser.ProcessConfig{
 		Command:    command,
 		Script:     script,
-		Stderr:     os.Stderr,
+		Stderr:     workerStderr(),
 		WorkerMode: "success",
 	})
 	if err != nil {

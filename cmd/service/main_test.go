@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,6 +15,17 @@ import (
 )
 
 type testFactory struct{}
+
+func TestWorkerStderrRequiresExplicitDebugOptIn(t *testing.T) {
+	t.Setenv("CHUZI_WORKER_DEBUG", "")
+	if got := workerStderr(); got != io.Discard {
+		t.Fatalf("workerStderr() without opt-in = %T, want io.Discard", got)
+	}
+	t.Setenv("CHUZI_WORKER_DEBUG", "1")
+	if got := workerStderr(); got != os.Stderr {
+		t.Fatalf("workerStderr() with opt-in = %T, want os.Stderr", got)
+	}
+}
 
 func (testFactory) Start(context.Context, browser.WorkerSpec) (browser.Worker, error) {
 	return nil, errors.New("test factory must not start a worker during assembly")

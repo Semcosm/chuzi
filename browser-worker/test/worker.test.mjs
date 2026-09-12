@@ -11,17 +11,58 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const worker = resolve(root, "src", "worker.mjs");
 const headlessWorker = resolve(root, "src", "headless.mjs");
 const fakeBrowser = resolve(root, "test", "fixtures", "fake-cdp-browser.mjs");
+const testDebug = process.env.CHUZI_TEST_DEBUG === "1";
 
 function readMessage(lines) {
+  const child = lines.child;
+  const label = lines.label;
   return new Promise((resolveMessage, reject) => {
-    lines.once("line", (line) => {
+    let settled = false;
+    const cleanup = () => {
+      lines.removeListener("line", onLine);
+      child?.removeListener("error", onError);
+      child?.removeListener("exit", onExit);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+    const onLine = (line) => {
       try {
-        resolveMessage(JSON.parse(line));
+        const message = JSON.parse(line);
+        settled = true;
+        cleanup();
+        if (testDebug) process.stderr.write(`[${label}] <- ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
+        resolveMessage(message);
       } catch (error) {
-        reject(error);
+        fail(new Error(`${label} emitted invalid JSON: ${error.message}; line=${line}`));
       }
-    });
+    };
+    const onError = (error) => fail(new Error(`${label} child error: ${error.message}`));
+    const onExit = (code, signal) => fail(new Error(`${label} child exited before protocol message: code=${code ?? "null"} signal=${signal ?? "null"}`));
+    lines.once("line", onLine);
+    child?.once("error", onError);
+    child?.once("exit", onExit);
+    if (child && (child.exitCode !== null || child.signalCode !== null)) onExit(child.exitCode, child.signalCode);
   });
+}
+
+function createReader(child, label) {
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  lines.child = child;
+  lines.label = label;
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk) => {
+    if (testDebug) process.stderr.write(`[${label}:stderr] ${chunk}`);
+  });
+  return lines;
+}
+
+function sendMessage(child, label, message) {
+  if (testDebug) process.stderr.write(`[${label}] -> ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
+  child.stdin.write(JSON.stringify(message) + "\n");
 }
 
 function spawnHeadless(mode = "valid", timeoutMs = "1000") {
@@ -55,7 +96,7 @@ function waitForExit(child) {
 
 async function stopChild(child, lines) {
   const exited = waitForExit(child);
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
+  sendMessage(child, "worker", { protocol: "v1", id: "shutdown-1", type: "shutdown" });
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
   await exited;
   lines.close();
@@ -63,14 +104,14 @@ async function stopChild(child, lines) {
 
 test("worker performs a versioned handshake and shutdown", async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "worker");
 
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "hello-1", type: "hello" })}\n`);
+  sendMessage(child, "worker", { protocol: "v1", id: "hello-1", type: "hello" });
   const hello = await readMessage(lines);
   assert.equal(hello.protocol, "v1");
   assert.equal(hello.type, "hello_ack");
 
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
+  sendMessage(child, "worker", { protocol: "v1", id: "shutdown-1", type: "shutdown" });
   const shutdown = await readMessage(lines);
   assert.equal(shutdown.type, "shutdown_ack");
   await waitForExit(child);
@@ -79,12 +120,12 @@ test("worker performs a versioned handshake and shutdown", async () => {
 
 test("worker exposes session start, cancellation, and shutdown lifecycle", async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "worker");
 
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "hello-1", type: "hello" })}\n`);
+  sendMessage(child, "worker", { protocol: "v1", id: "hello-1", type: "hello" });
   assert.equal((await readMessage(lines)).type, "hello_ack");
 
-  child.stdin.write(`${JSON.stringify({
+  sendMessage(child, "worker", {
     protocol: "v1",
     id: "session-1",
     type: "session_start",
@@ -95,23 +136,23 @@ test("worker exposes session start, cancellation, and shutdown lifecycle", async
       profile_dir: "/service-generated/profile",
       mode: "hold",
     },
-  })}\n`);
+  });
   const started = await readMessage(lines);
   assert.equal(started.id, "session-1");
   assert.equal(started.type, "session_started");
   assert.equal(started.payload.session_id, "session-1");
 
-  child.stdin.write(`${JSON.stringify({
+  sendMessage(child, "worker", {
     protocol: "v1",
     id: "cancel-1",
     type: "session_cancel",
     payload: { session_id: "session-1" },
-  })}\n`);
+  });
   const cancelled = await readMessage(lines);
   assert.equal(cancelled.id, "session-1");
   assert.equal(cancelled.type, "session_cancelled");
 
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
+  sendMessage(child, "worker", { protocol: "v1", id: "shutdown-1", type: "shutdown" });
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
   await waitForExit(child);
   lines.close();
@@ -119,11 +160,11 @@ test("worker exposes session start, cancellation, and shutdown lifecycle", async
 
 test("worker reports deferred browser runtime as a classified failure", async () => {
   const child = spawn(process.execPath, [worker, "--stdio"], { stdio: ["pipe", "pipe", "pipe"] });
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "worker");
 
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "hello-1", type: "hello" })}\n`);
+  sendMessage(child, "worker", { protocol: "v1", id: "hello-1", type: "hello" });
   assert.equal((await readMessage(lines)).type, "hello_ack");
-  child.stdin.write(`${JSON.stringify({
+  sendMessage(child, "worker", {
     protocol: "v1",
     id: "session-1",
     type: "session_start",
@@ -133,13 +174,13 @@ test("worker reports deferred browser runtime as a classified failure", async ()
       request_id: "request-1",
       profile_dir: "/service-generated/profile",
     },
-  })}\n`);
+  });
   assert.equal((await readMessage(lines)).type, "session_started");
   const failed = await readMessage(lines);
   assert.equal(failed.type, "session_failed");
   assert.equal(failed.payload.failure, "configuration");
 
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "shutdown-1", type: "shutdown" })}\n`);
+  sendMessage(child, "worker", { protocol: "v1", id: "shutdown-1", type: "shutdown" });
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
   await waitForExit(child);
   lines.close();
@@ -149,14 +190,14 @@ test("headless worker discovers a loopback CDP endpoint and exposes a session ha
   const profile = await mkdtemp(resolve(root, "test-profile-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "headless-worker");
   cleanupChild(t, child, lines);
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "hello-1", type: "hello" })}\n`);
+  sendMessage(child, "headless-worker", { protocol: "v1", id: "hello-1", type: "hello" });
   const hello = await readMessage(lines);
   assert.equal(hello.payload.browserRuntime, "headless-cdp");
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "session-1", type: "session_start", payload: {
+  sendMessage(child, "headless-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
     session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "success",
-  } })}\n`);
+  } });
   const started = await readMessage(lines);
   assert.equal(started.type, "session_started");
   assert.equal(started.payload.runtime, "headless-cdp");
@@ -174,11 +215,11 @@ test("headless worker fails closed for invalid or unavailable CDP endpoints", as
       const profile = await mkdtemp(resolve(root, `test-profile-${mode}-`));
       t.after(() => rm(profile, { recursive: true, force: true }));
       const child = spawnHeadless(mode, "250");
-      const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+      const lines = createReader(child, `headless-worker-${mode}`);
       cleanupChild(t, child, lines);
-      child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "session-1", type: "session_start", payload: {
+      sendMessage(child, `headless-worker-${mode}`, { protocol: "v1", id: "session-1", type: "session_start", payload: {
         session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile,
-      } })}\n`);
+      } });
       const failed = await readMessage(lines);
       assert.equal(failed.type, "session_failed");
       assert.equal(failed.payload.failure, mode === "invalid" ? "configuration" : "transient");
@@ -192,13 +233,13 @@ test("headless worker cancellation terminates the external browser", async (t) =
   const profile = await mkdtemp(resolve(root, "test-profile-hold-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnHeadless("valid");
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "headless-worker");
   cleanupChild(t, child, lines);
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "session-1", type: "session_start", payload: {
+  sendMessage(child, "headless-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
     session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "hold",
-  } })}\n`);
+  } });
   assert.equal((await readMessage(lines)).type, "session_started");
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "cancel-1", type: "session_cancel", payload: { session_id: "session-1" } })}\n`);
+  sendMessage(child, "headless-worker", { protocol: "v1", id: "cancel-1", type: "session_cancel", payload: { session_id: "session-1" } });
   const cancelled = await readMessage(lines);
   assert.equal(cancelled.type, "session_cancelled");
   await stopChild(child, lines);
@@ -206,11 +247,11 @@ test("headless worker cancellation terminates the external browser", async (t) =
 
 test("headless worker rejects caller-provided relative Profile paths", async (t) => {
   const child = spawnHeadless("valid");
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "headless-worker");
   cleanupChild(t, child, lines);
-  child.stdin.write(`${JSON.stringify({ protocol: "v1", id: "session-1", type: "session_start", payload: {
+  sendMessage(child, "headless-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
     session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: "./not-allowed",
-  } })}\n`);
+  } });
   const failed = await readMessage(lines);
   assert.equal(failed.type, "session_failed");
   assert.equal(failed.payload.failure, "configuration");

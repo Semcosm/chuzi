@@ -10,17 +10,58 @@ import { dirname, resolve } from "node:path";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const adapter = resolve(root, "src", "headless-adapter.mjs");
 const fakeBrowser = resolve(root, "test", "fixtures", "fake-cdp-browser.mjs");
+const testDebug = process.env.CHUZI_TEST_DEBUG === "1";
 
 function readMessage(lines) {
+  const child = lines.child;
+  const label = lines.label;
   return new Promise((resolveMessage, rejectMessage) => {
-    lines.once("line", (line) => {
+    let settled = false;
+    const cleanup = () => {
+      lines.removeListener("line", onLine);
+      child?.removeListener("error", onError);
+      child?.removeListener("exit", onExit);
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      rejectMessage(error);
+    };
+    const onLine = (line) => {
       try {
-        resolveMessage(JSON.parse(line));
+        const message = JSON.parse(line);
+        settled = true;
+        cleanup();
+        if (testDebug) process.stderr.write(`[${label}] <- ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
+        resolveMessage(message);
       } catch (error) {
-        rejectMessage(error);
+        fail(new Error(`${label} emitted invalid JSON: ${error.message}; line=${line}`));
       }
-    });
+    };
+    const onError = (error) => fail(new Error(`${label} child error: ${error.message}`));
+    const onExit = (code, signal) => fail(new Error(`${label} child exited before protocol message: code=${code ?? "null"} signal=${signal ?? "null"}`));
+    lines.once("line", onLine);
+    child?.once("error", onError);
+    child?.once("exit", onExit);
+    if (child && (child.exitCode !== null || child.signalCode !== null)) onExit(child.exitCode, child.signalCode);
   });
+}
+
+function createReader(child, label) {
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  lines.child = child;
+  lines.label = label;
+  child.stderr?.setEncoding("utf8");
+  child.stderr?.on("data", (chunk) => {
+    if (testDebug) process.stderr.write(`[${label}:stderr] ${chunk}`);
+  });
+  return lines;
+}
+
+function sendMessage(child, label, message) {
+  if (testDebug) process.stderr.write(`[${label}] -> ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
+  child.stdin.write(JSON.stringify(message) + "\n");
 }
 
 async function readType(lines, type) {
@@ -68,29 +109,29 @@ function cleanup(testContext, child, lines) {
 
 async function stop(child, lines) {
   const exited = waitForExit(child);
-  child.stdin.write(JSON.stringify({ protocol: "chuzi.adapter/v1", id: "shutdown-1", type: "shutdown" }) + "\n");
+  sendMessage(child, "headless-adapter", { protocol: "chuzi.adapter/v1", id: "shutdown-1", type: "shutdown" });
   assert.equal((await readMessage(lines)).type, "shutdown_ack");
   await exited;
   lines.close();
 }
 
 function execute(child, payload) {
-  child.stdin.write(JSON.stringify({
+  sendMessage(child, "headless-adapter", {
     protocol: "chuzi.adapter/v1",
     id: payload.operation_id + "-request",
     type: "execute",
     payload,
-  }) + "\n");
+  });
 }
 
 test("headless-CDP adapter performs a local test-page operation with a fake account", async (t) => {
   const profile = await mkdtemp(resolve(root, "adapter-profile-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnAdapter();
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "headless-adapter");
   cleanup(t, child, lines);
 
-  child.stdin.write(JSON.stringify({ protocol: "chuzi.adapter/v1", id: "hello-1", type: "hello" }) + "\n");
+  sendMessage(child, "headless-adapter", { protocol: "chuzi.adapter/v1", id: "hello-1", type: "hello" });
   const hello = await readMessage(lines);
   assert.equal(hello.type, "hello_ack");
   assert.equal(hello.payload.api, "chuzi.adapter/v1");
@@ -121,7 +162,7 @@ test("CDP endpoint discovery alone is not a business success", async (t) => {
   const profile = await mkdtemp(resolve(root, "adapter-profile-unknown-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnAdapter();
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "headless-adapter");
   cleanup(t, child, lines);
 
   execute(child, {
@@ -145,7 +186,7 @@ test("local page marker mismatch is a business failure and cancellation is class
   const profile = await mkdtemp(resolve(root, "adapter-profile-marker-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
   const child = spawnAdapter("marker-missing", "fake-account-1");
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  const lines = createReader(child, "headless-adapter");
   cleanup(t, child, lines);
 
   execute(child, {
@@ -159,12 +200,12 @@ test("local page marker mismatch is a business failure and cancellation is class
     parameters: "{}",
   });
   await readType(lines, "operation_started");
-  child.stdin.write(JSON.stringify({
+  sendMessage(child, "headless-adapter", {
     protocol: "chuzi.adapter/v1",
     id: "cancel-3",
     type: "cancel",
     payload: { operation_id: "operation-3" },
-  }) + "\n");
+  });
   const cancelled = await readMessage(lines);
   assert.equal(cancelled.id, "cancel-3");
   assert.equal(cancelled.type, "operation_cancelled");
