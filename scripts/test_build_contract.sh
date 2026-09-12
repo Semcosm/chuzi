@@ -46,7 +46,10 @@ grep -Fq 'browser-runtime.headless-cdp' "$repo_root/browser-worker/src/headless.
 grep -Fq 'chuzi.adapter/v1' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter protocol is missing"
 grep -Fq 'local.test_page_probe' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter operation is missing"
 grep -Fq 'local-test-page.html' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter test page is missing"
+grep -Fq 'process.stdin.resume()' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter stdin is not kept alive"
 grep -Fq 'node --test --test-concurrency=1 --test-reporter=spec test/headless-adapter.test.mjs test/worker.test.mjs' "$repo_root/browser-worker/package.json" || fail "browser worker tests are not in package test command"
+grep -Fq 'CHUZI_TEST_DEBUG' "$repo_root/browser-worker/test/headless-adapter.test.mjs" || fail "headless adapter test diagnostics are not gated"
+grep -Fq 'CHUZI_TEST_DEBUG' "$repo_root/browser-worker/test/worker.test.mjs" || fail "worker test diagnostics are not gated"
 grep -Fq 'chuzi.adapter/v1' "$repo_root/internal/automation/contract.go" || fail "adapter protocol version is missing"
 grep -Fq 'LaunchMode' "$repo_root/internal/plugin/process.go" || fail "plugin launch modes are missing"
 grep -Fq 'chuzi-launcher' "$repo_root/scripts/build.sh" || fail "build.sh misses launcher"
@@ -59,5 +62,7 @@ grep -Fq 'release-manifest.json' "$repo_root/scripts/package.ps1" || fail "packa
 grep -Fq 'Verify Unix artifact checksums' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Unix checksum verification"
 grep -Fq 'checksum_command=(sha256sum -c)' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Linux checksum verifier"
 grep -Fq 'checksum_command=(shasum -a 256 -c)' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses macOS checksum verifier"
+grep -Fq 'run_phase '\''go-test'\'' go test -count=1 -v ./...' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses verbose Go contract test"
+grep -Fq 'debug_watchdog' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses contract test diagnostics watchdog"
 
 echo "build contract validation passed"
