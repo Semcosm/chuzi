@@ -67,5 +67,6 @@ grep -Fq 'checksum_command=(sha256sum -c)' "$repo_root/.github/workflows/chuzi-b
 grep -Fq 'checksum_command=(shasum -a 256 -c)' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses macOS checksum verifier"
 grep -Fq 'run_phase '\''go-test'\'' go test -count=1 -v ./...' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses verbose Go contract test"
 grep -Fq 'debug_watchdog' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses contract test diagnostics watchdog"
+grep -Fq "dump_debug_state >&2" "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses failure-time contract diagnostics"
 
 echo "build contract validation passed"
