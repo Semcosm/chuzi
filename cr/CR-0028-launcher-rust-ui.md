@@ -1,7 +1,7 @@
 # CR-0028: add the Rust cross-platform launcher UI MVP
 
 Base: main
-Head or Range: 1b4060079b7fe3d684738b76e933a2d3f5fb790f..c03b0e3563fc16d96dd66e912fb31528810bbf58
+Head or Range: 1b4060079b7fe3d684738b76e933a2d3f5fb790f..dd73527416b86de1cf2d3c8f490ac20ef7712456
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): add Rust/Wry launcher UI MVP
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 1b4060079b7fe3d684738b76e933a2d3f5fb790f
-Head OID: c03b0e3563fc16d96dd66e912fb31528810bbf58
+Head OID: dd73527416b86de1cf2d3c8f490ac20ef7712456
 Integrated Result: pending
 
 ## Summary
