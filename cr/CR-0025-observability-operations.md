@@ -9,7 +9,7 @@ Revision: 2
 Status: accepted
 Decision: accepted
 Policy Version: v0.3
-Base OID: 9c3bf03032cd6532394eecb27b65449db0502f0b
+Base OID: 823c2852a3a98266076a6e64af3fc52713ddf9b3
 Head OID: 823c2852a3a98266076a6e64af3fc52713ddf9b3
 Integrated Result: pending
 
