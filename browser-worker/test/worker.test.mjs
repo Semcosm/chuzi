@@ -1,67 +1,20 @@
 import assert from "node:assert/strict";
-import { once } from "node:events";
 import { spawn } from "node:child_process";
-import { createInterface } from "node:readline";
 import { mkdtemp, rm } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
+import {
+  createReader,
+  readMessage,
+  sendMessage,
+  waitForExit,
+} from "./protocol-harness.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const worker = resolve(root, "src", "worker.mjs");
 const headlessWorker = resolve(root, "src", "headless.mjs");
 const fakeBrowser = resolve(root, "test", "fixtures", "fake-cdp-browser.mjs");
-const testDebug = process.env.CHUZI_TEST_DEBUG === "1";
-
-function readMessage(lines) {
-  return lines.nextMessage();
-}
-
-function createReader(child, label) {
-  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
-  lines.child = child;
-  lines.label = label;
-  const queue = [];
-  const waiters = [];
-  let closed = false;
-  let closeError;
-  const fail = (error) => {
-    if (closed) return;
-    closed = true;
-    closeError = error;
-    for (const waiter of waiters.splice(0)) waiter.reject(error);
-  };
-  lines.on("line", (line) => {
-    if (!line.trim()) return;
-    let message;
-    try {
-      message = JSON.parse(line);
-    } catch (error) {
-      fail(new Error(`${label} emitted invalid JSON: ${error.message}; line=${line}`));
-      return;
-    }
-    if (testDebug) process.stderr.write(`[${label}] <- ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
-    const waiter = waiters.shift();
-    if (waiter) waiter.resolve(message);
-    else queue.push(message);
-  });
-  child.once("error", (error) => fail(new Error(`${label} child error: ${error.message}`)));
-  child.once("exit", (code, signal) => fail(new Error(`${label} child exited before protocol message: code=${code ?? "null"} signal=${signal ?? "null"}`)));
-  lines.nextMessage = () => {
-    if (queue.length) return Promise.resolve(queue.shift());
-    if (closed) return Promise.reject(closeError);
-    return new Promise((resolveMessage, rejectMessage) => waiters.push({ resolve: resolveMessage, reject: rejectMessage }));
-  };
-  child.stderr?.setEncoding("utf8");
-  if (testDebug) child.stderr?.on("data", (chunk) => process.stderr.write(`[${label}:stderr] ${chunk}`));
-  else child.stderr?.resume();
-  return lines;
-}
-
-function sendMessage(child, label, message) {
-  if (testDebug) process.stderr.write(`[${label}] -> ${message.type || "unknown"} id=${message.id || "unknown"}\n`);
-  child.stdin.write(JSON.stringify(message) + "\n");
-}
 
 function spawnHeadless(mode = "valid", timeoutMs = "1000") {
   return spawn(process.execPath, [
@@ -86,16 +39,10 @@ function cleanupChild(testContext, child, lines) {
   });
 }
 
-function waitForExit(child) {
-  const exited = once(child, "exit");
-  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
-  return exited;
-}
-
 async function stopChild(child, lines) {
-  const exited = waitForExit(child);
+  const exited = waitForExit(child, lines);
   sendMessage(child, "worker", { protocol: "v1", id: "shutdown-1", type: "shutdown" });
-  assert.equal((await readMessage(lines)).type, "shutdown_ack");
+  assert.equal((await readMessage(lines, "shutdown_ack")).type, "shutdown_ack");
   await exited;
   lines.close();
 }

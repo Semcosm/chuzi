@@ -41,12 +41,15 @@ as a real child process and verifies the same success/failure facts. The build
 contract requires the adapter and local page, and the worker manifest records
 the adapter entry point. The adapter keeps stdin alive before the first
 request; the test reader queues every JSONL message and reports child
-`error`/`exit` instead of waiting indefinitely. Contract tests run serially
+`error`/`exit` instead of waiting indefinitely; every wait also records its
+expected message, recent protocol trace, child status, and stderr tail, with
+periodic reports enabled by `CHUZI_TEST_DEBUG=1`. Contract tests run serially
 with opt-in, stderr-only diagnostics, while production worker stderr remains
-discarded by default. Local evidence includes `node --check`, five repeated
-Node contract runs, `GOCACHE=/tmp/chuzi-go-cache go test -count=1 ./...`,
-`go vet ./...`, Rust tests with `--nocapture`, `git diff --check`, and
-`./scripts/test_build_contract.sh`. No Chromium is downloaded or packaged.
+discarded by default. Local evidence includes `node --check`, repeated Node
+contract runs with diagnostics, `GOCACHE=/tmp/chuzi-go-cache go test -count=1
+-v ./...`, `go vet ./...`, Rust tests with `--nocapture`, `git diff --check`,
+and `./scripts/test_build_contract.sh`. No Chromium is downloaded or
+packaged.
 
 ## Risk
 
