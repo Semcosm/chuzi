@@ -95,7 +95,7 @@ store, err := store.Open(cfg)
 同时生成完整包、按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的
 组件包，以及记录归档大小/SHA-256 的 `release-index.json`；不创建 tag 或 GitHub Release。
 
-完整包内的 `release-manifest.json` 是启动器与未来 UI 的稳定输入，声明目标平台、
+完整包内的 `release-manifest.json` 是启动器 UI 与 CLI 的稳定输入，声明目标平台、
 版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 提供 manifest
 展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
 的更新检查、资源修复、组件启停、插件信任/启停和 `settings`/`settings-save` CLI。
@@ -104,8 +104,10 @@ store, err := store.Open(cfg)
 只接受 HTTPS（本地测试可显式允许 loopback HTTP）、同源归档，并校验目标平台、版本、
 大小和 SHA-256；组件及其依赖先安全解包到临时 source，再复用原子资源修复和状态回滚。
 未提供 index 时，修复和组件安装仍只使用显式本地 source root。
-锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。后续 Rust UI 应通过
-CLI/未来 IPC 复用这些接口，不要把文件或插件策略复制到 UI 层。
+锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件同时包含
+UI-neutral `chuzi-launcher` CLI 和 Rust/Wry `chuzi-launcher-ui`；
+UI 通过 `chuzi.launcher-ui/v1` IPC 事件调用 CLI，不复制文件、下载、校验、
+插件信任或回滚策略。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：

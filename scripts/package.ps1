@@ -26,7 +26,7 @@ foreach ($component in @("launcher", "service", "browser-worker", "desktop-runti
     if (Test-Path $componentRoot) { Remove-Item -Recurse -Force $componentRoot }
     New-Item -ItemType Directory -Force -Path $componentRoot | Out-Null
     switch ($component) {
-        "launcher" { Copy-Item -Force (Join-Path $stageDir "chuzi-launcher.exe") $componentRoot; Copy-Item -Force (Join-Path $stageDir "release-manifest.json") $componentRoot }
+        "launcher" { Copy-Item -Force (Join-Path $stageDir "chuzi-launcher.exe") $componentRoot; Copy-Item -Force (Join-Path $stageDir "chuzi-launcher-ui.exe") $componentRoot; Copy-Item -Force (Join-Path $stageDir "release-manifest.json") $componentRoot }
         "service" { Copy-Item -Force (Join-Path $stageDir "chuzi.exe") $componentRoot }
         "browser-worker" { Copy-Item -Recurse -Force (Join-Path $stageDir "browser-worker") $componentRoot }
         "desktop-runtime" { Copy-Item -Force (Join-Path $stageDir "chuzi-browser-runtime.exe") $componentRoot }

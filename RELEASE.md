@@ -11,20 +11,21 @@ started manually. Scheduled and manually started runs use a
 artifact per target: Windows amd64, Linux amd64, Linux arm64, and macOS arm64.
 
 Each target bundle contains the complete package, `release-manifest.json`, the
-UI-neutral `chuzi-launcher` executable, SHA-256 sidecars, and independently
-installable component archives for the launcher, service, browser worker, and
-desktop runtime, plus a `release-index.json` catalog with archive sizes and
-SHA-256 digests. The manifest/index are integrity and capability contracts;
-they do not imply that a plugin is trusted or that business automation is
-implemented.
+UI-neutral `chuzi-launcher` CLI, the Rust/Wry `chuzi-launcher-ui` binary,
+SHA-256 sidecars, and independently installable component archives for the
+launcher, service, browser worker, and desktop runtime, plus a
+`release-index.json` catalog with archive sizes and SHA-256 digests. The
+manifest/index are integrity and capability contracts; they do not imply that
+a plugin is trusted or that business automation is implemented.
 
-The first launcher command is intentionally non-graphical. `-command initialize`
-returns the required/optional component choices without installing anything;
-`component-install -item <id> -release-index <https-url>` downloads only the
-selected dependency closure after validating the index and archive digests.
-`component-list`, enable/disable, and `settings` provide the data/actions a
-future Rust UI can use without changing the package format. Local test servers
-may use `-allow-http-loopback`; production endpoints must use HTTPS.
+The UI defaults to the release directory and starts the sibling
+`chuzi-launcher` CLI with direct, shell-free arguments. It renders
+`initialize` required/optional choices, serialized component operations,
+settings, progress, cancellation, and classified failures. Refreshes and
+repeated actions stay ordered behind the install lock; cancellation is a
+separate control message and does not expire a slow operation. The equivalent CLI
+commands remain available for headless administration. Local test servers may
+use `-allow-http-loopback`; production endpoints must use HTTPS.
 
 ## Stable signed releases
 

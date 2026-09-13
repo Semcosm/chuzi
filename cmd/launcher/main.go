@@ -213,7 +213,7 @@ func main() {
 		if strings.TrimSpace(*settingsInput) == "" {
 			fatal(fmt.Errorf("-settings-input is required"))
 		}
-		data, err := os.ReadFile(*settingsInput)
+		data, err := readSettingsInput(*settingsInput)
 		if err != nil {
 			fatal(err)
 		}
@@ -459,6 +459,13 @@ func writeJSON(value any) {
 	if err := json.NewEncoder(os.Stdout).Encode(value); err != nil {
 		fatal(err)
 	}
+}
+
+func readSettingsInput(path string) ([]byte, error) {
+	if path == "-" {
+		return io.ReadAll(os.Stdin)
+	}
+	return os.ReadFile(path)
 }
 
 func fatal(err error) {

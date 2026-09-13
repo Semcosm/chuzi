@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -49,5 +50,38 @@ func TestLauncherProgressReporterWritesOnlyToConfiguredWriter(t *testing.T) {
 	}
 	if !managerCommandNeedsItem("plugin-install") {
 		t.Fatal("plugin-install did not require an item")
+	}
+}
+
+func TestReadSettingsInputUsesFileOrStdinMarker(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "settings.json")
+	if err := os.WriteFile(path, []byte("{\"update_channel\":\"nightly\"}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := readSettingsInput(path)
+	if err != nil || string(data) != "{\"update_channel\":\"nightly\"}" {
+		t.Fatalf("file settings = %q, err=%v", data, err)
+	}
+	if _, err := readSettingsInput(filepath.Join(root, "missing")); err == nil {
+		t.Fatal("missing settings file unexpectedly succeeded")
+	}
+
+	previous := os.Stdin
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Close()
+	defer writer.Close()
+	os.Stdin = reader
+	defer func() { os.Stdin = previous }()
+	if _, err := writer.WriteString("{\"update_channel\":\"stable\"}"); err != nil {
+		t.Fatal(err)
+	}
+	_ = writer.Close()
+	data, err = readSettingsInput("-")
+	if err != nil || string(data) != "{\"update_channel\":\"stable\"}" {
+		t.Fatalf("stdin settings = %q, err=%v", data, err)
 	}
 }

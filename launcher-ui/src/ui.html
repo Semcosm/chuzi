@@ -1,0 +1,399 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>chuzi launcher</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      color: #1e2a2a;
+      background: #f3f6f4;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 760px; min-height: 520px; background: #f3f6f4; }
+    button, input, select { font: inherit; }
+    button {
+      border: 1px solid #b8c9c5;
+      border-radius: 6px;
+      padding: 8px 12px;
+      color: #173330;
+      background: #fff;
+      cursor: pointer;
+    }
+    button:hover { border-color: #28766a; background: #eef8f5; }
+    button:disabled { opacity: .55; cursor: wait; }
+    .app { display: grid; grid-template-columns: 214px 1fr; min-height: 100vh; }
+    aside {
+      display: flex;
+      flex-direction: column;
+      padding: 24px 16px;
+      border-right: 1px solid #d6e1dd;
+      background: #e6efeb;
+    }
+    .brand {
+      padding: 0 10px 28px;
+      font-size: 21px;
+      font-weight: 700;
+      letter-spacing: .02em;
+      color: #153c36;
+    }
+    .nav { display: grid; gap: 4px; }
+    .nav button { border-color: transparent; text-align: left; background: transparent; }
+    .nav button.active {
+      border-color: #b7d4cc;
+      background: #d4e8e1;
+      color: #0d5b4e;
+      font-weight: 650;
+    }
+    .side-note { margin-top: auto; padding: 10px; color: #60716d; font-size: 12px; line-height: 1.5; }
+    main { display: flex; flex-direction: column; min-width: 0; }
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 30px;
+      border-bottom: 1px solid #d6e1dd;
+      background: #fbfcfb;
+    }
+    h1 { margin: 0; font-size: 23px; color: #173330; }
+    .version { color: #687b76; font-size: 12px; }
+    .content { width: min(920px, 100%); padding: 28px 30px 42px; }
+    .view { display: none; }
+    .view.active { display: block; }
+    .eyebrow {
+      margin: 0 0 8px;
+      color: #28766a;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    h2 { margin: 0 0 20px; font-size: 29px; line-height: 1.15; color: #173330; }
+    h3 { margin: 0; font-size: 16px; color: #173330; }
+    .intro { margin: 0 0 24px; color: #60716d; font-size: 14px; }
+    .panel { margin-bottom: 18px; border: 1px solid #d6e1dd; border-radius: 7px; background: #fff; }
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 18px;
+      border-bottom: 1px solid #e3ebe8;
+    }
+    .panel-body { padding: 18px; }
+    .component-list { display: grid; gap: 10px; }
+    .component {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 13px 14px;
+      border: 1px solid #e0e9e6;
+      border-radius: 6px;
+    }
+    .component-name { font-weight: 650; color: #23433e; }
+    .component-meta { margin-top: 3px; color: #73827e; font-size: 12px; }
+    .status {
+      min-width: 92px;
+      padding: 5px 8px;
+      border-radius: 5px;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 650;
+      background: #edf1ef;
+      color: #60716d;
+    }
+    .status.healthy { background: #e0f2e9; color: #18734e; }
+    .status.missing, .status.not_installed { background: #fff2dc; color: #9b6419; }
+    .actions { display: flex; gap: 7px; justify-content: flex-end; }
+    .primary { border-color: #28766a; background: #28766a; color: white; }
+    .primary:hover { border-color: #1e5f55; background: #1e5f55; }
+    .danger { color: #9b443e; }
+    .onboarding { border-left: 4px solid #28766a; }
+    .choice {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 0;
+      border-bottom: 1px solid #edf1ef;
+    }
+    .choice:last-child { border-bottom: 0; }
+    .choice input { width: 17px; height: 17px; accent-color: #28766a; }
+    .choice small { display: block; margin-top: 3px; color: #73827e; }
+    .settings-grid { display: grid; gap: 15px; max-width: 560px; }
+    .setting {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      align-items: center;
+      gap: 18px;
+      padding: 12px 0;
+      border-bottom: 1px solid #edf1ef;
+    }
+    .setting label { color: #23433e; font-weight: 600; }
+    .setting small { display: block; margin-top: 3px; color: #73827e; font-weight: 400; }
+    .setting input[type=number], .setting select {
+      width: 145px;
+      padding: 7px 8px;
+      border: 1px solid #b8c9c5;
+      border-radius: 5px;
+      color: #23433e;
+      background: #fff;
+    }
+    .setting input[type=checkbox] { width: 18px; height: 18px; accent-color: #28766a; }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .progress { min-height: 21px; color: #28766a; font-size: 13px; }
+    .error { min-height: 21px; color: #a23c36; font-size: 13px; }
+    .empty { padding: 18px 0; color: #73827e; }
+    .toast {
+      position: fixed;
+      right: 22px;
+      bottom: 22px;
+      max-width: 360px;
+      padding: 12px 14px;
+      border: 1px solid #e0b9b3;
+      border-radius: 6px;
+      background: #fff8f7;
+      color: #8d3833;
+      box-shadow: 0 8px 24px #1733301a;
+      opacity: 0;
+      transform: translateY(8px);
+      pointer-events: none;
+      transition: opacity .18s, transform .18s;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    @media (max-width: 820px) {
+      body { min-width: 0; }
+      .app { grid-template-columns: 176px 1fr; }
+      header, .content { padding-left: 20px; padding-right: 20px; }
+      .component { grid-template-columns: 1fr auto; }
+      .component .status { grid-column: 2; grid-row: 1; }
+      .component .actions { grid-column: 1 / -1; justify-content: flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside>
+      <div class="brand">chuzi launcher</div>
+      <nav class="nav" aria-label="Sections">
+        <button data-view="overview" class="active">Overview</button>
+        <button data-view="components">Components</button>
+        <button data-view="settings">Settings</button>
+      </nav>
+      <div class="side-note">Nightly channel | local policy enforced</div>
+    </aside>
+    <main>
+      <header><h1 id="page-title">Overview</h1><span class="version" id="version">loading manifest</span></header>
+      <div class="content">
+        <section id="view-overview" class="view active">
+          <p class="eyebrow">Installation</p>
+          <h2>Prepare this device</h2>
+          <p class="intro">Choose the chuzi components to keep on this installation.</p>
+          <div id="onboarding" class="panel onboarding" hidden></div>
+          <div class="panel">
+            <div class="panel-head"><h3>Components</h3><button data-action="refresh">Refresh</button></div>
+            <div class="panel-body"><div id="overview-components" class="component-list"><div class="empty">Loading component state...</div></div></div>
+          </div>
+        </section>
+        <section id="view-components" class="view">
+          <p class="eyebrow">Runtime</p>
+          <h2>Components</h2>
+          <div class="toolbar"><div id="component-progress" class="progress"></div><div class="actions"><button id="cancel-operation" data-action="cancel-operation" hidden>Cancel</button><button data-action="refresh">Refresh</button></div></div>
+          <div id="components" class="component-list"><div class="empty">Loading component state...</div></div>
+        </section>
+        <section id="view-settings" class="view">
+          <p class="eyebrow">Launcher</p>
+          <h2>Settings</h2>
+          <div class="panel"><div class="panel-body"><div class="settings-grid">
+            <div class="setting"><label for="auto-check">Check for updates<small>Poll the configured release index.</small></label><input id="auto-check" type="checkbox"></div>
+            <div class="setting"><label for="auto-repair">Repair missing resources<small>Repair verified files before starting a component.</small></label><input id="auto-repair" type="checkbox"></div>
+            <div class="setting"><label for="channel">Update channel</label><select id="channel"><option value="nightly">Nightly</option><option value="stable">Stable</option></select></div>
+            <div class="setting"><label for="login">Launch on login</label><input id="login" type="checkbox"></div>
+            <div class="setting"><label for="tray">Close to tray</label><input id="tray" type="checkbox"></div>
+            <div class="setting"><label for="interval">Check interval<small>Minutes, 0 disables scheduled checks.</small></label><input id="interval" type="number" min="0" step="1" value="0"></div>
+            <div class="actions"><button data-action="save-settings" class="primary">Save settings</button></div>
+          </div></div></div>
+        </section>
+        <div id="global-progress" class="progress"></div><div id="global-error" class="error"></div>
+      </div>
+    </main>
+  </div>
+  <div id="toast" class="toast" role="status"></div>
+  <script>
+    const PROTOCOL = "chuzi.launcher-ui/v1";
+    const state = { components: [], settings: null, initialization: null, pending: new Map(), queue: [], activeRequest: null, refreshInFlight: false, activeView: "overview", installQueue: [], installing: null, currentOperation: null };
+    const $ = (id) => document.getElementById(id);
+    function makeRequest(action, extra) {
+      const id = action + "-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+      return { id: id, action: action, payload: Object.assign({ protocol: PROTOCOL, id: id, action: action }, extra || {}) };
+    }
+    function dispatchRequest(request) {
+      window.ipc.postMessage(JSON.stringify(request.payload));
+    }
+    function pump() {
+      if (state.activeRequest || !state.queue.length) return;
+      const request = state.queue.shift();
+      state.activeRequest = request;
+      if (["component-install", "component-remove", "component-enable", "component-disable", "repair"].includes(request.action)) {
+        state.currentOperation = request.id;
+      }
+      dispatchRequest(request);
+    }
+    function send(action, extra) {
+      const request = makeRequest(action, extra);
+      state.pending.set(request.id, request.action);
+      if (action === "cancel") {
+        dispatchRequest(request);
+      } else {
+        state.queue.push(request);
+        pump();
+      }
+      return request.id;
+    }
+    function setError(message) {
+      $("global-error").textContent = message || "";
+      if (message) { $("toast").textContent = message; $("toast").classList.add("show"); }
+      else { $("toast").classList.remove("show"); }
+    }
+    function setProgress(message) {
+      $("global-progress").textContent = message || "";
+      $("component-progress").textContent = message || "";
+      $("cancel-operation").hidden = !state.currentOperation;
+    }
+    function esc(value) {
+      return String(value == null ? "" : value).replace(/[&<>\"']/g, function (char) {
+        return { "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;" }[char];
+      });
+    }
+    function statusLabel(component) {
+      return component.installed ? (component.enabled ? component.health : "disabled") : "not installed";
+    }
+    function renderComponents(target) {
+      if (!state.components.length) { target.innerHTML = "<div class=\"empty\">No components are declared by this release.</div>"; return; }
+      target.innerHTML = state.components.map(function (component) {
+        const label = statusLabel(component);
+        const install = !component.installed;
+        const toggle = component.installed
+          ? "<button data-component-action=\"component-" + (component.enabled ? "disable" : "enable") + "\" data-item=\"" + esc(component.id) + "\">" + (component.enabled ? "Disable" : "Enable") + "</button>"
+          : "";
+        const repair = component.installed && component.health === "missing"
+          ? "<button data-component-action=\"repair\">Repair</button>" : "";
+        const remove = component.installed && !component.required
+          ? "<button class=\"danger\" data-component-action=\"component-remove\" data-item=\"" + esc(component.id) + "\">Remove</button>" : "";
+        return "<div class=\"component\"><div><div class=\"component-name\">" + esc(component.id) + "</div><div class=\"component-meta\">" + esc(component.version || "not installed") + (component.required ? " | required" : " | optional") + "</div></div><span class=\"status " + esc(label.replaceAll(" ", "_")) + "\">" + esc(label) + "</span><div class=\"actions\">" + (install ? "<button class=\"primary\" data-component-action=\"component-install\" data-item=\"" + esc(component.id) + "\">Install</button>" : "") + toggle + repair + remove + "</div></div>";
+      }).join("");
+    }
+    function renderAll() { renderComponents($("components")); renderComponents($("overview-components")); }
+    function renderSettings() {
+      if (!state.settings) return;
+      $("auto-check").checked = !!state.settings.auto_check_updates;
+      $("auto-repair").checked = !!state.settings.auto_repair;
+      $("channel").value = state.settings.update_channel || "nightly";
+      $("login").checked = !!state.settings.launch_on_login;
+      $("tray").checked = !!state.settings.close_to_tray;
+      $("interval").value = Math.round(Number(state.settings.check_interval || 0) / 60000000000);
+    }
+    function renderOnboarding() {
+      const info = state.initialization;
+      if (!info || !info.first_run) { $("onboarding").hidden = true; return; }
+      const choices = (info.required || []).concat(info.optional || []).map(function (id) {
+        const component = state.components.find(function (item) { return item.id === id; }) || { id: id, installed: false, required: (info.required || []).includes(id) };
+        const checked = component.required || !component.installed ? "checked" : "";
+        return "<label class=\"choice\"><input type=\"checkbox\" data-choice=\"" + esc(id) + "\" " + checked + " " + (component.required ? "disabled" : "") + "><span><strong>" + esc(id) + "</strong><small>" + (component.required ? "Required" : "Optional component") + "</small></span></label>";
+      }).join("");
+      $("onboarding").innerHTML = "<div class=\"panel-head\"><h3>First launch</h3></div><div class=\"panel-body\"><div>" + (choices || "<div class=\"empty\">The required launcher is ready.</div>") + "</div><div class=\"actions\" style=\"margin-top:16px\"><button data-action=\"finish-onboarding\" class=\"primary\">Install selected and continue</button></div></div>";
+      $("onboarding").hidden = false;
+    }
+    function refresh() {
+      if (state.refreshInFlight) return;
+      state.refreshInFlight = true;
+      send("initialize");
+      send("component-list");
+      send("settings");
+    }
+    function startAction(action, item) { return send(action, item ? { item: item } : {}); }
+    function finishOnboarding() {
+      state.installQueue = Array.from(document.querySelectorAll("[data-choice]:checked")).map(function (input) { return input.dataset.choice; });
+      installNext();
+    }
+    function installNext() {
+      const item = state.installQueue.shift();
+      if (!item) { send("initialize-complete"); return; }
+      state.installing = item;
+      send("component-install", { item: item });
+    }
+    function cancelOperation() {
+      if (state.currentOperation) send("cancel", { target_id: state.currentOperation });
+    }
+    function saveSettings() {
+      const minutes = Math.max(0, Number($("interval").value || 0));
+      send("settings-save", { settings: {
+        auto_check_updates: $("auto-check").checked,
+        auto_repair: $("auto-repair").checked,
+        update_channel: $("channel").value,
+        launch_on_login: $("login").checked,
+        close_to_tray: $("tray").checked,
+        check_interval: Math.round(minutes * 60000000000)
+      }});
+    }
+    document.querySelectorAll("[data-view]").forEach(function (button) {
+      button.addEventListener("click", function () {
+        state.activeView = button.dataset.view;
+        document.querySelectorAll("[data-view]").forEach(function (item) { item.classList.toggle("active", item === button); });
+        document.querySelectorAll(".view").forEach(function (view) { view.classList.toggle("active", view.id === "view-" + state.activeView); });
+        $("page-title").textContent = button.textContent;
+      });
+    });
+    document.addEventListener("click", function (event) {
+      const componentButton = event.target.closest("[data-component-action]");
+      if (componentButton) { startAction(componentButton.dataset.componentAction, componentButton.dataset.item); return; }
+      const action = event.target.closest("[data-action]") && event.target.closest("[data-action]").dataset.action;
+      if (action === "refresh") refresh();
+      if (action === "finish-onboarding") finishOnboarding();
+      if (action === "save-settings") saveSettings();
+      if (action === "cancel-operation") cancelOperation();
+    });
+    window.onLauncherEvent = function (event) {
+      if (!event || event.protocol !== PROTOCOL) return;
+      if (event.type === "progress") { setProgress(event.stage + (event.item ? " | " + event.item : "")); return; }
+      if (event.type !== "result") return;
+      const action = state.pending.get(event.id);
+      state.pending.delete(event.id);
+      if (state.activeRequest && state.activeRequest.id === event.id) {
+        state.activeRequest = null;
+        if (state.currentOperation === event.id) { state.currentOperation = null; $("cancel-operation").hidden = true; }
+      }
+      if (state.refreshInFlight && action === "settings") state.refreshInFlight = false;
+      if (!event.ok) {
+        if (state.installing && action === "component-install") { state.installing = null; state.installQueue = []; }
+        setError(event.error || "launcher operation failed");
+        pump();
+        return;
+      }
+      setError(""); setProgress("");
+      if (event.data && event.data.components) {
+        state.initialization = event.data; state.components = event.data.components;
+        $("version").textContent = event.data.first_run ? "first launch" : "ready";
+        renderOnboarding(); renderAll();
+      } else if (Array.isArray(event.data)) {
+        state.components = event.data; renderAll();
+      } else if (event.data && Object.prototype.hasOwnProperty.call(event.data, "update_channel")) {
+        state.settings = event.data; renderSettings();
+      } else if (event.data && event.data.initialized) {
+        refresh();
+      }
+      if (state.installing && action === "component-install") { state.installing = null; installNext(); }
+      else if (["component-install", "component-remove", "component-enable", "component-disable", "repair"].includes(action)) { refresh(); }
+      pump();
+    };
+    window.addEventListener("load", function () { refresh(); });
+  </script>
+</body>
+</html>
