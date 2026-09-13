@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestJSONLoggerRotatesBoundedFiles(t *testing.T) {
 		if statErr != nil || info.Size() == 0 {
 			t.Fatalf("rotation file %s: %v %#v", file, statErr, info)
 		}
-		if info.Mode().Perm() != 0o600 {
+		if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 			t.Fatalf("rotation file %s permissions = %o, want 600", file, info.Mode().Perm())
 		}
 	}
@@ -89,7 +90,7 @@ func TestJSONLoggerRestrictsExistingFileAndRejectsSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o600 {
+	if runtime.GOOS != "windows" && info.Mode().Perm() != 0o600 {
 		t.Fatalf("existing log permissions = %o, want 600", info.Mode().Perm())
 	}
 	target := filepath.Join(root, "target.log")
