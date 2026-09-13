@@ -5,13 +5,13 @@ Head or Range: ae8b014871bb43a2b9bc87719c040053173bbc1e
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: chore(governance): record CR-0029 nightly acceptance
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: ee0ed78b19ebf1d2bea6fffa4552204f8d086fb4
-Head OID: ee0ed78b19ebf1d2bea6fffa4552204f8d086fb4
-Integrated Result: pending
+Base OID: 7486aaf55b9cbeec752b971aae9fd1a542400713
+Head OID: 7486aaf55b9cbeec752b971aae9fd1a542400713
+Integrated Result: main@7486aaf55b9cbeec752b971aae9fd1a542400713
 
 ## Summary
 
