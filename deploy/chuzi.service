@@ -1,0 +1,22 @@
+[Unit]
+Description=chuzi account queue service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=chuzi
+Group=chuzi
+WorkingDirectory=/var/lib/chuzi
+ExecStart=/usr/local/lib/chuzi/chuzi --config /etc/chuzi/config.json --health-listen 127.0.0.1:8080
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/chuzi
+EnvironmentFile=-/etc/chuzi/chuzi.env
+
+[Install]
+WantedBy=multi-user.target

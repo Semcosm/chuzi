@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,6 +126,30 @@ func TestHeadlessBackendRejectsEmptyBrowserCommand(t *testing.T) {
 func TestDefaultServiceOptionsAreValid(t *testing.T) {
 	options := defaultServiceOptions()
 	if err := options.validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAssembleRuntimeWiresConfiguredMatrixAndCredentialBoundaries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.WriteHeader(http.StatusOK)
+		_, _ = writer.Write([]byte(`{"user_id":"@bot:example.org"}`))
+	}))
+	defer server.Close()
+	t.Setenv("CHUZI_MATRIX_TOKEN", "test-token")
+	cfg, err := config.New(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Matrix = config.MatrixConfig{HomeserverURL: server.URL, AccessTokenEnv: "CHUZI_MATRIX_TOKEN"}
+	runtime, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), func() time.Time { return time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC) }, testFactory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.credentials == nil || runtime.notifier == nil || runtime.matrixClient == nil || runtime.health == nil {
+		t.Fatalf("runtime production boundaries missing: %#v", runtime)
+	}
+	if err := runtime.store.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -23,13 +23,13 @@ type Sender interface {
 
 // NotifierConfig controls one outbox delivery worker.
 type NotifierConfig struct {
-	Owner        string
-	ClaimTTL     time.Duration
-	RetryBase    time.Duration
-	RetryMax     time.Duration
-	BatchSize    int
-	Clock        func() time.Time
-	Sink         observability.Sink
+	Owner     string
+	ClaimTTL  time.Duration
+	RetryBase time.Duration
+	RetryMax  time.Duration
+	BatchSize int
+	Clock     func() time.Time
+	Sink      observability.Sink
 }
 
 // Notifier drains the durable Matrix outbox without owning business state.
@@ -44,6 +44,30 @@ type DeliveryResult struct {
 	Claimed   int
 	Delivered int
 	Retried   int
+}
+
+// Run drains the outbox until context cancellation. A failed flush is
+// returned to the owner so deployment supervision can restart the worker;
+// individual send failures are already retained and retried by Flush.
+func (n *Notifier) Run(ctx context.Context, interval time.Duration) error {
+	if n == nil || ctx == nil || interval <= 0 {
+		return ErrInvalidNotifier
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		if _, err := n.Flush(ctx); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return err
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 // NewNotifier validates and constructs an outbox delivery worker.
@@ -109,12 +133,12 @@ func (n *Notifier) Flush(ctx context.Context) (DeliveryResult, error) {
 		}
 		result.Delivered++
 		n.config.Sink.Record(observability.Event{
-			At:         now,
-			Component:  "matrix",
-			Operation:  "notify",
-			Outcome:    "delivered",
-			RequestID:  notification.RequestID,
-			Resource:   observability.RedactIdentifier(notification.RoomID),
+			At:        now,
+			Component: "matrix",
+			Operation: "notify",
+			Outcome:   "delivered",
+			RequestID: notification.RequestID,
+			Resource:  observability.RedactIdentifier(notification.RoomID),
 		})
 	}
 	return result, nil

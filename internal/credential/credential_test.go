@@ -14,10 +14,10 @@ import (
 var credentialTestTime = time.Date(2026, time.September, 10, 13, 0, 0, 0, time.UTC)
 
 type memoryBackend struct {
-	mu      sync.Mutex
-	record  Record
-	found   bool
-	audits  []Audit
+	mu     sync.Mutex
+	record Record
+	found  bool
+	audits []Audit
 }
 
 type fakeInvalidator struct {
@@ -249,4 +249,29 @@ func TestEnvKeyringUsesDeploymentVariablesOnly(t *testing.T) {
 		t.Fatalf("invalid env key error = %v", err)
 	}
 	_ = os.Getenv("TEST_CREDENTIAL_KEY")
+}
+
+func TestEnvSourceAndInjectEncryptsAndWipesInput(t *testing.T) {
+	service, backend, _ := testService(t)
+	t.Setenv("CHUZI_TEST_CREDENTIAL", "injected-secret")
+	source, err := NewEnvSource("CHUZI_TEST_CREDENTIAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := credentialTestTime.Add(time.Hour)
+	if _, err := service.Inject(context.Background(), "account-1", "operator", at, source); err != nil {
+		t.Fatal(err)
+	}
+	record, found, err := backend.GetCredential("account-1")
+	if err != nil || !found || string(record.Ciphertext) == "injected-secret" {
+		t.Fatalf("injected record = %#v, found=%t, err=%v", record, found, err)
+	}
+	if err := service.Use(context.Background(), "account-1", "runner", at.Add(time.Minute), func(value []byte) error {
+		if string(value) != "injected-secret" {
+			t.Fatalf("decrypted injected value = %q", value)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }

@@ -61,3 +61,36 @@ func TestValidateRejectsRootAndRelativeLiteralPaths(t *testing.T) {
 		}
 	}
 }
+
+func TestLoadDeploymentSettingsKeepSecretsOutOfConfig(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "config.json")
+	body := `{"data_dir":"runtime","matrix":{"homeserver_url":"https://matrix.example.org","user_id":"@bot:example.org","access_token_env":"MATRIX_TOKEN","sync_enabled":true,"rooms":{"!ops:example.org":{"@alice:example.org":"user"}}},"credentials":{"key_env":"CRED_KEY","key_id_env":"CRED_KEY_ID"},"health":{"listen":"127.0.0.1:8080"}}`
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Matrix.HomeserverURL == "" || got.Matrix.AccessTokenEnv != "MATRIX_TOKEN" || got.Credentials.KeyEnv != "CRED_KEY" {
+		t.Fatalf("deployment settings not loaded: %#v", got)
+	}
+}
+
+func TestLoadRejectsMatrixTokenInConfigAndInvalidEnvironmentNames(t *testing.T) {
+	root := t.TempDir()
+	cases := []string{
+		`{"data_dir":"runtime","matrix":{"homeserver_url":"https://matrix.example.org","user_id":"@bot:example.org","access_token":"secret","access_token_env":"MATRIX_TOKEN"}}`,
+		`{"data_dir":"runtime","credentials":{"key_env":"BAD-NAME"}}`,
+	}
+	for index, body := range cases {
+		path := filepath.Join(root, string(rune('a'+index))+".json")
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(path); err == nil {
+			t.Fatalf("Load(%q) unexpectedly succeeded", body)
+		}
+	}
+}

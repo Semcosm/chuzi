@@ -27,17 +27,18 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 - **State Store**：持久化账号、请求、状态转换、租约、队列索引、审计、凭证
   密文和 Matrix 通知 outbox。
 - **Credential Store**：提供加密凭证的读写，不向业务层暴露不必要的明文。
-- **Status Notifier**：将领域事件转换为 Matrix 可读消息；当前通过注入的
-  Sender 交付，不包含 Matrix 网络客户端。
+- **Status Notifier**：将领域事件转换为 Matrix 可读消息；通知 worker 通过持久化
+  outbox 和稳定 event ID 重试交付。生产拼装使用 `internal/matrix` 的 HTTP Client，
+  仍可注入 Sender 做离线测试。
 
 ## 建议目录树
 
 以下是目标目录。`internal/account`、`internal/protocol`、`internal/browser`、
 `internal/request`、`internal/queue`、`internal/credential`、`internal/matrix`、
 `internal/observability`、`internal/store`、`internal/config` 和 `migrations/`
-均已有实现与测试；`tests/`、`deploy/` 当前尚不存在，仍是规划目录。`cmd/service`
-已把配置、Store、Request Service、Session Runner 和 Queue Scheduler 组装成持久化
-调度入口；Matrix 网络客户端、凭证入口、通知 worker 和部署编排仍未接入。
+均已有实现与测试；`tests/` 仍是规划目录。`cmd/service` 已把配置、Store、凭证服务、
+Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知 worker 和
+健康端点组装成持久化调度入口；`deploy/` 提供 systemd 与 Secret 边界示例。
 
 ```text
 .
@@ -61,9 +62,9 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 │   ├── observability/           # 已实现：脱敏观测事件边界；日志/指标接入规划中
 │   └── launcher/                # release manifest、校验和组件/插件管理接口
 ├── migrations/                  # 已实现：bbolt schema 迁移
-├── tests/                       # 规划中：集成测试与端到端测试（当前不存在）
+├── tests/                       # 规划中：更大规模集成测试与端到端测试
 ├── configs/                     # 脱敏示例配置
-├── deploy/                      # 规划中：容器、服务编排和运行时配置（当前不存在）
+├── deploy/                      # systemd 与 Secret/恢复运维示例
 ├── docs/                        # 项目文档与 ADR
 ├── scripts/                     # 开发和治理脚本
 ├── cr/                          # UGS 变更记录
@@ -159,7 +160,8 @@ X11/Wayland smoke 路径；Windows/macOS 的构建证据不表示 GUI 运行时 
 
 ## Matrix 适配与通知契约
 
-`internal/matrix` 只接收已抽取的 Matrix event 字段，先检查房间/用户白名单，
+`internal/matrix` 提供 transport-neutral 适配器、Matrix HTTP Client 和同步网关。
+适配器只接收已抽取的 Matrix event 字段，先检查房间/用户白名单，
 再解析固定命令并调用 Request Service。请求创建时绑定通知房间，普通用户的
 `status`/`cancel` 只能访问同一房间；管理员跨房间访问必须由策略显式授予。
 适配器和 notifier 都只记录分类错误与脱敏标识，不能把命令正文、凭证、房间
@@ -168,7 +170,8 @@ X11/Wayland smoke 路径；Windows/macOS 的构建证据不表示 GUI 运行时 
 状态事件在请求带有通知房间时由 Store 在同一事务至多写入一条
 `matrix_notifications` outbox 记录。Notifier 使用短期 claim、稳定 event ID
 和可注入 Sender 进行发送；网络失败不会删除记录，重试或服务重启会重新使用
-同一 event ID。当前边界不实现生产 Matrix 网络客户端。
+同一 event ID。HTTP Client 只实现必要的 Client-Server API 调用；access token 由
+部署环境注入，不进入配置、日志或错误文本。
 
 ## Session Runner 生命周期契约
 
