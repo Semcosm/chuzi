@@ -104,6 +104,7 @@ func (p Policy) clone() Policy {
 // Config controls parsing and redacted event recording.
 type Config struct {
 	Prefix string
+	UserID string
 	Clock  func() time.Time
 	Sink   observability.Sink
 }
@@ -127,6 +128,9 @@ func NewAdapter(requests *requestservice.Service, policy Policy, config Config) 
 	if !safeInputToken(config.Prefix) {
 		return nil, ErrInvalidCommand
 	}
+	if config.UserID != "" && !safeInputToken(config.UserID) {
+		return nil, ErrInvalidCommand
+	}
 	if config.Clock == nil {
 		config.Clock = time.Now
 	}
@@ -134,6 +138,13 @@ func NewAdapter(requests *requestservice.Service, policy Policy, config Config) 
 		config.Sink = observability.NopSink{}
 	}
 	return &Adapter{requests: requests, policy: policy.clone(), config: config}, nil
+}
+
+func (a *Adapter) configUserID() string {
+	if a == nil {
+		return ""
+	}
+	return a.config.UserID
 }
 
 // Handle authorizes, parses and executes one incoming Matrix command.

@@ -2,13 +2,13 @@
 
 ## 配置分类
 
-- 规划中的普通配置：服务地址、并发上限、超时、重试策略。
-  当前 `internal/config.Config` 只实现 `data_dir`，其余字段尚未存在。
-- 规划中的 Secret 配置：数据库密码、Matrix access token、凭证加密主密钥（不进入普通配置文件）。
+- 普通配置：`data_dir`、Matrix homeserver/user/policy、同步时序、凭证 key 环境变量
+  名称和健康监听地址。`configs/example.json` 不包含任何 Secret 值。
+- Secret 配置：Matrix access token、凭证加密主密钥（只由环境/Secret manager 注入）。
 - 运行数据：数据库、浏览器 Profile、审计日志和待发送事件。
 
-普通配置示例位于 `configs/example.json`，当前仅包含 `data_dir` 字段。数据库
-路径固定由存储层派生为
+普通配置示例位于 `configs/example.json`，包含数据目录、凭证环境变量名称和本地
+健康监听地址；Matrix 网络配置按需添加。数据库路径固定由存储层派生为
 `<data_dir>/chuzi.db`，备份目录固定为 `<data_dir>/backups/`；请求和账号
 输入不能覆盖这些路径。`cmd/service` 普通启动默认加载该文件，也可通过 `-config`
 指定路径；Store、Profile 和队列都从同一 `data_dir` 派生。Secret 不进入 Git。
@@ -22,9 +22,9 @@
 4. 与运行模式匹配的浏览器运行时及其资源限制。
 5. 日志轮转、健康检查和任务租约回收。
 
-以上是生产组装完成后的目标要求。当前 `cmd/service` 已运行持久化 Store、Queue
-和 Session Runner 调度循环；默认 Node backend 仍是 deferred/合成 Worker。它还
-不连接生产 Matrix 网络客户端、凭证入口、通知发送 worker 或真实账号自动化。
+`cmd/service` 已运行持久化 Store、Queue 和 Session Runner 调度循环；默认 Node
+backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/send client、
+同步网关和通知 worker；凭证注入通过 `-inject-account` 从显式环境变量加密写入。
 
 ## 浏览器运行时前置条件
 
@@ -55,10 +55,9 @@ X11/Wayland 下执行 WebKitGTK smoke，Windows/macOS 则执行 Wry 编译与打
 尚未完成 Windows/macOS 的 GUI 运行时 smoke。服务入口仍未将 helper 设为默认
 Worker；部署时不能仅凭 stage 中存在 helper 就推断服务具备真实浏览器自动化能力。
 
-Matrix 适配器当前只提供可注入的 transport-neutral Sender 边界；生产部署还
-需要在后续阶段选择 Matrix SDK、access token Secret 和连接/同步策略。通知
-outbox 保存在同一 bbolt 数据库，发送 worker 必须使用稳定 event ID 并在网络
-失败后保留记录。
+Matrix HTTP client 使用 Client-Server `sync`、`send` 和 `whoami` 接口；access token
+由 `matrix.access_token_env` 指定的环境变量注入。通知 outbox 保存在同一 bbolt
+数据库，发送 worker 使用稳定 event ID 并在网络失败后保留记录。
 
 阶段二的默认存储拓扑是单节点纯 Go bbolt。一个数据目录只能由一个服务
 实例拥有；该文件锁不提供跨主机多实例一致性。服务入口组装 `Store` 后，
@@ -82,8 +81,9 @@ cfg, err := config.Load("configs/example.json")
 store, err := store.Open(cfg)
 ```
 
-备份由存储服务写入配置派生的 `backups/` 目录；恢复前应验证备份文件、
-权限和 schema 版本，不能用未验证的任意路径覆盖运行数据库。
+备份由存储服务写入配置派生的 `backups/` 目录；`-restore` 只接受该目录内的
+非符号链接、0600 文件，并验证当前 schema 后以临时文件和原子替换恢复数据库。
+恢复必须在服务停止时执行；Profile 目录仍由部署系统独立备份。
 
 ## 构建与发布目标
 

@@ -18,8 +18,10 @@ Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 
 Rust helper，路径由 `-browser-runtime` 指定。`-self-test` 继续使用临时目录运行
 一次 Node Worker 协议 smoke test，不代表生产服务入口或真实浏览器自动化。
 
-当前入口还没有接入生产 Matrix 网络客户端、凭证注入/使用、账号管理 API 或通知
-发送 worker，因此它可以恢复和调度已有 Store 中的请求，但不会自行创建账号或请求。
+`cmd/service` 已提供生产运行拼装：凭证服务从部署环境注入密钥，Matrix HTTP
+Client/同步网关和通知 outbox worker 可由配置启用，健康检查可绑定受限 HTTP 端点；
+`-backup`、`-restore` 和 `-inject-account` 提供停止服务后的运维操作。服务仍不会
+自行创建账号，也不会把 Secret 写入普通配置或日志。
 
 Rust `browser-runtime` 已建立独立协议 helper。Windows 10/11、macOS 11+
 Apple Silicon 的 Wry 桌面 WebView 已由对应原生 CI 构建并打包；Ubuntu 24.04

@@ -409,6 +409,38 @@ func TestStoreBackupCanBeReopenedAndRejectsDuplicatePath(t *testing.T) {
 	}
 }
 
+func TestRestoreValidatesBackupAndAtomicallyReplacesDatabase(t *testing.T) {
+	service, cfg := openTestStore(t)
+	if _, err := service.CreateAccount("account-restore"); err != nil {
+		t.Fatal(err)
+	}
+	backupPath, err := service.Backup(storeTestTime.Add(2 * time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(cfg, backupPath); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if _, err := reopened.GetAccount("account-restore"); err != nil {
+		t.Fatalf("restored account = %v", err)
+	}
+	outside := filepath.Join(t.TempDir(), "outside.db")
+	if err := os.WriteFile(outside, []byte("not a database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(cfg, outside); !errors.Is(err, ErrInvalidRestore) {
+		t.Fatalf("outside restore error = %v", err)
+	}
+}
+
 func TestStoreSubmitRequestIsAtomicAndIdempotent(t *testing.T) {
 	service, _ := openTestStore(t)
 	if _, err := service.CreateAccount("account-1"); err != nil {
