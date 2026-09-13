@@ -5,13 +5,13 @@ Head or Range: 97abff8407ad67a15bd70b264754d10f3311e2bd
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): add UI-neutral runtime controls
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
 Base OID: dae2e88fa4b53c9054874853dcc03e8d233100cd
-Head OID: 97abff8407ad67a15bd70b264754d10f3311e2bd
-Integrated Result: pending
+Head OID: ef4ec96835120b9de7fc7cf7cf3e19db62fa7ce9
+Integrated Result: main@ef4ec96835120b9de7fc7cf7cf3e19db62fa7ce9
 
 ## Summary
 
