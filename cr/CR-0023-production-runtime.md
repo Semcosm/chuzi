@@ -5,13 +5,13 @@ Head or Range: 8c3fd957c87b1985252d44238300720b8c18716e..a7ec9e09fe69d42c93c9f3b
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): assemble production runtime boundaries
-Revision: 3
+Revision: 4
 Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: dee1fa85ae1af6da921256903201b770f17e7f2c
-Head OID: dee1fa85ae1af6da921256903201b770f17e7f2c
-Integrated Result: main@dee1fa85ae1af6da921256903201b770f17e7f2c
+Base OID: 1934312f0b104c7baefcf78108c30dd525649e89
+Head OID: 1934312f0b104c7baefcf78108c30dd525649e89
+Integrated Result: main@1934312f0b104c7baefcf78108c30dd525649e89
 
 ## Summary
 
