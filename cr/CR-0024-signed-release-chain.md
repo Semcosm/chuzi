@@ -5,9 +5,9 @@ Head or Range: 1a3700c88755616c72ff9c7fe0bcab18063b5e4b..cab48362e5de4e759003446
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(release): add signed stable release verification chain
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
 Base OID: 1a3700c88755616c72ff9c7fe0bcab18063b5e4b
 Head OID: cab48362e5de4e759003446c25839f501e2114f7
