@@ -1,16 +1,16 @@
 # CR-0021: implement the first headless-CDP automation adapter
 
 Base: main
-Head or Range: working tree
+Head or Range: d532dbcc2da9203ffbde79275c4a308b1569e7fe..7ed60fbe317e7181c9981892be4ec04c790841ae
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): implement first headless-CDP local test adapter
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: d532dbcc2da9203ffbde79275c4a308b1569e7fe
-Head OID: d556d5417fc5c08628610663406bb2915c416075
+Base OID: 7ed60fbe317e7181c9981892be4ec04c790841ae
+Head OID: 7ed60fbe317e7181c9981892be4ec04c790841ae
 Integrated Result: pending
 
 ## Summary
