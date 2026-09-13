@@ -107,13 +107,13 @@ impl OperationRegistry {
         let children: Vec<_> = state
             .children
             .iter()
-            .map(|(id, child)| {
-                state.cancelled.insert(id.clone());
-                Arc::clone(child)
-            })
+            .map(|(id, child)| (id.clone(), Arc::clone(child)))
             .collect();
+        for (id, _) in &children {
+            state.cancelled.insert(id.clone());
+        }
         drop(state);
-        for child in children {
+        for (_, child) in children {
             if let Ok(mut child) = child.lock() {
                 let _ = child.kill();
             }
