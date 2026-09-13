@@ -111,10 +111,17 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 
 `internal/launcher` 是 transport-neutral 的后台接口：`UpdateChecker` 负责查询更新，
 `ResourceVerifier`/`ResourceRepairer` 负责完整性检查与修复，`ComponentManager` 和
-`PluginManager` 负责安装状态，`SettingsStore` 保存启动行为设置。接口不假设 UI
-技术、网络协议或插件进程模型。CR-0022 提供了本地 manifest source、原子资源修复、
-组件依赖安装、插件归档安全解包和显式 signer 信任后端；`cmd/launcher` 通过 CLI
-调用这些后台能力，仍不包含 UI 或隐式网络下载。
+`PluginManager` 负责安装状态，`SettingsStore` 保存启动行为设置，文件锁和
+`ServiceController` 约束本地操作并管理由调用方持有的前台服务进程。接口不假设 UI
+技术、网络协议或平台服务管理器。CR-0022 与 CR-0026 提供了本地 manifest source、
+原子资源修复、组件依赖安装、插件归档安全解包、显式 signer 信任、原子设置持久化、
+跨进程锁和可取消进度事件；`cmd/launcher` 通过 CLI 调用这些后台能力，仍不包含 UI
+或隐式网络下载。
+
+行为设置文件缺失时使用关闭自动变更的默认值，写入使用 0600 临时文件和原子替换。
+修改安装目录或设置前应先持有 `.chuzi/launcher.lock`；锁不会自动打破，发现遗留锁时
+必须先确认记录中的进程已退出。`ProcessServiceController` 只负责当前调用方生命周期
+内的 shell-free 子进程，生产部署仍由 systemd、launchd 或 Windows 服务管理器负责。
 
 ## 真实 WebView 与 headless 边界
 

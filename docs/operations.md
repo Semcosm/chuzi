@@ -96,9 +96,13 @@ store, err := store.Open(cfg)
 
 完整包内的 `release-manifest.json` 是启动器与未来 UI 的稳定输入，声明目标平台、
 版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 提供 manifest
-展示、校验、基于本地 manifest 的更新检查、资源修复、组件启停和插件信任/启停 CLI。
-CR-0022 的后台实现不下载未知资源：更新检查通过注入的 source，修复和组件安装只
-使用显式本地 source root，插件归档先校验摘要再安全解包到临时目录并原子替换。
+展示、校验、基于本地 manifest 的更新检查、资源修复、组件启停、插件信任/启停和
+`settings`/`settings-save` CLI。修改安装目录或设置前会取得 `.chuzi/launcher.lock`，
+`-progress` 可将脱敏的阶段事件写到 stderr，Ctrl-C 会通过 context 取消当前操作。
+CR-0022/CR-0026 的后台实现不下载未知资源：更新检查通过注入的 source，修复和组件
+安装只使用显式本地 source root，插件归档先校验摘要再安全解包到临时目录并原子替换。
+锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。后续 Rust UI 应通过
+CLI/未来 IPC 复用这些接口，不要把文件或插件策略复制到 UI 层。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：

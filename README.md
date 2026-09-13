@@ -42,8 +42,10 @@ GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`li
 artifact，不创建 Git tag 或 GitHub Release。每个目标包含最小启动器、服务、浏览器
 Worker、桌面运行时以及 `release-manifest.json`；同时提供按组件拆分的归档，安装者不
 必安装全部运行资源。启动器后台契约位于 `internal/launcher`，UI 暂未定型；当前已
-提供本地更新检查、资源修复、组件启停、插件归档安装和显式信任管理，不会隐式下载
-或执行未知插件。
+提供本地更新检查、资源修复、组件启停、插件归档安装、显式信任管理、原子行为设置、
+跨进程安装锁和可取消的操作进度；`cmd/launcher` 只使用本地 manifest/source，不会
+隐式下载或执行未知插件。Go 的前台服务进程控制边界可由后续 Rust 跨平台 UI 通过
+CLI/未来 IPC 适配，但当前 CLI 不替代 systemd、launchd 或 Windows 服务管理器。
 
 ## 设计原则
 
