@@ -5,13 +5,13 @@ Head or Range: 1b4060079b7fe3d684738b76e933a2d3f5fb790f..dd73527416b86de1cf2d3c8
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): add Rust/Wry launcher UI MVP
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: aa8f0a16078ae6e9531402b7b743b5a46d27508d
-Head OID: aa8f0a16078ae6e9531402b7b743b5a46d27508d
-Integrated Result: pending
+Base OID: 17a7609834077f56287351fb066f1890297b4d1f
+Head OID: 17a7609834077f56287351fb066f1890297b4d1f
+Integrated Result: main@17a7609834077f56287351fb066f1890297b4d1f
 
 ## Summary
 
