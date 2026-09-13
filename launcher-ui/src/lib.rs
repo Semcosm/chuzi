@@ -314,11 +314,23 @@ pub struct ProgressMessage {
 mod tests {
     use super::*;
 
+    fn test_root() -> PathBuf {
+        #[cfg(windows)]
+        {
+            PathBuf::from(r"C:\opt\chuzi")
+        }
+        #[cfg(not(windows))]
+        {
+            PathBuf::from("/opt/chuzi")
+        }
+    }
+
     fn config() -> LauncherConfig {
+        let root = test_root();
         LauncherConfig {
-            launcher: PathBuf::from("/opt/chuzi/chuzi-launcher"),
-            root: PathBuf::from("/opt/chuzi"),
-            manifest: PathBuf::from("/opt/chuzi/release-manifest.json"),
+            launcher: root.join("chuzi-launcher"),
+            root: root.clone(),
+            manifest: root.join("release-manifest.json"),
             release_index: None,
             source_root: None,
             download_dir: None,
@@ -339,9 +351,10 @@ mod tests {
 
     #[test]
     fn command_spec_is_shell_free_and_includes_root() {
-        let spec = command_spec(&config(), &request("component-list")).expect("command spec");
+        let config = config();
+        let spec = command_spec(&config, &request("component-list")).expect("command spec");
         assert_eq!(spec.args[0], "-manifest");
-        assert!(spec.args.iter().any(|arg| arg == "/opt/chuzi"));
+        assert!(spec.args.iter().any(|arg| arg == config.root.as_os_str()));
         assert!(!spec.args.iter().any(|arg| arg == "-progress"));
     }
 
