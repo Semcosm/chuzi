@@ -111,7 +111,9 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 `internal/launcher` 是 transport-neutral 的后台接口：`UpdateChecker` 负责查询更新，
 `ResourceVerifier`/`ResourceRepairer` 负责完整性检查与修复，`ComponentManager` 和
 `PluginManager` 负责安装状态，`SettingsStore` 保存启动行为设置。接口不假设 UI
-技术、网络协议或插件进程模型；当前 `cmd/launcher` 只实现 manifest 读取和只读校验。
+技术、网络协议或插件进程模型。CR-0022 提供了本地 manifest source、原子资源修复、
+组件依赖安装、插件归档安全解包和显式 signer 信任后端；`cmd/launcher` 通过 CLI
+调用这些后台能力，仍不包含 UI 或隐式网络下载。
 
 ## 真实 WebView 与 headless 边界
 

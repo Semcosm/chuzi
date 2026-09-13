@@ -31,8 +31,9 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 Nightly release 是首次可交付流程：GitHub Actions 定时构建四个目标，不打 tag、不创建
 GitHub Release，只上传限期 Actions artifacts。产物已拆分为最小启动器、服务、浏览器
 Worker 和桌面运行时组件，并携带资源校验 manifest。启动器 UI 尚未定型；更新、修复、
-组件/插件和行为设置先以 `internal/launcher` 接口固定，网络下载、签名信任和插件执行
-仍需后续独立 CR。
+组件/插件和行为设置先以 `internal/launcher` 接口固定。CR-0022 已实现 UI 无关的
+本地更新检查、资源修复、组件依赖启停、插件归档安装和显式签名者信任；网络下载、
+生产签名验证、插件执行和行为设置持久化仍需后续独立 CR。
 
 ## 演进阶段
 

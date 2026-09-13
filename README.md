@@ -35,7 +35,9 @@ GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`li
 当前首个 release 流程是 nightly：GitHub Actions 每日自动构建并上传四个平台的限期
 artifact，不创建 Git tag 或 GitHub Release。每个目标包含最小启动器、服务、浏览器
 Worker、桌面运行时以及 `release-manifest.json`；同时提供按组件拆分的归档，安装者不
-必安装全部运行资源。启动器后台契约位于 `internal/launcher`，UI 暂未定型。
+必安装全部运行资源。启动器后台契约位于 `internal/launcher`，UI 暂未定型；当前已
+提供本地更新检查、资源修复、组件启停、插件归档安装和显式信任管理，不会隐式下载
+或执行未知插件。
 
 ## 设计原则
 
