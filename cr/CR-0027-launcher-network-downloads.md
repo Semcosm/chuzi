@@ -5,12 +5,12 @@ Head or Range: ba087186a1a7c16ab4bad0944b0d0b522f566d6f..c26c28a4d42a94950aa7985
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): add network component downloads
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: ba087186a1a7c16ab4bad0944b0d0b522f566d6f
-Head OID: c26c28a4d42a94950aa79853dbefc49e16fc091c
+Base OID: b6d077447f5d1d8eef4639fc2c83dabe1f5a2642
+Head OID: b6d077447f5d1d8eef4639fc2c83dabe1f5a2642
 Integrated Result: pending
 
 ## Summary
