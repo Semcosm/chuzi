@@ -1,7 +1,7 @@
 # CR-0024: establish a verifiable stable release chain
 
 Base: main
-Head or Range: 1a3700c88755616c72ff9c7fe0bcab18063b5e4b..deb35b7fb76d358d96c13126e2bb5122e6d742a7
+Head or Range: 1a3700c88755616c72ff9c7fe0bcab18063b5e4b..cab48362e5de4e759003446c25839f501e2114f7
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(release): add signed stable release verification chain
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 1a3700c88755616c72ff9c7fe0bcab18063b5e4b
-Head OID: deb35b7fb76d358d96c13126e2bb5122e6d742a7
+Head OID: cab48362e5de4e759003446c25839f501e2114f7
 Integrated Result: pending
 
 ## Summary
