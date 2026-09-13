@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -41,7 +42,10 @@ func Restore(cfg config.Config, backupPath string) error {
 	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
 		return ErrInvalidRestore
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	// Windows reports ACL-backed files with synthetic Unix permission bits;
+	// the mode argument cannot enforce 0600 there. Unix files must remain
+	// owner-only because that is the platform's permission boundary.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return ErrInvalidRestore
 	}
 	backup, err := bbolt.Open(backupPath, 0o600, &bbolt.Options{ReadOnly: true, Timeout: time.Second})
