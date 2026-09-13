@@ -29,6 +29,8 @@ var (
 	ErrNotTrusted      = errors.New("launcher: plugin is not trusted")
 	ErrRequired        = errors.New("launcher: required component cannot be changed")
 	ErrTransaction     = errors.New("launcher: transaction rolled back")
+	ErrLockHeld        = errors.New("launcher: installation is locked")
+	ErrServiceRunning  = errors.New("launcher: service is already running")
 )
 
 const (
@@ -345,4 +347,37 @@ func (s BehaviorSettings) Validate() error {
 type SettingsStore interface {
 	Load(context.Context) (BehaviorSettings, error)
 	Save(context.Context, BehaviorSettings) error
+}
+
+// DefaultBehaviorSettings keeps automatic changes disabled until an operator
+// explicitly enables them. A launcher UI can present these values without
+// inventing policy of its own.
+func DefaultBehaviorSettings() BehaviorSettings {
+	return BehaviorSettings{UpdateChannel: ChannelNightly}
+}
+
+// ProgressEvent is a deliberately small, non-sensitive operation update for
+// a launcher UI or CLI. Item values are manifest paths or component/plugin IDs
+// supplied by the installation, never credentials or page content.
+type ProgressEvent struct {
+	Operation string `json:"operation"`
+	Stage     string `json:"stage"`
+	Item      string `json:"item,omitempty"`
+	Completed int    `json:"completed"`
+	Total     int    `json:"total"`
+}
+
+// ProgressReporter receives best-effort operation updates. Report must be
+// fast and must not mutate launcher state; cancellation remains controlled by
+// the operation context.
+type ProgressReporter interface {
+	Report(ProgressEvent)
+}
+
+type ProgressFunc func(ProgressEvent)
+
+func (f ProgressFunc) Report(event ProgressEvent) {
+	if f != nil {
+		f(event)
+	}
 }

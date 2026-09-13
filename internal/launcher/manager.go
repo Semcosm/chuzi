@@ -35,6 +35,7 @@ type ManagerOptions struct {
 	StatePath   string
 	Manifest    ReleaseManifest
 	Trust       PluginTrustPolicy
+	Progress    ProgressReporter
 }
 
 // FilesystemManager implements both management interfaces without exposing a
@@ -48,6 +49,7 @@ type FilesystemManager struct {
 	manifest      ReleaseManifest
 	trust         map[string]struct{}
 	requireSigned bool
+	progress      ProgressReporter
 	data          managerState
 }
 
@@ -100,8 +102,8 @@ func NewFilesystemManager(options ManagerOptions) (*FilesystemManager, error) {
 	manager := &FilesystemManager{
 		root: options.InstallRoot, source: options.SourceRoot, state: options.StatePath,
 		manifest: options.Manifest, trust: make(map[string]struct{}),
-		requireSigned: options.Trust.RequireSigned,
-		data:          managerState{Components: make(map[string]componentRecord), Plugins: make(map[string]pluginRecord)},
+		requireSigned: options.Trust.RequireSigned, progress: options.Progress,
+		data: managerState{Components: make(map[string]componentRecord), Plugins: make(map[string]pluginRecord)},
 	}
 	for _, signer := range options.Trust.AllowedSigners {
 		if strings.TrimSpace(signer) != "" {
@@ -127,6 +129,13 @@ func (m *FilesystemManager) load() error {
 	var state managerState
 	if err := decoder.Decode(&state); err != nil {
 		return fmt.Errorf("decode launcher state: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("decode launcher state: trailing JSON")
+		}
+		return fmt.Errorf("decode launcher state trailing content: %w", err)
 	}
 	if state.Components == nil {
 		state.Components = make(map[string]componentRecord)
@@ -181,26 +190,36 @@ func (m *FilesystemManager) List(ctx context.Context) ([]ComponentState, error) 
 	states := make([]ComponentState, 0, len(m.manifest.Components))
 	for _, component := range m.manifest.Components {
 		record := m.data.Components[component.ID]
-		states = append(states, ComponentState{ID: component.ID, Installed: record.Installed, Version: record.Version, Enabled: record.Enabled, Required: component.Required, Health: m.componentHealth(component, record)})
+		health, err := m.componentHealth(ctx, component, record)
+		if err != nil {
+			return nil, err
+		}
+		states = append(states, ComponentState{ID: component.ID, Installed: record.Installed, Version: record.Version, Enabled: record.Enabled, Required: component.Required, Health: health})
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].ID < states[j].ID })
 	return states, nil
 }
 
-func (m *FilesystemManager) componentHealth(component Component, record componentRecord) string {
+func (m *FilesystemManager) componentHealth(ctx context.Context, component Component, record componentRecord) (string, error) {
 	if !record.Installed {
-		return HealthNotInstalled
+		return HealthNotInstalled, nil
 	}
 	if !record.Enabled {
-		return HealthDisabled
+		return HealthDisabled, nil
 	}
 	for _, resource := range component.Resources {
-		ok, err := verifyOne(context.Background(), mustJoin(m.root, resource.Path), resource)
-		if err != nil || !ok {
-			return HealthMissing
+		ok, err := verifyOne(ctx, mustJoin(m.root, resource.Path), resource)
+		if err != nil {
+			if contextError := contextErr(ctx); contextError != nil {
+				return "", contextError
+			}
+			return HealthMissing, nil
+		}
+		if !ok {
+			return HealthMissing, nil
 		}
 	}
-	return HealthHealthy
+	return HealthHealthy, nil
 }
 
 func (m *FilesystemManager) Install(ctx context.Context, id string) (ComponentState, error) {
@@ -209,6 +228,7 @@ func (m *FilesystemManager) Install(ctx context.Context, id string) (ComponentSt
 	if err := contextErr(ctx); err != nil {
 		return ComponentState{}, err
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "component-install", Stage: "start", Item: id, Total: 1})
 	if _, ok := m.component(id); !ok {
 		return ComponentState{}, fmt.Errorf("%w: component %q", ErrNotFound, id)
 	}
@@ -228,9 +248,14 @@ func (m *FilesystemManager) Install(ctx context.Context, id string) (ComponentSt
 		m.data = previous
 		return ComponentState{}, fmt.Errorf("%w: save component state: %v", ErrTransaction, err)
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "component-install", Stage: "complete", Item: id, Completed: 1, Total: 1})
 	component, _ := m.component(id)
 	record := m.data.Components[id]
-	return ComponentState{ID: id, Installed: record.Installed, Version: record.Version, Enabled: record.Enabled, Required: component.Required, Health: m.componentHealth(component, record)}, nil
+	health, err := m.componentHealth(ctx, component, record)
+	if err != nil {
+		return ComponentState{}, err
+	}
+	return ComponentState{ID: id, Installed: record.Installed, Version: record.Version, Enabled: record.Enabled, Required: component.Required, Health: health}, nil
 }
 
 func (m *FilesystemManager) installComponent(ctx context.Context, id string, visiting map[string]bool) error {
@@ -263,7 +288,7 @@ func (m *FilesystemManager) installComponent(ctx context.Context, id string, vis
 	}
 	componentForRepair := component
 	componentForRepair.Dependencies = nil
-	result, err := (FileRepairer{SourceRoot: m.source}).Repair(ctx, RepairRequest{InstallRoot: m.root, Manifest: ReleaseManifest{Format: m.manifest.Format, Channel: m.manifest.Channel, Version: m.manifest.Version, Target: m.manifest.Target, Components: []Component{componentForRepair}}})
+	result, err := (FileRepairer{SourceRoot: m.source, Progress: m.progress}).Repair(ctx, RepairRequest{InstallRoot: m.root, Manifest: ReleaseManifest{Format: m.manifest.Format, Channel: m.manifest.Channel, Version: m.manifest.Version, Target: m.manifest.Target, Components: []Component{componentForRepair}}})
 	_ = result
 	if err != nil {
 		return err
@@ -278,6 +303,7 @@ func (m *FilesystemManager) Remove(ctx context.Context, id string) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "component-remove", Stage: "start", Item: id, Total: 1})
 	component, ok := m.component(id)
 	if !ok {
 		return fmt.Errorf("%w: component %q", ErrNotFound, id)
@@ -323,6 +349,7 @@ func (m *FilesystemManager) Remove(ctx context.Context, id string) error {
 		m.data = previous
 		return fmt.Errorf("%w: save component state: %v", ErrTransaction, err)
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "component-remove", Stage: "complete", Item: id, Completed: 1, Total: 1})
 	return nil
 }
 
@@ -332,6 +359,11 @@ func (m *FilesystemManager) SetEnabled(ctx context.Context, id string, enabled b
 	if err := contextErr(ctx); err != nil {
 		return ComponentState{}, err
 	}
+	operation := "component-disable"
+	if enabled {
+		operation = "component-enable"
+	}
+	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "start", Item: id, Total: 1})
 	component, ok := m.component(id)
 	if !ok {
 		return ComponentState{}, fmt.Errorf("%w: component %q", ErrNotFound, id)
@@ -350,7 +382,12 @@ func (m *FilesystemManager) SetEnabled(ctx context.Context, id string, enabled b
 		m.data = previous
 		return ComponentState{}, fmt.Errorf("%w: save component state: %v", ErrTransaction, err)
 	}
-	return ComponentState{ID: id, Installed: true, Version: record.Version, Enabled: enabled, Required: component.Required, Health: m.componentHealth(component, record)}, nil
+	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "complete", Item: id, Completed: 1, Total: 1})
+	health, err := m.componentHealth(ctx, component, record)
+	if err != nil {
+		return ComponentState{}, err
+	}
+	return ComponentState{ID: id, Installed: true, Version: record.Version, Enabled: enabled, Required: component.Required, Health: health}, nil
 }
 
 func (m *FilesystemManager) ListPlugins(ctx context.Context) ([]PluginState, error) {
@@ -387,6 +424,7 @@ func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (Plugi
 	if err := contextErr(ctx); err != nil {
 		return PluginState{}, err
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "plugin-install", Stage: "start", Item: id, Total: 1})
 	descriptor, ok := m.plugin(id)
 	if !ok {
 		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotFound, id)
@@ -422,25 +460,39 @@ func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (Plugi
 	}
 	previous := cloneState(m.data)
 	backup := pluginRoot + ".rollback"
-	_ = os.RemoveAll(backup)
+	if err := os.RemoveAll(backup); err != nil {
+		return PluginState{}, fmt.Errorf("prepare plugin rollback: %w", err)
+	}
+	hadPrevious := false
 	if _, err := os.Lstat(pluginRoot); err == nil {
+		hadPrevious = true
 		if err := os.Rename(pluginRoot, backup); err != nil {
 			return PluginState{}, fmt.Errorf("backup plugin: %w", err)
 		}
+	} else if !os.IsNotExist(err) {
+		return PluginState{}, fmt.Errorf("inspect plugin: %w", err)
 	}
 	if err := os.Rename(stage, pluginRoot); err != nil {
-		_ = os.Rename(backup, pluginRoot)
+		if hadPrevious {
+			_ = os.Rename(backup, pluginRoot)
+		}
 		return PluginState{}, fmt.Errorf("install plugin: %w", err)
 	}
 	// A new archive always requires a fresh trust decision, even when the
 	// plugin ID is unchanged.
 	m.data.Plugins[id] = pluginRecord{Installed: true, Enabled: false, Trusted: false}
 	if err := m.save(); err != nil {
-		_ = os.RemoveAll(pluginRoot)
-		_ = os.Rename(backup, pluginRoot)
+		rollbackErr := os.RemoveAll(pluginRoot)
+		if rollbackErr == nil && hadPrevious {
+			rollbackErr = os.Rename(backup, pluginRoot)
+		}
 		m.data = previous
+		if rollbackErr != nil {
+			return PluginState{}, fmt.Errorf("%w: save plugin state: %v; rollback: %v", ErrTransaction, err, rollbackErr)
+		}
 		return PluginState{}, fmt.Errorf("%w: save plugin state: %v", ErrTransaction, err)
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "plugin-install", Stage: "complete", Item: id, Completed: 1, Total: 1})
 	_ = os.RemoveAll(backup)
 	record := m.data.Plugins[id]
 	return PluginState{Descriptor: descriptor, Installed: true, Enabled: record.Enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}, nil
@@ -452,6 +504,7 @@ func (m *FilesystemManager) RemovePlugin(ctx context.Context, id string) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "plugin-remove", Stage: "start", Item: id, Total: 1})
 	if _, ok := m.plugin(id); !ok {
 		return fmt.Errorf("%w: plugin %q", ErrNotFound, id)
 	}
@@ -461,8 +514,12 @@ func (m *FilesystemManager) RemovePlugin(ctx context.Context, id string) error {
 		return err
 	}
 	backup := pluginRoot + ".rollback"
-	_ = os.RemoveAll(backup)
+	if err := os.RemoveAll(backup); err != nil {
+		return fmt.Errorf("%w: prepare plugin rollback: %v", ErrTransaction, err)
+	}
+	hadPrevious := false
 	if _, err := os.Lstat(pluginRoot); err == nil {
+		hadPrevious = true
 		if err := os.Rename(pluginRoot, backup); err != nil {
 			return fmt.Errorf("%w: remove plugin: %v", ErrTransaction, err)
 		}
@@ -471,10 +528,17 @@ func (m *FilesystemManager) RemovePlugin(ctx context.Context, id string) error {
 	}
 	delete(m.data.Plugins, id)
 	if err := m.save(); err != nil {
-		_ = os.Rename(backup, pluginRoot)
+		var rollbackErr error
+		if hadPrevious {
+			rollbackErr = os.Rename(backup, pluginRoot)
+		}
 		m.data = previous
+		if rollbackErr != nil {
+			return fmt.Errorf("%w: save plugin state: %v; rollback: %v", ErrTransaction, err, rollbackErr)
+		}
 		return fmt.Errorf("%w: save plugin state: %v", ErrTransaction, err)
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: "plugin-remove", Stage: "complete", Item: id, Completed: 1, Total: 1})
 	_ = os.RemoveAll(backup)
 	return nil
 }
@@ -485,6 +549,11 @@ func (m *FilesystemManager) SetPluginEnabled(ctx context.Context, id string, ena
 	if err := contextErr(ctx); err != nil {
 		return PluginState{}, err
 	}
+	operation := "plugin-disable"
+	if enabled {
+		operation = "plugin-enable"
+	}
+	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "start", Item: id, Total: 1})
 	descriptor, ok := m.plugin(id)
 	if !ok {
 		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotFound, id)
@@ -503,6 +572,7 @@ func (m *FilesystemManager) SetPluginEnabled(ctx context.Context, id string, ena
 		m.data = previous
 		return PluginState{}, fmt.Errorf("%w: save plugin state: %v", ErrTransaction, err)
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "complete", Item: id, Completed: 1, Total: 1})
 	return PluginState{Descriptor: descriptor, Installed: true, Enabled: enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}, nil
 }
 
@@ -512,6 +582,11 @@ func (m *FilesystemManager) SetTrusted(ctx context.Context, id string, trusted b
 	if err := contextErr(ctx); err != nil {
 		return PluginState{}, err
 	}
+	operation := "plugin-untrust"
+	if trusted {
+		operation = "plugin-trust"
+	}
+	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "start", Item: id, Total: 1})
 	descriptor, ok := m.plugin(id)
 	if !ok {
 		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotFound, id)
@@ -541,6 +616,7 @@ func (m *FilesystemManager) SetTrusted(ctx context.Context, id string, trusted b
 		m.data = previous
 		return PluginState{}, fmt.Errorf("%w: save plugin trust: %v", ErrTransaction, err)
 	}
+	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "complete", Item: id, Completed: 1, Total: 1})
 	return PluginState{Descriptor: descriptor, Installed: record.Installed, Enabled: record.Enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}, nil
 }
 
@@ -639,13 +715,14 @@ func (m *FilesystemManager) snapshotResources() (map[string]resourceSnapshot, er
 			if err != nil {
 				return nil, fmt.Errorf("snapshot resource %s: %w", resource.Path, err)
 			}
+			if !info.Mode().IsRegular() {
+				return nil, fmt.Errorf("%w: existing resource %s is not a regular file", ErrInvalidPath, resource.Path)
+			}
 			entry.exists = true
 			entry.mode = info.Mode()
-			if info.Mode().IsRegular() {
-				entry.data, err = os.ReadFile(entry.path)
-				if err != nil {
-					return nil, fmt.Errorf("snapshot resource %s: %w", resource.Path, err)
-				}
+			entry.data, err = os.ReadFile(entry.path)
+			if err != nil {
+				return nil, fmt.Errorf("snapshot resource %s: %w", resource.Path, err)
 			}
 			snapshot[resource.Path] = entry
 		}
@@ -726,7 +803,7 @@ func extractZip(ctx context.Context, archivePath, destination string) error {
 		}
 		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
 		if err == nil {
-			_, err = io.Copy(output, input)
+			_, err = copyWithContext(ctx, output, input)
 			_ = output.Close()
 		}
 		_ = input.Close()
@@ -777,7 +854,7 @@ func extractTarGz(ctx context.Context, archivePath, destination string) error {
 			if err != nil {
 				return err
 			}
-			_, copyErr := io.Copy(output, reader)
+			_, copyErr := copyWithContext(ctx, output, reader)
 			closeErr := output.Close()
 			if copyErr != nil {
 				return copyErr

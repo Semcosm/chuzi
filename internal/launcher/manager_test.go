@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -36,6 +37,41 @@ func TestFileRepairerStagesAllResourcesBeforeCommit(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(install, "bin", "one")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("partial repair was committed: %v", err)
+	}
+}
+
+func TestFileRepairerReportsDeterministicProgress(t *testing.T) {
+	source, install := t.TempDir(), t.TempDir()
+	resource := resourceFor(t, source, "service/main", "service")
+	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "1", Target: "linux-amd64", Components: []Component{{ID: "service", Version: "1", Resources: []Resource{resource}}}}
+	var events []ProgressEvent
+	reporter := ProgressFunc(func(event ProgressEvent) { events = append(events, event) })
+	if _, err := (FileRepairer{SourceRoot: source, Progress: reporter}).Repair(context.Background(), RepairRequest{InstallRoot: install, Manifest: manifest}); err != nil {
+		t.Fatal(err)
+	}
+	if len(events) < 3 {
+		t.Fatalf("progress events = %#v, want verify/stage/commit", events)
+	}
+	if events[0].Operation != "repair" || events[0].Stage != "verify" || events[0].Item != resource.Path {
+		t.Fatalf("first progress event = %#v", events[0])
+	}
+	if events[len(events)-1].Stage != "commit" || events[len(events)-1].Completed != 1 {
+		t.Fatalf("last progress event = %#v", events[len(events)-1])
+	}
+}
+
+func TestFileRepairerDoesNotReplaceNonRegularTarget(t *testing.T) {
+	source, install := t.TempDir(), t.TempDir()
+	resource := resourceFor(t, source, "service/main", "service")
+	if err := os.MkdirAll(filepath.Join(install, "service", "main"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "1", Target: "linux-amd64", Components: []Component{{ID: "service", Version: "1", Resources: []Resource{resource}}}}
+	if _, err := (FileRepairer{SourceRoot: source}).Repair(context.Background(), RepairRequest{InstallRoot: install, Manifest: manifest}); !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("non-regular target error = %v, want ErrInvalidPath", err)
+	}
+	if info, err := os.Stat(filepath.Join(install, "service", "main")); err != nil || !info.IsDir() {
+		t.Fatalf("non-regular target changed: info=%v err=%v", info, err)
 	}
 }
 
@@ -92,6 +128,45 @@ func TestFilesystemComponentInstallRollsBackFilesWhenStateCommitFails(t *testing
 	if _, err := os.Stat(filepath.Join(install, "service/main")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("resource survived failed transaction: %v", err)
 	}
+}
+
+func TestFilesystemManagerRejectsTrailingStateJSON(t *testing.T) {
+	root := t.TempDir()
+	statePath := filepath.Join(root, ".chuzi", "launcher-state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(statePath, []byte(`{"components":{},"plugins":{}} {}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "1", Target: "linux-amd64"}
+	if _, err := NewFilesystemManager(ManagerOptions{InstallRoot: root, Manifest: manifest}); err == nil {
+		t.Fatal("launcher state accepted trailing JSON")
+	}
+}
+
+func TestCopyWithContextStopsBetweenReads(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	reader := &cancelAfterRead{cancel: cancel}
+	var destination strings.Builder
+	if _, err := copyWithContext(ctx, &destination, reader); !errors.Is(err, context.Canceled) {
+		t.Fatalf("copy error = %v, want context.Canceled", err)
+	}
+}
+
+type cancelAfterRead struct {
+	cancel context.CancelFunc
+	reads  int
+}
+
+func (r *cancelAfterRead) Read(buffer []byte) (int, error) {
+	r.reads++
+	if r.reads == 1 {
+		buffer[0] = 'x'
+		r.cancel()
+		return 1, nil
+	}
+	return 0, io.EOF
 }
 
 func TestFilesystemPluginManagerTrustAndArchiveSafety(t *testing.T) {

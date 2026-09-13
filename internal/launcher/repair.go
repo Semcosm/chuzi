@@ -15,7 +15,10 @@ import (
 // source is checked against the manifest before any destination is changed.
 // Destination replacement is committed as one filesystem transaction and is
 // rolled back if any rename fails.
-type FileRepairer struct{ SourceRoot string }
+type FileRepairer struct {
+	SourceRoot string
+	Progress   ProgressReporter
+}
 
 type LocalResourceRepairer = FileRepairer
 
@@ -52,7 +55,8 @@ func (r FileRepairer) Repair(ctx context.Context, request RepairRequest) (Repair
 	}
 	var repairs []pending
 	result := RepairResult{}
-	for _, resourcePath := range selected {
+	for index, resourcePath := range selected {
+		reportProgress(r.Progress, ProgressEvent{Operation: "repair", Stage: "verify", Item: resourcePath, Completed: index, Total: len(selected)})
 		if _, ok := seen[resourcePath]; ok {
 			continue
 		}
@@ -64,6 +68,13 @@ func (r FileRepairer) Repair(ctx context.Context, request RepairRequest) (Repair
 		target, err := safeJoin(request.InstallRoot, resource.Path)
 		if err != nil {
 			return RepairResult{}, err
+		}
+		if info, statErr := os.Lstat(target); statErr == nil {
+			if !info.Mode().IsRegular() {
+				return RepairResult{}, fmt.Errorf("%w: resource target %q is not a regular file", ErrInvalidPath, resource.Path)
+			}
+		} else if !os.IsNotExist(statErr) {
+			return RepairResult{}, fmt.Errorf("inspect resource target %s: %w", resource.Path, statErr)
 		}
 		valid, err := verifyOne(ctx, target, resource)
 		if err != nil {
@@ -101,6 +112,7 @@ func (r FileRepairer) Repair(ctx context.Context, request RepairRequest) (Repair
 			return RepairResult{}, err
 		}
 		staged := filepath.Join(stageDir, fmt.Sprintf("%06d", index))
+		reportProgress(r.Progress, ProgressEvent{Operation: "repair", Stage: "stage", Item: repairs[index].resource.Path, Completed: index + 1, Total: len(repairs)})
 		if err := copyVerified(ctx, safeSourcePath(r.SourceRoot, repairs[index].resource.Path), staged, repairs[index].resource); err != nil {
 			return RepairResult{}, fmt.Errorf("stage %s: %w", repairs[index].resource.Path, err)
 		}
@@ -123,7 +135,7 @@ func (r FileRepairer) Repair(ctx context.Context, request RepairRequest) (Repair
 			}
 		}
 	}
-	for _, item := range repairs {
+	for index, item := range repairs {
 		if err := contextErr(ctx); err != nil {
 			rollback()
 			return RepairResult{}, err
@@ -133,6 +145,7 @@ func (r FileRepairer) Repair(ctx context.Context, request RepairRequest) (Repair
 			return RepairResult{}, fmt.Errorf("create resource directory: %w", err)
 		}
 		backupPath := filepath.Join(stageDir, fmt.Sprintf("backup-%d", len(backups)))
+		reportProgress(r.Progress, ProgressEvent{Operation: "repair", Stage: "commit", Item: item.resource.Path, Completed: index + 1, Total: len(repairs)})
 		entry := backup{target: item.target, backup: backupPath}
 		if _, err := os.Lstat(item.target); err == nil {
 			if err := os.Rename(item.target, backupPath); err != nil {
@@ -198,7 +211,7 @@ func copyVerified(ctx context.Context, source, target string, resource Resource)
 		}
 	}()
 	hash := sha256.New()
-	count, err := io.Copy(io.MultiWriter(output, hash), input)
+	count, err := copyWithContext(ctx, io.MultiWriter(output, hash), input)
 	if err != nil {
 		return err
 	}
@@ -210,6 +223,28 @@ func copyVerified(ctx context.Context, source, target string, resource Resource)
 	}
 	ok = true
 	return nil
+}
+
+// copyWithContext checks cancellation between bounded reads. File and archive
+// reads are not interruptible at the OS level, but this keeps large copies
+// from running an entire operation after its caller has cancelled it.
+func copyWithContext(ctx context.Context, destination io.Writer, source io.Reader) (int64, error) {
+	if err := contextErr(ctx); err != nil {
+		return 0, err
+	}
+	return io.Copy(destination, contextReader{ctx: ctx, reader: source})
+}
+
+type contextReader struct {
+	ctx    context.Context
+	reader io.Reader
+}
+
+func (r contextReader) Read(buffer []byte) (int, error) {
+	if err := contextErr(r.ctx); err != nil {
+		return 0, err
+	}
+	return r.reader.Read(buffer)
 }
 
 func hashFile(ctx context.Context, filename string) (string, error) {
