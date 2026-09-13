@@ -20,7 +20,7 @@ tar -czf "$artifact" -C "$stage_dir" .
 for component in launcher service browser-worker desktop-runtime; do
   component_dir="$(mktemp -d)"
   case "$component" in
-    launcher) cp "$stage_dir/chuzi-launcher" "$component_dir/"; cp "$stage_dir/release-manifest.json" "$component_dir/" ;;
+    launcher) cp "$stage_dir/chuzi-launcher" "$component_dir/"; cp "$stage_dir/chuzi-launcher-ui" "$component_dir/"; cp "$stage_dir/release-manifest.json" "$component_dir/" ;;
     service) cp "$stage_dir/chuzi" "$component_dir/" ;;
     browser-worker) cp -R "$stage_dir/browser-worker" "$component_dir/" ;;
     desktop-runtime) cp "$stage_dir/chuzi-browser-runtime" "$component_dir/" ;;

@@ -33,9 +33,10 @@ def main() -> int:
     binary = "chuzi.exe" if args.target == "windows-amd64" else "chuzi"
     runtime = "chuzi-browser-runtime.exe" if args.target == "windows-amd64" else "chuzi-browser-runtime"
     launcher = "chuzi-launcher.exe" if args.target == "windows-amd64" else "chuzi-launcher"
+    launcher_ui = "chuzi-launcher-ui.exe" if args.target == "windows-amd64" else "chuzi-launcher-ui"
     archive_extension = "zip" if args.target == "windows-amd64" else "tar.gz"
     groups = {
-        "launcher": ([launcher], True),
+        "launcher": ([launcher, launcher_ui], True),
         "service": ([binary], False),
         "browser-worker": (sorted(
             "browser-worker/" + str(path.relative_to(stage / "browser-worker")).replace(os.sep, "/")
@@ -46,7 +47,11 @@ def main() -> int:
     components = []
     for component_id, (files, required) in groups.items():
         files = files if isinstance(files, list) else list(files)
-        files = [item for item in files if (stage / item).is_file()]
+        missing = [item for item in files if not (stage / item).is_file()]
+        if missing:
+            raise SystemExit(
+                f"component {component_id} is missing resources: {', '.join(missing)}"
+            )
         if required and not files:
             raise SystemExit(f"required component has no resources: {component_id}")
         dependencies = ["browser-worker"] if component_id == "service" else []

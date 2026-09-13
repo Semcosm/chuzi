@@ -46,7 +46,8 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 │   └── service/
 ├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
 ├── browser-runtime/             # Rust helper；deferred/Wry 桌面 WebView
-├── cmd/launcher/                # UI-neutral 最小启动器入口
+├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
+├── launcher-ui/                 # Rust/Wry 跨平台启动器 UI 与 CLI IPC bridge
 ├── internal/
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
@@ -117,7 +118,9 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 原子资源修复、组件依赖安装、插件归档安全解包、显式 signer 信任、原子设置持久化、
 跨进程锁和可取消进度事件；CR-0027 增加了 `ReleaseIndex`、HTTPS 同源归档下载、
 临时文件原子落盘和首次运行初始化状态。`cmd/launcher` 只在显式提供
-`-release-index` 时联网，UI 可直接复用这些接口。
+`-release-index` 时联网。`launcher-ui` 只通过 shell-free 子进程调用该 CLI，
+将 UI 请求、脱敏进度和分类错误转换为 `chuzi.launcher-ui/v1` IPC 事件；文件、
+下载、校验、锁、插件信任和回滚策略仍只由 Go 后台实现。
 
 行为设置文件缺失时使用关闭自动变更的默认值，写入使用 0600 临时文件和原子替换。
 修改安装目录或设置前应先持有 `.chuzi/launcher.lock`；锁不会自动打破，发现遗留锁时
