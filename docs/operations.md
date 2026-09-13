@@ -124,6 +124,13 @@ Windows runner 使用对应的 `*.ps1` 脚本。构建产物必须包含 Go 服�
 `headless-cdp` 适配器。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 
+稳定版由带签名的 annotated semver tag 触发。tag 构建会复用四平台构建矩阵，
+为每个归档生成并签署 UGS attestation，校验签名者、tag/commit 绑定和归档
+SHA-256 后才创建 GitHub Release。发布需要仓库 Secret
+`CHUZI_RELEASE_SIGNING_KEY` 与变量 `CHUZI_RELEASE_SIGNER`，私钥只存在于
+短生命周期 runner。发布前必须提交 `releases/v<version>.md`；缺失或未信任的
+tag 会在发布 job 早期失败。
+
 当前 Node Worker 继续提供 deferred 协议和生命周期替身，并提供 headless-CDP
 进程边界；四个目标的 Rust/Wry helper
 已接入构建，原生编译由对应 runner 验证。Linux amd64/arm64 在原生 runner 上
