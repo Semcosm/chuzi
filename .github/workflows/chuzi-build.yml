@@ -110,18 +110,22 @@ jobs:
             date -u '+%Y-%m-%dT%H:%M:%SZ'
           }
 
+          dump_debug_state() {
+            current_phase="$(cat "$phase_file" 2>/dev/null || printf '%s' 'unknown')"
+            printf '[contract-debug] %s phase=%s\n' "$(now)" "$current_phase"
+            printf '[contract-debug] process snapshot\n'
+            if command -v ps >/dev/null 2>&1; then
+              ps -ef 2>&1 || true
+            elif command -v tasklist.exe >/dev/null 2>&1; then
+              tasklist.exe 2>&1 || true
+            else
+              printf '[contract-debug] no process-list command available\n'
+            fi
+          }
+
           debug_watchdog() {
             while sleep 15; do
-              current_phase="$(cat "$phase_file" 2>/dev/null || printf '%s' 'unknown')"
-              printf '[contract-debug] %s phase=%s\n' "$(now)" "$current_phase"
-              printf '[contract-debug] process snapshot\n'
-              if command -v ps >/dev/null 2>&1; then
-                ps -ef 2>&1 || true
-              elif command -v tasklist.exe >/dev/null 2>&1; then
-                tasklist.exe 2>&1 || true
-              else
-                printf '[contract-debug] no process-list command available\n'
-              fi
+              dump_debug_state
             done
           }
           debug_watchdog &
@@ -141,6 +145,10 @@ jobs:
             fi
             phase_finished="$(now)"
             printf '[contract] END %s at %s exit=%s\n' "$phase_name" "$phase_finished" "$phase_status"
+            if [ "$phase_status" -ne 0 ]; then
+              printf '[contract] FAILURE %s diagnostics\n' "$phase_name" >&2
+              dump_debug_state >&2
+            fi
             return "$phase_status"
           }
 
