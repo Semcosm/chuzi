@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -54,8 +55,9 @@ type FilesystemManager struct {
 }
 
 type managerState struct {
-	Components map[string]componentRecord `json:"components"`
-	Plugins    map[string]pluginRecord    `json:"plugins"`
+	Initialized bool                       `json:"initialized"`
+	Components  map[string]componentRecord `json:"components"`
+	Plugins     map[string]pluginRecord    `json:"plugins"`
 }
 
 type componentRecord struct {
@@ -113,7 +115,31 @@ func NewFilesystemManager(options ManagerOptions) (*FilesystemManager, error) {
 	if err := manager.load(); err != nil {
 		return nil, err
 	}
+	manager.bootstrapExistingComponents()
 	return manager, nil
+}
+
+// bootstrapExistingComponents recognizes files shipped with a standalone
+// launcher (most importantly the launcher component itself) without turning
+// arbitrary files into installed state. Only manifest-declared resources that
+// fully verify are adopted, and an explicit state record always wins.
+func (m *FilesystemManager) bootstrapExistingComponents() {
+	for _, component := range m.manifest.Components {
+		if _, recorded := m.data.Components[component.ID]; recorded || len(component.Resources) == 0 {
+			continue
+		}
+		healthy := true
+		for _, resource := range component.Resources {
+			valid, err := verifyOne(context.Background(), mustJoin(m.root, resource.Path), resource)
+			if err != nil || !valid {
+				healthy = false
+				break
+			}
+		}
+		if healthy {
+			m.data.Components[component.ID] = componentRecord{Installed: true, Version: component.Version, Enabled: true}
+		}
+	}
 }
 
 func (m *FilesystemManager) load() error {
@@ -187,6 +213,10 @@ func (m *FilesystemManager) List(ctx context.Context) ([]ComponentState, error) 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.listComponentsLocked(ctx)
+}
+
+func (m *FilesystemManager) listComponentsLocked(ctx context.Context) ([]ComponentState, error) {
 	states := make([]ComponentState, 0, len(m.manifest.Components))
 	for _, component := range m.manifest.Components {
 		record := m.data.Components[component.ID]
@@ -198,6 +228,50 @@ func (m *FilesystemManager) List(ctx context.Context) ([]ComponentState, error) 
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].ID < states[j].ID })
 	return states, nil
+}
+
+func (m *FilesystemManager) Initialize(ctx context.Context) (InitializationStatus, error) {
+	if err := contextErr(ctx); err != nil {
+		return InitializationStatus{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	components, err := m.listComponentsLocked(ctx)
+	if err != nil {
+		return InitializationStatus{}, err
+	}
+	status := InitializationStatus{FirstRun: !m.data.Initialized, Components: components, NextAction: "manage_components"}
+	for _, component := range m.manifest.Components {
+		if component.Required {
+			status.Required = append(status.Required, component.ID)
+		} else {
+			status.Optional = append(status.Optional, component.ID)
+		}
+	}
+	sort.Strings(status.Required)
+	sort.Strings(status.Optional)
+	if status.FirstRun {
+		status.NextAction = "select_components"
+	}
+	return status, nil
+}
+
+func (m *FilesystemManager) CompleteInitialization(ctx context.Context) error {
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.data.Initialized {
+		return nil
+	}
+	previous := cloneState(m.data)
+	m.data.Initialized = true
+	if err := m.save(); err != nil {
+		m.data = previous
+		return fmt.Errorf("%w: save initialization state: %v", ErrTransaction, err)
+	}
+	return nil
 }
 
 func (m *FilesystemManager) componentHealth(ctx context.Context, component Component, record componentRecord) (string, error) {
@@ -751,7 +825,7 @@ func mustJoin(root, relative string) string {
 }
 
 func cloneState(state managerState) managerState {
-	clone := managerState{Components: make(map[string]componentRecord, len(state.Components)), Plugins: make(map[string]pluginRecord, len(state.Plugins))}
+	clone := managerState{Initialized: state.Initialized, Components: make(map[string]componentRecord, len(state.Components)), Plugins: make(map[string]pluginRecord, len(state.Plugins))}
 	for id, record := range state.Components {
 		clone.Components[id] = record
 	}
@@ -761,30 +835,66 @@ func cloneState(state managerState) managerState {
 	return clone
 }
 
+const (
+	defaultArchiveMaxEntries       = 10000
+	defaultArchiveMaxBytes   int64 = 512 << 20
+)
+
+type ArchiveLimits struct {
+	MaxEntries int
+	MaxBytes   int64
+}
+
 func extractArchive(ctx context.Context, archivePath, destination string) error {
+	return extractArchiveWithLimits(ctx, archivePath, destination, ArchiveLimits{MaxEntries: defaultArchiveMaxEntries, MaxBytes: defaultArchiveMaxBytes})
+}
+
+func extractArchiveWithLimits(ctx context.Context, archivePath, destination string, limits ArchiveLimits) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}
-	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
-		return extractZip(ctx, archivePath, destination)
+	if limits.MaxEntries <= 0 {
+		limits.MaxEntries = defaultArchiveMaxEntries
 	}
-	return extractTarGz(ctx, archivePath, destination)
+	if limits.MaxBytes <= 0 {
+		limits.MaxBytes = defaultArchiveMaxBytes
+	}
+	if err := os.MkdirAll(destination, 0o700); err != nil {
+		return err
+	}
+	if strings.HasSuffix(strings.ToLower(archivePath), ".zip") {
+		return extractZip(ctx, archivePath, destination, limits)
+	}
+	return extractTarGz(ctx, archivePath, destination, limits)
 }
 
-func extractZip(ctx context.Context, archivePath, destination string) error {
+func extractZip(ctx context.Context, archivePath, destination string, limits ArchiveLimits) error {
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
 		return err
 	}
 	defer reader.Close()
-	for _, entry := range reader.File {
+	seen := make(map[string]struct{}, len(reader.File))
+	var totalBytes int64
+	for index, entry := range reader.File {
+		if index >= limits.MaxEntries {
+			return fmt.Errorf("%w: archive has too many entries", ErrInvalidManifest)
+		}
 		if err := contextErr(ctx); err != nil {
 			return err
 		}
-		if err := validateRelativePath(entry.Name); err != nil {
+		name, err := validateArchiveEntryPath(entry.Name)
+		if err != nil {
 			return err
 		}
-		target, _ := safeJoin(destination, entry.Name)
+		if name == "" {
+			continue
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return fmt.Errorf("%w: duplicate archive entry %q", ErrInvalidManifest, entry.Name)
+		}
+		seen[name] = struct{}{}
+		target, _ := safeJoin(destination, name)
 		if entry.FileInfo().IsDir() {
 			if err := os.MkdirAll(target, 0o700); err != nil {
 				return err
@@ -793,6 +903,9 @@ func extractZip(ctx context.Context, archivePath, destination string) error {
 		}
 		if !entry.FileInfo().Mode().IsRegular() {
 			return fmt.Errorf("%w: archive entry %q is not regular", ErrInvalidManifest, entry.Name)
+		}
+		if entry.UncompressedSize64 > uint64(limits.MaxBytes-totalBytes) {
+			return fmt.Errorf("%w: archive exceeds maximum extracted size", ErrInvalidManifest)
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return err
@@ -803,18 +916,30 @@ func extractZip(ctx context.Context, archivePath, destination string) error {
 		}
 		output, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o700)
 		if err == nil {
-			_, err = copyWithContext(ctx, output, input)
+			var count int64
+			var copyErr error
+			if entry.UncompressedSize64 > 0 {
+				count, copyErr = copyWithContextLimit(ctx, output, input, limits.MaxBytes-totalBytes)
+			}
+			totalBytes += count
+			err = copyErr
+			if err == nil && count != int64(entry.UncompressedSize64) {
+				err = fmt.Errorf("%w: archive entry %q size mismatch", ErrInvalidManifest, entry.Name)
+			}
 			_ = output.Close()
 		}
 		_ = input.Close()
-		if err != nil {
+		if err != nil || totalBytes > limits.MaxBytes {
+			if err == nil {
+				err = fmt.Errorf("%w: archive exceeds maximum extracted size", ErrInvalidManifest)
+			}
 			return err
 		}
 	}
 	return nil
 }
 
-func extractTarGz(ctx context.Context, archivePath, destination string) error {
+func extractTarGz(ctx context.Context, archivePath, destination string, limits ArchiveLimits) error {
 	input, err := os.Open(archivePath)
 	if err != nil {
 		return err
@@ -826,6 +951,9 @@ func extractTarGz(ctx context.Context, archivePath, destination string) error {
 	}
 	defer compressed.Close()
 	reader := tar.NewReader(compressed)
+	seen := make(map[string]struct{})
+	var totalBytes int64
+	entries := 0
 	for {
 		if err := contextErr(ctx); err != nil {
 			return err
@@ -837,16 +965,31 @@ func extractTarGz(ctx context.Context, archivePath, destination string) error {
 		if err != nil {
 			return err
 		}
-		if err := validateRelativePath(header.Name); err != nil {
+		entries++
+		if entries > limits.MaxEntries {
+			return fmt.Errorf("%w: archive has too many entries", ErrInvalidManifest)
+		}
+		name, err := validateArchiveEntryPath(header.Name)
+		if err != nil {
 			return err
 		}
-		target, _ := safeJoin(destination, header.Name)
+		if name == "" {
+			continue
+		}
+		if _, duplicate := seen[name]; duplicate {
+			return fmt.Errorf("%w: duplicate archive entry %q", ErrInvalidManifest, header.Name)
+		}
+		seen[name] = struct{}{}
+		target, _ := safeJoin(destination, name)
 		switch header.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o700); err != nil {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
+			if header.Size < 0 || header.Size > limits.MaxBytes-totalBytes {
+				return fmt.Errorf("%w: archive exceeds maximum extracted size", ErrInvalidManifest)
+			}
 			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 				return err
 			}
@@ -854,7 +997,15 @@ func extractTarGz(ctx context.Context, archivePath, destination string) error {
 			if err != nil {
 				return err
 			}
-			_, copyErr := copyWithContext(ctx, output, reader)
+			var count int64
+			var copyErr error
+			if header.Size > 0 {
+				count, copyErr = copyWithContextLimit(ctx, output, reader, limits.MaxBytes-totalBytes)
+			}
+			totalBytes += count
+			if copyErr == nil && count != header.Size {
+				copyErr = fmt.Errorf("%w: archive entry %q size mismatch", ErrInvalidManifest, header.Name)
+			}
 			closeErr := output.Close()
 			if copyErr != nil {
 				return copyErr
@@ -868,5 +1019,32 @@ func extractTarGz(ctx context.Context, archivePath, destination string) error {
 	}
 }
 
+func validateArchiveEntryPath(value string) (string, error) {
+	original := value
+	if strings.TrimSpace(value) == "" || strings.Contains(value, "\\") || strings.HasPrefix(value, "/") ||
+		(len(value) >= 2 && value[1] == ':') {
+		return "", fmt.Errorf("%w: archive entry %q", ErrInvalidPath, original)
+	}
+	for strings.HasPrefix(value, "./") {
+		value = strings.TrimPrefix(value, "./")
+	}
+	trimmed := strings.TrimRight(value, "/")
+	if trimmed == "" || trimmed == "." {
+		// tar archives made with `-C stage .` contain a harmless root entry.
+		return "", nil
+	}
+	for _, segment := range strings.Split(trimmed, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return "", fmt.Errorf("%w: archive entry %q", ErrInvalidPath, original)
+		}
+	}
+	clean := pathpkg.Clean(trimmed)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", fmt.Errorf("%w: archive entry %q", ErrInvalidPath, original)
+	}
+	return clean, nil
+}
+
 var _ ComponentManager = (*FilesystemComponentManager)(nil)
 var _ PluginManager = (*FilesystemPluginManager)(nil)
+var _ InitializationManager = (*FilesystemManager)(nil)

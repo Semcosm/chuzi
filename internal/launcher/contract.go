@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	ManifestFormat = "chuzi-release/v1"
-	ChannelNightly = "nightly"
-	ChannelStable  = "stable"
-	PluginAPIV1    = "chuzi.plugin/v1"
+	ManifestFormat     = "chuzi-release/v1"
+	ReleaseIndexFormat = "chuzi-release-index/v1"
+	ChannelNightly     = "nightly"
+	ChannelStable      = "stable"
+	PluginAPIV1        = "chuzi.plugin/v1"
 )
 
 var (
@@ -53,6 +54,106 @@ type ReleaseManifest struct {
 	GeneratedAt time.Time          `json:"generated_at"`
 	Components  []Component        `json:"components"`
 	Plugins     []PluginDescriptor `json:"plugins"`
+}
+
+// ReleaseIndex is the catalog consumed by a launcher that was downloaded
+// separately from the service components. The manifest is embedded so an
+// index fetch is enough to render first-run component choices.
+type ReleaseIndex struct {
+	Format      string            `json:"format"`
+	Channel     string            `json:"channel"`
+	Version     string            `json:"version"`
+	Commit      string            `json:"commit"`
+	Target      string            `json:"target"`
+	GeneratedAt time.Time         `json:"generated_at"`
+	Manifest    ReleaseManifest   `json:"manifest"`
+	Artifacts   []ReleaseArtifact `json:"artifacts"`
+}
+
+// ReleaseArtifact identifies a downloadable archive. Path is a relative
+// filename; URL is optional and, when present, must be same-origin with the
+// index URL when fetched over HTTP.
+type ReleaseArtifact struct {
+	Component string `json:"component"`
+	Target    string `json:"target"`
+	Version   string `json:"version"`
+	Path      string `json:"path"`
+	URL       string `json:"url,omitempty"`
+	Size      int64  `json:"size"`
+	SHA256    string `json:"sha256"`
+}
+
+func (i ReleaseIndex) Validate() error {
+	if i.Format != ReleaseIndexFormat || strings.TrimSpace(i.Channel) == "" ||
+		strings.TrimSpace(i.Version) == "" || strings.TrimSpace(i.Target) == "" ||
+		!validCommit(i.Commit) {
+		return fmt.Errorf("%w: release index format, channel, version, target, and commit are required", ErrInvalidManifest)
+	}
+	if err := i.Manifest.Validate(); err != nil {
+		return fmt.Errorf("%w: release index manifest: %v", ErrInvalidManifest, err)
+	}
+	if i.Manifest.Channel != i.Channel || i.Manifest.Version != i.Version ||
+		i.Manifest.Target != i.Target || i.Manifest.Commit != i.Commit {
+		return fmt.Errorf("%w: release index and manifest metadata differ", ErrInvalidManifest)
+	}
+	seen := make(map[string]struct{}, len(i.Artifacts))
+	seenPaths := make(map[string]struct{}, len(i.Artifacts))
+	for _, artifact := range i.Artifacts {
+		if strings.TrimSpace(artifact.Component) == "" || strings.TrimSpace(artifact.Target) == "" ||
+			strings.TrimSpace(artifact.Version) == "" {
+			return fmt.Errorf("%w: release artifact component, target, and version are required", ErrInvalidManifest)
+		}
+		if artifact.Target != i.Target || artifact.Version != i.Version {
+			return fmt.Errorf("%w: release artifact %q metadata does not match index", ErrInvalidManifest, artifact.Component)
+		}
+		if err := validateRelativePath(artifact.Path); err != nil {
+			return fmt.Errorf("%w: release artifact %s path: %v", ErrInvalidManifest, artifact.Component, err)
+		}
+		if artifact.Size <= 0 {
+			return fmt.Errorf("%w: release artifact %s has invalid size", ErrInvalidManifest, artifact.Component)
+		}
+		if !validSHA256(artifact.SHA256) {
+			return fmt.Errorf("%w: release artifact %s has invalid sha256", ErrInvalidManifest, artifact.Component)
+		}
+		if _, ok := seen[artifact.Component]; ok {
+			return fmt.Errorf("%w: duplicate release artifact %q", ErrInvalidManifest, artifact.Component)
+		}
+		if _, ok := seenPaths[artifact.Path]; ok {
+			return fmt.Errorf("%w: duplicate release artifact path %q", ErrInvalidManifest, artifact.Path)
+		}
+		seen[artifact.Component] = struct{}{}
+		seenPaths[artifact.Path] = struct{}{}
+	}
+	for _, component := range i.Manifest.Components {
+		if strings.TrimSpace(component.Artifact) == "" {
+			continue
+		}
+		artifact, ok := i.Artifact(component.ID)
+		if !ok {
+			return fmt.Errorf("%w: component %s has no release artifact", ErrInvalidManifest, component.ID)
+		}
+		if artifact.Path != component.Artifact {
+			return fmt.Errorf("%w: component %s artifact path does not match manifest", ErrInvalidManifest, component.ID)
+		}
+	}
+	return nil
+}
+
+func (i ReleaseIndex) Artifact(component string) (ReleaseArtifact, bool) {
+	for _, artifact := range i.Artifacts {
+		if artifact.Component == component {
+			return artifact, true
+		}
+	}
+	return ReleaseArtifact{}, false
+}
+
+func (i ReleaseIndex) MarshalJSON() ([]byte, error) {
+	type alias ReleaseIndex
+	if err := i.Validate(); err != nil {
+		return nil, err
+	}
+	return json.Marshal(alias(i))
 }
 
 type Component struct {
@@ -99,6 +200,11 @@ func (m ReleaseManifest) Validate() error {
 	for _, component := range m.Components {
 		if strings.TrimSpace(component.ID) == "" || strings.TrimSpace(component.Version) == "" {
 			return fmt.Errorf("%w: component id and version are required", ErrInvalidManifest)
+		}
+		if component.Artifact != "" {
+			if err := validateRelativePath(component.Artifact); err != nil {
+				return fmt.Errorf("%w: component %s artifact: %v", ErrInvalidManifest, component.ID, err)
+			}
 		}
 		if _, ok := seenComponents[component.ID]; ok {
 			return fmt.Errorf("%w: duplicate component %q", ErrInvalidManifest, component.ID)
@@ -216,10 +322,27 @@ func validSHA256(value string) bool {
 	return true
 }
 
+func validCommit(value string) bool {
+	if len(value) != 40 {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateRelativePath(value string) error {
 	if strings.TrimSpace(value) == "" || path.IsAbs(value) || strings.Contains(value, "\\") ||
 		(len(value) >= 2 && value[1] == ':') {
 		return fmt.Errorf("%w: %q", ErrInvalidPath, value)
+	}
+	for _, segment := range strings.Split(value, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return fmt.Errorf("%w: %q", ErrInvalidPath, value)
+		}
 	}
 	clean := path.Clean(value)
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
@@ -250,6 +373,21 @@ type UpdateRequest struct {
 	CurrentVersion string
 	Target         string
 	Channel        string
+}
+
+// InitializationStatus is the first-run payload consumed by a CLI or future
+// Rust UI. It is descriptive only: installation remains an explicit action.
+type InitializationStatus struct {
+	FirstRun   bool             `json:"first_run"`
+	Components []ComponentState `json:"components"`
+	Required   []string         `json:"required"`
+	Optional   []string         `json:"optional"`
+	NextAction string           `json:"next_action"`
+}
+
+type InitializationManager interface {
+	Initialize(context.Context) (InitializationStatus, error)
+	CompleteInitialization(context.Context) error
 }
 
 type UpdateInfo struct {

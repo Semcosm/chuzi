@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/Semcosm/chuzi/internal/launcher"
@@ -23,9 +24,12 @@ func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
 	verify := flag.Bool("verify", false, "verify declared resources under root")
-	command := flag.String("command", "show", "launcher command: show, verify, check-update, repair, settings, settings-save, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
+	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
 	sourceRoot := flag.String("source-root", "", "trusted local source root for repair/install")
 	updateManifest := flag.String("update-manifest", "", "candidate manifest for check-update")
+	releaseIndexURL := flag.String("release-index", "", "HTTPS release index URL for update and component downloads")
+	downloadDir := flag.String("download-dir", "", "component archive cache directory (default: <root>/.chuzi/downloads)")
+	allowHTTPForLoopback := flag.Bool("allow-http-loopback", false, "allow HTTP release index/artifacts only for localhost test servers")
 	currentVersion := flag.String("current-version", "", "installed version for check-update")
 	item := flag.String("item", "", "component or plugin id")
 	paths := flag.String("paths", "", "comma-separated resource paths for repair (default: all)")
@@ -40,19 +44,41 @@ func main() {
 		fmt.Println(version)
 		return
 	}
-	data, err := os.ReadFile(*manifestPath)
-	if err != nil {
-		fatal(err)
-	}
-	var manifest launcher.ReleaseManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		fatal(err)
-	}
-	if err := manifest.Validate(); err != nil {
-		fatal(err)
-	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
+
+	var manifest launcher.ReleaseManifest
+	var releaseIndex *launcher.ReleaseIndex
+	if strings.TrimSpace(*releaseIndexURL) != "" {
+		source := launcher.HTTPReleaseIndexSource{URL: *releaseIndexURL, AllowHTTPForLoopback: *allowHTTPForLoopback}
+		index, err := source.FetchIndex(ctx)
+		if err != nil {
+			fatal(err)
+		}
+		if expected := runtimeTarget(); expected != "" && index.Target != expected {
+			fatal(fmt.Errorf("release index target %q does not match launcher target %q", index.Target, expected))
+		}
+		releaseIndex = &index
+		manifest = index.Manifest
+	}
+	data, manifestErr := os.ReadFile(*manifestPath)
+	if manifestErr == nil {
+		var local launcher.ReleaseManifest
+		if err := json.Unmarshal(data, &local); err != nil {
+			fatal(err)
+		}
+		if err := local.Validate(); err != nil {
+			fatal(err)
+		}
+		if releaseIndex != nil && (local.Target != manifest.Target || local.Channel != manifest.Channel || local.Version != manifest.Version || local.Commit != manifest.Commit) {
+			fatal(fmt.Errorf("local manifest does not match release index"))
+		}
+		if releaseIndex == nil {
+			manifest = local
+		}
+	} else if releaseIndex == nil {
+		fatal(manifestErr)
+	}
 
 	if *verify || *command == "verify" {
 		root, err := filepath.Abs(*installRoot)
@@ -79,10 +105,19 @@ func main() {
 	case "show":
 		// Fall through to the stable manifest JSON output below.
 	case "check-update":
-		if strings.TrimSpace(*updateManifest) == "" || strings.TrimSpace(*currentVersion) == "" {
-			fatal(fmt.Errorf("-update-manifest and -current-version are required"))
+		if strings.TrimSpace(*currentVersion) == "" {
+			fatal(fmt.Errorf("-current-version is required"))
 		}
-		result, err := (launcher.ManifestUpdateChecker{Source: launcher.FileManifestSource{Path: *updateManifest}}).Check(ctx, launcher.UpdateRequest{CurrentVersion: *currentVersion, Target: manifest.Target, Channel: manifest.Channel})
+		var source launcher.ManifestSource
+		if releaseIndex != nil {
+			source = launcher.StaticManifestSource{Manifest: releaseIndex.Manifest}
+		} else {
+			if strings.TrimSpace(*updateManifest) == "" {
+				fatal(fmt.Errorf("-update-manifest is required when -release-index is not set"))
+			}
+			source = launcher.FileManifestSource{Path: *updateManifest}
+		}
+		result, err := (launcher.ManifestUpdateChecker{Source: source}).Check(ctx, launcher.UpdateRequest{CurrentVersion: *currentVersion, Target: manifest.Target, Channel: manifest.Channel})
 		if err != nil {
 			fatal(err)
 		}
@@ -115,6 +150,53 @@ func main() {
 			fatal(err)
 		}
 		writeJSON(result)
+		return
+	case "initialize", "initialize-complete":
+		source, err := resolveSourceRoot(root, *sourceRoot)
+		if err != nil {
+			fatal(err)
+		}
+		lock, err := acquireMutationLock(ctx, root, *lockPath)
+		if err != nil {
+			fatal(err)
+		}
+		options := launcher.ManagerOptions{InstallRoot: root, SourceRoot: source, Manifest: manifest, Trust: launcher.PluginTrustPolicy{AllowedSigners: splitValues(*trustedSigners)}, Progress: progressReporter(*progress)}
+		var initializer launcher.InitializationManager
+		localManager, err := launcher.NewFilesystemComponentManager(options)
+		initializer = localManager
+		if releaseIndex != nil {
+			networkManager, networkErr := launcher.NewNetworkComponentManager(options, *releaseIndex, *releaseIndexURL, *downloadDir, launcher.ArtifactDownloader{AllowHTTPForLoopback: *allowHTTPForLoopback})
+			if networkErr != nil {
+				err = networkErr
+			} else {
+				initializer = networkManager
+			}
+		}
+		if err != nil {
+			_ = lock.Release()
+			fatal(err)
+		}
+		if *command == "initialize" {
+			result, err := initializer.Initialize(ctx)
+			if err == nil {
+				writeJSON(result)
+			}
+			if releaseErr := lock.Release(); err == nil {
+				err = releaseErr
+			}
+			if err != nil {
+				fatal(err)
+			}
+			return
+		}
+		err = initializer.CompleteInitialization(ctx)
+		if releaseErr := lock.Release(); err == nil {
+			err = releaseErr
+		}
+		if err != nil {
+			fatal(err)
+		}
+		writeJSON(map[string]any{"initialized": true})
 		return
 	case "settings":
 		store, err := newSettingsStore(root, *settingsPath)
@@ -178,7 +260,7 @@ func main() {
 			fatal(err)
 		}
 		managerOptions := launcher.ManagerOptions{InstallRoot: root, SourceRoot: source, Manifest: manifest, Trust: launcher.PluginTrustPolicy{AllowedSigners: splitValues(*trustedSigners)}, Progress: progressReporter(*progress)}
-		if handled, err := runComponentCommand(ctx, *command, *item, managerOptions); handled {
+		if handled, err := runComponentCommand(ctx, *command, *item, managerOptions, releaseIndex, *releaseIndexURL, *downloadDir, *allowHTTPForLoopback); handled {
 			if err != nil {
 				_ = lock.Release()
 				fatal(err)
@@ -203,6 +285,21 @@ func main() {
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(manifest); err != nil {
 		fatal(err)
+	}
+}
+
+func runtimeTarget() string {
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "windows/amd64":
+		return "windows-amd64"
+	case "linux/amd64":
+		return "linux-amd64"
+	case "linux/arm64":
+		return "linux-arm64"
+	case "darwin/arm64":
+		return "darwin-arm64"
+	default:
+		return ""
 	}
 }
 
@@ -273,10 +370,19 @@ func splitValues(value string) []string {
 	return values
 }
 
-func runComponentCommand(ctx context.Context, command, id string, options launcher.ManagerOptions) (bool, error) {
-	manager, err := launcher.NewFilesystemComponentManager(options)
+func runComponentCommand(ctx context.Context, command, id string, options launcher.ManagerOptions, index *launcher.ReleaseIndex, indexURL, downloadDir string, allowHTTPForLoopback bool) (bool, error) {
+	var manager launcher.ComponentManager
+	local, err := launcher.NewFilesystemComponentManager(options)
 	if err != nil {
 		return true, err
+	}
+	manager = local
+	if index != nil {
+		network, networkErr := launcher.NewNetworkComponentManager(options, *index, indexURL, downloadDir, launcher.ArtifactDownloader{AllowHTTPForLoopback: allowHTTPForLoopback})
+		if networkErr != nil {
+			return true, networkErr
+		}
+		manager = network
 	}
 	switch command {
 	case "component-list":

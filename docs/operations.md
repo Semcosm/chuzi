@@ -91,16 +91,19 @@ store, err := store.Open(cfg)
 
 `.github/workflows/chuzi-build.yml` 每天 `02:17 UTC` 自动运行，也支持手动
 触发。Nightly 不创建 Git tag 或 GitHub Release，而是为四个平台上传保留 14 天
-的 Actions artifact，并使用 `nightly-<run-number>` 版本号。每个平台同时生成完整
-包和按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的组件包。
+的 Actions artifact，并使用 `nightly-<run-number>-<commit-short-hash>` 版本号。每个平台
+同时生成完整包、按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的
+组件包，以及记录归档大小/SHA-256 的 `release-index.json`；不创建 tag 或 GitHub Release。
 
 完整包内的 `release-manifest.json` 是启动器与未来 UI 的稳定输入，声明目标平台、
 版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 提供 manifest
-展示、校验、基于本地 manifest 的更新检查、资源修复、组件启停、插件信任/启停和
-`settings`/`settings-save` CLI。修改安装目录或设置前会取得 `.chuzi/launcher.lock`，
-`-progress` 可将脱敏的阶段事件写到 stderr，Ctrl-C 会通过 context 取消当前操作。
-CR-0022/CR-0026 的后台实现不下载未知资源：更新检查通过注入的 source，修复和组件
-安装只使用显式本地 source root，插件归档先校验摘要再安全解包到临时目录并原子替换。
+展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
+的更新检查、资源修复、组件启停、插件信任/启停和 `settings`/`settings-save` CLI。
+修改安装目录或设置前会取得 `.chuzi/launcher.lock`，`-progress` 可将脱敏的阶段事件
+写到 stderr，Ctrl-C 会通过 context 取消当前操作。显式 `-release-index` 时，下载器
+只接受 HTTPS（本地测试可显式允许 loopback HTTP）、同源归档，并校验目标平台、版本、
+大小和 SHA-256；组件及其依赖先安全解包到临时 source，再复用原子资源修复和状态回滚。
+未提供 index 时，修复和组件安装仍只使用显式本地 source root。
 锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。后续 Rust UI 应通过
 CLI/未来 IPC 复用这些接口，不要把文件或插件策略复制到 UI 层。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。

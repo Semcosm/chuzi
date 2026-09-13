@@ -77,7 +77,10 @@ commit="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
 printf '{\n  "target": "%s",\n  "version": "%s",\n  "commit": "%s",\n  "goos": "%s",\n  "goarch": "%s",\n  "cgo": false,\n  "rustHelper": "chuzi-browser-runtime",\n  "browserRuntime": "%s"\n}\n' \
   "$target" "$version" "$commit" "$goos" "$goarch" "$runtime_backend" > "$stage_dir/build-manifest.json"
 
+channel=nightly
+case "$version" in v[0-9]*.[0-9]*.[0-9]*) channel=stable ;; esac
 python3 "$repo_root/scripts/generate_release_manifest.py" \
-  --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit"
+  --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit" \
+  --channel "$channel"
 
 echo "built $target at $stage_dir"

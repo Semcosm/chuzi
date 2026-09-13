@@ -73,18 +73,22 @@ jobs:
         shell: bash
         run: scripts/test_build_contract.sh
 
+      - name: Validate nightly package contract
+        shell: bash
+        run: scripts/test_nightly_package.sh
+
       - name: Build service and worker on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
+          $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
           ./scripts/build.ps1 -Target "${{ matrix.target }}" -Version $version
 
       - name: Build service and worker on Unix
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}"; else version="dev-${GITHUB_SHA:0:12}"; fi
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
           scripts/build.sh "${{ matrix.target }}" "$version"
 
       - name: Test Go service and worker contract
@@ -256,14 +260,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
+          $version = if ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
           ./scripts/package.ps1 -Target "${{ matrix.target }}" -Version $version
 
       - name: Package Unix artifact
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}"; else version="dev-${GITHUB_SHA:0:12}"; fi
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
           scripts/package.sh "${{ matrix.target }}" "$version"
 
       - name: Verify Unix artifact checksums
@@ -282,6 +286,13 @@ jobs:
             (cd "$(dirname "$checksum")" && "${checksum_command[@]}" "$(basename "$checksum")")
           done
 
+      - name: Verify release index
+        shell: bash
+        run: |
+          index="$(find dist -maxdepth 1 -type f -name '*-${{ matrix.target }}.index.json' -print -quit)"
+          test -n "$index"
+          if [ "${{ runner.os }}" = "Windows" ]; then python scripts/validate_release_index.py --index "$index" --dist dist; else python3 scripts/validate_release_index.py --index "$index" --dist dist; fi
+
       - name: Upload nightly target bundle
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -292,6 +303,8 @@ jobs:
             dist/chuzi-*.zip
             dist/chuzi-*.sha256
             dist/chuzi-*.manifest.json
+            dist/chuzi-*.index.json
+            dist/chuzi-*.index.json.sha256
           if-no-files-found: error
           retention-days: 14
 

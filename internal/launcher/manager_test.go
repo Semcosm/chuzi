@@ -110,6 +110,40 @@ func TestFilesystemComponentManagerDependenciesAndPersistence(t *testing.T) {
 	}
 }
 
+func TestFilesystemManagerInitializationIsExplicitAndDurable(t *testing.T) {
+	root := t.TempDir()
+	launcherResource := resourceFor(t, root, "chuzi-launcher", "launcher")
+	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "1", Target: "linux-amd64", Components: []Component{
+		{ID: "launcher", Version: "1", Required: true, Resources: []Resource{launcherResource}},
+		{ID: "service", Version: "1"},
+	}}
+	manager, err := NewFilesystemComponentManager(ManagerOptions{InstallRoot: root, Manifest: manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := manager.Initialize(context.Background())
+	if err != nil || !status.FirstRun || status.NextAction != "select_components" {
+		t.Fatalf("initialization status = %#v err=%v", status, err)
+	}
+	if len(status.Required) != 1 || status.Required[0] != "launcher" || len(status.Optional) != 1 || status.Optional[0] != "service" {
+		t.Fatalf("component choices = %#v", status)
+	}
+	if !status.Components[0].Installed {
+		t.Fatalf("existing launcher was not recognized: %#v", status.Components)
+	}
+	if err := manager.CompleteInitialization(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reloaded, err := NewFilesystemComponentManager(ManagerOptions{InstallRoot: root, Manifest: manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err = reloaded.Initialize(context.Background())
+	if err != nil || status.FirstRun || status.NextAction != "manage_components" {
+		t.Fatalf("completed initialization status = %#v err=%v", status, err)
+	}
+}
+
 func TestFilesystemComponentInstallRollsBackFilesWhenStateCommitFails(t *testing.T) {
 	source, install := t.TempDir(), t.TempDir()
 	resource := resourceFor(t, source, "service/main", "new")
@@ -213,5 +247,48 @@ func TestFilesystemPluginManagerTrustAndArchiveSafety(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(install, "plugins/demo/plugin/main.js")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestArchiveExtractionRejectsTraversalLinksDuplicatesAndOversize(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "unsafe.zip")
+	file, err := os.Create(archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	entry, err := writer.Create("../escape")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = entry.Write([]byte("escape"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractArchive(context.Background(), archive, t.TempDir()); !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("traversal archive error = %v", err)
+	}
+	large := filepath.Join(t.TempDir(), "large.zip")
+	file, err = os.Create(large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer = zip.NewWriter(file)
+	entry, err = writer.Create("payload")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = entry.Write([]byte("0123456789"))
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractArchiveWithLimits(context.Background(), large, t.TempDir(), ArchiveLimits{MaxEntries: 2, MaxBytes: 4}); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("oversize archive error = %v", err)
 	}
 }

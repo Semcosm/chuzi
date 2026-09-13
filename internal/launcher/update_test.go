@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -43,5 +44,19 @@ func TestManifestValidationRejectsDependencyAndPluginAmbiguity(t *testing.T) {
 	manifest.Plugins = []PluginDescriptor{{ID: "demo", Version: "1", API: PluginAPIV1, Installable: true, Archive: "demo.zip"}}
 	if err := manifest.Validate(); err == nil {
 		t.Fatal("installable plugin without digest was accepted")
+	}
+}
+
+func TestReleaseIndexRequiresArtifactMetadataToMatchManifest(t *testing.T) {
+	commit := strings.Repeat("c", 40)
+	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-2", Commit: commit, Target: "linux-amd64", Components: []Component{{ID: "service", Version: "nightly-2", Artifact: "service.tar.gz"}}}
+	index := ReleaseIndex{Format: ReleaseIndexFormat, Channel: ChannelNightly, Version: "nightly-2", Commit: commit, Target: "linux-amd64", Manifest: manifest, Artifacts: []ReleaseArtifact{{Component: "service", Target: "linux-amd64", Version: "nightly-2", Path: "other.tar.gz", Size: 1, SHA256: strings.Repeat("a", 64)}}}
+	if err := index.Validate(); err == nil {
+		t.Fatal("artifact path mismatch was accepted")
+	}
+	index.Artifacts[0].Path = "service.tar.gz"
+	index.Artifacts = append(index.Artifacts, ReleaseArtifact{Component: "other", Target: "linux-amd64", Version: "nightly-2", Path: "service.tar.gz", Size: 1, SHA256: strings.Repeat("b", 64)})
+	if err := index.Validate(); err == nil {
+		t.Fatal("duplicate artifact path was accepted")
 	}
 }
