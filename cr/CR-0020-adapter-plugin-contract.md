@@ -5,13 +5,13 @@ Head or Range: 82a06fa71e32bf248705ddb7a2e55fb0d01a3ea6..3957d7cd24181fb3934c32c
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): establish automation adapter and plugin process contract
-Revision: 4
-Status: accepted
+Revision: 5
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 3957d7cd24181fb3934c32c6789e8b3fd9330cbf
-Head OID: 3957d7cd24181fb3934c32c6789e8b3fd9330cbf
-Integrated Result: pending
+Base OID: cb6505b47fcf379c9f3ba6b9722d78e5170264a6
+Head OID: cb6505b47fcf379c9f3ba6b9722d78e5170264a6
+Integrated Result: main@cb6505b47fcf379c9f3ba6b9722d78e5170264a6
 
 ## Summary
 
