@@ -5,13 +5,13 @@ Head or Range: 9c3bf03032cd6532394eecb27b65449db0502f0b..2dc39888fb5728b4d01c7f7
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ops): add redacted observability and recovery checks
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 823c2852a3a98266076a6e64af3fc52713ddf9b3
-Head OID: 823c2852a3a98266076a6e64af3fc52713ddf9b3
-Integrated Result: pending
+Base OID: c41eb4f7c367c08b0f918def5e52b536baa3e4b3
+Head OID: c41eb4f7c367c08b0f918def5e52b536baa3e4b3
+Integrated Result: main@c41eb4f7c367c08b0f918def5e52b536baa3e4b3
 
 ## Summary
 
