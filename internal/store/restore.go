@@ -8,11 +8,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"time"
 
 	"github.com/Semcosm/chuzi/internal/config"
-	"github.com/Semcosm/chuzi/migrations"
-	"go.etcd.io/bbolt"
 )
 
 var (
@@ -48,14 +45,8 @@ func Restore(cfg config.Config, backupPath string) error {
 	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return ErrInvalidRestore
 	}
-	backup, err := bbolt.Open(backupPath, 0o600, &bbolt.Options{ReadOnly: true, Timeout: time.Second})
-	if err != nil {
-		return fmt.Errorf("%w: open backup: %v", ErrInvalidRestore, err)
-	}
-	version, versionErr := migrations.Version(backup)
-	closeErr := backup.Close()
-	if versionErr != nil || closeErr != nil || version != migrations.CurrentVersion {
-		return fmt.Errorf("%w: backup schema is not current", ErrInvalidRestore)
+	if err := ValidateBackup(backupPath); err != nil {
+		return err
 	}
 	if err := os.MkdirAll(normalized.DataDir, 0o700); err != nil {
 		return fmt.Errorf("%w: create data directory: %v", ErrRestoreFailed, err)
@@ -88,7 +79,13 @@ func Restore(cfg config.Config, backupPath string) error {
 	}
 	destination := normalized.DatabasePath()
 	oldPath := destination + ".before-restore"
-	_ = os.Remove(oldPath)
+	if _, statErr := os.Lstat(oldPath); statErr == nil {
+		if err := removeRestoreBackup(oldPath); err != nil {
+			return fmt.Errorf("%w: remove stale previous database: %v", ErrRestoreFailed, err)
+		}
+	} else if !errors.Is(statErr, os.ErrNotExist) {
+		return fmt.Errorf("%w: inspect stale previous database: %v", ErrRestoreFailed, statErr)
+	}
 	if existing, statErr := os.Lstat(destination); statErr == nil {
 		if !existing.Mode().IsRegular() || existing.Mode()&os.ModeSymlink != 0 {
 			return ErrInvalidRestore
@@ -98,15 +95,27 @@ func Restore(cfg config.Config, backupPath string) error {
 		}
 	}
 	if err := os.Rename(stagePath, destination); err != nil {
-		if _, statErr := os.Stat(oldPath); statErr == nil {
-			_ = os.Rename(oldPath, destination)
-		}
+		_ = os.Rename(oldPath, destination)
 		return fmt.Errorf("%w: install restored database: %v", ErrRestoreFailed, err)
 	}
-	if err := os.Remove(oldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("%w: remove previous database: %v", ErrRestoreFailed, err)
+	if err := removeRestoreBackup(oldPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		// The new database is already installed and validated. Keep the prior
+		// file as a recoverable rollback artifact rather than reporting a
+		// failed restore that cannot be distinguished from a partial install.
+		return fmt.Errorf("%w: restored database installed; previous database retained at %s: %v", ErrRestoreFailed, oldPath, err)
 	}
 	return nil
+}
+
+func removeRestoreBackup(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidRestore
+	}
+	return os.Remove(path)
 }
 
 func within(root, path string) bool {

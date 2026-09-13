@@ -47,17 +47,17 @@ var (
 // after an accepted event; a newly-created request starts at NO_REQUEST until
 // its queue event is applied.
 type Request struct {
-	RequestID            string               `json:"request_id"`
-	AccountID            string               `json:"account_id"`
-	IdempotencyKey       string               `json:"idempotency_key"`
-	NotificationRoomID   string               `json:"notification_room_id,omitempty"`
-	State                account.Status       `json:"state"`
-	CreatedAt            time.Time            `json:"created_at"`
-	UpdatedAt            time.Time            `json:"updated_at"`
-	Attempt              int                  `json:"attempt"`
-	NotBefore            time.Time            `json:"not_before,omitempty"`
-	Deadline             time.Time            `json:"deadline,omitempty"`
-	LastFailure          account.FailureClass `json:"last_failure,omitempty"`
+	RequestID          string               `json:"request_id"`
+	AccountID          string               `json:"account_id"`
+	IdempotencyKey     string               `json:"idempotency_key"`
+	NotificationRoomID string               `json:"notification_room_id,omitempty"`
+	State              account.Status       `json:"state"`
+	CreatedAt          time.Time            `json:"created_at"`
+	UpdatedAt          time.Time            `json:"updated_at"`
+	Attempt            int                  `json:"attempt"`
+	NotBefore          time.Time            `json:"not_before,omitempty"`
+	Deadline           time.Time            `json:"deadline,omitempty"`
+	LastFailure        account.FailureClass `json:"last_failure,omitempty"`
 }
 
 // NewRequest creates the initial request projection for an account.
@@ -991,18 +991,67 @@ func (s *Store) Backup(at time.Time) (string, error) {
 	if err := os.MkdirAll(s.cfg.BackupDir(), 0o700); err != nil {
 		return "", fmt.Errorf("create backup directory: %w", err)
 	}
-	if _, err := os.Stat(path); err == nil {
+	if _, err := os.Lstat(path); err == nil {
 		return "", ErrBackupExists
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("inspect backup path: %w", err)
 	}
+	file, err := os.CreateTemp(s.cfg.BackupDir(), ".chuzi-backup-")
+	if err != nil {
+		return "", fmt.Errorf("stage backup: %w", err)
+	}
+	temporary := file.Name()
+	removeTemporary := true
+	defer func() {
+		if removeTemporary {
+			_ = os.Remove(temporary)
+		}
+	}()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return "", fmt.Errorf("restrict staged backup: %w", err)
+	}
 	err = s.db.View(func(tx *bbolt.Tx) error {
-		return tx.CopyFile(path, 0o600)
+		_, writeErr := tx.WriteTo(file)
+		return writeErr
 	})
+	if err == nil {
+		err = file.Sync()
+	}
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		return "", fmt.Errorf("copy backup: %w", err)
 	}
+	if err := ValidateBackup(temporary); err != nil {
+		return "", fmt.Errorf("validate backup: %w", err)
+	}
+	if err := publishBackup(temporary, path); err != nil {
+		return "", err
+	}
+	removeTemporary = false
 	return path, nil
+}
+
+// publishBackup installs a fully written backup without following or replacing
+// an existing destination. The staged file and destination share a directory,
+// so a hard link gives us an atomic no-replace publication on supported
+// filesystems. We fail closed when that primitive is unavailable.
+func publishBackup(temporary, destination string) error {
+	linkErr := os.Link(temporary, destination)
+	if linkErr == nil {
+		if err := os.Remove(temporary); err != nil {
+			return fmt.Errorf("finalize backup: %w", err)
+		}
+		return nil
+	}
+	if _, err := os.Lstat(destination); err == nil {
+		return ErrBackupExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect backup path: %w", err)
+	}
+	return fmt.Errorf("install backup without replacement: %w", linkErr)
 }
 
 func (s *Store) view(fn func(*bbolt.Tx) error) error {

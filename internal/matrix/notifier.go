@@ -117,15 +117,7 @@ func (n *Notifier) Flush(ctx context.Context) (DeliveryResult, error) {
 				return result, retryErr
 			}
 			result.Retried++
-			n.config.Sink.Record(observability.Event{
-				At:         now,
-				Component:  "matrix",
-				Operation:  "notify",
-				Outcome:    "retry",
-				RequestID:  notification.RequestID,
-				Resource:   observability.RedactIdentifier(notification.RoomID),
-				ErrorClass: "send_failed",
-			})
+			n.config.Sink.Record(observability.Event{At: now, Component: "matrix", Operation: "notify", Outcome: "retry", RequestID: observability.RedactIdentifier(notification.RequestID), Resource: observability.RedactIdentifier(notification.RoomID), ErrorClass: "send_failed"})
 			continue
 		}
 		if err := n.store.CompleteNotification(notification.EventID, n.config.Owner, now); err != nil {
@@ -137,7 +129,7 @@ func (n *Notifier) Flush(ctx context.Context) (DeliveryResult, error) {
 			Component: "matrix",
 			Operation: "notify",
 			Outcome:   "delivered",
-			RequestID: notification.RequestID,
+			RequestID: observability.RedactIdentifier(notification.RequestID),
 			Resource:  observability.RedactIdentifier(notification.RoomID),
 		})
 	}

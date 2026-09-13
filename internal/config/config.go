@@ -26,10 +26,11 @@ var ErrInvalidConfig = errors.New("config: invalid configuration")
 // Config contains ordinary deployment settings only. Secrets intentionally do
 // not have a field in this type and must be supplied by a later secret store.
 type Config struct {
-	DataDir     string           `json:"data_dir"`
-	Matrix      MatrixConfig     `json:"matrix,omitempty"`
-	Credentials CredentialConfig `json:"credentials,omitempty"`
-	Health      HealthConfig     `json:"health,omitempty"`
+	DataDir       string              `json:"data_dir"`
+	Matrix        MatrixConfig        `json:"matrix,omitempty"`
+	Credentials   CredentialConfig    `json:"credentials,omitempty"`
+	Health        HealthConfig        `json:"health,omitempty"`
+	Observability ObservabilityConfig `json:"observability,omitempty"`
 }
 
 // MatrixConfig contains non-secret Matrix deployment settings. The access
@@ -106,6 +107,7 @@ func Load(path string) (Config, error) {
 	normalized.Matrix = raw.Matrix
 	normalized.Credentials = raw.Credentials
 	normalized.Health = raw.Health
+	normalized.Observability = raw.Observability
 	if err := normalized.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -128,6 +130,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Health.Validate(); err != nil {
+		return err
+	}
+	if err := c.Observability.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -183,6 +188,30 @@ func (h HealthConfig) Validate() error {
 	}
 	if _, _, err := net.SplitHostPort(strings.TrimSpace(h.Listen)); err != nil {
 		return fmt.Errorf("%w: health listen must be host:port", ErrInvalidConfig)
+	}
+	return nil
+}
+
+// ObservabilityConfig controls optional local diagnostics. It contains no
+// credentials; log files are created owner-only by the observability package.
+type ObservabilityConfig struct {
+	MetricsListen string `json:"metrics_listen,omitempty"`
+	LogPath       string `json:"log_path,omitempty"`
+	LogMaxBytes   int64  `json:"log_max_bytes,omitempty"`
+	LogMaxFiles   int    `json:"log_max_files,omitempty"`
+}
+
+func (o ObservabilityConfig) Validate() error {
+	if strings.TrimSpace(o.MetricsListen) != "" {
+		if _, _, err := net.SplitHostPort(strings.TrimSpace(o.MetricsListen)); err != nil {
+			return fmt.Errorf("%w: observability metrics_listen must be host:port", ErrInvalidConfig)
+		}
+	}
+	if strings.TrimSpace(o.LogPath) != o.LogPath || strings.ContainsAny(o.LogPath, "\r\n") || len(o.LogPath) > 1024 {
+		return fmt.Errorf("%w: observability log_path is invalid", ErrInvalidConfig)
+	}
+	if o.LogMaxBytes < 0 || o.LogMaxBytes > 1<<40 || o.LogMaxFiles < 0 || o.LogMaxFiles > 100 {
+		return fmt.Errorf("%w: observability log rotation limits are out of range", ErrInvalidConfig)
 	}
 	return nil
 }

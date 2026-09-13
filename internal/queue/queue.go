@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -51,6 +52,7 @@ type Config struct {
 	RetryPolicy          account.RetryPolicy
 	Clock                Clock
 	NewID                IDGenerator
+	Sink                 observability.Sink
 }
 
 // Scheduler claims and processes at most one request per RunOnce call. A
@@ -70,6 +72,9 @@ func New(database *store.Store, runner Runner, config Config) (*Scheduler, error
 	}
 	if _, err := config.RetryPolicy.Decide(account.Failure{Class: account.TransientFailure, Attempt: 1}); err != nil {
 		return nil, err
+	}
+	if config.Sink == nil {
+		config.Sink = observability.NopSink{}
 	}
 	return &Scheduler{store: database, runner: runner, config: config}, nil
 }
@@ -96,18 +101,22 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		return Outcome{}, ErrInvalidConfig
 	}
 	if err := s.recoverExpired(now); err != nil {
+		s.record(now, "recovery", "failed", "", "store_error", 0)
 		return Outcome{}, err
 	}
 	if err := s.expireQueued(now); err != nil {
+		s.record(now, "deadline", "failed", "", "store_error", 0)
 		return Outcome{}, err
 	}
 	claim, err := s.store.ClaimNext(now, s.config.NewID("lease"), s.config.Owner,
 		s.config.LeaseTTL, s.config.NewID("claim"), s.config.Owner,
 		"queue claim", store.QueueOptions{MaxGlobalConcurrency: s.config.MaxGlobalConcurrency})
 	if errors.Is(err, store.ErrQueueEmpty) || errors.Is(err, store.ErrQueueCapacity) {
+		s.record(now, "claim", "idle", "", "", 0)
 		return Outcome{Idle: true}, nil
 	}
 	if err != nil {
+		s.record(now, "claim", "failed", "", "store_error", 0)
 		return Outcome{}, err
 	}
 
@@ -140,6 +149,7 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		}
 		_, _ = s.store.CancelRequestOwned(cleanup, claim.Lease, true)
 		_ = s.store.ReleaseLease(claim.Request.AccountID, claim.Lease.LeaseID, claim.Lease.Owner)
+		s.record(now, "start", "failed", claim.Request.RequestID, "transition_failed", 0)
 		return Outcome{}, err
 	}
 
@@ -155,26 +165,53 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	if finishedAt.IsZero() {
 		return Outcome{}, ErrInvalidConfig
 	}
+	duration := finishedAt.Sub(now)
+	if duration < 0 {
+		duration = 0
+	}
 	if runnerErr != nil || runnerContextErr != nil {
 		// A request cancellation is durable and may race with the worker's
 		// terminal event. Do not turn that expected lifecycle into LOGIN_FAILED
 		// or a retry after the cancellation transaction released its lease.
 		current, readErr := s.store.GetRequest(claim.Request.RequestID)
 		if readErr != nil {
+			s.record(finishedAt, "run", "failed", claim.Request.RequestID, "store_error", duration)
 			return Outcome{}, readErr
 		}
 		if current.State == account.Cancelled {
+			s.record(finishedAt, "run", "cancelled", claim.Request.RequestID, "", duration)
 			return Outcome{Request: current}, nil
 		}
 		runnerResult = Result{Failure: account.TransientFailure}
 	}
 	if runnerResult.Succeeded {
-		return s.finishSuccess(finishedAt, claim.Request, claim.Lease, Outcome{Request: claim.Request})
+		outcome, err := s.finishSuccess(finishedAt, claim.Request, claim.Lease, Outcome{Request: claim.Request})
+		if err != nil {
+			s.record(finishedAt, "run", "failed", claim.Request.RequestID, "transition_failed", duration)
+		} else {
+			s.record(finishedAt, "run", "succeeded", claim.Request.RequestID, "", duration)
+		}
+		return outcome, err
 	}
 	if !validFailure(runnerResult.Failure) {
 		runnerResult.Failure = account.UnknownFailure
 	}
-	return s.finishFailure(finishedAt, claim.Request, claim.Lease, false, runnerResult.Failure)
+	outcome, err := s.finishFailure(finishedAt, claim.Request, claim.Lease, false, runnerResult.Failure)
+	if err != nil {
+		s.record(finishedAt, "run", "failed", claim.Request.RequestID, "transition_failed", duration)
+	} else if outcome.Retried {
+		s.record(finishedAt, "run", "retried", claim.Request.RequestID, string(runnerResult.Failure), duration)
+	} else {
+		s.record(finishedAt, "run", "failed", claim.Request.RequestID, string(runnerResult.Failure), duration)
+	}
+	return outcome, err
+}
+
+func (s *Scheduler) record(at time.Time, operation, outcome, requestID, errorClass string, duration time.Duration) {
+	if s == nil || s.config.Sink == nil {
+		return
+	}
+	s.config.Sink.Record(observability.Event{At: at, Component: "queue", Operation: operation, Outcome: outcome, RequestID: observability.RedactIdentifier(requestID), ErrorClass: errorClass, Duration: duration})
 }
 
 func (s *Scheduler) finishSuccess(now time.Time, request store.Request, lease account.Lease, outcome Outcome) (Outcome, error) {

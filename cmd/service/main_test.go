@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -26,6 +28,24 @@ func TestWorkerStderrRequiresExplicitDebugOptIn(t *testing.T) {
 	t.Setenv("CHUZI_WORKER_DEBUG", "1")
 	if got := workerStderr(); got != os.Stderr {
 		t.Fatalf("workerStderr() with opt-in = %T, want os.Stderr", got)
+	}
+}
+
+func TestCLIErrorMessageDoesNotExposeWrappedDetails(t *testing.T) {
+	secret := "account-private /credential-secret"
+	for _, test := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "generic", err: errors.New(secret), want: "operation failed"},
+		{name: "restore", err: fmt.Errorf("%w: %s", store.ErrInvalidRestore, secret), want: "invalid restore source"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := cliErrorMessage(test.err); got != test.want || strings.Contains(got, secret) {
+				t.Fatalf("cliErrorMessage() = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -127,6 +147,18 @@ func TestDefaultServiceOptionsAreValid(t *testing.T) {
 	options := defaultServiceOptions()
 	if err := options.validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLogPathMayUseConfiguredDefaultRotationLimits(t *testing.T) {
+	options := testServiceOptions()
+	options.logPath = filepath.Join(t.TempDir(), "service.log")
+	if err := options.validate(); err != nil {
+		t.Fatalf("log path with default limits rejected: %v", err)
+	}
+	options.logMaxBytes = -1
+	if err := options.validate(); !errors.Is(err, errInvalidOptions) {
+		t.Fatalf("negative log size error = %v, want errInvalidOptions", err)
 	}
 }
 

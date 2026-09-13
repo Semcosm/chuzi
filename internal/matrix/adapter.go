@@ -281,7 +281,7 @@ func (a *Adapter) record(event IncomingEvent, operation, outcome, requestID, err
 		Component:  "matrix",
 		Operation:  operation,
 		Outcome:    outcome,
-		RequestID:  requestID,
+		RequestID:  observability.RedactIdentifier(requestID),
 		Resource:   observability.RedactIdentifier(event.RoomID),
 		ErrorClass: errorClass,
 	})

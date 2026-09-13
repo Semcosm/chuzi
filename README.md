@@ -20,8 +20,12 @@ Rust helper，路径由 `-browser-runtime` 指定。`-self-test` 继续使用临
 
 `cmd/service` 已提供生产运行拼装：凭证服务从部署环境注入密钥，Matrix HTTP
 Client/同步网关和通知 outbox worker 可由配置启用，健康检查可绑定受限 HTTP 端点；
-`-backup`、`-restore` 和 `-inject-account` 提供停止服务后的运维操作。服务仍不会
+`-backup`、`-restore`、`-validate-backup`、`-diagnostics`、`-audit` 和 `-inject-account` 提供停止服务后的运维操作。服务仍不会
 自行创建账号，也不会把 Secret 写入普通配置或日志。
+
+观测能力通过 `observability` 配置启用：服务写入结构化脱敏 JSONL 日志并有界轮转，
+可选的本地 metrics 端点只暴露低基数分类指标；日志、指标、健康和审计输出都不会
+包含凭证、Cookie、页面内容或原始账号/房间标识。
 
 Rust `browser-runtime` 已建立独立协议 helper。Windows 10/11、macOS 11+
 Apple Silicon 的 Wry 桌面 WebView 已由对应原生 CI 构建并打包；Ubuntu 24.04
