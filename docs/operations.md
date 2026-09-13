@@ -163,5 +163,10 @@ CR-0021 的首个适配器通过显式 Node 入口运行，不改变服务默认
 - 部署前运行 `scripts/validate_policy_manifest.sh`。
 - 定期检查悬挂任务、过期凭证、Profile 磁盘占用和 Matrix 发送失败数。
 - 定期检查 Matrix outbox 的待发送数量、过期 claim 和按分类统计的发送失败。
+- 使用 `-diagnostics` 检查 schema、队列、租约、outbox 和数据库大小；使用 `-audit`
+  读取有界的脱敏状态/凭证操作审计，使用 `-validate-backup` 在恢复演练前验证备份。
+- `observability.metrics_listen` 提供本地 Prometheus 文本端点；`log_path` 启用
+  0600 JSONL 日志并按 `log_max_bytes`/`log_max_files` 轮转。两个端点都必须限制在
+  loopback 或受保护管理网络。
 - 备份状态数据库前确认凭证密文与密钥分离保存；撤销后的凭据密文已擦除且不可恢复。
 - 发布遵循 UGS 的版本和变更记录规则。

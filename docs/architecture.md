@@ -59,7 +59,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 │   ├── matrix/                  # Matrix 适配器与事件格式化
 │   ├── store/                   # 已实现：数据库与事务封装
 │   ├── config/                  # 已实现：配置加载与路径派生
-│   ├── observability/           # 已实现：脱敏观测事件边界；日志/指标接入规划中
+│   ├── observability/           # 已实现：结构化脱敏日志、轮转、指标和事件 Sink
 │   └── launcher/                # release manifest、校验和组件/插件管理接口
 ├── migrations/                  # 已实现：bbolt schema 迁移
 ├── tests/                       # 规划中：更大规模集成测试与端到端测试

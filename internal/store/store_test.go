@@ -409,6 +409,35 @@ func TestStoreBackupCanBeReopenedAndRejectsDuplicatePath(t *testing.T) {
 	}
 }
 
+func TestStoreBackupRejectsExistingSymlinkWithoutFollowingIt(t *testing.T) {
+	service, cfg := openTestStore(t)
+	target := filepath.Join(t.TempDir(), "outside.db")
+	original := []byte("do not overwrite")
+	if err := os.WriteFile(target, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backupPath, err := cfg.BackupPath(storeTestTime.Add(90 * time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(backupPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, backupPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := service.Backup(storeTestTime.Add(90 * time.Minute)); !errors.Is(err, ErrBackupExists) {
+		t.Fatalf("symlink backup error = %v, want ErrBackupExists", err)
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("symlink target changed from %q to %q", original, got)
+	}
+}
+
 func TestRestoreValidatesBackupAndAtomicallyReplacesDatabase(t *testing.T) {
 	service, cfg := openTestStore(t)
 	if _, err := service.CreateAccount("account-restore"); err != nil {

@@ -94,3 +94,18 @@ func TestLoadRejectsMatrixTokenInConfigAndInvalidEnvironmentNames(t *testing.T) 
 		}
 	}
 }
+
+func TestConfigAcceptsRedactionSafeObservabilitySettings(t *testing.T) {
+	cfg, err := New(filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Observability = ObservabilityConfig{MetricsListen: "127.0.0.1:9090", LogPath: filepath.Join(cfg.DataDir, "service.log"), LogMaxBytes: 1024, LogMaxFiles: 3}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Observability.MetricsListen = "not-an-address"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("invalid metrics listener was accepted")
+	}
+}

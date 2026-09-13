@@ -9,15 +9,16 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/queue"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
 var (
-	ErrInvalidConfig  = errors.New("browser: invalid runner configuration")
-	ErrInvalidWork    = errors.New("browser: invalid session work")
-	ErrWorkerCrashed  = errors.New("browser: worker crashed")
-	ErrWorkerProtocol = errors.New("browser: worker protocol failure")
+	ErrInvalidConfig    = errors.New("browser: invalid runner configuration")
+	ErrInvalidWork      = errors.New("browser: invalid session work")
+	ErrWorkerCrashed    = errors.New("browser: worker crashed")
+	ErrWorkerProtocol   = errors.New("browser: worker protocol failure")
 	ErrSessionCancelled = errors.New("browser: session cancelled")
 )
 
@@ -105,6 +106,7 @@ type Config struct {
 	ShutdownTimeout   time.Duration
 	WorkerMode        string
 	Clock             Clock
+	Sink              observability.Sink
 }
 
 // Runner adapts a WorkerFactory to queue.Runner and keeps worker facts below
@@ -130,6 +132,9 @@ func New(factory WorkerFactory, leases LeaseKeeper, profiles *Profiles, config C
 		if config.HeartbeatInterval <= 0 {
 			return nil, ErrInvalidConfig
 		}
+	}
+	if config.Sink == nil {
+		config.Sink = observability.NopSink{}
 	}
 	var requests RequestReader
 	if reader, ok := leases.(RequestReader); ok {
@@ -159,8 +164,11 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 		return queue.Result{}, ErrInvalidConfig
 	}
 	if work.Lease.Expired(now) {
+		r.record(now, "start", "failed", work.Request.RequestID, "lease_expired", 0)
 		return queue.Result{Failure: account.TransientFailure}, account.ErrLeaseExpired
 	}
+	startedAt := now
+	r.record(startedAt, "start", "started", work.Request.RequestID, "", 0)
 	profileDir, releaseProfile, err := r.profiles.Acquire(work.Request.AccountID)
 	if err != nil {
 		return queue.Result{Failure: account.ConfigurationFailure}, err
@@ -177,9 +185,11 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 	}
 	worker, err := r.factory.Start(ctx, spec)
 	if err != nil {
+		r.record(r.config.Clock(), "start", "failed", work.Request.RequestID, "worker_start_failed", elapsed(startedAt, r.config.Clock()))
 		return queue.Result{Failure: account.TransientFailure}, err
 	}
 	if worker == nil {
+		r.record(r.config.Clock(), "start", "failed", work.Request.RequestID, "worker_unavailable", elapsed(startedAt, r.config.Clock()))
 		return queue.Result{Failure: account.TransientFailure}, ErrWorkerCrashed
 	}
 
@@ -223,25 +233,34 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 
 	select {
 	case outcome := <-done:
-		if hbErr := readHeartbeatError(heartbeatErr); hbErr != nil {
-			return queue.Result{Failure: account.TransientFailure}, hbErr
-		}
-		if outcome.err != nil {
-			return queue.Result{Failure: account.TransientFailure}, outcome.err
-		}
-		if err := outcome.result.validate(); err != nil {
-			return queue.Result{Failure: account.UnknownFailure}, err
-		}
 		finishedAt := r.config.Clock()
 		if finishedAt.IsZero() {
 			return queue.Result{}, ErrInvalidConfig
+		}
+		if hbErr := readHeartbeatError(heartbeatErr); hbErr != nil {
+			r.record(finishedAt, "run", "failed", work.Request.RequestID, "heartbeat_failed", elapsed(startedAt, finishedAt))
+			return queue.Result{Failure: account.TransientFailure}, hbErr
+		}
+		if outcome.err != nil {
+			r.record(finishedAt, "run", "failed", work.Request.RequestID, "worker_failed", elapsed(startedAt, finishedAt))
+			return queue.Result{Failure: account.TransientFailure}, outcome.err
+		}
+		if err := outcome.result.validate(); err != nil {
+			r.record(finishedAt, "run", "failed", work.Request.RequestID, "worker_protocol_failed", elapsed(startedAt, finishedAt))
+			return queue.Result{Failure: account.UnknownFailure}, err
 		}
 		leaseState.mu.RLock()
 		latestLease := leaseState.value
 		leaseState.mu.RUnlock()
 		if latestLease.Expired(finishedAt) {
+			r.record(finishedAt, "run", "failed", work.Request.RequestID, "lease_expired", elapsed(startedAt, finishedAt))
 			return queue.Result{Failure: account.TransientFailure}, account.ErrLeaseExpired
 		}
+		outcomeName := "failed"
+		if outcome.result.Succeeded {
+			outcomeName = "succeeded"
+		}
+		r.record(finishedAt, "run", outcomeName, work.Request.RequestID, string(outcome.result.Failure), elapsed(startedAt, finishedAt))
 		return queue.Result{Succeeded: outcome.result.Succeeded, Failure: outcome.result.Failure}, nil
 	case <-ctx.Done():
 		cancelErr := cancelWorker()
@@ -254,8 +273,10 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 			}
 		}
 		if cancelErr != nil {
+			r.record(r.config.Clock(), "run", "failed", work.Request.RequestID, "cancel_failed", elapsed(startedAt, r.config.Clock()))
 			return queue.Result{Failure: account.TransientFailure}, fmt.Errorf("cancel worker: %w", cancelErr)
 		}
+		r.record(r.config.Clock(), "run", "cancelled", work.Request.RequestID, "cancelled", elapsed(startedAt, r.config.Clock()))
 		return queue.Result{Failure: account.TransientFailure}, ctx.Err()
 	case hbErr := <-heartbeatErr:
 		cancelErr := cancelWorker()
@@ -265,10 +286,26 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 		case <-time.After(r.config.CancelTimeout):
 		}
 		if cancelErr != nil {
+			r.record(r.config.Clock(), "run", "failed", work.Request.RequestID, "heartbeat_failed", elapsed(startedAt, r.config.Clock()))
 			return queue.Result{Failure: account.TransientFailure}, fmt.Errorf("heartbeat failed: %v; cancel worker: %w", hbErr, cancelErr)
 		}
+		r.record(r.config.Clock(), "run", "failed", work.Request.RequestID, "heartbeat_failed", elapsed(startedAt, r.config.Clock()))
 		return queue.Result{Failure: account.TransientFailure}, hbErr
 	}
+}
+
+func elapsed(start, end time.Time) time.Duration {
+	if start.IsZero() || end.IsZero() || end.Before(start) {
+		return 0
+	}
+	return end.Sub(start)
+}
+
+func (r *Runner) record(at time.Time, operation, outcome, requestID, errorClass string, duration time.Duration) {
+	if r == nil || r.config.Sink == nil {
+		return
+	}
+	r.config.Sink.Record(observability.Event{At: at, Component: "worker", Operation: operation, Outcome: outcome, RequestID: observability.RedactIdentifier(requestID), ErrorClass: errorClass, Duration: duration})
 }
 
 type workerRun struct {

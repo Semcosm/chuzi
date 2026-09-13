@@ -13,13 +13,14 @@ import (
 // Event contains only classified, non-secret operational metadata. Callers
 // must not add raw errors, credentials, message bodies, or account IDs.
 type Event struct {
-	At           time.Time
-	Component    string
-	Operation    string
-	Outcome      string
-	RequestID    string
-	Resource     string
-	ErrorClass   string
+	At         time.Time     `json:"at,omitempty"`
+	Component  string        `json:"component,omitempty"`
+	Operation  string        `json:"operation,omitempty"`
+	Outcome    string        `json:"outcome,omitempty"`
+	RequestID  string        `json:"request_id,omitempty"`
+	Resource   string        `json:"resource,omitempty"`
+	ErrorClass string        `json:"error_class,omitempty"`
+	Duration   time.Duration `json:"-"`
 }
 
 // Sink receives redacted operational events.
@@ -40,6 +41,19 @@ func (f FuncSink) Record(event Event) {
 type NopSink struct{}
 
 func (NopSink) Record(Event) {}
+
+// MultiSink fans one redacted event out to a set of sinks. A nil sink is
+// ignored, which makes optional log/metric wiring safe in tests and in a
+// minimal deployment.
+type MultiSink []Sink
+
+func (s MultiSink) Record(event Event) {
+	for _, sink := range s {
+		if sink != nil {
+			sink.Record(event)
+		}
+	}
+}
 
 // RedactIdentifier provides a stable short label for account and room IDs.
 // The original value is never included in the result.

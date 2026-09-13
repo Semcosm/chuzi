@@ -6,5 +6,11 @@
   },
   "health": {
     "listen": "127.0.0.1:8080"
+  },
+  "observability": {
+    "metrics_listen": "",
+    "log_path": "",
+    "log_max_bytes": 10485760,
+    "log_max_files": 5
   }
 }

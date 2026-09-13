@@ -25,19 +25,19 @@ var (
 // notifier. It stores identifiers and classified state only; the rendered
 // message is produced at delivery time and never persisted.
 type Notification struct {
-	EventID       string                 `json:"event_id"`
-	RoomID        string                 `json:"room_id"`
-	AccountID     string                 `json:"account_id"`
-	RequestID     string                 `json:"request_id"`
-	State         account.Status         `json:"state"`
-	Failure       account.FailureClass   `json:"failure,omitempty"`
-	OccurredAt    time.Time              `json:"occurred_at"`
-	CreatedAt     time.Time              `json:"created_at"`
-	NextAttemptAt time.Time              `json:"next_attempt_at"`
-	Attempt       int                    `json:"attempt"`
-	ClaimedBy     string                 `json:"claimed_by,omitempty"`
-	ClaimExpiresAt time.Time              `json:"claim_expires_at,omitempty"`
-	DeliveredAt   time.Time              `json:"delivered_at,omitempty"`
+	EventID        string               `json:"event_id"`
+	RoomID         string               `json:"room_id"`
+	AccountID      string               `json:"account_id"`
+	RequestID      string               `json:"request_id"`
+	State          account.Status       `json:"state"`
+	Failure        account.FailureClass `json:"failure,omitempty"`
+	OccurredAt     time.Time            `json:"occurred_at"`
+	CreatedAt      time.Time            `json:"created_at"`
+	NextAttemptAt  time.Time            `json:"next_attempt_at"`
+	Attempt        int                  `json:"attempt"`
+	ClaimedBy      string               `json:"claimed_by,omitempty"`
+	ClaimExpiresAt time.Time            `json:"claim_expires_at,omitempty"`
+	DeliveredAt    time.Time            `json:"delivered_at,omitempty"`
 }
 
 // Validate checks the durable notification projection and keeps values safe
