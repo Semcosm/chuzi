@@ -74,7 +74,7 @@ func TestManifestValidatesPluginCapabilities(t *testing.T) {
 		Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-1", Target: "windows-amd64",
 		Plugins: []PluginDescriptor{{
 			ID: "bettergi", Version: "0.1.0", API: PluginAPIV1,
-			Capabilities: []string{"bettergi.session.v1"}, Installable: true,
+			Capabilities: []string{"bettergi.session.v1"}, Installable: false,
 		}},
 	}
 	if err := manifest.Validate(); err != nil {

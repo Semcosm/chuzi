@@ -95,10 +95,11 @@ store, err := store.Open(cfg)
 包和按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的组件包。
 
 完整包内的 `release-manifest.json` 是启动器与未来 UI 的稳定输入，声明目标平台、
-版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 目前只提供
-manifest 展示与本地资源校验；更新源、下载、修复写入、组件/插件安装和行为设置都
-通过 `internal/launcher` 的注入接口保留给后续适配器。Nightly 的 `plugins` 列表
-默认为空，不能将组件包误认为已实现插件生态。
+版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 提供 manifest
+展示、校验、基于本地 manifest 的更新检查、资源修复、组件启停和插件信任/启停 CLI。
+CR-0022 的后台实现不下载未知资源：更新检查通过注入的 source，修复和组件安装只
+使用显式本地 source root，插件归档先校验摘要再安全解包到临时目录并原子替换。
+Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：
 

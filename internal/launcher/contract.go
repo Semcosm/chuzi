@@ -25,19 +25,31 @@ var (
 	ErrInvalidManifest = errors.New("launcher: invalid release manifest")
 	ErrInvalidPath     = errors.New("launcher: invalid resource path")
 	ErrUnsupported     = errors.New("launcher: unsupported launcher operation")
+	ErrNotFound        = errors.New("launcher: item not found")
+	ErrNotTrusted      = errors.New("launcher: plugin is not trusted")
+	ErrRequired        = errors.New("launcher: required component cannot be changed")
+	ErrTransaction     = errors.New("launcher: transaction rolled back")
+)
+
+const (
+	HealthHealthy      = "healthy"
+	HealthMissing      = "missing"
+	HealthDisabled     = "disabled"
+	HealthUntrusted    = "untrusted"
+	HealthNotInstalled = "not_installed"
 )
 
 // ReleaseManifest is the signed/verified metadata a launcher consumes before
 // presenting an update or install action. Hashes are over files inside the
 // target installation, not over an archive container.
 type ReleaseManifest struct {
-	Format      string            `json:"format"`
-	Channel     string            `json:"channel"`
-	Version     string            `json:"version"`
-	Commit      string            `json:"commit"`
-	Target      string            `json:"target"`
-	GeneratedAt time.Time         `json:"generated_at"`
-	Components  []Component       `json:"components"`
+	Format      string             `json:"format"`
+	Channel     string             `json:"channel"`
+	Version     string             `json:"version"`
+	Commit      string             `json:"commit"`
+	Target      string             `json:"target"`
+	GeneratedAt time.Time          `json:"generated_at"`
+	Components  []Component        `json:"components"`
 	Plugins     []PluginDescriptor `json:"plugins"`
 }
 
@@ -60,16 +72,16 @@ type Resource struct {
 // PluginDescriptor describes an adapter that can be managed independently of
 // the core release. The launcher never grants permissions implicitly.
 type PluginDescriptor struct {
-	ID              string   `json:"id"`
-	Version         string   `json:"version"`
-	API             string   `json:"api"`
-	Target          string   `json:"target,omitempty"`
-	Archive         string   `json:"archive,omitempty"`
-	SHA256          string   `json:"sha256,omitempty"`
-	Capabilities    []string `json:"capabilities,omitempty"`
-	Permissions     []string `json:"permissions,omitempty"`
-	SignedBy        string   `json:"signed_by,omitempty"`
-	Installable     bool     `json:"installable"`
+	ID           string   `json:"id"`
+	Version      string   `json:"version"`
+	API          string   `json:"api"`
+	Target       string   `json:"target,omitempty"`
+	Archive      string   `json:"archive,omitempty"`
+	SHA256       string   `json:"sha256,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Permissions  []string `json:"permissions,omitempty"`
+	SignedBy     string   `json:"signed_by,omitempty"`
+	Installable  bool     `json:"installable"`
 }
 
 func (m ReleaseManifest) Validate() error {
@@ -81,6 +93,7 @@ func (m ReleaseManifest) Validate() error {
 		return fmt.Errorf("%w: unknown channel %q", ErrInvalidManifest, m.Channel)
 	}
 	seenComponents := make(map[string]struct{}, len(m.Components))
+	seenResourcePaths := make(map[string]string)
 	for _, component := range m.Components {
 		if strings.TrimSpace(component.ID) == "" || strings.TrimSpace(component.Version) == "" {
 			return fmt.Errorf("%w: component id and version are required", ErrInvalidManifest)
@@ -89,6 +102,16 @@ func (m ReleaseManifest) Validate() error {
 			return fmt.Errorf("%w: duplicate component %q", ErrInvalidManifest, component.ID)
 		}
 		seenComponents[component.ID] = struct{}{}
+		seenDependencies := make(map[string]struct{}, len(component.Dependencies))
+		for _, dependency := range component.Dependencies {
+			if strings.TrimSpace(dependency) == "" || dependency == component.ID {
+				return fmt.Errorf("%w: component %s has invalid dependency", ErrInvalidManifest, component.ID)
+			}
+			if _, ok := seenDependencies[dependency]; ok {
+				return fmt.Errorf("%w: component %s has duplicate dependency %q", ErrInvalidManifest, component.ID, dependency)
+			}
+			seenDependencies[dependency] = struct{}{}
+		}
 		seenResources := make(map[string]struct{}, len(component.Resources))
 		for _, resource := range component.Resources {
 			if err := validateResource(resource); err != nil {
@@ -98,12 +121,26 @@ func (m ReleaseManifest) Validate() error {
 				return fmt.Errorf("%w: duplicate resource %q", ErrInvalidManifest, resource.Path)
 			}
 			seenResources[resource.Path] = struct{}{}
+			if owner, ok := seenResourcePaths[resource.Path]; ok && owner != component.ID {
+				return fmt.Errorf("%w: resource %q is declared by components %s and %s", ErrInvalidManifest, resource.Path, owner, component.ID)
+			}
+			seenResourcePaths[resource.Path] = component.ID
+		}
+	}
+	for _, component := range m.Components {
+		for _, dependency := range component.Dependencies {
+			if _, ok := seenComponents[dependency]; !ok {
+				return fmt.Errorf("%w: component %s depends on unknown component %q", ErrInvalidManifest, component.ID, dependency)
+			}
 		}
 	}
 	seenPlugins := make(map[string]struct{}, len(m.Plugins))
 	for _, plugin := range m.Plugins {
 		if strings.TrimSpace(plugin.ID) == "" || strings.TrimSpace(plugin.Version) == "" || plugin.API != PluginAPIV1 {
 			return fmt.Errorf("%w: plugin %q has invalid id, version, or api", ErrInvalidManifest, plugin.ID)
+		}
+		if !validIdentifier(plugin.ID) {
+			return fmt.Errorf("%w: plugin %q has invalid id", ErrInvalidManifest, plugin.ID)
 		}
 		if _, ok := seenPlugins[plugin.ID]; ok {
 			return fmt.Errorf("%w: duplicate plugin %q", ErrInvalidManifest, plugin.ID)
@@ -124,26 +161,57 @@ func (m ReleaseManifest) Validate() error {
 				return fmt.Errorf("%w: plugin %s archive: %v", ErrInvalidManifest, plugin.ID, err)
 			}
 		}
+		if plugin.SHA256 != "" && !validSHA256(plugin.SHA256) {
+			return fmt.Errorf("%w: plugin %s has invalid sha256", ErrInvalidManifest, plugin.ID)
+		}
+		if plugin.Installable && (plugin.Archive == "" || plugin.SHA256 == "") {
+			return fmt.Errorf("%w: installable plugin %s requires archive and sha256", ErrInvalidManifest, plugin.ID)
+		}
+		if plugin.Target != "" && plugin.Target != m.Target {
+			return fmt.Errorf("%w: plugin %s target does not match manifest", ErrInvalidManifest, plugin.ID)
+		}
+		seenPermissions := make(map[string]struct{}, len(plugin.Permissions))
+		for _, permission := range plugin.Permissions {
+			if strings.TrimSpace(permission) == "" {
+				return fmt.Errorf("%w: plugin %s has an empty permission", ErrInvalidManifest, plugin.ID)
+			}
+			if _, ok := seenPermissions[permission]; ok {
+				return fmt.Errorf("%w: plugin %s has duplicate permission %q", ErrInvalidManifest, plugin.ID, permission)
+			}
+			seenPermissions[permission] = struct{}{}
+		}
 	}
 	return nil
+}
+
+func validIdentifier(value string) bool {
+	return strings.TrimSpace(value) != "" && value != "." && value != ".." &&
+		!strings.ContainsAny(value, `/\\`) && !strings.Contains(value, "..")
 }
 
 func validateResource(resource Resource) error {
 	if err := validateRelativePath(resource.Path); err != nil {
 		return err
 	}
-	if len(resource.SHA256) != 64 {
+	if !validSHA256(resource.SHA256) {
 		return fmt.Errorf("resource %q has invalid sha256", resource.Path)
-	}
-	for _, character := range resource.SHA256 {
-		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
-			return fmt.Errorf("resource %q has invalid sha256", resource.Path)
-		}
 	}
 	if resource.Size < 0 {
 		return fmt.Errorf("resource %q has negative size", resource.Path)
 	}
 	return nil
+}
+
+func validSHA256(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f') || (character >= 'A' && character <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func validateRelativePath(value string) error {
@@ -224,12 +292,12 @@ type ResourceRepairer interface {
 }
 
 type ComponentState struct {
-	ID          string `json:"id"`
-	Installed   bool   `json:"installed"`
-	Version     string `json:"version,omitempty"`
-	Enabled     bool   `json:"enabled"`
-	Required    bool   `json:"required"`
-	Health      string `json:"health"`
+	ID        string `json:"id"`
+	Installed bool   `json:"installed"`
+	Version   string `json:"version,omitempty"`
+	Enabled   bool   `json:"enabled"`
+	Required  bool   `json:"required"`
+	Health    string `json:"health"`
 }
 
 type ComponentManager interface {
@@ -252,6 +320,7 @@ type PluginManager interface {
 	Install(context.Context, string) (PluginState, error)
 	Remove(context.Context, string) error
 	SetEnabled(context.Context, string, bool) (PluginState, error)
+	SetTrusted(context.Context, string, bool) (PluginState, error)
 }
 
 type BehaviorSettings struct {
