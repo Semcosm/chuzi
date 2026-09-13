@@ -5,13 +5,13 @@ Head or Range: d532dbcc2da9203ffbde79275c4a308b1569e7fe..7ed60fbe317e7181c998189
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): implement first headless-CDP local test adapter
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 7ed60fbe317e7181c9981892be4ec04c790841ae
-Head OID: 7ed60fbe317e7181c9981892be4ec04c790841ae
-Integrated Result: pending
+Base OID: cb612692d779460ebd6f5b30cf0016cb65bb0598
+Head OID: cb612692d779460ebd6f5b30cf0016cb65bb0598
+Integrated Result: main@cb612692d779460ebd6f5b30cf0016cb65bb0598
 
 ## Summary
 
