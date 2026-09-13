@@ -46,7 +46,9 @@ func NewHTTPClient(config HTTPClientConfig) (*HTTPClient, error) {
 		return nil, ErrInvalidClient
 	}
 	if config.HTTPClient == nil {
-		config.HTTPClient = &http.Client{Timeout: 30 * time.Second}
+		// The client deadline must exceed the Matrix long-poll timeout; otherwise
+		// a normal empty sync is misclassified as a transport failure.
+		config.HTTPClient = &http.Client{Timeout: 5*time.Minute + 30*time.Second}
 	}
 	return &HTTPClient{base: base, token: config.AccessToken, userAgent: strings.TrimSpace(config.UserAgent), http: config.HTTPClient}, nil
 }
