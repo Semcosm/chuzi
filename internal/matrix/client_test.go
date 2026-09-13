@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -64,20 +65,23 @@ func TestHTTPClientRejectsUnauthorizedWithoutLeakingToken(t *testing.T) {
 
 func TestGatewayHandlesSyncMessageAndUsesStableReplyEvent(t *testing.T) {
 	harness := newMatrixHarness(t)
-	var sent bool
+	var sent atomic.Bool
 	var replyPath string
+	replyDone := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/_matrix/client/v3/sync":
-			if sent {
+			if sent.Swap(true) {
 				<-request.Context().Done()
 				return
 			}
-			sent = true
 			_, _ = writer.Write([]byte(`{"next_batch":"batch-2","rooms":{"join":{"!ops:example.org":{"timeline":{"events":[{"type":"m.room.message","event_id":"$gateway","sender":"@alice:example.org","content":{"msgtype":"m.text","body":"!ugs request account-1"}}]}}}}}`))
 		default:
 			replyPath = request.URL.Path
 			writer.WriteHeader(http.StatusOK)
+			close(replyDone)
 		}
 	}))
 	defer server.Close()
@@ -89,12 +93,18 @@ func TestGatewayHandlesSyncMessageAndUsesStableReplyEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	if err := gateway.Run(ctx); !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+	runDone := make(chan error, 1)
+	go func() { runDone <- gateway.Run(ctx) }()
+	select {
+	case <-replyDone:
+		cancel()
+	case err := <-runDone:
+		t.Fatalf("gateway stopped before sending reply: %v", err)
+	}
+	if err := <-runDone; !errors.Is(err, context.Canceled) {
 		t.Fatalf("gateway error = %v", err)
 	}
-	if !sent || !strings.Contains(replyPath, "/send/m.room.message/reply-") {
-		t.Fatalf("gateway did not send stable reply: sent=%t path=%q", sent, replyPath)
+	if !sent.Load() || !strings.Contains(replyPath, "/send/m.room.message/reply-") {
+		t.Fatalf("gateway did not send stable reply: sent=%t path=%q", sent.Load(), replyPath)
 	}
 }
