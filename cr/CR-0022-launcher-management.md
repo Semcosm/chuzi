@@ -5,13 +5,13 @@ Head or Range: bdb10819990b7cfe53f3c8cce8d757089a88a223
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): implement component and plugin management
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 76ccc4f794f64cd4e41c00479c6405636d11116d
-Head OID: 76ccc4f794f64cd4e41c00479c6405636d11116d
-Integrated Result: pending
+Base OID: 659dd84c5ce2d4a8d096eccca7b4ba24b735df43
+Head OID: 659dd84c5ce2d4a8d096eccca7b4ba24b735df43
+Integrated Result: main@659dd84c5ce2d4a8d096eccca7b4ba24b735df43
 
 ## Summary
 
