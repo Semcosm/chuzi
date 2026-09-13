@@ -1,7 +1,7 @@
 # CR-0023: assemble production runtime
 
 Base: main
-Head or Range: 8c3fd957c87b1985252d44238300720b8c18716e..b90f005c5b237c5792ba27269cebc60c29519a98
+Head or Range: 8c3fd957c87b1985252d44238300720b8c18716e..a7ec9e09fe69d42c93c9f3bcb8e7ea238be884f3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): assemble production runtime boundaries
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 9d9cc4793a4d62dacc2133c8f4daf228f7dbb52b
-Head OID: b90f005c5b237c5792ba27269cebc60c29519a98
+Head OID: a7ec9e09fe69d42c93c9f3bcb8e7ea238be884f3
 Integrated Result: pending
 
 ## Summary
