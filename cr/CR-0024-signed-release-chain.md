@@ -10,7 +10,7 @@ Status: accepted
 Decision: accepted
 Policy Version: v0.3
 Base OID: 0c8ea4e206653d224fe11f9eaff4e3e532c3e784
-Head OID: pending
+Head OID: 3c512d2dd000b91e73964333a54046bd6c07099e
 Integrated Result: pending
 
 ## Summary
