@@ -13,6 +13,9 @@ stage_dir="$repo_root/dist/$target/stage"
 artifact="$repo_root/dist/chuzi-${version}-${target}.tar.gz"
 
 [ -d "$stage_dir" ] || { echo "build stage does not exist: $stage_dir" >&2; exit 1; }
+mkdir -p "$repo_root/dist"
+rm -f "$artifact" "$artifact.sha256" "$repo_root/dist/chuzi-${version}-${target}.manifest.json" \
+  "$repo_root/dist/chuzi-${version}-${target}.index.json" "$repo_root/dist/chuzi-${version}-${target}.index.json.sha256"
 tar -czf "$artifact" -C "$stage_dir" .
 for component in launcher service browser-worker desktop-runtime; do
   component_dir="$(mktemp -d)"
@@ -47,4 +50,14 @@ for component_artifact in "$repo_root/dist/chuzi-${version}-${target}-"*.tar.gz;
   [ "$component_artifact" = "$artifact" ] && continue
   write_sha256 "$component_artifact"
 done
+channel=nightly
+case "$version" in v[0-9]*.[0-9]*.[0-9]*) channel=stable ;; esac
+python3 "$repo_root/scripts/generate_release_index.py" \
+  --manifest "$stage_dir/release-manifest.json" \
+  --dist "$repo_root/dist" \
+  --target "$target" \
+  --version "$version" \
+  --commit "${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}" \
+  --channel "$channel"
+write_sha256 "$repo_root/dist/chuzi-${version}-${target}.index.json"
 echo "packaged $artifact"

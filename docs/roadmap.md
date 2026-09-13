@@ -29,13 +29,11 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 ### 当前 release 基线
 
 Nightly release 是首次可交付流程：GitHub Actions 定时构建四个目标，不打 tag、不创建
-GitHub Release，只上传限期 Actions artifacts。产物已拆分为最小启动器、服务、浏览器
-Worker 和桌面运行时组件，并携带资源校验 manifest。启动器 UI 尚未定型；更新、修复、
-组件/插件和行为设置以 `internal/launcher` 接口固定。CR-0022 与 CR-0026 已实现
-UI 无关的本地更新检查、资源修复、组件依赖启停、插件归档安装、显式签名者信任、
-行为设置持久化、跨进程操作锁和前台服务进程控制；网络下载、生产签名验证、插件
-执行和平台服务管理器集成仍需后续独立 CR。后续 Rust UI 应通过 CLI/未来 IPC 调用
-这些能力，不把 Go 文件策略复制到桌面层。
+GitHub Release，只上传限期 Actions artifacts。版本包含 run number 和短 commit hash；
+产物已拆分为最小启动器、服务、浏览器 Worker 和桌面运行时组件，并携带资源校验
+manifest/index。启动器 UI 尚未定型；首次启动通过 `initialize` 提供组件选择，显式
+release index 下载并安装所选组件，设置页可复用同一 `component-list`/启停和 settings
+契约。CR-0027 的网络下载仍不包含 Chromium、真实账号或生产凭证。
 
 ## 演进阶段
 

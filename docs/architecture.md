@@ -115,8 +115,9 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 `ServiceController` 约束本地操作并管理由调用方持有的前台服务进程。接口不假设 UI
 技术、网络协议或平台服务管理器。CR-0022 与 CR-0026 提供了本地 manifest source、
 原子资源修复、组件依赖安装、插件归档安全解包、显式 signer 信任、原子设置持久化、
-跨进程锁和可取消进度事件；`cmd/launcher` 通过 CLI 调用这些后台能力，仍不包含 UI
-或隐式网络下载。
+跨进程锁和可取消进度事件；CR-0027 增加了 `ReleaseIndex`、HTTPS 同源归档下载、
+临时文件原子落盘和首次运行初始化状态。`cmd/launcher` 只在显式提供
+`-release-index` 时联网，UI 可直接复用这些接口。
 
 行为设置文件缺失时使用关闭自动变更的默认值，写入使用 0600 临时文件和原子替换。
 修改安装目录或设置前应先持有 `.chuzi/launcher.lock`；锁不会自动打破，发现遗留锁时

@@ -39,11 +39,14 @@ amd64/arm64 的 WebKitGTK Wry desktop backend 还在 X11 与 Wayland 图形会�
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
 当前首个 release 流程是 nightly：GitHub Actions 每日自动构建并上传四个平台的限期
-artifact，不创建 Git tag 或 GitHub Release。每个目标包含最小启动器、服务、浏览器
-Worker、桌面运行时以及 `release-manifest.json`；同时提供按组件拆分的归档，安装者不
-必安装全部运行资源。启动器后台契约位于 `internal/launcher`，UI 暂未定型；当前已
-提供本地更新检查、资源修复、组件启停、插件归档安装、显式信任管理、原子行为设置、
-跨进程安装锁和可取消的操作进度；`cmd/launcher` 只使用本地 manifest/source，不会
+artifact，不创建 Git tag 或 GitHub Release。版本格式为
+`nightly-<run-number>-<commit-short-hash>`，完整 commit hash 写入 manifest/index。
+每个目标包含最小启动器、服务、浏览器 Worker、桌面运行时以及
+`release-manifest.json`；同时提供按组件拆分的归档和带大小/SHA-256 的
+`release-index.json`，安装者不必安装全部运行资源。启动器后台契约位于
+`internal/launcher`，UI 暂未定型；首次运行的 `initialize` 命令只报告组件选择状态，
+显式的 `-release-index` 才会通过 HTTPS 下载所选组件及依赖。组件启停、插件信任、
+原子行为设置、跨进程安装锁和可取消的操作进度继续由同一 CLI/后台接口提供；不会
 隐式下载或执行未知插件。Go 的前台服务进程控制边界可由后续 Rust 跨平台 UI 通过
 CLI/未来 IPC 适配，但当前 CLI 不替代 systemd、launchd 或 Windows 服务管理器。
 
