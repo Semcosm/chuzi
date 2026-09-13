@@ -5,13 +5,13 @@ Head or Range: 0c8ea4e206653d224fe11f9eaff4e3e532c3e784..pending
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(release): add signed stable release verification chain
-Revision: 3
-Status: accepted
+Revision: 4
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 0c8ea4e206653d224fe11f9eaff4e3e532c3e784
-Head OID: 3c512d2dd000b91e73964333a54046bd6c07099e
-Integrated Result: pending
+Base OID: cff336c6f5e0c252088e580ad95b3fbad87a1bcf
+Head OID: cff336c6f5e0c252088e580ad95b3fbad87a1bcf
+Integrated Result: main@cff336c6f5e0c252088e580ad95b3fbad87a1bcf
 
 ## Summary
 
