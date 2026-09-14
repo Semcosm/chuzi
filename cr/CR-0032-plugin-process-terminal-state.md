@@ -5,12 +5,12 @@ Head or Range: c9aaffe8e19b0e79d3b404fd22879c030394443e
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(plugin): make process pipe termination deterministic
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: e799591f24c891ed25289a7ad83e200a46bd58a8
-Head OID: c9aaffe8e19b0e79d3b404fd22879c030394443e
+Base OID: a82a7411591f4bf5e9d44645d2da8e829709d8f4
+Head OID: a82a7411591f4bf5e9d44645d2da8e829709d8f4
 Integrated Result: pending
 
 ## Summary
