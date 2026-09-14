@@ -55,6 +55,8 @@ done
 [ -x "$repo_root/scripts/test_release_signing.sh" ] || fail "release signing test is missing"
 [ -x "$repo_root/scripts/test_nightly_package.sh" ] || fail "nightly package test is missing"
 [ -x "$repo_root/scripts/test_launcher_ui.sh" ] || fail "launcher UI contract test is missing"
+[ -x "$repo_root/scripts/test_launcher_consumer.sh" ] || fail "launcher consumer acceptance test is missing"
+grep -Fq 'TestLauncherConsumerFlow' "$repo_root/cmd/launcher/consumer_test.go" || fail "launcher consumer flow test is missing"
 grep -Fq 'refreshInFlight' "$repo_root/launcher-ui/src/ui.html" || fail "launcher UI does not serialize refreshes"
 grep -Fq 'node - "$repo_root/launcher-ui/src/ui.html"' "$repo_root/scripts/test_launcher_ui.sh" || fail "launcher UI interaction harness is missing"
 
@@ -114,6 +116,7 @@ grep -Fq 'run_phase '\''go-test'\'' go test -count=1 -v ./...' "$repo_root/.gith
 grep -Fq 'debug_watchdog' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses contract test diagnostics watchdog"
 grep -Fq "dump_debug_state >&2" "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses failure-time contract diagnostics"
 grep -Fq 'test_nightly_package.sh' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses nightly package contract"
+grep -Fq 'test_launcher_consumer.sh' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses launcher consumer acceptance"
 grep -Fq 'launcher-ui/Cargo.toml' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses launcher UI tests"
 
 echo "build contract validation passed"

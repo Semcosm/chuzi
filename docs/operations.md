@@ -103,6 +103,9 @@ store, err := store.Open(cfg)
 写到 stderr，Ctrl-C 会通过 context 取消当前操作。显式 `-release-index` 时，下载器
 只接受 HTTPS（本地测试可显式允许 loopback HTTP）、同源归档，并校验目标平台、版本、
 大小和 SHA-256；组件及其依赖先安全解包到临时 source，再复用原子资源修复和状态回滚。
+已有安装目录在升级时可以继续保留旧版 `release-manifest.json`；只要 target 和 channel
+一致，新 release index 的版本和 commit 会作为候选版本使用。索引或归档校验失败时，
+旧组件状态和文件保持不变，不能把 endpoint 可达或归档下载完成误报为业务安装成功。
 未提供 index 时，修复和组件安装仍只使用显式本地 source root。
 锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件同时包含
 UI-neutral `chuzi-launcher` CLI 和 Rust/Wry `chuzi-launcher-ui`；

@@ -70,8 +70,10 @@ func main() {
 		if err := local.Validate(); err != nil {
 			fatal(err)
 		}
-		if releaseIndex != nil && (local.Target != manifest.Target || local.Channel != manifest.Channel || local.Version != manifest.Version || local.Commit != manifest.Commit) {
-			fatal(fmt.Errorf("local manifest does not match release index"))
+		// An index describes the candidate release, so an installed manifest may
+		// legitimately have an older version or commit during an upgrade.
+		if releaseIndex != nil && (local.Target != manifest.Target || local.Channel != manifest.Channel) {
+			fatal(fmt.Errorf("local manifest target/channel does not match release index"))
 		}
 		if releaseIndex == nil {
 			manifest = local
