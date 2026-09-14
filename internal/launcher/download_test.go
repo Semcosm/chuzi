@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 )
@@ -238,6 +239,79 @@ func TestNetworkComponentManagerDownloadsDependenciesOnce(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(install, "service/main")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestNetworkComponentManagerCancellationLeavesNoPartialInstallation(t *testing.T) {
+	runtimeArchive := tarGzBytes(t, map[string]string{"runtime/helper": "helper"})
+	serviceArchive := tarGzBytes(t, map[string]string{"service/main": "service"})
+	runtimeArtifact := artifactForBytes("runtime.tar.gz", "runtime", runtimeArchive)
+	serviceArtifact := artifactForBytes("service.tar.gz", "service", serviceArchive)
+	runtimeArtifact.Version, serviceArtifact.Version = "nightly-2", "nightly-2"
+	runtimeData := []byte("helper")
+	serviceData := []byte("service")
+	runtimeHash := sha256.Sum256(runtimeData)
+	serviceHash := sha256.Sum256(serviceData)
+	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-2", Commit: strings.Repeat("e", 40), Target: "linux-amd64", Components: []Component{
+		{ID: "runtime", Version: "nightly-2", Required: true, Artifact: "runtime.tar.gz", Resources: []Resource{{Path: "runtime/helper", SHA256: hex.EncodeToString(runtimeHash[:]), Size: int64(len(runtimeData))}}},
+		{ID: "service", Version: "nightly-2", Artifact: "service.tar.gz", Dependencies: []string{"runtime"}, Resources: []Resource{{Path: "service/main", SHA256: hex.EncodeToString(serviceHash[:]), Size: int64(len(serviceData))}}},
+	}}
+	index := ReleaseIndex{Format: ReleaseIndexFormat, Channel: manifest.Channel, Version: manifest.Version, Commit: manifest.Commit, Target: manifest.Target, Manifest: manifest, Artifacts: []ReleaseArtifact{runtimeArtifact, serviceArtifact}}
+	if err := index.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	var startOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/runtime.tar.gz" {
+			startOnce.Do(func() { close(started) })
+			<-request.Context().Done()
+			return
+		}
+		if request.URL.Path == "/service.tar.gz" {
+			_, _ = writer.Write(serviceArchive)
+			return
+		}
+		http.NotFound(writer, request)
+	}))
+	defer server.Close()
+
+	install := t.TempDir()
+	downloadDir := filepath.Join(install, "downloads")
+	manager, err := NewNetworkComponentManager(ManagerOptions{InstallRoot: install, Manifest: manifest}, index, server.URL+"/index.json", downloadDir, ArtifactDownloader{AllowHTTPForLoopback: true, RetryDelay: 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, installErr := manager.Install(ctx, "service")
+		result <- installErr
+	}()
+	<-started
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled network install error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(install, "runtime/helper")); !os.IsNotExist(err) {
+		t.Fatalf("cancelled install left runtime resource, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(install, "service/main")); !os.IsNotExist(err) {
+		t.Fatalf("cancelled install left service resource, err=%v", err)
+	}
+	if entries, err := os.ReadDir(downloadDir); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("cancelled install left download files: %v", entries)
+	}
+	states, err := manager.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range states {
+		if state.Installed {
+			t.Fatalf("cancelled install marked %s installed: %#v", state.ID, state)
+		}
 	}
 }
 
