@@ -5,13 +5,13 @@ Head or Range: 973b3c3591fac3c30a8350c7377135b70055846c..f1ab8e7173764a5bea79887
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: test(launcher): add nightly consumer acceptance
-Revision: 3
-Status: accepted
+Revision: 4
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 973b3c3591fac3c30a8350c7377135b70055846c
-Head OID: 04c6515308d3b2b55e91b29adbf8526f2692899a
-Integrated Result: pending
+Base OID: cde480d3cc8e64eb3ef18a4c78ac4e0aaf49dff9
+Head OID: cde480d3cc8e64eb3ef18a4c78ac4e0aaf49dff9
+Integrated Result: main@cde480d3cc8e64eb3ef18a4c78ac4e0aaf49dff9
 
 ## Summary
 
@@ -79,13 +79,14 @@ tag/release is used.
 GitHub Actions acceptance:
 
 PR `#85` run
-`https://github.com/Semcosm/chuzi/actions/runs/34807597760` completed
-successfully from head `996ad999bdee5e07be3fa2aafaf0b35cd14a7ca9`. The four
+`https://github.com/Semcosm/chuzi/actions/runs/34808479387` completed
+successfully from head `31b08387420c059a570f3997dcb1576c76e5f826`. The four
 target jobs (`windows-amd64`, `linux-amd64`, `linux-arm64`, and
 `darwin-arm64`) and the aggregate `chuzi-build` check passed; Linux X11 and
 Wayland WebKitGTK smoke tests also passed. `ugs-validate` run
-`34807597538` passed, and `stable-release` was skipped. This pull-request
-validation created no tag or GitHub Release.
+`34808479427` passed, and `stable-release` was skipped. PR `#85` was then
+rebase-ff merged as `main@cde480d3cc8e64eb3ef18a4c78ac4e0aaf49dff9`.
+This validation created no tag or GitHub Release.
 
 ## Risk
 
