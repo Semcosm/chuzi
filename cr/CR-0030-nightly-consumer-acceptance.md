@@ -5,12 +5,12 @@ Head or Range: 973b3c3591fac3c30a8350c7377135b70055846c..f1ab8e7173764a5bea79887
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: test(launcher): add nightly consumer acceptance
-Revision: 2
+Revision: 3
 Status: accepted
 Decision: accepted
 Policy Version: v0.3
-Base OID: 996ad999bdee5e07be3fa2aafaf0b35cd14a7ca9
-Head OID: 996ad999bdee5e07be3fa2aafaf0b35cd14a7ca9
+Base OID: 973b3c3591fac3c30a8350c7377135b70055846c
+Head OID: 04c6515308d3b2b55e91b29adbf8526f2692899a
 Integrated Result: pending
 
 ## Summary
