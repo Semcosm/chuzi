@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,16 +24,16 @@ var (
 // Client speaks the versioned JSONL adapter protocol over an isolated plugin
 // process. It is deliberately independent of the process launch mode.
 type Client struct {
-	process   *Process
-	writeMu   sync.Mutex
-	stateMu   sync.Mutex
-	closeOnce sync.Once
-	closeDone chan struct{}
-	closeErr  error
-	next      uint64
-	pending   map[string]chan automation.Envelope
-	readDone  chan struct{}
-	readErr   error
+	process    *Process
+	writeMu    sync.Mutex
+	stateMu    sync.Mutex
+	closeOnce  sync.Once
+	closeDone  chan struct{}
+	closeErr   error
+	next       uint64
+	pending    map[string]chan automation.Envelope
+	readDone   chan struct{}
+	readErr    error
 	descriptor automation.Descriptor
 }
 
@@ -42,9 +43,9 @@ func StartAdapter(ctx context.Context, config Command) (*Client, error) {
 		return nil, err
 	}
 	client := &Client{
-		process:  process,
-		pending:  make(map[string]chan automation.Envelope),
-		readDone: make(chan struct{}),
+		process:   process,
+		pending:   make(map[string]chan automation.Envelope),
+		readDone:  make(chan struct{}),
 		closeDone: make(chan struct{}),
 	}
 	go client.readLoop()
@@ -68,7 +69,14 @@ func (c *Client) readLoop() {
 		var message automation.Envelope
 		if err := decoder.Decode(&message); err != nil {
 			c.stateMu.Lock()
-			if !errors.Is(err, io.EOF) {
+			switch {
+			case errors.Is(err, io.EOF), errors.Is(err, os.ErrClosed):
+				// EOF and a closed parent pipe are terminal process states. In
+				// particular, os/exec may report the latter while Wait is
+				// releasing an owned pipe after the child exits; it is not a
+				// protocol violation.
+				c.readErr = ErrProcessExited
+			default:
 				c.readErr = fmt.Errorf("%w: decode: %v", ErrProtocol, err)
 			}
 			close(c.readDone)

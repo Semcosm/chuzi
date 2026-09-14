@@ -1,11 +1,18 @@
 package plugin
 
 import (
+	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/Semcosm/chuzi/internal/automation"
 )
 
 func TestInvocationUsesNativeExecutableWithoutShell(t *testing.T) {
@@ -51,5 +58,46 @@ func TestLaunchModeCannotMixNativeAndWineSettings(t *testing.T) {
 	}
 	if err := (Command{Mode: Wine, Executable: "plugin.exe", WineExecutable: "wine", WinePrefix: "/var/lib/chuzi/wine/plugin", Environment: []string{"WINEPREFIX=/tmp/override"}}).Validate(); !errors.Is(err, ErrInvalidConfig) {
 		t.Fatalf("Wine prefix override was accepted: %v", err)
+	}
+}
+
+func TestProcessWaitLeavesProtocolReaderAtEOF(t *testing.T) {
+	process, err := start(context.Background(), Command{
+		Mode:        Native,
+		Executable:  os.Args[0],
+		Args:        []string{"-test.run=TestPluginHelperProcess", "--"},
+		Environment: []string{"CHUZI_PLUGIN_HELPER=1"},
+	}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = process.stdin.Close()
+		_ = process.stdout.Close()
+	}()
+
+	request := automation.Request("hello", automation.Hello, nil)
+	if err := json.NewEncoder(process.stdin).Encode(request); err != nil {
+		t.Fatal(err)
+	}
+	decoder := json.NewDecoder(bufio.NewReader(process.stdout))
+	var response automation.Envelope
+	if err := decoder.Decode(&response); err != nil {
+		t.Fatalf("handshake response: %v", err)
+	}
+	if response.Type != automation.HelloAck {
+		t.Fatalf("handshake response type = %q", response.Type)
+	}
+	if err := process.Cancel(); err != nil {
+		t.Fatal(err)
+	}
+	waitCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := process.Wait(waitCtx); err == nil {
+		t.Fatal("Wait() unexpectedly reported a clean exit after cancellation")
+	}
+	var trailing automation.Envelope
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		t.Fatalf("protocol reader after Wait() = %v, want EOF", err)
 	}
 }
