@@ -106,6 +106,8 @@
     }
     .status.healthy { background: #e0f2e9; color: #18734e; }
     .status.missing, .status.not_installed { background: #fff2dc; color: #9b6419; }
+    .status.untrusted { background: #fff2dc; color: #9b6419; }
+    .status.update { background: #e1edf9; color: #245d8e; }
     .actions { display: flex; gap: 7px; justify-content: flex-end; }
     .primary { border-color: #28766a; background: #28766a; color: white; }
     .primary:hover { border-color: #1e5f55; background: #1e5f55; }
@@ -185,6 +187,7 @@
       <nav class="nav" aria-label="Sections">
         <button data-view="overview" class="active">Overview</button>
         <button data-view="components">Components</button>
+        <button data-view="plugins">Plugins</button>
         <button data-view="settings">Settings</button>
       </nav>
       <div class="side-note">Nightly channel | local policy enforced</div>
@@ -198,6 +201,10 @@
           <p class="intro">Choose the chuzi components to keep on this installation.</p>
           <div id="onboarding" class="panel onboarding" hidden></div>
           <div class="panel">
+            <div class="panel-head"><h3>Updates</h3><button data-action="check-update">Check now</button></div>
+            <div class="panel-body"><div id="update-status" class="empty">No update check has run.</div></div>
+          </div>
+          <div class="panel">
             <div class="panel-head"><h3>Components</h3><button data-action="refresh">Refresh</button></div>
             <div class="panel-body"><div id="overview-components" class="component-list"><div class="empty">Loading component state...</div></div></div>
           </div>
@@ -208,11 +215,17 @@
           <div class="toolbar"><div id="component-progress" class="progress"></div><div class="actions"><button id="cancel-operation" data-action="cancel-operation" hidden>Cancel</button><button data-action="refresh">Refresh</button></div></div>
           <div id="components" class="component-list"><div class="empty">Loading component state...</div></div>
         </section>
+        <section id="view-plugins" class="view">
+          <p class="eyebrow">Extensions</p>
+          <h2>Plugins</h2>
+          <div class="toolbar"><div id="plugin-progress" class="progress"></div><div class="actions"><button data-action="refresh-plugins">Refresh</button></div></div>
+          <div id="plugins" class="component-list"><div class="empty">Loading plugin state...</div></div>
+        </section>
         <section id="view-settings" class="view">
           <p class="eyebrow">Launcher</p>
           <h2>Settings</h2>
           <div class="panel"><div class="panel-body"><div class="settings-grid">
-            <div class="setting"><label for="auto-check">Check for updates<small>Poll the configured release index.</small></label><input id="auto-check" type="checkbox"></div>
+            <div class="setting"><label for="auto-check">Check for updates<small>Run a check whenever launcher state is refreshed.</small></label><input id="auto-check" type="checkbox"></div>
             <div class="setting"><label for="auto-repair">Repair missing resources<small>Repair verified files before starting a component.</small></label><input id="auto-repair" type="checkbox"></div>
             <div class="setting"><label for="channel">Update channel</label><select id="channel"><option value="nightly">Nightly</option><option value="stable">Stable</option></select></div>
             <div class="setting"><label for="login">Launch on login</label><input id="login" type="checkbox"></div>
@@ -228,7 +241,8 @@
   <div id="toast" class="toast" role="status"></div>
   <script>
     const PROTOCOL = "chuzi.launcher-ui/v1";
-    const state = { components: [], settings: null, initialization: null, pending: new Map(), queue: [], activeRequest: null, refreshInFlight: false, activeView: "overview", installQueue: [], installing: null, currentOperation: null };
+    const MUTATING_ACTIONS = ["component-install", "component-remove", "component-enable", "component-disable", "plugin-install", "plugin-remove", "plugin-enable", "plugin-disable", "plugin-trust", "plugin-untrust", "repair"];
+    const state = { components: [], plugins: [], settings: null, initialization: null, update: null, pending: new Map(), queue: [], activeRequest: null, refreshInFlight: false, refreshPending: new Set(), autoCheckRequested: false, activeView: "overview", installQueue: [], installing: null, currentOperation: null };
     const $ = (id) => document.getElementById(id);
     function makeRequest(action, extra) {
       const id = action + "-" + Date.now() + "-" + Math.random().toString(16).slice(2);
@@ -241,7 +255,7 @@
       if (state.activeRequest || !state.queue.length) return;
       const request = state.queue.shift();
       state.activeRequest = request;
-      if (["component-install", "component-remove", "component-enable", "component-disable", "repair"].includes(request.action)) {
+      if (MUTATING_ACTIONS.includes(request.action)) {
         state.currentOperation = request.id;
       }
       dispatchRequest(request);
@@ -265,6 +279,7 @@
     function setProgress(message) {
       $("global-progress").textContent = message || "";
       $("component-progress").textContent = message || "";
+      $("plugin-progress").textContent = message || "";
       $("cancel-operation").hidden = !state.currentOperation;
     }
     function esc(value) {
@@ -290,7 +305,47 @@
         return "<div class=\"component\"><div><div class=\"component-name\">" + esc(component.id) + "</div><div class=\"component-meta\">" + esc(component.version || "not installed") + (component.required ? " | required" : " | optional") + "</div></div><span class=\"status " + esc(label.replaceAll(" ", "_")) + "\">" + esc(label) + "</span><div class=\"actions\">" + (install ? "<button class=\"primary\" data-component-action=\"component-install\" data-item=\"" + esc(component.id) + "\">Install</button>" : "") + toggle + repair + remove + "</div></div>";
       }).join("");
     }
-    function renderAll() { renderComponents($("components")); renderComponents($("overview-components")); }
+    function pluginStatusLabel(plugin) {
+      if (!plugin.installed) return "not installed";
+      if (!plugin.trusted) return "untrusted";
+      return plugin.enabled ? (plugin.health || "healthy") : "disabled";
+    }
+    function renderPlugins() {
+      const target = $("plugins");
+      if (!state.plugins.length) { target.innerHTML = "<div class=\"empty\">No plugins are declared by this release.</div>"; return; }
+      target.innerHTML = state.plugins.map(function (plugin) {
+        const descriptor = plugin.descriptor || {};
+        const label = pluginStatusLabel(plugin);
+        const install = !plugin.installed && descriptor.installable
+          ? "<button class=\"primary\" data-plugin-action=\"plugin-install\" data-item=\"" + esc(descriptor.id) + "\">Install</button>" : "";
+        const trust = plugin.installed
+          ? "<button data-plugin-action=\"plugin-" + (plugin.trusted ? "untrust" : "trust") + "\" data-item=\"" + esc(descriptor.id) + "\">" + (plugin.trusted ? "Untrust" : "Trust") + "</button>" : "";
+        const toggle = plugin.installed && plugin.trusted
+          ? "<button data-plugin-action=\"plugin-" + (plugin.enabled ? "disable" : "enable") + "\" data-item=\"" + esc(descriptor.id) + "\">" + (plugin.enabled ? "Disable" : "Enable") + "</button>" : "";
+        const remove = plugin.installed
+          ? "<button class=\"danger\" data-plugin-action=\"plugin-remove\" data-item=\"" + esc(descriptor.id) + "\">Remove</button>" : "";
+        const capabilities = (descriptor.capabilities || []).join(", ") || "none";
+        const permissions = (descriptor.permissions || []).join(", ") || "none";
+        const signer = descriptor.signed_by || "unsigned";
+        const meta = [descriptor.version || "unknown", descriptor.api || "unknown API", "capabilities: " + capabilities, "permissions: " + permissions, "signer: " + signer].map(esc).join(" | ");
+        return "<div class=\"component\"><div><div class=\"component-name\">" + esc(descriptor.id || "unknown plugin") + "</div><div class=\"component-meta\">" + meta + "</div></div><span class=\"status " + esc(label.replaceAll(" ", "_")) + "\">" + esc(label) + "</span><div class=\"actions\">" + install + trust + toggle + remove + "</div></div>";
+      }).join("");
+    }
+    function renderUpdate(info) {
+      const target = $("update-status");
+      state.update = info || null;
+      if (!info) { target.className = "empty"; target.textContent = "No update check has run."; return; }
+      if (info.available) {
+        const manifest = info.manifest || {};
+        const commit = manifest.commit ? " (" + String(manifest.commit).slice(0, 12) + ")" : "";
+        target.className = "status update";
+        target.textContent = "Update available: " + (manifest.version || "new release") + commit;
+        return;
+      }
+      target.className = "empty";
+      target.textContent = info.reason === "up_to_date" ? "Already up to date." : "No update is available.";
+    }
+    function renderAll() { renderComponents($("components")); renderComponents($("overview-components")); renderPlugins(); }
     function renderSettings() {
       if (!state.settings) return;
       $("auto-check").checked = !!state.settings.auto_check_updates;
@@ -314,9 +369,18 @@
     function refresh() {
       if (state.refreshInFlight) return;
       state.refreshInFlight = true;
-      send("initialize");
-      send("component-list");
-      send("settings");
+      state.autoCheckRequested = false;
+      state.refreshPending.clear();
+      ["initialize", "component-list", "settings", "plugin-list"].forEach(function (action) {
+        state.refreshPending.add(send(action));
+      });
+    }
+    function hasPendingAction(action) {
+      for (const pending of state.pending.values()) if (pending === action) return true;
+      return false;
+    }
+    function checkUpdate() {
+      if (!hasPendingAction("check-update")) send("check-update");
     }
     function startAction(action, item) { return send(action, item ? { item: item } : {}); }
     function finishOnboarding() {
@@ -354,8 +418,12 @@
     document.addEventListener("click", function (event) {
       const componentButton = event.target.closest("[data-component-action]");
       if (componentButton) { startAction(componentButton.dataset.componentAction, componentButton.dataset.item); return; }
+      const pluginButton = event.target.closest("[data-plugin-action]");
+      if (pluginButton) { startAction(pluginButton.dataset.pluginAction, pluginButton.dataset.item); return; }
       const action = event.target.closest("[data-action]") && event.target.closest("[data-action]").dataset.action;
       if (action === "refresh") refresh();
+      if (action === "refresh-plugins") refresh();
+      if (action === "check-update") checkUpdate();
       if (action === "finish-onboarding") finishOnboarding();
       if (action === "save-settings") saveSettings();
       if (action === "cancel-operation") cancelOperation();
@@ -370,7 +438,7 @@
         state.activeRequest = null;
         if (state.currentOperation === event.id) { state.currentOperation = null; $("cancel-operation").hidden = true; }
       }
-      if (state.refreshInFlight && action === "settings") state.refreshInFlight = false;
+      if (state.refreshPending.delete(event.id) && state.refreshPending.size === 0) state.refreshInFlight = false;
       if (!event.ok) {
         if (state.installing && action === "component-install") { state.installing = null; state.installQueue = []; }
         setError(event.error || "launcher operation failed");
@@ -378,19 +446,24 @@
         return;
       }
       setError(""); setProgress("");
-      if (event.data && event.data.components) {
+      if (action === "initialize" && event.data && event.data.components) {
         state.initialization = event.data; state.components = event.data.components;
         $("version").textContent = event.data.first_run ? "first launch" : "ready";
         renderOnboarding(); renderAll();
-      } else if (Array.isArray(event.data)) {
+      } else if (action === "component-list" && Array.isArray(event.data)) {
         state.components = event.data; renderAll();
-      } else if (event.data && Object.prototype.hasOwnProperty.call(event.data, "update_channel")) {
+      } else if (action === "plugin-list" && Array.isArray(event.data)) {
+        state.plugins = event.data; renderPlugins();
+      } else if (action === "settings" && event.data && Object.prototype.hasOwnProperty.call(event.data, "update_channel")) {
         state.settings = event.data; renderSettings();
-      } else if (event.data && event.data.initialized) {
+        if (state.settings.auto_check_updates && !state.autoCheckRequested) { state.autoCheckRequested = true; checkUpdate(); }
+      } else if (action === "check-update") {
+        renderUpdate(event.data);
+      } else if (action === "initialize-complete" && event.data && event.data.initialized) {
         refresh();
       }
       if (state.installing && action === "component-install") { state.installing = null; installNext(); }
-      else if (["component-install", "component-remove", "component-enable", "component-disable", "repair"].includes(action)) { refresh(); }
+      else if (MUTATING_ACTIONS.includes(action)) { refresh(); }
       pump();
     };
     window.addEventListener("load", function () { refresh(); });

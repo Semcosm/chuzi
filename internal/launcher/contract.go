@@ -391,9 +391,9 @@ type InitializationManager interface {
 }
 
 type UpdateInfo struct {
-	Available bool
-	Manifest  *ReleaseManifest
-	Reason    string
+	Available bool             `json:"available"`
+	Manifest  *ReleaseManifest `json:"manifest,omitempty"`
+	Reason    string           `json:"reason"`
 }
 
 type UpdateChecker interface {

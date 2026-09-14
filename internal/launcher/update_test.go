@@ -2,10 +2,21 @@ package launcher
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 )
+
+func TestUpdateInfoJSONUsesUIFieldNames(t *testing.T) {
+	data, err := json.Marshal(UpdateInfo{Available: true, Manifest: &ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-2", Target: "linux-amd64"}, Reason: "update_available"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(data); !strings.Contains(got, `"available":true`) || !strings.Contains(got, `"manifest"`) || !strings.Contains(got, `"reason":"update_available"`) {
+		t.Fatalf("update JSON = %s", data)
+	}
+}
 
 func TestManifestUpdateCheckerReportsOnlyValidatedCandidate(t *testing.T) {
 	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-2", Target: "linux-amd64"}
