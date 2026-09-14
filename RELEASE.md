@@ -27,6 +27,20 @@ separate control message and does not expire a slow operation. The equivalent CL
 commands remain available for headless administration. Local test servers may
 use `-allow-http-loopback`; production endpoints must use HTTPS.
 
+After a successful manual nightly run on `main`, consume its artifacts with:
+
+```bash
+scripts/accept_nightly_run.sh <run-id> <full-commit-sha>
+```
+
+The command requires the run to be a successful `workflow_dispatch` of
+`chuzi-build`, downloads each named target artifact with `gh`, and validates
+the run/job SHA, retention metadata, release index, manifests, archive
+contents, sidecars, and resource hashes. It only runs the extracted launcher
+CLI on a matching host, using a loopback catalog and temporary installation
+directory; foreign targets are never executed. This is consumer evidence for
+the nightly artifact and does not create a tag or GitHub Release.
+
 ## Stable signed releases
 
 Stable releases use a signed annotated `v<major>.<minor>.<patch>` tag and a
