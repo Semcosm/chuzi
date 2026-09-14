@@ -29,13 +29,13 @@ var (
 // Command describes one plugin process. Arguments are passed directly to
 // exec.Command; no shell expansion or string command line is supported.
 type Command struct {
-	Mode          LaunchMode
-	Executable    string
-	Args          []string
+	Mode           LaunchMode
+	Executable     string
+	Args           []string
 	WineExecutable string
-	WinePrefix    string
-	Environment   []string
-	Stderr        io.Writer
+	WinePrefix     string
+	Environment    []string
+	Stderr         io.Writer
 }
 
 func (c Command) Validate() error {
@@ -122,19 +122,30 @@ func start(ctx context.Context, config Command, withIO bool) (*Process, error) {
 	}
 	var stdin io.WriteCloser
 	var stdout io.ReadCloser
+	var childStdin *os.File
+	var childStdout *os.File
 	if withIO {
 		var err error
-		stdin, err = command.StdinPipe()
+		childStdin, stdin, err = os.Pipe()
 		if err != nil {
 			return nil, fmt.Errorf("create plugin stdin pipe: %w", err)
 		}
-		stdout, err = command.StdoutPipe()
+		stdout, childStdout, err = os.Pipe()
 		if err != nil {
+			_ = childStdin.Close()
 			_ = stdin.Close()
 			return nil, fmt.Errorf("create plugin stdout pipe: %w", err)
 		}
+		command.Stdin = childStdin
+		command.Stdout = childStdout
 	}
 	if err := command.Start(); err != nil {
+		if childStdin != nil {
+			_ = childStdin.Close()
+		}
+		if childStdout != nil {
+			_ = childStdout.Close()
+		}
 		if stdin != nil {
 			_ = stdin.Close()
 		}
@@ -142,6 +153,15 @@ func start(ctx context.Context, config Command, withIO bool) (*Process, error) {
 			_ = stdout.Close()
 		}
 		return nil, fmt.Errorf("start plugin process: %w", err)
+	}
+	// The command owns the child ends after Start. Keeping only the parent
+	// ends here prevents Cmd.Wait from closing the protocol reader underneath
+	// the client read loop.
+	if childStdin != nil {
+		_ = childStdin.Close()
+	}
+	if childStdout != nil {
+		_ = childStdout.Close()
 	}
 	process := &Process{cmd: command, stdin: stdin, stdout: stdout, waitDone: make(chan struct{})}
 	go func() {
