@@ -5,7 +5,7 @@ Head or Range: pending
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: test(launcher): validate nightly artifacts as a consumer
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
