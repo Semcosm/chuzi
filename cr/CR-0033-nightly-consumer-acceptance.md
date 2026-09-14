@@ -5,13 +5,13 @@ Head or Range: 934d56dc6adddcbeaeae86f5be6cca8be01f61e7..09084d757097cfcb2267066
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: test(launcher): validate nightly artifacts as a consumer
-Revision: 3
+Revision: 4
 Status: accepted
 Decision: accepted
 Policy Version: v0.3
-Base OID: cd9b6b8bbe0a9c4f6e9ca4d410ddc21464eb700d
-Head OID: cd9b6b8bbe0a9c4f6e9ca4d410ddc21464eb700d
-Integrated Result: pending
+Base OID: c309a88bd67769e8d0db9195ec439419ff2112f4
+Head OID: c309a88bd67769e8d0db9195ec439419ff2112f4
+Integrated Result: main@c309a88bd67769e8d0db9195ec439419ff2112f4
 
 ## Summary
 
