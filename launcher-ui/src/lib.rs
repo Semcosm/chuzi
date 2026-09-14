@@ -21,8 +21,10 @@ pub struct LauncherConfig {
     pub root: PathBuf,
     pub manifest: PathBuf,
     pub release_index: Option<String>,
+    pub update_manifest: Option<PathBuf>,
     pub source_root: Option<PathBuf>,
     pub download_dir: Option<PathBuf>,
+    pub trusted_signers: Vec<String>,
     pub allow_http_loopback: bool,
 }
 
@@ -31,6 +33,9 @@ impl LauncherConfig {
         validate_absolute("launcher", &self.launcher)?;
         validate_absolute("root", &self.root)?;
         validate_absolute("manifest", &self.manifest)?;
+        if let Some(path) = &self.update_manifest {
+            validate_absolute("update_manifest", path)?;
+        }
         if let Some(path) = &self.source_root {
             validate_absolute("source_root", path)?;
         }
@@ -66,6 +71,18 @@ impl LauncherConfig {
             args.extend([
                 OsString::from("-release-index"),
                 OsString::from(release_index),
+            ]);
+        }
+        if let Some(update_manifest) = &self.update_manifest {
+            args.extend([
+                OsString::from("-update-manifest"),
+                update_manifest.as_os_str().to_owned(),
+            ]);
+        }
+        if !self.trusted_signers.is_empty() {
+            args.extend([
+                OsString::from("-trusted-signers"),
+                OsString::from(self.trusted_signers.join(",")),
             ]);
         }
         if self.allow_http_loopback {
@@ -112,10 +129,18 @@ impl UiRequest {
             return Err("request id is required".to_owned());
         }
         match self.action.as_str() {
-            "initialize" | "initialize-complete" | "component-list" | "settings" | "repair" => {}
+            "initialize"
+            | "initialize-complete"
+            | "component-list"
+            | "plugin-list"
+            | "settings"
+            | "check-update"
+            | "repair" => {}
             "component-install" | "component-remove" | "component-enable" | "component-disable" => {
                 require_item(self.item.as_deref())?
             }
+            "plugin-install" | "plugin-remove" | "plugin-enable" | "plugin-disable"
+            | "plugin-trust" | "plugin-untrust" => require_item(self.item.as_deref())?,
             "settings-save" => {
                 if !self.settings.as_ref().is_some_and(Value::is_object) {
                     return Err("settings-save requires an object".to_owned());
@@ -170,6 +195,14 @@ pub fn command_spec(config: &LauncherConfig, request: &UiRequest) -> Result<Comm
         | "component-disable"
         | "settings"
         | "settings-save"
+        | "check-update"
+        | "plugin-list"
+        | "plugin-install"
+        | "plugin-remove"
+        | "plugin-enable"
+        | "plugin-disable"
+        | "plugin-trust"
+        | "plugin-untrust"
         | "repair" => request.action.as_str(),
         _ => return Err("unsupported UI action".to_owned()),
     };
@@ -197,6 +230,12 @@ pub fn command_spec(config: &LauncherConfig, request: &UiRequest) -> Result<Comm
             | "component-remove"
             | "component-enable"
             | "component-disable"
+            | "plugin-install"
+            | "plugin-remove"
+            | "plugin-enable"
+            | "plugin-disable"
+            | "plugin-trust"
+            | "plugin-untrust"
             | "repair"
     ) {
         args.push(OsString::from("-progress"));
@@ -332,8 +371,10 @@ mod tests {
             root: root.clone(),
             manifest: root.join("release-manifest.json"),
             release_index: None,
+            update_manifest: None,
             source_root: None,
             download_dir: None,
+            trusted_signers: Vec::new(),
             allow_http_loopback: false,
         }
     }
@@ -356,6 +397,22 @@ mod tests {
         assert_eq!(spec.args[0], "-manifest");
         assert!(spec.args.iter().any(|arg| arg == config.root.as_os_str()));
         assert!(!spec.args.iter().any(|arg| arg == "-progress"));
+    }
+
+    #[test]
+    fn command_spec_passes_update_source_and_explicit_signers() {
+        let mut config = config();
+        config.update_manifest = Some(config.root.join("candidate.json"));
+        config.trusted_signers = vec!["release-key".to_owned(), "ops-key".to_owned()];
+        let spec = command_spec(&config, &request("check-update")).expect("command spec");
+        assert!(spec.args.windows(2).any(|pair| {
+            pair[0] == "-update-manifest"
+                && pair[1] == config.root.join("candidate.json").as_os_str()
+        }));
+        assert!(spec
+            .args
+            .windows(2)
+            .any(|pair| { pair[0] == "-trusted-signers" && pair[1] == "release-key,ops-key" }));
     }
 
     #[test]
@@ -423,6 +480,16 @@ mod tests {
     }
 
     #[test]
+    fn requests_require_items_for_plugin_mutations() {
+        let mut plugin_request = request("plugin-enable");
+        assert!(plugin_request.validate().is_err());
+        plugin_request.item = Some("demo".to_owned());
+        assert!(plugin_request.validate().is_ok());
+        assert!(request("plugin-list").validate().is_ok());
+        assert!(request("check-update").validate().is_ok());
+    }
+
+    #[test]
     fn html_contains_the_supported_user_actions() {
         for action in [
             "initialize",
@@ -430,6 +497,9 @@ mod tests {
             "component-install",
             "settings-save",
             "repair",
+            "check-update",
+            "plugin-list",
+            "plugin-trust",
         ] {
             assert!(UI_HTML.contains(action), "missing action {action}");
         }

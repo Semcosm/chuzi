@@ -156,7 +156,7 @@ func TestLauncherConsumerFlow(t *testing.T) {
 	serverMu.Lock()
 	current = &new
 	serverMu.Unlock()
-	stdout, stderr, err = runConsumerLauncher(t, binary, root, operationTemp, "-manifest", manifestPath, "-release-index", indexURL, "-allow-http-loopback", "-current-version", old.manifest.Version, "-command", "check-update")
+	stdout, stderr, err = runConsumerLauncher(t, binary, root, operationTemp, "-manifest", manifestPath, "-release-index", indexURL, "-allow-http-loopback", "-command", "check-update")
 	if err != nil {
 		t.Fatalf("check-update failed: %v", err)
 	}
@@ -194,6 +194,14 @@ func TestLauncherConsumerFlow(t *testing.T) {
 
 	if err := os.WriteFile(filepath.Join(root, "release-manifest-new.json"), mustConsumerJSON(new.manifest), 0o600); err != nil {
 		t.Fatal(err)
+	}
+	stdout, stderr, err = runConsumerLauncher(t, binary, root, operationTemp, "-manifest", manifestPath, "-update-manifest", filepath.Join(root, "release-manifest-new.json"), "-command", "check-update")
+	if err != nil {
+		t.Fatalf("local check-update failed: %v: %s", err, stderr)
+	}
+	decodeConsumerJSON(t, stdout, &update)
+	if !update.Available || update.Manifest == nil || update.Manifest.Version != new.manifest.Version {
+		t.Fatalf("local update result = %#v", update)
 	}
 	serverMu.Lock()
 	current = &bad

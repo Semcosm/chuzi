@@ -67,10 +67,66 @@ function finishRefresh() {
   result(list, []);
   const settings = take("settings");
   result(settings, { auto_check_updates: false, auto_repair: false, update_channel: "nightly", launch_on_login: false, close_to_tray: false, check_interval: 0 });
+  const plugins = take("plugin-list");
+  result(plugins, []);
   assert(messages.length === 0, "refresh left unexpected messages");
 }
 
 context.refresh();
+finishRefresh();
+
+context.refresh();
+const initWhileRefresh = take("initialize");
+result(initWhileRefresh, { first_run: false, components: [] });
+const listWhileRefresh = take("component-list");
+result(listWhileRefresh, []);
+const settingsWhileRefresh = take("settings");
+result(settingsWhileRefresh, { auto_check_updates: false, auto_repair: false, update_channel: "nightly", launch_on_login: false, close_to_tray: false, check_interval: 0 });
+assert(messages.length === 1 && messages[0].action === "plugin-list", "refresh completed before plugin state");
+context.refresh();
+assert(messages.length === 1 && messages[0].action === "plugin-list", "overlapping refresh was not suppressed");
+const pluginsWhileRefresh = take("plugin-list");
+result(pluginsWhileRefresh, []);
+assert(messages.length === 0, "refresh left a pending plugin request");
+
+context.refresh();
+const autoInit = take("initialize");
+result(autoInit, { first_run: false, components: [] });
+const autoList = take("component-list");
+result(autoList, []);
+const autoSettings = take("settings");
+result(autoSettings, { auto_check_updates: true, auto_repair: false, update_channel: "nightly", launch_on_login: false, close_to_tray: false, check_interval: 0 });
+const autoPlugins = take("plugin-list");
+result(autoPlugins, []);
+const autoUpdate = take("check-update");
+result(autoUpdate, { available: false, reason: "up_to_date" });
+assert(elements.get("update-status").textContent === "Already up to date.", "automatic update check was not rendered");
+
+context.checkUpdate();
+context.checkUpdate();
+assert(messages.length === 1, "duplicate update checks bypassed the request guard");
+const update = take("check-update");
+result(update, { available: true, reason: "update_available", manifest: { version: "nightly-200", commit: "abcdef0123456789" } });
+assert(elements.get("update-status").textContent.includes("nightly-200"), "update result was not rendered");
+
+context.startAction("plugin-list");
+const demoList = take("plugin-list");
+result(demoList, [{ descriptor: { id: "demo", version: "1", api: "chuzi.plugin/v1", capabilities: ["probe"], permissions: ["local.test"], signed_by: "test-key", installable: true }, installed: true, enabled: false, trusted: false, health: "untrusted" }]);
+assert(elements.get("plugins").innerHTML.includes("plugin-trust"), "untrusted plugin did not expose trust action");
+
+context.startAction("plugin-trust", "demo");
+const pluginTrust = take("plugin-trust");
+result(pluginTrust, { descriptor: { id: "demo", version: "1", api: "chuzi.plugin/v1", signed_by: "test-key" }, installed: true, enabled: false, trusted: true, health: "disabled" });
+finishRefresh();
+
+context.startAction("plugin-enable", "demo");
+const pluginEnable = take("plugin-enable");
+result(pluginEnable, { descriptor: { id: "demo", version: "1", api: "chuzi.plugin/v1", signed_by: "test-key" }, installed: true, enabled: true, trusted: true, health: "healthy" });
+finishRefresh();
+
+context.startAction("plugin-remove", "demo");
+const pluginRemove = take("plugin-remove");
+result(pluginRemove, null);
 finishRefresh();
 
 const first = context.startAction("component-install", "service");

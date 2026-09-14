@@ -333,8 +333,10 @@ fn parse_config() -> Result<Option<LauncherConfig>, String> {
     let mut launcher: Option<PathBuf> = None;
     let mut manifest: Option<PathBuf> = None;
     let mut release_index = None;
+    let mut update_manifest = None;
     let mut source_root = None;
     let mut download_dir = None;
+    let mut trusted_signers = Vec::new();
     let mut allow_http_loopback = false;
     let mut arguments = env::args_os().skip(1);
     while let Some(argument) = arguments.next() {
@@ -342,7 +344,7 @@ fn parse_config() -> Result<Option<LauncherConfig>, String> {
         match name.as_ref() {
             "--help" | "-h" => {
                 println!(
-                    "usage: chuzi-launcher-ui [--root PATH] [--launcher PATH] [--manifest PATH] [--release-index URL] [--source-root PATH] [--download-dir PATH] [--allow-http-loopback]"
+                    "usage: chuzi-launcher-ui [--root PATH] [--launcher PATH] [--manifest PATH] [--release-index URL] [--update-manifest PATH] [--source-root PATH] [--download-dir PATH] [--trusted-signers CSV] [--allow-http-loopback]"
                 );
                 return Ok(None);
             }
@@ -351,6 +353,21 @@ fn parse_config() -> Result<Option<LauncherConfig>, String> {
             "--manifest" => manifest = Some(next_path(&mut arguments, "--manifest")?),
             "--source-root" => source_root = Some(next_path(&mut arguments, "--source-root")?),
             "--download-dir" => download_dir = Some(next_path(&mut arguments, "--download-dir")?),
+            "--update-manifest" => {
+                update_manifest = Some(next_path(&mut arguments, "--update-manifest")?)
+            }
+            "--trusted-signers" => {
+                let value = arguments.next().ok_or_else(|| {
+                    "--trusted-signers requires a comma-separated list".to_owned()
+                })?;
+                trusted_signers = value
+                    .to_string_lossy()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|signer| !signer.is_empty())
+                    .map(str::to_owned)
+                    .collect();
+            }
             "--release-index" => {
                 release_index = Some(
                     arguments
@@ -377,8 +394,10 @@ fn parse_config() -> Result<Option<LauncherConfig>, String> {
         root,
         manifest,
         release_index,
+        update_manifest,
         source_root,
         download_dir,
+        trusted_signers,
         allow_http_loopback,
     };
     config.validate().map_err(|error| error.to_owned())?;

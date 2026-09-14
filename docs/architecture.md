@@ -119,8 +119,9 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 跨进程锁和可取消进度事件；CR-0027 增加了 `ReleaseIndex`、HTTPS 同源归档下载、
 临时文件原子落盘和首次运行初始化状态。`cmd/launcher` 只在显式提供
 `-release-index` 时联网。`launcher-ui` 只通过 shell-free 子进程调用该 CLI，
-将 UI 请求、脱敏进度和分类错误转换为 `chuzi.launcher-ui/v1` IPC 事件；文件、
-下载、校验、锁、插件信任和回滚策略仍只由 Go 后台实现。
+将 UI 请求、脱敏进度和分类错误转换为 `chuzi.launcher-ui/v1` IPC 事件；更新
+候选、组件管理和插件信任操作仍由 Go 后台校验并执行，文件、下载、校验、锁、
+插件信任和回滚策略不复制到 UI。
 
 行为设置文件缺失时使用关闭自动变更的默认值，写入使用 0600 临时文件和原子替换。
 修改安装目录或设置前应先持有 `.chuzi/launcher.lock`；锁不会自动打破，发现遗留锁时

@@ -48,6 +48,7 @@ func main() {
 	defer stop()
 
 	var manifest launcher.ReleaseManifest
+	var installedManifest *launcher.ReleaseManifest
 	var releaseIndex *launcher.ReleaseIndex
 	if strings.TrimSpace(*releaseIndexURL) != "" {
 		source := launcher.HTTPReleaseIndexSource{URL: *releaseIndexURL, AllowHTTPForLoopback: *allowHTTPForLoopback}
@@ -78,6 +79,7 @@ func main() {
 		if releaseIndex == nil {
 			manifest = local
 		}
+		installedManifest = &local
 	} else if releaseIndex == nil {
 		fatal(manifestErr)
 	}
@@ -107,8 +109,12 @@ func main() {
 	case "show":
 		// Fall through to the stable manifest JSON output below.
 	case "check-update":
-		if strings.TrimSpace(*currentVersion) == "" {
-			fatal(fmt.Errorf("-current-version is required"))
+		current := strings.TrimSpace(*currentVersion)
+		if current == "" {
+			if installedManifest == nil {
+				fatal(fmt.Errorf("-current-version is required when the installed manifest is unavailable"))
+			}
+			current = installedManifest.Version
 		}
 		var source launcher.ManifestSource
 		if releaseIndex != nil {
@@ -119,7 +125,7 @@ func main() {
 			}
 			source = launcher.FileManifestSource{Path: *updateManifest}
 		}
-		result, err := (launcher.ManifestUpdateChecker{Source: source}).Check(ctx, launcher.UpdateRequest{CurrentVersion: *currentVersion, Target: manifest.Target, Channel: manifest.Channel})
+		result, err := (launcher.ManifestUpdateChecker{Source: source}).Check(ctx, launcher.UpdateRequest{CurrentVersion: current, Target: manifest.Target, Channel: manifest.Channel})
 		if err != nil {
 			fatal(err)
 		}
