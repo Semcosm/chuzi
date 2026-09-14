@@ -5,13 +5,13 @@ Head or Range: 082ab63a7d367022901b6604cdc10ca4fcf1e542..e7b8e0298d1636b119b1991
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): extend Rust UI management surface
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: e5cfab83535b1fa0e4ec39f8b284b4a8dfbe155a
-Head OID: e5cfab83535b1fa0e4ec39f8b284b4a8dfbe155a
-Integrated Result: pending
+Base OID: 801c9d185882ee34152956aed68f01ea7c3165d4
+Head OID: 801c9d185882ee34152956aed68f01ea7c3165d4
+Integrated Result: main@801c9d185882ee34152956aed68f01ea7c3165d4
 
 ## Summary
 
