@@ -64,6 +64,7 @@ artifact，不创建 Git tag 或 GitHub Release。版本格式为
 ## 文档入口
 
 - [项目文档总览](docs/README.md)
+- [CHUZI Design Language](docs/design-language.md)
 - [长期演进路线图](docs/roadmap.md)
 - [架构与目录规划](docs/architecture.md)
 - [账号状态机](docs/account-state-machine.md)
