@@ -455,7 +455,12 @@ fn page_load_label(event: PageLoadEvent) -> &'static str {
 
 fn is_inline_navigation(url: &str) -> bool {
     let url = url.trim();
-    url == "about:blank" || url.starts_with("about:blank#") || url.starts_with("about:blank?")
+    const INLINE_HTML_DATA_PREFIX: &str = "data:text/html;charset=utf-8;base64,";
+
+    url == "about:blank"
+        || url.starts_with("about:blank#")
+        || url.starts_with("about:blank?")
+        || url.starts_with(INLINE_HTML_DATA_PREFIX)
 }
 
 fn configure_builder<'a>(
@@ -650,6 +655,9 @@ mod tests {
         assert!(is_inline_navigation("about:blank"));
         assert!(is_inline_navigation(" about:blank#launcher "));
         assert!(is_inline_navigation("about:blank?reload=1"));
+        assert!(is_inline_navigation(
+            "data:text/html;charset=utf-8;base64,PGh0bWw+"
+        ));
     }
 
     #[test]
@@ -658,5 +666,12 @@ mod tests {
         assert!(!is_inline_navigation("file:///C:/Users/user/page.html"));
         assert!(!is_inline_navigation("about:srcdoc"));
         assert!(!is_inline_navigation("ABOUT:BLANK"));
+        assert!(!is_inline_navigation(
+            "DATA:text/html;charset=utf-8;base64,PGh0bWw+"
+        ));
+        assert!(!is_inline_navigation(
+            "data:text/html;charset=UTF-8;base64,PGh0bWw+"
+        ));
+        assert!(!is_inline_navigation("data:image/png;base64,PGh0bWw+"));
     }
 }
