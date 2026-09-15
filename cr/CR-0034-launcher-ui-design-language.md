@@ -5,13 +5,13 @@ Head or Range: 415789bbaaf351ea30ea66c9f1ffd297e03e6838
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): add CHUZI design language and appearance controls
-Revision: 3
-Status: accepted
+Revision: 4
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: f0bc6e365f60d4137d5c1cc351be51f4af563b19
-Head OID: f0bc6e365f60d4137d5c1cc351be51f4af563b19
-Integrated Result: main@f0bc6e365f60d4137d5c1cc351be51f4af563b19
+Base OID: 50b76d649c66ed37ed7083ad2457ff2ab2257a62
+Head OID: 50b76d649c66ed37ed7083ad2457ff2ab2257a62
+Integrated Result: main@50b76d649c66ed37ed7083ad2457ff2ab2257a62
 
 ## Summary
 
