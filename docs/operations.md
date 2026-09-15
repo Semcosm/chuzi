@@ -145,6 +145,19 @@ SHA-256 后才创建 GitHub Release。发布需要仓库 Secret
 短生命周期 runner。发布前必须提交 `releases/v<version>.md`；缺失或未信任的
 tag 会在发布 job 早期失败。
 
+如果正式 tag 已存在，但该 tag 中的 workflow 定义早于发布修复，可从 `main` 使用
+`.github/workflows/release-retry.yml` 重试发布。重试必须显式提供已经成功完成四平台
+构建的 Actions Run、正式 tag 和 tag 目标 commit；入口会重新验证签名 tag、Run 的
+矩阵作业、归档索引、SHA-256 和 stable manifest，然后才签署 attestation 并创建
+GitHub Release：
+
+```bash
+gh workflow run release-retry.yml --repo Semcosm/chuzi --ref main \
+  -f run_id=<successful-build-run> \
+  -f release_tag=v<major>.<minor>.<patch> \
+  -f commit_sha=<tag-target-commit>
+```
+
 当前 Node Worker 继续提供 deferred 协议和生命周期替身，并提供 headless-CDP
 进程边界；四个目标的 Rust/Wry helper
 已接入构建，原生编译由对应 runner 验证。Linux amd64/arm64 在原生 runner 上

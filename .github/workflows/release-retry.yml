@@ -1,0 +1,135 @@
+name: chuzi-release-retry
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful chuzi-build Actions run containing the four target artifacts
+        required: true
+        type: string
+      release_tag:
+        description: Existing signed annotated release tag to publish
+        required: true
+        type: string
+      commit_sha:
+        description: Full commit SHA targeted by the release tag and build run
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish:
+    name: publish-stable-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Restore and verify annotated release tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_COMMIT: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          tag_ref="refs/tags/$RELEASE_TAG"
+          git fetch --force --no-tags origin "$tag_ref:$tag_ref"
+          git cat-file -e "$tag_ref^{tag}"
+          test "$(git rev-parse "$tag_ref^{commit}")" = "${RELEASE_COMMIT,,}"
+          scripts/validate_release_tag.sh "$RELEASE_TAG"
+      - name: Validate source build run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPOSITORY: ${{ github.repository }}
+        run: scripts/validate_release_retry_run.sh "${{ inputs.run_id }}" "${{ inputs.release_tag }}" "${{ inputs.commit_sha }}"
+      - name: Download target build artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
+            mkdir -p "dist/$target"
+            gh run download "${{ inputs.run_id }}" --repo "${{ github.repository }}" --name "chuzi-nightly-$target" --dir "dist/$target"
+          done
+      - name: Validate target packages and bind stable metadata
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_COMMIT: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
+            index="$(find "dist/$target" -maxdepth 1 -type f -name "*.index.json" -print -quit)"
+            test -n "$index"
+            python3 scripts/validate_release_index.py --index "$index" --dist "dist/$target"
+            python3 scripts/validate_nightly_artifact.py --artifact "dist/$target" --target "$target" --channel stable --commit "$RELEASE_COMMIT" --version "$(python3 - "$index" <<'PY'
+import json
+import sys
+print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])
+PY
+)"
+            manifest="$(find "dist/$target" -maxdepth 1 -type f -name "*.manifest.json" -print -quit)"
+            python3 - "$manifest" "$RELEASE_TAG" "$RELEASE_COMMIT" <<'PY'
+import json
+import sys
+path, tag, commit = sys.argv[1:]
+manifest = json.load(open(path, encoding="utf-8"))
+if manifest.get("version") != tag or manifest.get("channel") != "stable" or manifest.get("commit", "").lower() != commit.lower():
+    raise SystemExit(f"stable metadata mismatch in {path}")
+PY
+            find "dist/$target" -maxdepth 1 -type f -exec cp {} dist/ \;
+          done
+      - name: Require release signing inputs
+        shell: bash
+        env:
+          CHUZI_RELEASE_SIGNING_KEY: ${{ secrets.CHUZI_RELEASE_SIGNING_KEY }}
+          CHUZI_RELEASE_SIGNER: ${{ vars.CHUZI_RELEASE_SIGNER }}
+        run: |
+          test -n "$CHUZI_RELEASE_SIGNING_KEY" || { echo 'CHUZI_RELEASE_SIGNING_KEY is required' >&2; exit 1; }
+          test -n "$CHUZI_RELEASE_SIGNER" || { echo 'CHUZI_RELEASE_SIGNER repository variable is required' >&2; exit 1; }
+      - name: Sign and verify release attestations
+        shell: bash
+        env:
+          CHUZI_RELEASE_SIGNING_KEY: ${{ secrets.CHUZI_RELEASE_SIGNING_KEY }}
+          CHUZI_RELEASE_SIGNER: ${{ vars.CHUZI_RELEASE_SIGNER }}
+          CHUZI_RELEASE_REPOSITORY: ${{ github.repository }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          RELEASE_COMMIT: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          key_file="$RUNNER_TEMP/chuzi-release-signing-key"
+          trap 'rm -f "$key_file"' EXIT
+          umask 077
+          printf '%s\n' "$CHUZI_RELEASE_SIGNING_KEY" > "$key_file"
+          mkdir -p dist/attestations
+          while IFS= read -r -d '' artifact; do
+            name="$(basename "$artifact")"
+            unsigned="dist/attestations/$name.json"
+            signed="dist/attestations/$name.signed.json"
+            scripts/generate_release_attestation.sh "$RELEASE_TAG" "$RELEASE_COMMIT" "$artifact" "github-actions/$GITHUB_WORKFLOW" "$unsigned"
+            scripts/sign_release_attestation.sh "$unsigned" "$key_file" "$CHUZI_RELEASE_SIGNER" "$signed"
+            rm -f "$unsigned"
+          done < <(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | sort -z)
+          scripts/verify_release_bundle.sh "$RELEASE_TAG" "$RELEASE_COMMIT" dist dist/attestations "$CHUZI_RELEASE_REPOSITORY"
+      - name: Assemble release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          find dist -maxdepth 1 -type f -exec cp {} release-assets/ \;
+          cp dist/attestations/*.signed.json release-assets/
+          test "$(find release-assets -type f | wc -l)" -gt 0
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ inputs.release_tag }}" --verify-tag --title "chuzi ${{ inputs.release_tag }}" --notes-file "releases/${{ inputs.release_tag }}.md" release-assets/*

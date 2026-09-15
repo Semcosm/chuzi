@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate one downloaded chuzi nightly Actions artifact.
+"""Validate one downloaded chuzi release Actions artifact.
 
 The Actions artifact is an outer ZIP produced by upload-artifact. Its files
 are the target package archives and their metadata sidecars. This validator
@@ -152,12 +152,16 @@ def validate(args) -> dict:
     index = read_json(index_path)
     if index.get("format") != "chuzi-release-index/v1":
         raise ValueError("invalid release index format")
-    if index.get("channel") != "nightly":
-        raise ValueError("nightly artifact has a non-nightly channel")
+    if index.get("channel") != args.channel:
+        raise ValueError(f"artifact has a non-{args.channel} channel")
     if index.get("target") != args.target:
         raise ValueError("release index target mismatch")
-    if not isinstance(index.get("version"), str) or not index["version"].startswith("nightly-"):
+    if not isinstance(index.get("version"), str):
+        raise ValueError("release version is missing")
+    if args.channel == "nightly" and not index["version"].startswith("nightly-"):
         raise ValueError("nightly version is missing")
+    if args.channel == "stable" and not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", index["version"]):
+        raise ValueError("stable version is invalid")
     if not COMMIT_RE.fullmatch(str(index.get("commit", ""))):
         raise ValueError("release index commit must be a full SHA-1")
     if args.commit and index["commit"].lower() != args.commit.lower():
@@ -171,7 +175,7 @@ def validate(args) -> dict:
     manifest = index.get("manifest")
     if not isinstance(manifest, dict):
         raise ValueError("release index has no embedded manifest")
-    if manifest.get("format") != "chuzi-release/v1" or manifest.get("channel") != "nightly":
+    if manifest.get("format") != "chuzi-release/v1" or manifest.get("channel") != args.channel:
         raise ValueError("release manifest format or channel is invalid")
     if not isinstance(manifest.get("components"), list) or not isinstance(manifest.get("plugins"), list):
         raise ValueError("release manifest components or plugins are invalid")
@@ -259,6 +263,7 @@ def main() -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--commit", default="")
     parser.add_argument("--version", default="")
+    parser.add_argument("--channel", choices=("nightly", "stable"), default="nightly")
     parser.add_argument("--extract-launcher", type=Path)
     args = parser.parse_args()
     try:
@@ -267,7 +272,7 @@ def main() -> int:
             extension = TARGETS[args.target][0]
             extract_launcher(Path(args.artifact).resolve() / result["launcher_archive"], args.extract_launcher, extension)
     except (OSError, ValueError, tarfile.TarError, zipfile.BadZipFile, UnicodeError) as exc:
-        raise SystemExit(f"nightly artifact validation failed: {exc}") from exc
+        raise SystemExit(f"release artifact validation failed: {exc}") from exc
     print(json.dumps(result, sort_keys=True))
     return 0
 
