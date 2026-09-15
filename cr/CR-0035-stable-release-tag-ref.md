@@ -1,17 +1,17 @@
 # CR-0035: restore annotated tag refs for stable publishing
 
 Base: main
-Head or Range: ea06ec0e331f237429b6b69c5195c6b6c644d379
+Head or Range: 0046bd368dc4056947b09d68bbd59b620d76fccf
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(release): restore annotated tag before publishing
-Revision: 3
-Status: accepted
+Revision: 4
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: a3b248b5ddac6b8ef31527c94dfc265c23a5c137
-Head OID: a3b248b5ddac6b8ef31527c94dfc265c23a5c137
-Integrated Result: pending
+Base OID: 0046bd368dc4056947b09d68bbd59b620d76fccf
+Head OID: 0046bd368dc4056947b09d68bbd59b620d76fccf
+Integrated Result: main@0046bd368dc4056947b09d68bbd59b620d76fccf
 
 ## Summary
 
