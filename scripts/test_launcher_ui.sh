@@ -24,6 +24,8 @@ if (!match) throw new Error("launcher UI script is missing");
 
 const messages = [];
 const elements = new Map();
+const root = { dataset: {} };
+const storage = new Map();
 function element() {
   return {
     hidden: false,
@@ -35,6 +37,7 @@ function element() {
   };
 }
 const document = {
+  documentElement: root,
   getElementById(id) {
     if (!elements.has(id)) elements.set(id, element());
     return elements.get(id);
@@ -44,10 +47,20 @@ const document = {
 };
 const window = {
   ipc: { postMessage(value) { messages.push(JSON.parse(value)); } },
+  localStorage: {
+    getItem(key) { return storage.has(key) ? storage.get(key) : null; },
+    setItem(key, value) { storage.set(key, String(value)); }
+  },
   addEventListener() {}
 };
 const context = { console, document, window, JSON, Math, Date, Map, Number, String };
 vm.runInNewContext(match[1], context, { filename: htmlPath });
+
+assert(root.dataset.theme === "light", "appearance did not initialize to light theme");
+assert(root.dataset.material === "solid", "appearance did not initialize to solid material");
+context.applyAppearance("dark", "liquid", true);
+assert(root.dataset.theme === "dark" && root.dataset.material === "liquid", "appearance switch was not applied");
+assert(storage.has("chuzi.appearance"), "appearance selection was not persisted");
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
