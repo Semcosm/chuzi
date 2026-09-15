@@ -1,17 +1,17 @@
 # CR-0038: fix Windows launcher UI blank page
 
 Base: main
-Head or Range: 3fbac8acb9800c5f51826cf22293168ebb556572
+Head or Range: e348f3d53007d6a5219060f68c5bb2f9f63fadd3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(launcher): load embedded UI after WebView creation
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 3fbac8acb9800c5f51826cf22293168ebb556572
-Head OID: 3fbac8acb9800c5f51826cf22293168ebb556572
-Integrated Result: pending
+Base OID: e348f3d53007d6a5219060f68c5bb2f9f63fadd3
+Head OID: e348f3d53007d6a5219060f68c5bb2f9f63fadd3
+Integrated Result: main@e348f3d53007d6a5219060f68c5bb2f9f63fadd3
 
 ## Summary
 
