@@ -65,10 +65,10 @@ CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   -o "$stage_dir/$launcher_binary" \
   "$repo_root/cmd/launcher"
 
+npm --prefix "$repo_root/launcher-ui" ci --ignore-scripts
+npm --prefix "$repo_root/launcher-ui" run build
+
 cargo_ui_args=(build --locked --manifest-path "$repo_root/launcher-ui/Cargo.toml" --release)
-if [ -n "$runtime_features" ]; then
-  cargo_ui_args+=(--features "$runtime_features")
-fi
 cargo "${cargo_ui_args[@]}"
 cp "$repo_root/launcher-ui/target/release/$launcher_ui_binary" "$stage_dir/$launcher_ui_binary"
 

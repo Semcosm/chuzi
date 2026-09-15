@@ -1,0 +1,349 @@
+    /* Material recipes. The requested value stays in data-material; the
+       resolver writes data-resolved-material when a capability gate applies. */
+    :root[data-material="solid"] {
+      --cz-material-fill: var(--cz-color-surface-1);
+      --cz-material-fill-chrome: var(--cz-color-surface-3);
+      --cz-material-fill-secondary: var(--cz-color-surface-2);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-fill), var(--cz-material-fill)), var(--cz-material-solid-base);
+      --cz-material-fill-layer-chrome: linear-gradient(var(--cz-material-fill-chrome), var(--cz-material-fill-chrome)), var(--cz-material-solid-base);
+      --cz-material-fill-layer-secondary: linear-gradient(var(--cz-material-fill-secondary), var(--cz-material-fill-secondary)), var(--cz-material-solid-base);
+      --cz-material-opacity-primary: 1;
+      --cz-material-opacity-interactive: 1;
+      --cz-material-blur: 0px;
+      --cz-material-environment-saturation: 0%;
+      --cz-material-transmission: 0;
+      --cz-material-transmission-body: 0;
+      --cz-material-transmission-edge: 0;
+      --cz-material-tint-authored: transparent;
+      --cz-material-tint-environment: 0;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-contrast-min: 4.5;
+      --cz-material-fallback: solid;
+      --cz-material-border: var(--cz-color-border-default);
+      --cz-material-highlight: transparent;
+      --cz-material-highlight-alpha: 0;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-shadow: var(--cz-shadow-1);
+      --cz-material-content-well: var(--cz-material-solid-base);
+      --cz-material-optical: 0;
+    }
+    :root[data-material="frosted"] {
+      --cz-material-fill: rgba(255, 255, 255, .78);
+      --cz-material-fill-chrome: rgba(255, 255, 255, .74);
+      --cz-material-fill-secondary: rgba(255, 255, 255, .84);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .78;
+      --cz-material-opacity-interactive: .84;
+      --cz-material-blur: 18px;
+      --cz-material-environment-saturation: 100%;
+      --cz-material-transmission: .22;
+      --cz-material-transmission-body: .22;
+      --cz-material-transmission-edge: .28;
+      --cz-material-tint-authored: rgba(0, 0, 0, .03);
+      --cz-material-tint-environment: 0;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-contrast-min: 4.5;
+      --cz-material-fallback: mica;
+      --cz-material-border: rgba(0, 0, 0, .14);
+      --cz-material-highlight: rgba(255, 255, 255, .40);
+      --cz-material-highlight-alpha: .42;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-shadow: var(--cz-shadow-1);
+      --cz-material-content-well: rgba(255, 255, 255, .92);
+      --cz-material-optical: 1;
+    }
+    :root[data-theme="dark"][data-material="frosted"] {
+      --cz-material-fill: rgba(0, 0, 0, .72);
+      --cz-material-fill-chrome: rgba(0, 0, 0, .68);
+      --cz-material-fill-secondary: rgba(0, 0, 0, .80);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .72;
+      --cz-material-opacity-interactive: .80;
+      --cz-material-blur: 18px;
+      --cz-material-environment-saturation: 100%;
+      --cz-material-transmission: .18;
+      --cz-material-transmission-body: .18;
+      --cz-material-transmission-edge: .24;
+      --cz-material-tint-environment: 0;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-contrast-min: 4.5;
+      --cz-material-fallback: mica;
+      --cz-material-border: rgba(255, 255, 255, .16);
+      --cz-material-tint-authored: rgba(255, 255, 255, .03);
+      --cz-material-highlight: rgba(255, 255, 255, .10);
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-content-well: rgba(0, 0, 0, .88);
+    }
+    :root[data-material="mica"] {
+      --cz-material-fill: rgba(255, 255, 255, .92);
+      --cz-material-fill-chrome: rgba(255, 255, 255, .90);
+      --cz-material-fill-secondary: rgba(255, 255, 255, .95);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .92;
+      --cz-material-opacity-interactive: .95;
+      --cz-material-blur: 24px;
+      --cz-material-environment-saturation: 75%;
+      --cz-material-transmission: .08;
+      --cz-material-transmission-body: .08;
+      --cz-material-transmission-edge: .12;
+      --cz-material-tint-authored: rgba(0, 0, 0, .02);
+      --cz-material-tint-environment: .08;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-contrast-min: 4.5;
+      --cz-material-fallback: solid;
+      --cz-material-border: rgba(0, 0, 0, .12);
+      --cz-material-highlight: rgba(255, 255, 255, .20);
+      --cz-material-highlight-alpha: .24;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-shadow: var(--cz-shadow-1);
+      --cz-material-content-well: rgba(255, 255, 255, .96);
+      --cz-material-optical: 1;
+    }
+    :root[data-theme="dark"][data-material="mica"] {
+      --cz-material-fill: rgba(0, 0, 0, .86);
+      --cz-material-fill-chrome: rgba(0, 0, 0, .82);
+      --cz-material-fill-secondary: rgba(0, 0, 0, .90);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .86;
+      --cz-material-opacity-interactive: .90;
+      --cz-material-blur: 24px;
+      --cz-material-environment-saturation: 75%;
+      --cz-material-transmission: .08;
+      --cz-material-transmission-body: .08;
+      --cz-material-transmission-edge: .12;
+      --cz-material-tint-environment: .08;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-contrast-min: 4.5;
+      --cz-material-fallback: solid;
+      --cz-material-border: rgba(255, 255, 255, .16);
+      --cz-material-tint-authored: rgba(255, 255, 255, .02);
+      --cz-material-highlight: rgba(255, 255, 255, .06);
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-content-well: rgba(0, 0, 0, .94);
+    }
+    :root[data-material="liquid"] {
+      --cz-material-fill: rgba(255, 255, 255, .68);
+      --cz-material-fill-chrome: rgba(255, 255, 255, .64);
+      --cz-material-fill-secondary: rgba(255, 255, 255, .78);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .68;
+      --cz-material-opacity-interactive: .78;
+      --cz-material-blur: 30px;
+      --cz-material-environment-saturation: 100%;
+      --cz-material-transmission: .28;
+      --cz-material-transmission-body: .28;
+      --cz-material-transmission-edge: .45;
+      --cz-material-tint-authored: rgba(0, 0, 0, .06);
+      --cz-material-tint-environment: .06;
+      --cz-material-refraction-offset: 1px;
+      --cz-material-dispersion-alpha: .06;
+      --cz-material-elevation: 2;
+      --cz-material-contrast-min: 4.5;
+      --cz-material-fallback: frosted;
+      --cz-material-border: rgba(0, 0, 0, .14);
+      --cz-material-highlight: rgba(255, 255, 255, .50);
+      --cz-material-highlight-alpha: .58;
+      --cz-material-pointer-highlight: rgba(255, 255, 255, .10);
+      --cz-material-shadow: var(--cz-shadow-2);
+      --cz-material-content-well: rgba(255, 255, 255, .94);
+      --cz-material-optical: 1;
+    }
+    :root[data-theme="dark"][data-material="liquid"] {
+      --cz-material-fill: rgba(0, 0, 0, .72);
+      --cz-material-fill-chrome: rgba(0, 0, 0, .68);
+      --cz-material-fill-secondary: rgba(0, 0, 0, .80);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .72;
+      --cz-material-opacity-interactive: .80;
+      --cz-material-blur: 30px;
+      --cz-material-environment-saturation: 100%;
+      --cz-material-transmission: .24;
+      --cz-material-transmission-body: .24;
+      --cz-material-transmission-edge: .40;
+      --cz-material-tint-environment: .06;
+      --cz-material-refraction-offset: 1px;
+      --cz-material-dispersion-alpha: .06;
+      --cz-material-elevation: 2;
+      --cz-material-contrast-min: 4.5;
+      --cz-material-fallback: frosted;
+      --cz-material-border: rgba(255, 255, 255, .18);
+      --cz-material-tint-authored: rgba(255, 255, 255, .06);
+      --cz-material-highlight: rgba(255, 255, 255, .12);
+      --cz-material-pointer-highlight: rgba(255, 255, 255, .08);
+      --cz-material-content-well: rgba(0, 0, 0, .92);
+      --cz-material-shadow: var(--cz-shadow-2);
+    }
+
+    /* Capability fallback values are explicit and inspectable. */
+    :root[data-resolved-material="solid"] {
+      --cz-material-fill: var(--cz-color-surface-1);
+      --cz-material-fill-chrome: var(--cz-color-surface-3);
+      --cz-material-fill-secondary: var(--cz-color-surface-2);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-fill), var(--cz-material-fill)), var(--cz-material-solid-base);
+      --cz-material-fill-layer-chrome: linear-gradient(var(--cz-material-fill-chrome), var(--cz-material-fill-chrome)), var(--cz-material-solid-base);
+      --cz-material-fill-layer-secondary: linear-gradient(var(--cz-material-fill-secondary), var(--cz-material-fill-secondary)), var(--cz-material-solid-base);
+      --cz-material-opacity-primary: 1;
+      --cz-material-opacity-interactive: 1;
+      --cz-material-blur: 0px;
+      --cz-material-environment-saturation: 0%;
+      --cz-material-transmission: 0;
+      --cz-material-transmission-body: 0;
+      --cz-material-transmission-edge: 0;
+      --cz-material-tint-authored: transparent;
+      --cz-material-tint-environment: 0;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-fallback: solid;
+      --cz-material-border: var(--cz-color-border-default);
+      --cz-material-highlight: transparent;
+      --cz-material-highlight-alpha: 0;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-shadow: var(--cz-shadow-1);
+      --cz-material-content-well: var(--cz-material-solid-base);
+      --cz-material-contrast-fill: var(--cz-color-bg-canvas);
+      --cz-material-optical: 0;
+    }
+    :root[data-resolved-material="mica"] {
+      --cz-material-fill: rgba(255, 255, 255, .92);
+      --cz-material-fill-chrome: rgba(255, 255, 255, .90);
+      --cz-material-fill-secondary: rgba(255, 255, 255, .95);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .92;
+      --cz-material-opacity-interactive: .95;
+      --cz-material-blur: 24px;
+      --cz-material-environment-saturation: 75%;
+      --cz-material-transmission: .08;
+      --cz-material-transmission-body: .08;
+      --cz-material-transmission-edge: .12;
+      --cz-material-tint-authored: rgba(0, 0, 0, .02);
+      --cz-material-tint-environment: .08;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-fallback: solid;
+      --cz-material-border: rgba(0, 0, 0, .12);
+      --cz-material-highlight: rgba(255, 255, 255, .20);
+      --cz-material-highlight-alpha: .24;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-shadow: var(--cz-shadow-1);
+      --cz-material-content-well: rgba(255, 255, 255, .96);
+      --cz-material-contrast-fill: var(--cz-color-bg-canvas);
+      --cz-material-optical: 1;
+    }
+    :root[data-theme="dark"][data-resolved-material="mica"] {
+      --cz-material-fill: rgba(0, 0, 0, .86);
+      --cz-material-fill-chrome: rgba(0, 0, 0, .82);
+      --cz-material-fill-secondary: rgba(0, 0, 0, .90);
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-opacity-primary: .86;
+      --cz-material-opacity-interactive: .90;
+      --cz-material-blur: 24px;
+      --cz-material-environment-saturation: 75%;
+      --cz-material-transmission: .08;
+      --cz-material-transmission-body: .08;
+      --cz-material-transmission-edge: .12;
+      --cz-material-tint-authored: rgba(255, 255, 255, .02);
+      --cz-material-tint-environment: .08;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-elevation: 1;
+      --cz-material-fallback: solid;
+      --cz-material-border: rgba(255, 255, 255, .16);
+      --cz-material-highlight: rgba(255, 255, 255, .06);
+      --cz-material-highlight-alpha: .10;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-content-well: rgba(0, 0, 0, .94);
+      --cz-material-contrast-fill: var(--cz-color-bg-canvas);
+    }
+    :root[data-theme="dark"][data-resolved-material="solid"] {
+      --cz-material-border: var(--cz-color-border-default);
+      --cz-material-highlight: transparent;
+      --cz-material-highlight-alpha: 0;
+      --cz-material-shadow: var(--cz-shadow-1);
+      --cz-material-content-well: var(--cz-material-solid-base);
+    }
+    :root[data-resolved-material="liquid-basic"] {
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-blur: 24px;
+      --cz-material-transmission: .18;
+      --cz-material-transmission-body: .18;
+      --cz-material-transmission-edge: .30;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-optical: 1;
+    }
+    :root[data-theme="dark"][data-resolved-material="liquid-basic"] {
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-fill);
+      --cz-material-blur: 24px;
+      --cz-material-transmission: .18;
+      --cz-material-transmission-body: .18;
+      --cz-material-transmission-edge: .28;
+    }
+    /* A reduced-transparency preference keeps the stable Mica tone but removes
+       the optical channels that make a surface depend on the backdrop. */
+    :root[data-reduced-effects="true"][data-material] {
+      --cz-material-transmission: 0;
+      --cz-material-transmission-body: 0;
+      --cz-material-transmission-edge: 0;
+      --cz-material-blur: 0px;
+      --cz-material-environment-saturation: 0%;
+      --cz-material-tint-environment: 0;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-highlight-alpha: 0;
+      --cz-material-optical: 0;
+      --cz-material-fill-layer: linear-gradient(var(--cz-material-fill), var(--cz-material-fill)), var(--cz-material-solid-base);
+      --cz-material-fill-layer-chrome: linear-gradient(var(--cz-material-fill-chrome), var(--cz-material-fill-chrome)), var(--cz-material-solid-base);
+      --cz-material-fill-layer-secondary: linear-gradient(var(--cz-material-fill-secondary), var(--cz-material-fill-secondary)), var(--cz-material-solid-base);
+      --cz-material-content-well: var(--cz-material-solid-base);
+    }
+    /* Host-reported reduced motion must be equivalent to the media-query
+       path, including WebViews that do not expose the preference as CSS. */
+    :root[data-reduced-motion="true"] {
+      --cz-motion-micro: 0ms;
+      --cz-motion-fast: 0ms;
+      --cz-motion-standard: 0ms;
+      --cz-motion-slow: 0ms;
+      --cz-ease-standard: linear;
+      --cz-ease-enter: linear;
+      --cz-ease-exit: linear;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-pointer-highlight: transparent;
+    }
+    :root[data-reduced-motion="true"] .material-surface[data-optical="interactive"]::after { display: none; }
+    :root[data-window-inactive="true"] .material-surface[data-optical="interactive"]::after { display: none; }
+    :root[data-contrast-guard="true"][data-material] {
+      --cz-material-transmission: 0;
+      --cz-material-transmission-body: 0;
+      --cz-material-transmission-edge: 0;
+      --cz-material-blur: 0px;
+      --cz-material-environment-saturation: 0%;
+      --cz-material-refraction-offset: 0px;
+      --cz-material-dispersion-alpha: 0;
+      --cz-material-pointer-highlight: transparent;
+      --cz-material-highlight-alpha: 0;
+      --cz-material-optical: 0;
+      --cz-material-fill: var(--cz-material-contrast-fill);
+      --cz-material-fill-chrome: var(--cz-material-contrast-fill);
+      --cz-material-fill-secondary: var(--cz-material-contrast-fill);
+      --cz-material-fill-layer: var(--cz-material-contrast-fill);
+      --cz-material-fill-layer-chrome: var(--cz-material-contrast-fill);
+      --cz-material-fill-layer-secondary: var(--cz-material-contrast-fill);
+      --cz-material-content-well: var(--cz-material-contrast-fill);
+      --cz-material-border: var(--cz-color-border-strong);
+      --cz-material-shadow: var(--cz-shadow-none);
+    }
+    :root[data-contrast-guard="true"][data-material] .material-surface::after { display: none !important; }

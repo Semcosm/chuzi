@@ -45,7 +45,13 @@ $launcherLdflags = "-s -w -X main.version=$Version"
 & go build -trimpath "-ldflags=$launcherLdflags" -o (Join-Path $stageDir "chuzi-launcher.exe") ./cmd/launcher
 if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
 
-$cargoUiArgs = @("build", "--locked", "--manifest-path", (Join-Path $repoRoot "launcher-ui/Cargo.toml"), "--release") + $runtimeFeatures
+$launcherUiPath = Join-Path $repoRoot "launcher-ui"
+& npm --prefix $launcherUiPath ci --ignore-scripts
+if ($LASTEXITCODE -ne 0) { throw "launcher UI npm ci failed" }
+& npm --prefix $launcherUiPath run build
+if ($LASTEXITCODE -ne 0) { throw "launcher UI frontend build failed" }
+
+$cargoUiArgs = @("build", "--locked", "--manifest-path", (Join-Path $repoRoot "launcher-ui/Cargo.toml"), "--release")
 & cargo @cargoUiArgs
 if ($LASTEXITCODE -ne 0) { throw "launcher UI build failed" }
 Copy-Item -Force (Join-Path $repoRoot "launcher-ui/target/release/chuzi-launcher-ui.exe") (Join-Path $stageDir "chuzi-launcher-ui.exe")

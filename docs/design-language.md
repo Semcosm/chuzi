@@ -2,8 +2,8 @@
 
 **规范版本：** 1.0 design baseline
 **状态：** 设计规范与 `launcher-ui` 首份实现已同步
-**适用范围：** Web UI、Rust/Wry Desktop App、共享 Component System、Light/Dark Theme 与四种 Material
-**当前实现落点：** `launcher-ui` 的 Rust/Wry 原生壳与内嵌 vanilla HTML/CSS/JS 页面
+**适用范围：** Web UI、Tauri 2 Desktop App、共享 Component System、Light/Dark Theme 与四种 Material
+**当前实现落点：** `launcher-ui` 的 Tauri 2 原生壳与 `frontend/src` 模块化 TypeScript/CSS 页面
 
 本文定义 CHUZI 的视觉语言和实现契约。它只描述视觉系统、组件所需的设计属性和无障碍规则，不定义信息架构、页面流程或具体页面布局。后续实现可以使用 CSS custom properties、Web Components、其他 Web 框架或原生桥接，但必须保持本文的 token 语义和 Theme × Material 组合关系。
 
@@ -47,7 +47,7 @@ CHUZI 的辨识度来自以下组合，而不是某一个圆角或渐变：
 
 ### 1.2 Scope and technical assumptions
 
-当前仓库不是 React 应用。`launcher-ui` 由 Rust/Wry 承载一个内嵌页面，页面使用 vanilla HTML/CSS/JS，调用 `chuzi.launcher-ui/v1` IPC；桌面运行时分别使用 WebView2、WKWebView 或 WebKitGTK。设计 token 因此必须满足：
+当前仓库不是 React 应用。`launcher-ui` 由 Tauri 2 承载一个静态前端页面，页面使用模块化 TypeScript/CSS，调用 `chuzi.launcher-ui/v1` IPC；底层桌面运行时分别使用 WebView2、WKWebView 或 WebKitGTK。设计 token 因此必须满足：
 
 - **静态可打包**：基础 token 不依赖远程字体、远程图片、网络 CSS 或运行时下载。
 - **渐进增强**：backdrop blur、environment sampling、blend 和可选 distortion 都是增强；不支持时保持可读的 Solid 或 Mica-like surface。
@@ -70,7 +70,7 @@ Web 内容不应把页面绘制到原生 titlebar 或依赖窗口背后的像素
 
 #### 1.3.1 Current-stack capability map
 
-当前 `launcher-ui` 以 Rust/Wry 创建普通不透明窗口，再通过 `load_html` 加载内嵌 vanilla HTML/CSS/JS。规范落地时应沿这条能力链增强：
+当前 `launcher-ui` 以 Tauri 2 创建普通不透明窗口，再从 `frontend/dist` 加载模块化 HTML/CSS/JS。规范落地时应沿这条能力链增强：
 
 | Layer | 当前技术栈的基线 | 可选增强 | 失败行为 |
 | --- | --- | --- | --- |
@@ -115,7 +115,7 @@ visible result       = authored layer ⊕ transformed environment
 | `desktop-compositor` | 桌面 compositor 的真实透射 | 透明窗口、合成器支持、性能预算 | 用预设品牌色假装桌面颜色 |
 | `none` | 无环境，使用黑白 synthetic environment | 默认安全路径 | 留下未合成的透明洞 |
 
-环境采样只保留渲染所需的短生命周期数据，不进入业务状态、日志、持久化主题 token 或 IPC。采样应先做低频化和边缘保护，再与 authored layer 合成；窗口移动、失焦、遮挡和显示器切换时，允许在 `220 ms` 内平滑更新，但不得让正文颜色跟随桌面闪动。当前 Rust/Wry launcher 默认使用不透明窗口，因此默认 `environmentSource=page`；只有未来宿主明确实现透明窗口 capability，才可选择 `host-backdrop` 或 `desktop-compositor`。
+环境采样只保留渲染所需的短生命周期数据，不进入业务状态、日志、持久化主题 token 或 IPC。采样应先做低频化和边缘保护，再与 authored layer 合成；窗口移动、失焦、遮挡和显示器切换时，允许在 `220 ms` 内平滑更新，但不得让正文颜色跟随桌面闪动。当前 Tauri launcher 默认使用不透明窗口，因此默认 `environmentSource=page`；只有未来宿主明确实现透明窗口 capability，才可选择 `host-backdrop` 或 `desktop-compositor`。
 
 ### 1.5 Surface roles
 
@@ -833,7 +833,7 @@ CHUZI 使用系统 UI sans，保证离线打包和平台一致性。字体声明
 
 不要求用户安装 Inter 或下载 Web Font。品牌字标可以有独立 display treatment，但正文、数字、表单和状态均使用系统 UI 字体。
 
-`launcher-ui/src/ui.html` 已将字体声明迁移为本地系统 UI 字体优先，并保留 CJK fallback。实现通过 `type.font.ui` 的语义顺序解析字体，不依赖联网下载或仓库内的 Inter 资源。
+`launcher-ui/frontend/src/design/components.css` 已将字体声明迁移为本地系统 UI 字体优先，并保留 CJK fallback。实现通过 `type.font.ui` 的语义顺序解析字体，不依赖联网下载或仓库内的 Inter 资源。
 
 ### 12.1 Type scale
 
@@ -1212,7 +1212,7 @@ design/
     └── schema.json
 ```
 
-当前仓库将生成文件留给后续共享 Component System；`launcher-ui/src/ui.html` 已作为 vanilla WebView 的第一份 token consumer，直接实现 primitive/theme/material/component 四层的 `--cz-*` custom properties。旧品牌/状态变量已从 launcher 页面删除；新增组件必须沿用同一 alias 层，不能恢复局部 palette。
+当前仓库将生成文件留给后续共享 Component System；`launcher-ui/frontend/src/design/` 已作为模块化 WebView 页面的第一份 token consumer，直接实现 primitive/theme/material/component 四层的 `--cz-*` custom properties。旧品牌/状态变量已从 launcher 页面删除；新增组件必须沿用同一 alias 层，不能恢复局部 palette。
 
 ### 19.2 Naming grammar
 
@@ -1332,13 +1332,13 @@ resolve(theme, material, surfaceRole, capabilities, preferences)
 5. 运行静态 token 对比度约束；失败则提高 alpha、降低环境贡献，再沿 fallback 链退化。
 6. 将请求值与实际值分开报告，便于设置界面解释“效果不可用”而不泄露平台细节。
 
-### 19.5 CSS and Rust/Wry handoff
+### 19.5 CSS and Tauri handoff
 
-CSS 生成层可以把语义 token 映射为 `--cz-*` 前缀的 custom properties，例如 `--cz-color-fg-primary`、`--cz-material-fill` 和 `--cz-material-blur`；组件样式只引用 component alias。当前 Wry 页面已经使用 `data-theme`/`data-material`、`data-resolved-material` 和本地 `chuzi.appearance`：前两个记录请求值与能力解析值，后者只保存用户选择，不改变 `chuzi.launcher-ui/v1` IPC payload。
+CSS 生成层可以把语义 token 映射为 `--cz-*` 前缀的 custom properties，例如 `--cz-color-fg-primary`、`--cz-material-fill` 和 `--cz-material-blur`；组件样式只引用 component alias。当前 Tauri 页面已经使用 `data-theme`/`data-material`、`data-resolved-material` 和本地 `chuzi.appearance`：前两个记录请求值与能力解析值，后者只保存用户选择，不改变 `chuzi.launcher-ui/v1` IPC payload。
 
 当前页面的 resolver 在 vanilla JavaScript 中执行能力检查：`backdrop-filter` 不可用时 Frosted 解析为 Mica，Liquid 解析为 `liquid-basic` 或 Mica；`prefers-reduced-motion`、减少透明度、增强对比度和 forced colors 会关闭 optical channel。宿主若报告 `environmentContrastRisk`，resolver 会启用 contrast guard，压实 surface、关闭 transmission 和 edge response。Liquid 的 pointer response 只写入交互 surface 的 `--cz-pointer-x/--cz-pointer-y`，最大影响限定在边缘高光，组件布局和命中区域不变。
 
-Rust/Wry 壳只负责窗口、WebView capability 和本地资源加载；它不应在 Rust 中复制一套颜色常量，也不应根据 Windows/macOS/Linux 分别发明 Material。平台差异只影响 capability（例如 backdrop blur 是否可用）和字体 fallback。
+Tauri 壳只负责窗口、WebView capability 和本地资源加载；它不应在 Rust 中复制一套颜色常量，也不应根据 Windows/macOS/Linux 分别发明 Material。平台差异只影响 capability（例如 backdrop blur 是否可用）和字体 fallback。
 
 ### 19.6 Component token contract
 
@@ -1481,4 +1481,4 @@ Dark secondary     rgba(255,255,255,.72)   border rgba(255,255,255,.22)   danger
 - 正文、状态、focus、控件边界在最终合成像素上达到本文对比度目标。
 - 浏览器缩放、窗口缩放、CJK 文本、键盘导航和屏幕阅读器不依赖光学效果。
 - 所有组件使用 token alias；仓库中不出现散落的组件级玻璃 CSS 或未命名的阴影值。
-- Rust/Wry 壳、Go IPC 和业务状态边界保持不变；外观解析失败不会影响安装、更新、插件信任或服务控制。
+- Tauri 壳、Go IPC 和业务状态边界保持不变；外观解析失败不会影响安装、更新、插件信任或服务控制。

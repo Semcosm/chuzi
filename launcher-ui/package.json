@@ -1,0 +1,17 @@
+{
+  "name": "chuzi-launcher-ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node scripts/copy-assets.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build --silent && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.8.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

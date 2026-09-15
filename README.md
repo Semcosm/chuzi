@@ -41,7 +41,7 @@ GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`li
 当前首个 release 流程是 nightly：GitHub Actions 每日自动构建并上传四个平台的限期
 artifact，不创建 Git tag 或 GitHub Release。版本格式为
 `nightly-<run-number>-<commit-short-hash>`，完整 commit hash 写入 manifest/index。
-每个目标包含 Rust/Wry 启动器 UI、UI-neutral CLI、服务、浏览器 Worker、桌面运行时以及
+每个目标包含 Tauri 2 启动器 UI、UI-neutral CLI、服务、浏览器 Worker、桌面运行时以及
 `release-manifest.json`；同时提供按组件拆分的归档和带大小/SHA-256 的
 `release-index.json`，安装者不必安装全部运行资源。启动器后台契约位于
 `internal/launcher`，Rust UI 通过受控 IPC 调用同目录的 Go CLI，不复制下载、

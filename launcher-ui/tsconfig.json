@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "rootDir": "frontend/src",
+    "outDir": "frontend/dist",
+    "strict": true,
+    "noEmitOnError": true,
+    "isolatedModules": true,
+    "lib": ["ES2022", "DOM"],
+    "skipLibCheck": true
+  },
+  "include": ["frontend/src/**/*.ts"],
+  "exclude": ["frontend/dist"]
+}

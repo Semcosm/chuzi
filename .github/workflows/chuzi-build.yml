@@ -45,7 +45,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: browser-worker/package-lock.json
+          cache-dependency-path: |
+            browser-worker/package-lock.json
+            launcher-ui/package-lock.json
 
       - name: Install Linux WebView dependencies
         if: runner.os == 'Linux'
@@ -168,14 +170,14 @@ jobs:
           printf '%s\n' 'complete' >"$phase_file"
           printf '[contract] all phases passed at %s\n' "$(now)"
 
-      - name: Test native desktop WebView helper contract
+      - name: Test native desktop UI and WebView helper contract
         if: runner.os == 'Windows' || runner.os == 'macOS' || runner.os == 'Linux'
         shell: bash
         run: |
           cargo test --locked --manifest-path browser-runtime/Cargo.toml --features desktop-webview
           cargo fmt --manifest-path launcher-ui/Cargo.toml -- --check
-          cargo test --locked --manifest-path launcher-ui/Cargo.toml --features desktop-webview
-          cargo clippy --locked --manifest-path launcher-ui/Cargo.toml --all-targets --features desktop-webview -- -D warnings
+          cargo test --locked --manifest-path launcher-ui/Cargo.toml
+          cargo clippy --locked --manifest-path launcher-ui/Cargo.toml --all-targets -- -D warnings
           if [ "${{ runner.os }}" = "Windows" ]; then
             test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime.exe"
             test -f "dist/${{ matrix.target }}/stage/chuzi-launcher-ui.exe"

@@ -108,16 +108,15 @@ store, err := store.Open(cfg)
 旧组件状态和文件保持不变，不能把 endpoint 可达或归档下载完成误报为业务安装成功。
 未提供 index 时，修复和组件安装仍只使用显式本地 source root。
 锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件同时包含
-UI-neutral `chuzi-launcher` CLI 和 Rust/Wry `chuzi-launcher-ui`；UI 通过
+UI-neutral `chuzi-launcher` CLI 和 Tauri 2 `chuzi-launcher-ui`；UI 通过
 `chuzi.launcher-ui/v1` IPC 事件调用 CLI，可显示已校验的更新候选、管理组件，
 以及执行插件列表、安装、启停、信任/取消信任和删除操作。UI 不复制文件、下载、
 校验、执行插件、授予 signer 信任或实现回滚策略；更新候选 manifest 和显式
 signer allowlist 仅作为启动器进程配置传入 Go 后台。
 
-如果桌面 UI 窗口启动后为空白，可为该进程设置
-`CHUZI_LAUNCHER_UI_DIAGNOSTICS=1`，再从终端启动
-`chuzi-launcher-ui`。此模式会将 WebView Runtime、页面加载、被阻止的导航
-以及原生脚本/加载错误写到 stderr；不会记录凭证或启动器响应 payload。
+如果桌面 UI 窗口启动后为空白，可从终端启动 `chuzi-launcher-ui` 并检查 Tauri
+运行时错误；前端页面由 `launcher-ui/frontend/dist` 提供。诊断输出不得记录凭证或
+启动器响应 payload。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：

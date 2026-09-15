@@ -47,7 +47,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
 ├── browser-runtime/             # Rust helper；deferred/Wry 桌面 WebView
 ├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
-├── launcher-ui/                 # Rust/Wry 跨平台启动器 UI 与 CLI IPC bridge
+├── launcher-ui/                 # Tauri 2 + TypeScript 模块化启动器 UI 与 CLI IPC bridge
 ├── internal/
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
@@ -72,6 +72,12 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ├── .githooks/                   # UGS Git hooks
 └── .ugs/                        # UGS 版本与策略清单
 ```
+
+`launcher-ui` 的桌面壳由 Tauri 2 提供，`frontend/src` 负责 TypeScript 渲染、交互、
+状态和 Design Language；`src/config.rs` 负责启动配置，`src/protocol.rs` 负责
+`chuzi.launcher-ui/v1` 请求映射，`src/launcher_process.rs` 负责 shell-free CLI
+进程、取消和脱敏进度事件。Tauri 命令只暴露这条明确的 IPC 边界，文件、下载、
+校验和进程权限仍由 Go CLI/Rust 壳的后端边界持有。
 
 ## 业务自动化适配器与插件
 
@@ -118,7 +124,7 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 原子资源修复、组件依赖安装、插件归档安全解包、显式 signer 信任、原子设置持久化、
 跨进程锁和可取消进度事件；CR-0027 增加了 `ReleaseIndex`、HTTPS 同源归档下载、
 临时文件原子落盘和首次运行初始化状态。`cmd/launcher` 只在显式提供
-`-release-index` 时联网。`launcher-ui` 只通过 shell-free 子进程调用该 CLI，
+`-release-index` 时联网。`launcher-ui` 只通过 Tauri 命令转发到 shell-free 子进程调用该 CLI，
 将 UI 请求、脱敏进度和分类错误转换为 `chuzi.launcher-ui/v1` IPC 事件；更新
 候选、组件管理和插件信任操作仍由 Go 后台校验并执行，文件、下载、校验、锁、
 插件信任和回滚策略不复制到 UI。
@@ -134,7 +140,7 @@ Rust helper 继续通过现有 Go Worker 的版本化 JSON Lines 边界运行，
 Go/Rust FFI。helper 内部的运行时接口只返回 capability 和脱敏运行事实，业务
 状态、租约、重试和 Profile 路径仍由 Go 控制面决定。
 
-桌面 WebView 后端使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
+`browser-runtime` 的桌面 WebView 后端使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
 WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 WebView
 创建和页面操作 API，不是一个跨平台 headless 浏览器。隐藏窗口仍需要有效的
 用户图形会话、主线程和事件循环。
