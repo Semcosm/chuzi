@@ -1,17 +1,17 @@
 # CR-0039: allow the WebView2 embedded HTML navigation
 
 Base: main
-Head or Range: af6b8ad92394670de8cc9ec199e1427f69d58e6e
+Head or Range: 860d5c797216e57c8964c6980fffd4268b944ad5
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(launcher): allow WebView2 data HTML navigation
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: af6b8ad92394670de8cc9ec199e1427f69d58e6e
-Head OID: af6b8ad92394670de8cc9ec199e1427f69d58e6e
-Integrated Result: pending
+Base OID: 860d5c797216e57c8964c6980fffd4268b944ad5
+Head OID: 860d5c797216e57c8964c6980fffd4268b944ad5
+Integrated Result: main@860d5c797216e57c8964c6980fffd4268b944ad5
 
 ## Summary
 
