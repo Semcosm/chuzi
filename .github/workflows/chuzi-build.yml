@@ -269,14 +269,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
+          $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
           ./scripts/package.ps1 -Target "${{ matrix.target }}" -Version $version
 
       - name: Package Unix artifact
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          if [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
           scripts/package.sh "${{ matrix.target }}" "$version"
 
       - name: Verify Unix artifact checksums
@@ -393,4 +393,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" --verify-tag --title "chuzi $GITHUB_REF_NAME" --notes-file "releases/$GITHUB_REF_NAME.md" dist/*
+          release_assets=()
+          while IFS= read -r -d '' asset; do
+            release_assets+=("$asset")
+          done < <(find dist -maxdepth 1 -type f -print0 | sort -z)
+          while IFS= read -r -d '' asset; do
+            release_assets+=("$asset")
+          done < <(find dist/attestations -maxdepth 1 -type f -name '*.signed.json' -print0 | sort -z)
+          [ "${#release_assets[@]}" -gt 0 ] || { echo 'no release assets were produced' >&2; exit 1; }
+          gh release create "$GITHUB_REF_NAME" --verify-tag --title "chuzi $GITHUB_REF_NAME" --notes-file "releases/$GITHUB_REF_NAME.md" "${release_assets[@]}"
