@@ -6,6 +6,7 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch:
 
 permissions:
@@ -348,6 +349,14 @@ jobs:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
+      - name: Restore annotated release tag ref
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag_ref="refs/tags/$GITHUB_REF_NAME"
+          git fetch --force --no-tags origin "$tag_ref:$tag_ref"
+          git cat-file -e "$tag_ref^{tag}"
+          test "$(git rev-parse "$tag_ref^{commit}")" = "$GITHUB_SHA"
       - name: Validate signed release tag and notes
         shell: bash
         run: scripts/validate_release_tag.sh "$GITHUB_REF_NAME"
