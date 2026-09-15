@@ -1,17 +1,17 @@
 # CR-0037: fix stable release retry workflow dispatch
 
 Base: main
-Head or Range: a639e3bb5603c3d1a1deff17bdf87b18270d49b5
+Head or Range: 7d034ad5da1734578f86e15e474a775f35840361
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(release): make stable retry workflow dispatchable
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: a639e3bb5603c3d1a1deff17bdf87b18270d49b5
-Head OID: a639e3bb5603c3d1a1deff17bdf87b18270d49b5
-Integrated Result: pending
+Base OID: 7d034ad5da1734578f86e15e474a775f35840361
+Head OID: 7d034ad5da1734578f86e15e474a775f35840361
+Integrated Result: main@7d034ad5da1734578f86e15e474a775f35840361
 
 ## Summary
 
