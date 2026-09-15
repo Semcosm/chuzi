@@ -1,17 +1,17 @@
 # CR-0040: adopt the CHUZI design language
 
 Base: main
-Head or Range: ef8174463d7485b6dfd11db26594c359200695e7
+Head or Range: 988cdeeeb9d521dc935572cd516e34b0e189842e
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): adopt CHUZI theme and material design language
-Revision: 4
-Status: accepted
+Revision: 5
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: ef8174463d7485b6dfd11db26594c359200695e7
-Head OID: ef8174463d7485b6dfd11db26594c359200695e7
-Integrated Result: pending
+Base OID: 988cdeeeb9d521dc935572cd516e34b0e189842e
+Head OID: 988cdeeeb9d521dc935572cd516e34b0e189842e
+Integrated Result: main@988cdeeeb9d521dc935572cd516e34b0e189842e
 
 ## Summary
 
