@@ -113,6 +113,11 @@ UI-neutral `chuzi-launcher` CLI 和 Rust/Wry `chuzi-launcher-ui`；UI 通过
 以及执行插件列表、安装、启停、信任/取消信任和删除操作。UI 不复制文件、下载、
 校验、执行插件、授予 signer 信任或实现回滚策略；更新候选 manifest 和显式
 signer allowlist 仅作为启动器进程配置传入 Go 后台。
+
+如果桌面 UI 窗口启动后为空白，可为该进程设置
+`CHUZI_LAUNCHER_UI_DIAGNOSTICS=1`，再从终端启动
+`chuzi-launcher-ui`。此模式会将 WebView Runtime、页面加载、被阻止的导航
+以及原生脚本/加载错误写到 stderr；不会记录凭证或启动器响应 payload。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：

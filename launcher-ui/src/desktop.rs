@@ -24,7 +24,7 @@ use tao::{
 use wry::WebContext;
 #[cfg(target_os = "linux")]
 use wry::WebViewBuilderExtUnix;
-use wry::{NewWindowResponse, PermissionResponse, WebView, WebViewBuilder};
+use wry::{NewWindowResponse, PageLoadEvent, PermissionResponse, WebView, WebViewBuilder};
 
 use crate::{
     command_spec, parse_progress_line, LauncherConfig, ProgressEvent, ProgressMessage, ResultEvent,
@@ -128,6 +128,7 @@ struct UiHost {
     _context: WebContext,
     config: LauncherConfig,
     operations: OperationRegistry,
+    diagnostics: bool,
 }
 
 impl UiHost {
@@ -136,7 +137,9 @@ impl UiHost {
             return;
         };
         let script = format!("window.onLauncherEvent({encoded});");
-        let _ = self.webview.evaluate_script(&script);
+        if let Err(error) = self.webview.evaluate_script(&script) {
+            diagnostic_error(self.diagnostics, "evaluate_script", error);
+        }
     }
 
     fn error_for_request(&self, id: String, error: impl Into<String>) {
@@ -428,17 +431,62 @@ fn catch_native_panic<T>(function: impl FnOnce() -> T) -> Result<T, ()> {
     result.map_err(|_| ())
 }
 
+fn diagnostics_enabled() -> bool {
+    env::var_os("CHUZI_LAUNCHER_UI_DIAGNOSTICS").is_some_and(|value| {
+        matches!(
+            value.to_string_lossy().to_ascii_lowercase().as_str(),
+            "1" | "true" | "yes" | "on"
+        )
+    })
+}
+
+fn diagnostic_error(enabled: bool, stage: &str, error: impl std::fmt::Display) {
+    if enabled {
+        eprintln!("[chuzi-launcher-ui] {stage}: {error}");
+    }
+}
+
+fn page_load_label(event: PageLoadEvent) -> &'static str {
+    match event {
+        PageLoadEvent::Started => "started",
+        PageLoadEvent::Finished => "finished",
+    }
+}
+
+fn is_inline_navigation(url: &str) -> bool {
+    let url = url.trim();
+    url == "about:blank" || url.starts_with("about:blank#") || url.starts_with("about:blank?")
+}
+
 fn configure_builder<'a>(
     builder: WebViewBuilder<'a>,
     proxy: EventLoopProxy<UserEvent>,
+    diagnostics: bool,
 ) -> WebViewBuilder<'a> {
     builder
         .with_visible(true)
-        .with_html(UI_HTML)
+        // Start from a real blank document, then load the embedded page after
+        // the native WebView has been fully created. This avoids relying on
+        // NavigateToString during WebView2 controller initialization.
+        .with_url("about:blank")
         .with_clipboard(false)
         .with_autoplay(false)
         .with_general_autofill_enabled(false)
-        .with_navigation_handler(|url| url == "about:blank")
+        .with_navigation_handler(move |url| {
+            let allowed = is_inline_navigation(&url);
+            if diagnostics && !allowed {
+                eprintln!("[chuzi-launcher-ui] navigation blocked: {url}");
+            }
+            allowed
+        })
+        .with_on_page_load_handler(move |event, url| {
+            if diagnostics {
+                eprintln!(
+                    "[chuzi-launcher-ui] page load {}: {url}",
+                    page_load_label(event)
+                );
+            }
+        })
         .with_new_window_req_handler(|_, _| NewWindowResponse::Deny)
         .with_permission_handler(|_| PermissionResponse::Deny)
         .with_download_started_handler(|_, _| false)
@@ -451,6 +499,7 @@ fn build_host(
     config: LauncherConfig,
     proxy: EventLoopProxy<UserEvent>,
     target: &tao::event_loop::EventLoopWindowTarget<UserEvent>,
+    diagnostics: bool,
 ) -> Result<UiHost, String> {
     let window = WindowBuilder::new()
         .with_title("chuzi launcher")
@@ -469,7 +518,11 @@ fn build_host(
             let _ = std::fs::set_permissions(&profile, std::fs::Permissions::from_mode(0o700));
         }
         let mut context = WebContext::new(Some(profile));
-        let builder = configure_builder(WebViewBuilder::new_with_web_context(&mut context), proxy);
+        let builder = configure_builder(
+            WebViewBuilder::new_with_web_context(&mut context),
+            proxy,
+            diagnostics,
+        );
         #[cfg(target_os = "linux")]
         let webview = {
             let vbox = window
@@ -483,25 +536,39 @@ fn build_host(
         let webview = builder
             .build(&window)
             .map_err(|_| "webview_build_failed".to_owned())?;
+        webview.load_html(UI_HTML).map_err(|error| {
+            diagnostic_error(diagnostics, "load_html", error);
+            "webview_load_failed".to_owned()
+        })?;
         return Ok(UiHost {
             window,
             webview,
             _context: context,
             config,
             operations: OperationRegistry::default(),
+            diagnostics,
         });
     }
     #[cfg(target_os = "macos")]
     {
-        let builder = configure_builder(WebViewBuilder::new().with_incognito(true), proxy);
+        let builder = configure_builder(
+            WebViewBuilder::new().with_incognito(true),
+            proxy,
+            diagnostics,
+        );
         let webview = builder
             .build(&window)
             .map_err(|_| "webview_build_failed".to_owned())?;
+        webview.load_html(UI_HTML).map_err(|error| {
+            diagnostic_error(diagnostics, "load_html", error);
+            "webview_load_failed".to_owned()
+        })?;
         return Ok(UiHost {
             window,
             webview,
             config,
             operations: OperationRegistry::default(),
+            diagnostics,
         });
     }
     #[allow(unreachable_code)]
@@ -512,8 +579,17 @@ pub fn run() -> io::Result<()> {
     let Some(config) = parse_config().map_err(io::Error::other)? else {
         return Ok(());
     };
-    if wry::webview_version().is_err() {
-        return Err(io::Error::other("webview_runtime_unavailable"));
+    let diagnostics = diagnostics_enabled();
+    match wry::webview_version() {
+        Ok(version) => {
+            if diagnostics {
+                eprintln!("[chuzi-launcher-ui] WebView runtime: {version}");
+            }
+        }
+        Err(error) => {
+            diagnostic_error(diagnostics, "webview_runtime", error);
+            return Err(io::Error::other("webview_runtime_unavailable"));
+        }
     }
     let mut builder = EventLoopBuilder::<UserEvent>::with_user_event();
     let event_loop = build_event_loop(&mut builder).map_err(io::Error::other)?;
@@ -522,7 +598,7 @@ pub fn run() -> io::Result<()> {
     event_loop.run(move |event, target, control_flow| {
         *control_flow = ControlFlow::Wait;
         if host.is_none() {
-            match build_host(config.clone(), proxy.clone(), target) {
+            match build_host(config.clone(), proxy.clone(), target, diagnostics) {
                 Ok(created) => host = Some(created),
                 Err(error) => {
                     eprintln!("{error}");
@@ -563,4 +639,24 @@ pub fn run() -> io::Result<()> {
             _ => {}
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_inline_navigation;
+
+    #[test]
+    fn inline_navigation_allows_blank_document_variants() {
+        assert!(is_inline_navigation("about:blank"));
+        assert!(is_inline_navigation(" about:blank#launcher "));
+        assert!(is_inline_navigation("about:blank?reload=1"));
+    }
+
+    #[test]
+    fn inline_navigation_rejects_external_documents() {
+        assert!(!is_inline_navigation("https://example.com"));
+        assert!(!is_inline_navigation("file:///C:/Users/user/page.html"));
+        assert!(!is_inline_navigation("about:srcdoc"));
+        assert!(!is_inline_navigation("ABOUT:BLANK"));
+    }
 }
