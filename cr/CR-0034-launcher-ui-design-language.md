@@ -1,16 +1,16 @@
 # CR-0034: add the CHUZI launcher design language
 
 Base: main
-Head or Range: 53455781221827f05a7fb3dd75bac5e40b928086
+Head or Range: 415789bbaaf351ea30ea66c9f1ffd297e03e6838
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): add CHUZI design language and appearance controls
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 370732d4fd406939a5aae332fd2e1de0f4d4aeda
-Head OID: 53455781221827f05a7fb3dd75bac5e40b928086
+Base OID: 8f03d4dfc80ad84e480beb46e25b84242612d046
+Head OID: 8f03d4dfc80ad84e480beb46e25b84242612d046
 Integrated Result: pending
 
 ## Summary
