@@ -21,6 +21,17 @@ const htmlPath = process.argv[2];
 const html = fs.readFileSync(htmlPath, "utf8");
 const match = html.match(/<script>([\s\S]*)<\/script>/);
 if (!match) throw new Error("launcher UI script is missing");
+assert(html.includes("--cz-color-authored-black"), "semantic CHUZI token layer is missing");
+assert(html.includes("--cz-material-transmission"), "material transmission token is missing");
+assert(html.includes("--cz-material-solid-base"), "opaque solid base token is missing");
+assert(html.includes("data-resolved-material"), "capability-aware material resolver is missing");
+assert(html.includes("focus-within"), "optical highlight does not yield to keyboard focus");
+assert(html.includes("data-window-inactive"), "optical highlight does not yield to inactive windows");
+assert(html.includes("requestAnimationFrame"), "liquid pointer response is not frame-coalesced");
+assert(html.includes("outline-color: Highlight"), "forced-colors focus fallback is missing");
+for (const legacyColor of ["#087d6d", "#526fc6", "#c96754", "#edf3f0"]) {
+  assert(!html.includes(legacyColor), `legacy authored palette remains: ${legacyColor}`);
+}
 
 const messages = [];
 const elements = new Map();
@@ -58,9 +69,37 @@ vm.runInNewContext(match[1], context, { filename: htmlPath });
 
 assert(root.dataset.theme === "light", "appearance did not initialize to light theme");
 assert(root.dataset.material === "solid", "appearance did not initialize to solid material");
+assert(root.dataset.resolvedMaterial === "solid", "solid material did not resolve to solid");
+context.applyAppearance("light", "frosted", false);
+assert(root.dataset.material === "frosted", "requested frosted material was not retained");
+assert(root.dataset.resolvedMaterial === "mica", "frosted fallback was not reported without backdrop support");
 context.applyAppearance("dark", "liquid", true);
 assert(root.dataset.theme === "dark" && root.dataset.material === "liquid", "appearance switch was not applied");
+assert(root.dataset.resolvedMaterial === "mica", "liquid fallback was not reported without backdrop support");
 assert(storage.has("chuzi.appearance"), "appearance selection was not persisted");
+window.__CHUZI_CAPABILITIES__ = { backdropFilter: true, compositedOpacity: true, environmentSource: "host-backdrop", transparentWindow: true, dispersion: true };
+context.applyAppearance("dark", "liquid", false);
+assert(root.dataset.resolvedMaterial === "liquid-basic", "supported liquid material did not resolve to liquid-basic");
+assert(root.dataset.environmentSource === "host-backdrop", "host backdrop capability was not retained");
+assert(root.dataset.dispersion === "true", "liquid dispersion capability was not enabled for a real backdrop");
+window.__CHUZI_CAPABILITIES__ = { backdropFilter: false, compositedOpacity: true, environmentSource: "page" };
+context.applyAppearance("dark", "liquid", false);
+assert(root.dataset.resolvedMaterial === "mica", "explicitly unavailable backdrop capability was ignored");
+delete window.__CHUZI_CAPABILITIES__;
+window.matchMedia = (query) => ({ matches: query === "(prefers-reduced-transparency: reduce)" });
+context.applyAppearance("dark", "liquid", false);
+assert(root.dataset.resolvedMaterial === "mica", "reduced transparency did not choose the stable Mica fallback");
+assert(root.dataset.reducedEffects === "true", "reduced transparency did not disable optical effects");
+assert(root.dataset.dispersion === "false", "reduced transparency left dispersion enabled");
+window.matchMedia = (query) => ({ matches: query === "(prefers-contrast: more)" });
+context.applyAppearance("dark", "frosted", false);
+assert(root.dataset.resolvedMaterial === "solid", "increased contrast did not choose the opaque fallback");
+assert(root.dataset.contrastGuard === "true", "increased contrast did not enable the contrast guard");
+window.matchMedia = (query) => ({ matches: query === "(prefers-reduced-motion: reduce)" });
+context.applyAppearance("dark", "liquid", false);
+assert(root.dataset.reducedMotion === "true", "reduced motion preference was not retained");
+assert(root.dataset.dispersion === "false", "reduced motion left dispersion enabled");
+delete window.matchMedia;
 
 function assert(condition, message) {
   if (!condition) throw new Error(message);
