@@ -70,21 +70,10 @@ jobs:
             index="$(find "dist/$target" -maxdepth 1 -type f -name "*.index.json" -print -quit)"
             test -n "$index"
             python3 scripts/validate_release_index.py --index "$index" --dist "dist/$target"
-            python3 scripts/validate_nightly_artifact.py --artifact "dist/$target" --target "$target" --channel stable --commit "$RELEASE_COMMIT" --version "$(python3 - "$index" <<'PY'
-import json
-import sys
-print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])
-PY
-)"
+            version="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["version"])' "$index")"
+            python3 scripts/validate_nightly_artifact.py --artifact "dist/$target" --target "$target" --channel stable --commit "$RELEASE_COMMIT" --version "$version"
             manifest="$(find "dist/$target" -maxdepth 1 -type f -name "*.manifest.json" -print -quit)"
-            python3 - "$manifest" "$RELEASE_TAG" "$RELEASE_COMMIT" <<'PY'
-import json
-import sys
-path, tag, commit = sys.argv[1:]
-manifest = json.load(open(path, encoding="utf-8"))
-if manifest.get("version") != tag or manifest.get("channel") != "stable" or manifest.get("commit", "").lower() != commit.lower():
-    raise SystemExit(f"stable metadata mismatch in {path}")
-PY
+            python3 -c 'import json, sys; path, tag, commit = sys.argv[1:]; manifest = json.load(open(path, encoding="utf-8")); ok = manifest.get("version") == tag and manifest.get("channel") == "stable" and manifest.get("commit", "").lower() == commit.lower(); raise SystemExit(0 if ok else f"stable metadata mismatch in {path}")' "$manifest" "$RELEASE_TAG" "$RELEASE_COMMIT"
             find "dist/$target" -maxdepth 1 -type f -exec cp {} dist/ \;
           done
       - name: Require release signing inputs
