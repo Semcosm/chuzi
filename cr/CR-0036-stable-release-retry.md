@@ -1,17 +1,17 @@
 # CR-0036: add an auditable stable release retry path
 
 Base: main
-Head or Range: be6a9692cb3c2e2c4884316f963f774f1b34b599
+Head or Range: 7f243438e0a1fbcfeae398786518ffb2910f08ec
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(release): add auditable stable retry publisher
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: be6a9692cb3c2e2c4884316f963f774f1b34b599
-Head OID: be6a9692cb3c2e2c4884316f963f774f1b34b599
-Integrated Result: pending
+Base OID: 7f243438e0a1fbcfeae398786518ffb2910f08ec
+Head OID: 7f243438e0a1fbcfeae398786518ffb2910f08ec
+Integrated Result: main@7f243438e0a1fbcfeae398786518ffb2910f08ec
 
 ## Summary
 
