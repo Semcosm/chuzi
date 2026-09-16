@@ -14,6 +14,21 @@ export interface MaterialCapabilities {
   forcedColors: boolean;
 }
 
+export type HostPlatform = "windows" | "macos" | "linux" | "unknown";
+
+export interface HostCapabilities {
+  platform?: HostPlatform;
+  titlebar?: "native" | "custom";
+  desktopBackdrop?: boolean;
+  backdropFilter?: boolean;
+  compositedOpacity?: boolean;
+  environmentSource?: MaterialCapabilities["environmentSource"];
+  transparentWindow?: boolean;
+  refraction?: boolean;
+  dispersion?: boolean;
+  environmentContrastRisk?: boolean;
+}
+
 export interface ResolvedMaterial {
   name: "solid" | "mica" | "frosted" | "liquid-basic";
   capabilities: MaterialCapabilities;
@@ -28,10 +43,15 @@ function mediaMatches(query: string): boolean {
   }
 }
 
+export function detectHostCapabilities(): HostCapabilities {
+  const host = (window as Window & { __CHUZI_CAPABILITIES__?: HostCapabilities })
+    .__CHUZI_CAPABILITIES__;
+  return host ?? {};
+}
+
 export function detectMaterialCapabilities(): MaterialCapabilities {
   const supports = typeof CSS !== "undefined" && typeof CSS.supports === "function";
-  const host = (window as Window & { __CHUZI_CAPABILITIES__?: Partial<MaterialCapabilities> })
-    .__CHUZI_CAPABILITIES__ ?? {};
+  const host = detectHostCapabilities();
   const browserBackdropFilter = Boolean(
     supports &&
       (CSS.supports("backdrop-filter", "blur(1px)") || CSS.supports("-webkit-backdrop-filter", "blur(1px)"))
@@ -81,10 +101,13 @@ export function resolveMaterial(requested: Material): ResolvedMaterial {
 
 export function setAppearanceAttributes(root: HTMLElement, theme: Theme, material: Material): ResolvedMaterial {
   const resolved = resolveMaterial(material);
+  const host = detectHostCapabilities();
   root.dataset.theme = theme;
   root.dataset.material = material;
   root.dataset.resolvedMaterial = resolved.name;
   root.dataset.environmentSource = resolved.capabilities.environmentSource;
+  root.dataset.platform = host.platform ?? "unknown";
+  root.dataset.titlebar = host.titlebar ?? "native";
   root.dataset.reducedEffects = String(Boolean(resolved.reducedEffects));
   root.dataset.reducedMotion = String(resolved.capabilities.reduceMotion);
   root.dataset.contrastGuard = String(

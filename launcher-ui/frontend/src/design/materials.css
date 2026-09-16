@@ -290,6 +290,24 @@
       --cz-material-transmission-body: .18;
       --cz-material-transmission-edge: .28;
     }
+    /* A transparent host supplies the environment below each authored surface.
+       Keep the environment layer achromatic: real desktop color comes from
+       the native compositor, while CHUZI's own layer remains black/white. */
+    :root[data-environment-source="desktop-compositor"] {
+      --cz-material-environment-layer: linear-gradient(
+        transparent,
+        transparent
+      );
+      --cz-material-environment-layer-chrome: var(--cz-material-environment-layer);
+      --cz-material-environment-layer-secondary: var(--cz-material-environment-layer);
+    }
+    @supports (background: linear-gradient(rgb(0 0 0 / .1), rgb(0 0 0 / .1))) {
+      :root[data-environment-source="desktop-compositor"] {
+        --cz-component-surface-fill: var(--cz-material-fill-layer), var(--cz-material-environment-layer);
+        --cz-component-surface-secondary: var(--cz-material-fill-layer-secondary), var(--cz-material-environment-layer-secondary);
+        --cz-component-surface-chrome: var(--cz-material-fill-layer-chrome), var(--cz-material-environment-layer-chrome);
+      }
+    }
     /* A reduced-transparency preference keeps the stable Mica tone but removes
        the optical channels that make a surface depend on the backdrop. */
     :root[data-reduced-effects="true"][data-material] {

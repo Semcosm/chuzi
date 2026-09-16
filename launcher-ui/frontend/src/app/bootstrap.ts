@@ -8,6 +8,7 @@ import { renderOnboarding, renderOverviewComponents, renderUpdate, renderWorkspa
 import { renderPlugins } from "../views/plugin-view.js";
 import { renderSettings } from "../views/settings-view.js";
 import { LauncherController } from "../features/launcher-controller.js";
+import { installWindowControls } from "../features/window-controls.js";
 
 const viewTitles: Record<AppState["activeView"], string> = {
   overview: "Overview",
@@ -87,6 +88,7 @@ function installInteractions(controller: LauncherController): void {
 export async function bootstrap(): Promise<void> {
   initializeAppearance();
   installMaterialMotion();
+  installWindowControls();
   const client = new LauncherClient(new TauriLauncherTransport());
   const controller = new LauncherController(client, render);
   installInteractions(controller);

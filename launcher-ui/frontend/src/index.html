@@ -9,6 +9,17 @@
   <link rel="stylesheet" href="./design/components.css">
 </head>
 <body>
+  <div class="window-chrome material-surface" data-surface-role="chrome">
+    <div class="window-chrome-drag" data-window-drag aria-label="Move CHUZI launcher" role="button" tabindex="0">
+      <span class="window-chrome-mark" aria-hidden="true">cz</span>
+      <span class="window-chrome-title">CHUZI launcher</span>
+    </div>
+    <div class="window-chrome-controls" aria-label="Window controls">
+      <button type="button" class="window-chrome-control" data-window-action="minimize" aria-label="Minimize" title="Minimize"><span aria-hidden="true">&#x2212;</span></button>
+      <button type="button" class="window-chrome-control" data-window-action="maximize" aria-label="Maximize" title="Maximize"><span aria-hidden="true">&#x25A1;</span></button>
+      <button type="button" class="window-chrome-control window-chrome-close" data-window-action="close" aria-label="Close" title="Close"><span aria-hidden="true">&#x00D7;</span></button>
+    </div>
+  </div>
   <div class="app">
     <aside class="material-surface" data-surface-role="chrome">
       <div class="brand">
@@ -114,6 +125,16 @@
     </main>
   </div>
   <div id="toast" class="toast material-surface" data-surface-role="elevated" role="status"></div>
+  <div class="window-resize-layer" aria-hidden="true">
+    <div class="window-resize-handle window-resize-north" data-window-resize="North"></div>
+    <div class="window-resize-handle window-resize-east" data-window-resize="East"></div>
+    <div class="window-resize-handle window-resize-south" data-window-resize="South"></div>
+    <div class="window-resize-handle window-resize-west" data-window-resize="West"></div>
+    <div class="window-resize-handle window-resize-north-east" data-window-resize="NorthEast"></div>
+    <div class="window-resize-handle window-resize-south-east" data-window-resize="SouthEast"></div>
+    <div class="window-resize-handle window-resize-south-west" data-window-resize="SouthWest"></div>
+    <div class="window-resize-handle window-resize-north-west" data-window-resize="NorthWest"></div>
+  </div>
   <script type="module" src="./app.js"></script>
 </body>
 </html>

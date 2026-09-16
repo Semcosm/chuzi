@@ -1,4 +1,5 @@
 mod config;
+mod desktop;
 mod launcher_process;
 mod protocol;
 
@@ -44,6 +45,7 @@ pub fn run() {
             config,
             operations: OperationRegistry::default(),
         })
+        .setup(desktop::setup)
         .invoke_handler(tauri::generate_handler![launcher_request])
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::Destroyed) {
