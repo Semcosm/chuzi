@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc && node scripts/copy-assets.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build --silent && node --test test/*.test.mjs"
+    "test": "npm run build --silent && node --test test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0"
