@@ -148,7 +148,7 @@
       position: relative;
       isolation: isolate;
       border-color: var(--cz-material-border);
-      background-color: var(--cz-material-fill);
+      background-color: var(--cz-surface-fill, var(--cz-material-fill));
       background-image: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-environment-layer, linear-gradient(transparent, transparent));
       box-shadow: var(--cz-material-shadow);
       backdrop-filter: blur(var(--cz-material-blur)) saturate(var(--cz-material-environment-saturation));
@@ -187,100 +187,35 @@
       border: 0;
       pointer-events: none;
     }
-    .material-surface[data-liquid-renderer="webgl1"] {
-      background-image: none;
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
-    }
     .material-surface[data-liquid-renderer="webgl1"]::before,
     .material-surface[data-liquid-renderer="webgl1"]::after { display: none; }
-    .material-surface[data-surface-role="chrome"] { background-color: var(--cz-material-fill-chrome); background-image: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-environment-layer-chrome, linear-gradient(transparent, transparent)); }
-    .material-surface[data-surface-role="primary"] { background-color: var(--cz-material-fill); background-image: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-environment-layer, linear-gradient(transparent, transparent)); }
-    .material-surface[data-surface-role="secondary"] { background-color: var(--cz-material-fill-secondary); background-image: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-environment-layer-secondary, linear-gradient(transparent, transparent)); }
-    .material-surface[data-surface-role="elevated"] { background-color: var(--cz-material-content-well); background-image: linear-gradient(var(--cz-material-tint-authored), var(--cz-material-tint-authored)), var(--cz-material-environment-layer, linear-gradient(transparent, transparent)); }
-    :root[data-resolved-material="liquid-basic"] .material-surface[data-optical="interactive"]:hover::after { opacity: .8; }
-    :root[data-resolved-material="liquid-basic"] .material-surface[data-optical="interactive"]:active::after { opacity: .35; }
-    :root[data-resolved-material="solid"] .material-surface[data-optical="interactive"]:hover,
-    :root[data-resolved-material="mica"] .material-surface[data-optical="interactive"]:hover {
-      border-color: var(--cz-color-border-strong);
-      background: var(--cz-color-surface-interactive);
-    }
-    :root[data-resolved-material="frosted"] .material-surface[data-optical="interactive"]:hover {
-      background: var(--cz-component-surface-secondary);
+    .material-surface[data-optical="interactive"]:hover::after { opacity: .8; }
+    .material-surface[data-optical="interactive"]:active::after { opacity: .35; }
+    .material-surface[data-material-resolved="solid"]::after,
+    .material-surface[data-material-resolved="mica"]::after,
+    .material-surface[data-surface-resolved-material="solid"]::after,
+    .material-surface[data-surface-resolved-material="mica"]::after { display: none; }
+    .material-surface[data-optical="interactive"]:hover {
       border-color: var(--cz-color-border-strong);
     }
-    :root[data-resolved-material="liquid-basic"] .material-surface[data-optical="interactive"]:hover {
-      border-color: var(--cz-color-border-strong);
-      background: var(--cz-component-surface-secondary);
-    }
-    :root[data-resolved-material="frosted"] .material-surface[data-optical="interactive"]:active,
-    :root[data-resolved-material="liquid-basic"] .material-surface[data-optical="interactive"]:active {
-      background: var(--cz-material-content-well);
+    .material-surface[data-optical="interactive"]:active {
       box-shadow: var(--cz-shadow-1);
     }
-    :root[data-resolved-material="solid"] button:active {
-      background: var(--cz-color-surface-interactive);
-      box-shadow: none;
-    }
-    :root[data-resolved-material="frosted"] button:hover {
+    button:hover {
+      border-color: var(--cz-color-border-strong);
       background: var(--cz-component-surface-secondary);
-      border-color: var(--cz-color-border-strong);
     }
-    :root[data-resolved-material="frosted"] button:active {
-      background: var(--cz-material-content-well);
+    button:active {
+      background: var(--cz-component-content-well);
       box-shadow: var(--cz-shadow-1);
-    }
-    :root[data-resolved-material="mica"] button:hover {
-      background: var(--cz-color-surface-interactive);
-      border-color: var(--cz-color-border-strong);
-    }
-    :root[data-resolved-material="mica"] button:active { background: var(--cz-color-surface-3); }
-    :root[data-resolved-material="liquid-basic"] button:hover {
-      background: var(--cz-component-surface-secondary);
-      border-color: var(--cz-color-border-strong);
-      box-shadow: var(--cz-shadow-inset-highlight);
-    }
-    :root[data-resolved-material="liquid-basic"] button:active {
-      background: var(--cz-material-content-well);
-      box-shadow: var(--cz-shadow-1);
-    }
-    :root[data-resolved-material="mica"] .material-surface[data-optical="interactive"]::after,
-    :root[data-resolved-material="solid"] .material-surface[data-optical="interactive"]::after {
-      display: none;
-    }
-    :root[data-resolved-material="mica"] button:hover {
-      background: var(--cz-color-surface-interactive);
-      border-color: var(--cz-color-border-strong);
-      box-shadow: none;
-    }
-    :root[data-resolved-material="mica"] button:active {
-      background: var(--cz-color-surface-3);
-      box-shadow: none;
-    }
-    :root[data-resolved-material="solid"] button:hover {
-      background: var(--cz-color-surface-interactive);
-      border-color: var(--cz-color-border-strong);
-      box-shadow: none;
-    }
-    :root[data-resolved-material="solid"] button:active {
-      background: var(--cz-color-surface-interactive);
-      box-shadow: none;
-    }
-    :root[data-resolved-material="solid"] .material-surface {
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
     }
     :root[data-contrast-guard="true"] .material-surface[data-optical="interactive"]:hover,
-    :root[data-contrast-guard="true"] .material-surface[data-optical="interactive"]:active {
-      background: var(--cz-material-fill);
-      border-color: var(--cz-color-border-strong);
-      box-shadow: var(--cz-material-shadow);
-    }
+    :root[data-contrast-guard="true"] .material-surface[data-optical="interactive"]:active,
     :root[data-contrast-guard="true"] button:hover,
     :root[data-contrast-guard="true"] button:active {
-      background: var(--cz-material-content-well);
+      background: var(--cz-component-surface-fill);
       border-color: var(--cz-color-border-strong);
-      box-shadow: none;
+      box-shadow: var(--cz-material-shadow);
     }
 
     aside {
@@ -599,14 +534,13 @@
       .status, .error { color: CanvasText; background: Canvas; }
     }
 
-    /* When the WebGL pass is active it owns the material pixels.  Keeping the
-       DOM surface transparent is what lets the shader's refraction and rim
-       remain visible underneath semantic text and controls. */
+    /* The WebGL pass is an optical overlay. DOM surfaces remain the semantic
+       material base, so CSS keeps rendering through GPU loss or fallback. */
     :root[data-liquid-renderer="webgl1"] body { background: transparent; }
     :root[data-liquid-renderer="webgl1"] > body > .liquid-glass-canvas {
       position: fixed;
       inset: 0;
-      z-index: 0;
+      z-index: 1;
       display: block;
       width: 100vw;
       height: 100vh;
@@ -615,18 +549,9 @@
     :root[data-liquid-renderer="webgl1"] > body > .window-chrome,
     :root[data-liquid-renderer="webgl1"] > body > .app {
       position: relative;
-      z-index: 1;
+      z-index: 2;
     }
     :root[data-liquid-renderer="webgl1"] .window-resize-layer { z-index: 40; }
-    :root[data-liquid-renderer="webgl1"] .material-surface[data-liquid-renderer="webgl1"],
-    :root[data-liquid-renderer="webgl1"] .material-surface[data-liquid-enhanced="true"] {
-      background: transparent !important;
-      background-image: none !important;
-      border-color: var(--cz-color-border-default);
-      box-shadow: var(--cz-shadow-2);
-      backdrop-filter: none;
-      -webkit-backdrop-filter: none;
-    }
     :root[data-liquid-renderer="webgl1"] .material-surface[data-liquid-renderer="webgl1"]::before,
     :root[data-liquid-renderer="webgl1"] .material-surface[data-liquid-renderer="webgl1"]::after { display: none; }
     :root[data-liquid-renderer="webgl1"] button[data-liquid-renderer="webgl1"],
@@ -639,8 +564,6 @@
     :root[data-liquid-renderer="webgl1"] .glass-lens-preview[data-liquid-control="true"] {
       position: relative;
       isolation: isolate;
-      background: transparent !important;
-      box-shadow: var(--cz-shadow-1);
     }
     :root[data-liquid-renderer="webgl1"] button[data-liquid-renderer="webgl1"],
     :root[data-liquid-renderer="webgl1"] button[data-liquid-control="true"] { border-radius: var(--cz-radius-pill); }

@@ -1,7 +1,8 @@
 import { LauncherClient, TauriLauncherTransport } from "../services/ipc.js";
-import { applyAppearance, initializeAppearance, updateAppearance } from "../runtime/appearance.js";
+import { applyAppearance, getAppearance, initializeAppearance, updateAppearance } from "../runtime/appearance.js";
 import { installMaterialMotion } from "../runtime/material-motion.js";
 import { disposeLiquidGlassRenderer, installLiquidGlassRenderer } from "../runtime/liquid-glass.js";
+import { syncMaterialSurfaces } from "../runtime/material.js";
 import type { AppState, MaterialOpacityKey } from "../state/types.js";
 import { byId } from "../utilities/dom.js";
 import { renderComponents } from "../views/component-view.js";
@@ -49,6 +50,10 @@ function render(state: AppState): void {
     view.classList.toggle("active", view.id === `view-${state.activeView}`);
   });
   byId("page-title").textContent = viewTitles[state.activeView];
+  // Rows and onboarding panels are rendered after the initial appearance pass.
+  // Bind their material datasets through the same resolver before the optical
+  // renderer observes them.
+  syncMaterialSurfaces(document.documentElement, getAppearance());
 }
 
 function currentMaterial(): string {
