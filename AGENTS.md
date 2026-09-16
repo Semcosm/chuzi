@@ -99,6 +99,59 @@ gh run view <run-id> --repo Semcosm/chuzi --log-failed
 gh run watch <run-id> --repo Semcosm/chuzi --exit-status
 ```
 
+### Build Nightly From an Unmerged Topic Branch
+
+To build all four nightly targets before merging a topic branch, push the
+committed branch over the configured SSH alias and dispatch `chuzi-build` on
+that branch. Do not rely on a local `scripts/build.sh` run for this purpose:
+the local host can build only its native target, while the Actions matrix
+builds `windows-amd64`, `linux-amd64`, `linux-arm64`, and `darwin-arm64`.
+
+```bash
+topic_branch="$(git branch --show-current)"
+head_sha="$(git rev-parse HEAD)"
+git status --short
+git push git@github-account:Semcosm/chuzi.git HEAD:"$topic_branch"
+
+gh auth status
+gh api user --jq .login
+gh workflow run chuzi-build.yml --repo Semcosm/chuzi --ref "$topic_branch"
+gh run list --repo Semcosm/chuzi \
+  --workflow chuzi-build.yml --branch "$topic_branch" --limit 5 \
+  --json databaseId,headSha,status,conclusion,url
+gh run watch <run-id> --repo Semcosm/chuzi --exit-status
+```
+
+Select the run whose `headSha` exactly equals `head_sha`. After it succeeds,
+derive the workflow version from its run number and validate every downloaded
+Actions artifact against the topic commit:
+
+```bash
+run_id=<successful-workflow-run-id>
+run_number="$(gh run view "$run_id" --repo Semcosm/chuzi --json number --jq .number)"
+nightly_version="nightly-${run_number}-${head_sha:0:12}"
+download_root="$(mktemp -d)"
+trap 'rm -rf "$download_root"' EXIT
+for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
+  target_dir="$download_root/$target"
+  mkdir -p "$target_dir"
+  gh run download "$run_id" --repo Semcosm/chuzi \
+    --name "chuzi-nightly-$target" --dir "$target_dir"
+  python3 scripts/validate_release_index.py \
+    --index "$target_dir/chuzi-${nightly_version}-${target}.index.json" \
+    --dist "$target_dir"
+  ./scripts/validate_nightly_artifact.py \
+    --artifact "$target_dir" --target "$target" \
+    --commit "$head_sha" --version "$nightly_version"
+done
+```
+
+`scripts/accept_nightly_run.sh` is the main-branch acceptance flow and
+currently rejects topic branches by design; use the per-target validation
+commands above for an unmerged branch. If an HTTPS push is rejected because
+the OAuth token lacks the `workflow` scope, do not rotate credentials just for
+this operation; use the configured SSH push command shown above.
+
 For an implementation CR, create the PR with the standard adapter so its body
 is sourced from the persisted CR:
 
