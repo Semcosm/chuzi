@@ -24,6 +24,7 @@ done
 [ -f "$repo_root/launcher-ui/package.json" ] || fail "launcher UI package manifest is missing"
 [ -f "$repo_root/launcher-ui/package-lock.json" ] || fail "launcher UI package lockfile is missing"
 [ -f "$repo_root/launcher-ui/tauri.conf.json" ] || fail "launcher UI Tauri config is missing"
+[ -f "$repo_root/launcher-ui/icons/icon.ico" ] || fail "launcher UI Windows icon is missing"
 [ -f "$repo_root/launcher-ui/capabilities/default.json" ] || fail "launcher UI capability manifest is missing"
 [ -f "$repo_root/launcher-ui/src/main.rs" ] || fail "launcher UI entrypoint is missing"
 [ -f "$repo_root/launcher-ui/src/lib.rs" ] || fail "launcher UI Tauri bootstrap is missing"
