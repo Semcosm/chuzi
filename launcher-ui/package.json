@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "build": "tsc && node scripts/copy-assets.mjs",
+    "build": "tsc && node scripts/copy-assets.mjs && esbuild frontend/src/app.ts --bundle --format=esm --platform=browser --outfile=frontend/dist/app.js",
     "typecheck": "tsc --noEmit",
     "test": "npm run build --silent && node --test test"
   },
@@ -12,6 +12,7 @@
     "@tauri-apps/api": "^2.8.0"
   },
   "devDependencies": {
+    "esbuild": "^0.25.12",
     "typescript": "^5.9.2"
   }
 }

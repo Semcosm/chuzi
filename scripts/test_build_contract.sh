@@ -106,6 +106,7 @@ grep -Fq 'launcher-ui/Cargo.toml' "$repo_root/scripts/build.sh" || fail "build.s
 grep -Fq 'launcher-ui/Cargo.toml' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses launcher UI"
 grep -Fq 'npm --prefix "$repo_root/launcher-ui"' "$repo_root/scripts/build.sh" || fail "build.sh misses launcher UI frontend build"
 grep -Fq 'launcher-ui' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses launcher UI frontend build"
+grep -Fq 'esbuild frontend/src/app.ts --bundle' "$repo_root/launcher-ui/package.json" || fail "launcher UI build does not bundle the Tauri frontend"
 grep -Fq 'schedule:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "nightly schedule is missing"
 grep -Fq 'workflow_dispatch:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "manual nightly trigger is missing"
 grep -Fq "tags: ['v*.*.*']" "$repo_root/.github/workflows/chuzi-build.yml" || fail "formal release tag trigger is missing"
