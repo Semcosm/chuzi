@@ -76,11 +76,14 @@
       --cz-material-content-well: var(--cz-color-surface-2);
       --cz-material-contrast-fill: var(--cz-color-bg-canvas);
       --cz-material-optical: 0;
+      --cz-opacity-frosted: .86;
+      --cz-opacity-mica: .92;
+      --cz-opacity-liquid: .78;
       --cz-pointer-x: 50%;
       --cz-pointer-y: 0%;
-      --cz-component-surface-fill: var(--cz-material-fill-layer);
-      --cz-component-surface-secondary: var(--cz-material-fill-layer-secondary);
-      --cz-component-surface-chrome: var(--cz-material-fill-layer-chrome);
+      --cz-component-surface-fill: var(--cz-material-fill);
+      --cz-component-surface-secondary: var(--cz-material-fill-secondary);
+      --cz-component-surface-chrome: var(--cz-material-fill-chrome);
       --cz-component-border: var(--cz-material-border);
       --cz-component-shadow: var(--cz-material-shadow);
       --cz-component-content-well: var(--cz-material-content-well);

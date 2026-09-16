@@ -68,6 +68,7 @@ mod tests {
 
         assert!(script.contains("__CHUZI_CAPABILITIES__"));
         assert!(script.contains("transparentWindow: true"));
+        assert!(script.contains("desktopBackdrop: true"));
         assert!(script.contains("environmentSource: \"desktop-compositor\""));
         assert!(script.contains(&format!("platform: \"{}\"", platform_name())));
         assert!(!script.contains("release_index"));

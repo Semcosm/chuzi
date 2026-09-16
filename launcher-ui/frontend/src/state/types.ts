@@ -2,6 +2,22 @@ export const PROTOCOL = "chuzi.launcher-ui/v1" as const;
 
 export type Theme = "light" | "dark";
 export type Material = "solid" | "frosted" | "mica" | "liquid";
+export type MaterialOpacityKey = Exclude<Material, "solid">;
+
+export interface MaterialOpacityPreferences {
+  frosted: number;
+  mica: number;
+  liquid: number;
+}
+
+export interface AppearancePreferences {
+  theme: Theme;
+  /** The material used by content surfaces unless they declare another role. */
+  material: Material;
+  /** A shared material for the custom title bar and the sidebar. */
+  chromeMaterial: Material;
+  opacity: MaterialOpacityPreferences;
+}
 
 export interface ComponentState {
   id: string;

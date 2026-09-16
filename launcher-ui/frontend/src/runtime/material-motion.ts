@@ -27,11 +27,14 @@ export function installMaterialMotion(): void {
   };
   document.addEventListener("pointermove", (event) => {
     const root = document.documentElement;
-    if (!root || root.dataset.material !== "liquid" || root.dataset.reducedEffects === "true" || root.dataset.reducedMotion === "true" || root.dataset.contrastGuard === "true" || root.dataset.windowInactive === "true" || root.dataset.resolvedMaterial === "mica" || root.dataset.resolvedMaterial === "solid") return;
     if (event.pointerType && event.pointerType !== "mouse" && event.pointerType !== "pen") return;
     const target = event.target;
     const surface = target instanceof Element ? target.closest<HTMLElement>("[data-optical=\"interactive\"]") : null;
     if (!surface) return;
+    const material = surface.dataset.surfaceMaterial ?? root.dataset.material;
+    const resolvedMaterial = surface.dataset.surfaceResolvedMaterial ?? root.dataset.resolvedMaterial;
+    const reducedEffects = surface.dataset.surfaceReducedEffects ?? root.dataset.reducedEffects;
+    if (material !== "liquid" || reducedEffects === "true" || root.dataset.reducedMotion === "true" || root.dataset.contrastGuard === "true" || root.dataset.windowInactive === "true" || resolvedMaterial === "mica" || resolvedMaterial === "solid") return;
     const rect = surface.getBoundingClientRect();
     if (!rect.width || !rect.height) return;
     schedulePointer(surface, Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)), Math.max(0, Math.min(100, ((event.clientY - rect.top) / rect.height) * 100)));

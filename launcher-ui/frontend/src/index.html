@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-theme="light" data-material="solid" data-resolved-material="solid" data-environment-source="page">
+<html lang="en" data-theme="light" data-material="solid" data-chrome-material="mica" data-resolved-material="solid" data-environment-source="page">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -9,7 +9,7 @@
   <link rel="stylesheet" href="./design/components.css">
 </head>
 <body>
-  <div class="window-chrome material-surface" data-surface-role="chrome">
+  <div class="window-chrome material-surface" data-surface-role="chrome" data-surface-area="chrome" data-surface-material="mica" data-surface-resolved-material="mica">
     <div class="window-chrome-drag" data-window-drag aria-label="Move CHUZI launcher" role="button" tabindex="0">
       <span class="window-chrome-mark" aria-hidden="true">cz</span>
       <span class="window-chrome-title">CHUZI launcher</span>
@@ -21,7 +21,7 @@
     </div>
   </div>
   <div class="app">
-    <aside class="material-surface" data-surface-role="chrome">
+    <aside class="material-surface" data-surface-role="chrome" data-surface-area="chrome" data-surface-material="mica" data-surface-resolved-material="mica">
       <div class="brand">
         <div class="brand-mark" aria-hidden="true">cz</div>
         <div><div class="brand-name">CHUZI</div><span class="brand-subtitle">control desk</span></div>
@@ -43,7 +43,7 @@
       </div>
     </aside>
     <main>
-      <header class="material-surface" data-surface-role="chrome">
+      <header class="material-surface" data-surface-role="primary">
         <div class="breadcrumb"><span class="breadcrumb-kicker">Launcher</span><span class="breadcrumb-separator">/</span><h1 id="page-title">Overview</h1></div>
         <div class="topbar-actions">
           <span class="version" id="version">loading manifest</span>
@@ -106,7 +106,51 @@
             <div class="panel-body">
               <div class="appearance-options">
                 <div class="appearance-option"><div class="appearance-option-copy"><strong>Theme</strong></div><div class="segmented material-surface" data-surface-role="interactive" role="group" aria-label="Theme"><button type="button" data-theme-control="light" aria-pressed="true">Light</button><button type="button" data-theme-control="dark" aria-pressed="false">Dark</button></div></div>
-                <div class="appearance-option"><div class="appearance-option-copy"><strong>Material</strong></div><div class="segmented material-surface" data-surface-role="interactive" role="group" aria-label="Material"><button type="button" data-material-control="solid" aria-pressed="true">Solid</button><button type="button" data-material-control="frosted" aria-pressed="false">Frosted Glass</button><button type="button" data-material-control="mica" aria-pressed="false">Mica</button><button type="button" data-material-control="liquid" aria-pressed="false">Liquid Glass</button></div></div>
+                <div class="appearance-option"><div class="appearance-option-copy"><strong>Content material</strong><small>Default recipe for the main content surfaces.</small></div><div class="segmented material-surface" data-surface-role="interactive" role="group" aria-label="Content material"><button type="button" data-material-control="solid" aria-pressed="true">Solid</button><button type="button" data-material-control="frosted" aria-pressed="false">Frosted Glass</button><button type="button" data-material-control="mica" aria-pressed="false">Mica</button><button type="button" data-material-control="liquid" aria-pressed="false">Liquid Glass</button></div></div>
+                <div class="appearance-option"><div class="appearance-option-copy"><strong>Window chrome material</strong><small>One shared recipe for the title bar and sidebar.</small></div><div class="segmented material-surface" data-surface-role="interactive" role="group" aria-label="Window chrome material"><button type="button" data-chrome-material-control="solid" aria-pressed="false">Solid</button><button type="button" data-chrome-material-control="frosted" aria-pressed="false">Frosted Glass</button><button type="button" data-chrome-material-control="mica" aria-pressed="true">Mica</button><button type="button" data-chrome-material-control="liquid" aria-pressed="false">Liquid Glass</button></div></div>
+                <div class="appearance-option appearance-opacity-option"><div class="appearance-option-copy"><strong>Material opacity</strong><small>Each optical recipe keeps its own opacity, even when you switch materials.</small></div><div class="material-opacity-controls" aria-label="Material opacity controls">
+                  <label class="material-opacity-control"><span>Frosted</span><output id="opacity-frosted-value">86%</output><input type="range" min="60" max="96" step="1" value="86" data-opacity-control="frosted" aria-label="Frosted opacity" aria-valuenow="86" aria-valuetext="86%"></label>
+                  <label class="material-opacity-control"><span>Mica</span><output id="opacity-mica-value">92%</output><input type="range" min="75" max="100" step="1" value="92" data-opacity-control="mica" aria-label="Mica opacity" aria-valuenow="92" aria-valuetext="92%"></label>
+                  <label class="material-opacity-control"><span>Liquid</span><output id="opacity-liquid-value">78%</output><input type="range" min="55" max="92" step="1" value="78" data-opacity-control="liquid" aria-label="Liquid Glass opacity" aria-valuenow="78" aria-valuetext="78%"></label>
+                </div></div>
+              </div>
+            </div>
+          </section>
+          <section class="panel material-surface" data-surface-role="primary">
+            <div class="panel-head"><div class="panel-head-copy"><span class="panel-kicker">Liquid glass primitives</span><h3>Interaction lab</h3></div><span class="version">DOM-safe controls</span></div>
+            <div class="panel-body">
+              <div class="control-gallery">
+                <article class="control-sample material-surface" data-surface-role="secondary" data-surface-material="frosted">
+                  <div class="control-sample-head"><strong>Buttons</strong><small>Press and hover states</small></div>
+                  <div class="control-sample-actions"><button type="button" class="primary">Primary</button><button type="button">Quiet</button><button type="button" class="icon-button" aria-label="More actions">···</button></div>
+                </article>
+                <article class="control-sample material-surface" data-surface-role="secondary" data-surface-material="mica">
+                  <div class="control-sample-head"><strong>Toggle</strong><small>Native keyboard semantics</small></div>
+                  <label class="glass-toggle"><input type="checkbox" checked><span class="glass-toggle-track" aria-hidden="true"><span></span></span><span>Adaptive luminance</span></label>
+                </article>
+                <article class="control-sample material-surface" data-surface-role="secondary" data-surface-material="liquid">
+                  <div class="control-sample-head"><strong>Slider</strong><small>Live optical intensity</small></div>
+                  <label class="glass-slider"><span>Refraction</span><output id="demo-slider-value">64%</output><input type="range" min="0" max="100" value="64" data-demo-slider="true" aria-label="Refraction intensity"></label>
+                </article>
+                <article class="control-sample material-surface" data-surface-role="secondary" data-surface-material="mica">
+                  <div class="control-sample-head"><strong>Tabs</strong><small>Compact bottom-tab pattern</small></div>
+                  <div class="glass-tabs" role="tablist" aria-label="Glass sample tabs"><button type="button" role="tab" aria-selected="true" aria-controls="glass-tab-overview" data-demo-tab="overview">Overview</button><button type="button" role="tab" aria-selected="false" aria-controls="glass-tab-effects" data-demo-tab="effects">Effects</button><button type="button" role="tab" aria-selected="false" aria-controls="glass-tab-about" data-demo-tab="about">About</button></div>
+                  <div class="glass-tab-panels"><span id="glass-tab-overview" role="tabpanel">State</span><span id="glass-tab-effects" role="tabpanel" hidden>Optics</span><span id="glass-tab-about" role="tabpanel" hidden>About</span></div>
+                </article>
+                <article class="control-sample material-surface" data-surface-role="secondary" data-surface-material="frosted">
+                  <div class="control-sample-head"><strong>Dialog & notification</strong><small>Modal and transient feedback</small></div>
+                  <div class="control-sample-actions"><button type="button" data-dialog-open="glass-demo-dialog">Open dialog</button><button type="button" data-demo-action="toast">Show notice</button></div>
+                </article>
+                <article class="control-sample material-surface" data-surface-role="secondary" data-surface-material="liquid">
+                  <div class="control-sample-head"><strong>Progress & scroll</strong><small>Bounded content stays readable</small></div>
+                  <div class="glass-progress" role="progressbar" aria-label="Glass preparation" aria-valuemin="0" aria-valuemax="100" aria-valuenow="72"><span style="width:72%"></span></div>
+                  <div class="glass-scroll-demo" tabindex="0"><span>Scroll container</span><span>Depth-aware surfaces</span><span>Stable content hierarchy</span></div>
+                </article>
+                <article class="control-sample material-surface" data-surface-role="secondary" data-surface-material="liquid">
+                  <div class="control-sample-head"><strong>Optics</strong><small>Progressive blur & magnifier</small></div>
+                  <div class="glass-optics-controls"><label class="glass-toggle"><input type="checkbox" checked><span class="glass-toggle-track" aria-hidden="true"><span></span></span><span>Progressive blur</span></label><button type="button" data-demo-action="magnifier">Magnifier</button></div>
+                  <div class="glass-lens-preview"><span>Layered depth</span><b aria-hidden="true">+</b></div>
+                </article>
               </div>
             </div>
           </section>
@@ -125,6 +169,11 @@
     </main>
   </div>
   <div id="toast" class="toast material-surface" data-surface-role="elevated" role="status"></div>
+  <dialog id="glass-demo-dialog" class="glass-dialog material-surface" data-surface-role="elevated" data-surface-material="liquid" aria-labelledby="glass-demo-dialog-title">
+    <div class="glass-dialog-head"><div><span class="panel-kicker">Glass primitive</span><h3 id="glass-demo-dialog-title">Layered dialog</h3></div><button type="button" class="icon-button" data-dialog-close aria-label="Close dialog">×</button></div>
+    <p>Dialogs, toasts, sliders, toggles and bounded scroll regions now share the same material tokens without taking ownership of the window scroll.</p>
+    <div class="glass-dialog-actions"><button type="button" data-dialog-close>Cancel</button><button type="button" class="primary" data-dialog-close>Apply sample</button></div>
+  </dialog>
   <div class="window-resize-layer" aria-hidden="true">
     <div class="window-resize-handle window-resize-north" data-window-resize="North"></div>
     <div class="window-resize-handle window-resize-east" data-window-resize="East"></div>

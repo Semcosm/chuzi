@@ -1,8 +1,9 @@
-import type { Material, Theme } from "../state/types.js";
+import type { AppearancePreferences, Material } from "../state/types.js";
 
 export interface MaterialCapabilities {
   backdropFilter: boolean;
   compositedOpacity: boolean;
+  webgl: boolean;
   environmentSource: "page" | "host-backdrop" | "desktop-compositor" | "none";
   transparentWindow: boolean;
   refraction: boolean;
@@ -22,6 +23,7 @@ export interface HostCapabilities {
   desktopBackdrop?: boolean;
   backdropFilter?: boolean;
   compositedOpacity?: boolean;
+  webgl?: boolean;
   environmentSource?: MaterialCapabilities["environmentSource"];
   transparentWindow?: boolean;
   refraction?: boolean;
@@ -33,6 +35,13 @@ export interface ResolvedMaterial {
   name: "solid" | "mica" | "frosted" | "liquid-basic";
   capabilities: MaterialCapabilities;
   reducedEffects?: boolean;
+}
+
+function canUseLiquid(requested: Material, resolved: ResolvedMaterial): boolean {
+  return requested === "liquid" &&
+    resolved.name === "liquid-basic" &&
+    !resolved.reducedEffects &&
+    !resolved.capabilities.environmentContrastRisk;
 }
 
 function mediaMatches(query: string): boolean {
@@ -57,6 +66,13 @@ export function detectMaterialCapabilities(): MaterialCapabilities {
       (CSS.supports("backdrop-filter", "blur(1px)") || CSS.supports("-webkit-backdrop-filter", "blur(1px)"))
   );
   const backdropFilter = typeof host.backdropFilter === "boolean" ? host.backdropFilter : browserBackdropFilter;
+  let browserWebgl = false;
+  try {
+    const canvas = document.createElement?.("canvas");
+    browserWebgl = Boolean(canvas?.getContext("webgl") || canvas?.getContext("experimental-webgl"));
+  } catch {
+    browserWebgl = false;
+  }
   const validSources = ["page", "host-backdrop", "desktop-compositor", "none"] as const;
   let environmentSource = validSources.includes(host.environmentSource as (typeof validSources)[number])
     ? (host.environmentSource as (typeof validSources)[number])
@@ -67,6 +83,7 @@ export function detectMaterialCapabilities(): MaterialCapabilities {
   return {
     backdropFilter,
     compositedOpacity: host.compositedOpacity !== false,
+    webgl: typeof host.webgl === "boolean" ? host.webgl : browserWebgl,
     environmentSource,
     transparentWindow: host.transparentWindow === true,
     refraction: host.refraction === true,
@@ -92,18 +109,19 @@ export function resolveMaterial(requested: Material): ResolvedMaterial {
   }
   if (requested === "liquid") {
     return {
-      name: capabilities.backdropFilter && capabilities.compositedOpacity ? "liquid-basic" : "mica",
+      name: (capabilities.backdropFilter && capabilities.compositedOpacity) || capabilities.webgl ? "liquid-basic" : "mica",
       capabilities
     };
   }
   return { name: "solid", capabilities };
 }
 
-export function setAppearanceAttributes(root: HTMLElement, theme: Theme, material: Material): ResolvedMaterial {
-  const resolved = resolveMaterial(material);
+export function setAppearanceAttributes(root: HTMLElement, appearance: AppearancePreferences): ResolvedMaterial {
+  const resolved = resolveMaterial(appearance.material);
   const host = detectHostCapabilities();
-  root.dataset.theme = theme;
-  root.dataset.material = material;
+  root.dataset.theme = appearance.theme;
+  root.dataset.material = appearance.material;
+  root.dataset.chromeMaterial = appearance.chromeMaterial;
   root.dataset.resolvedMaterial = resolved.name;
   root.dataset.environmentSource = resolved.capabilities.environmentSource;
   root.dataset.platform = host.platform ?? "unknown";
@@ -116,15 +134,50 @@ export function setAppearanceAttributes(root: HTMLElement, theme: Theme, materia
       resolved.capabilities.forcedColors
   );
   root.dataset.dispersion = String(
-    material === "liquid" &&
-      resolved.name === "liquid-basic" &&
-      resolved.capabilities.dispersion &&
-      resolved.capabilities.environmentSource !== "none" &&
+    canUseLiquid(appearance.material, resolved) &&
+      (resolved.capabilities.dispersion || resolved.capabilities.webgl) &&
       !resolved.capabilities.reduceMotion &&
       !resolved.capabilities.reduceTransparency &&
       !resolved.capabilities.increaseContrast &&
       !resolved.capabilities.forcedColors &&
       !resolved.capabilities.environmentContrastRisk
   );
+  root.style.setProperty("--cz-opacity-frosted", String(appearance.opacity.frosted));
+  root.style.setProperty("--cz-opacity-mica", String(appearance.opacity.mica));
+  root.style.setProperty("--cz-opacity-liquid", String(appearance.opacity.liquid));
+
+  const chromeResolved = resolveMaterial(appearance.chromeMaterial);
+  root.dataset.chromeResolvedMaterial = chromeResolved.name;
+  root.dataset.chromeDispersion = String(
+    canUseLiquid(appearance.chromeMaterial, chromeResolved) &&
+      (chromeResolved.capabilities.dispersion || chromeResolved.capabilities.webgl) &&
+      !chromeResolved.capabilities.reduceMotion &&
+      !chromeResolved.capabilities.reduceTransparency &&
+      !chromeResolved.capabilities.increaseContrast &&
+      !chromeResolved.capabilities.forcedColors
+  );
+  document.querySelectorAll<HTMLElement>(".material-surface").forEach((surface) => {
+    const isChrome = surface.dataset.surfaceArea === "chrome";
+    const requested = isChrome ? appearance.chromeMaterial : appearance.material;
+    const surfaceResolved = isChrome ? chromeResolved : resolved;
+    const liquidEnabled = canUseLiquid(requested, surfaceResolved);
+    surface.dataset.surfaceMaterial = requested;
+    surface.dataset.surfaceResolvedMaterial = surfaceResolved.name;
+    surface.dataset.surfaceReducedEffects = String(Boolean(surfaceResolved.reducedEffects));
+    surface.dataset.surfaceEnvironmentSource = surfaceResolved.capabilities.environmentSource;
+    surface.dataset.liquidEnhanced = String(liquidEnabled);
+  });
+  const controlLiquid = canUseLiquid(appearance.material, resolved);
+  root.dataset.liquidControls = String(controlLiquid);
+  document.querySelectorAll<HTMLElement>(
+    "button, select, input[type='range'], .glass-toggle-track, .glass-tabs, .glass-progress, .glass-scroll-demo, .glass-lens-preview"
+  ).forEach((control) => {
+    const chromeAncestor = control.closest<HTMLElement>('[data-surface-area="chrome"]');
+    const controlResolved = chromeAncestor ? chromeResolved : resolved;
+    const controlRequested = chromeAncestor ? appearance.chromeMaterial : appearance.material;
+    control.dataset.liquidControl = String(
+      canUseLiquid(controlRequested, controlResolved)
+    );
+  });
   return resolved;
 }
