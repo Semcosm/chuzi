@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc && node scripts/copy-assets.mjs && esbuild frontend/src/app.ts --bundle --format=esm --platform=browser --outfile=frontend/dist/app.js",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build --silent && node --test test/*.mjs"
+    "test": "npm run build --silent && node --test test"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.8.0"
