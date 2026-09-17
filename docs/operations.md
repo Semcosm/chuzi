@@ -94,13 +94,29 @@ store, err := store.Open(cfg)
 
 ## 构建与发布目标
 
-### Pull request checks
+### CI DAG and pull request checks
 
-Pull request 更新由 `.github/workflows/chuzi-pr.yml` 执行单 runner 的快速检查，保留
-Go/Node/Rust 默认 feature 测试、宿主平台编译和协议 smoke test。同一个 PR 的旧运行会在
-新 push 后取消，避免分支迭代时堆积过时构建。四平台 native WebView、release package 和
-Linux X11/Wayland smoke 只由主分支、正式 tag、nightly 计划任务或手动 dispatch 的完整
-构建执行；主分支保护仍使用同名的 `chuzi-build` required check。
+Pull request 更新由 `.github/workflows/chuzi-pr.yml` 执行并行的 contract、Go、Node 和 Rust
+源码测试，最后由同名 `chuzi-build` 聚合 job 作为 required check。同一个 PR 的旧运行会在
+新 push 后取消，避免分支迭代时堆积过时检查。PR 不执行 Go/Launcher 发布编译、Worker
+产物构建、四平台 native WebView、release package 或 Linux X11/Wayland smoke。
+
+`.github/workflows/chuzi-build.yml` 是 `main` 合并、正式 tag、nightly 计划任务和手动
+dispatch 使用的完整构建 DAG。它不监听普通开发分支的 push；分支 PR 只执行上面的快速
+源码检查，合并到 `main` 后才启动完整目标构建。公共 contract/Go/Node/Rust 校验各自只
+运行一次，并与以下独立构建并行：
+
+* `go_build` matrix 在 Ubuntu 上交叉编译四个目标的 Go service/launcher。
+* `runtime_build` matrix 在 Windows、Linux x64、Linux ARM64 和 macOS ARM64 原生 runner
+  上编译 Rust/Wry helper，并在 Linux runner 上执行 X11/Wayland smoke。
+* `node_checks` 只构建一次 Node Worker，并通过 `ci-worker` artifact 交给所有目标。
+
+每个 `assemble_target` job 从 `ci-go-*`、`ci-worker` 和 `ci-runtime-*` artifact 组装一个
+目标包，job 的显示名称仍为 `chuzi-build-<target>`，以保持 nightly acceptance 和
+release retry 的审计契约。nightly/tag 产物再由 `artifact_integration` 在单独 runner
+汇聚，验证 commit、版本、release index、归档内容和 SHA-256，最后才允许
+`chuzi-build` 聚合 job 通过。Runner 之间不共享本地文件系统，只通过 Actions artifact
+传递构建结果。
 
 ### Nightly release（当前首个 release 流程）
 
@@ -129,7 +145,7 @@ Linux X11/Wayland smoke 只由主分支、正式 tag、nightly 计划任务或�
 凭证或启动器响应 payload。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
-GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：
+GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的默认格式/单元测试在公共 job 中执行，带 `desktop-webview` feature 的 native 编译和运行时测试在每个目标 runner 上执行，目标矩阵为：
 
 | Target | Output | Build mode |
 | --- | --- | --- |
@@ -143,9 +159,14 @@ GitHub Actions 负责远端构建，不要求开发者在本地安装完整的�
 ```bash
 scripts/build.sh <target> [version]
 scripts/package.sh <target> <version>
+scripts/build_go_target.sh <target> <version> <output-dir>
+scripts/build_worker.sh <output-dir>
+scripts/build_runtime.sh <target> <output-dir>
+scripts/assemble_target.sh <target> <version> <go-dir> <worker-archive> <runtime-binary> <dist-root>
 ```
 
-Windows runner 使用对应的 `*.ps1` 脚本。构建产物必须包含 Go 服务、Worker 文件、
+Windows runner 使用对应的 `*.ps1` 脚本。`build.sh`/`build.ps1` 保留为本地一体化构建入口，
+并行 CI 使用组件构建和 `assemble_target` 脚本。构建产物必须包含 Go 服务、Worker 文件、
 `chuzi-browser-runtime` 和 `build-manifest.json`，并生成 SHA256 校验文件。
 发布脚本生成的 manifest 将 `browserRuntime` 标为 `wry-desktop`；源码中的
 无 feature Rust helper 和 Node Worker 才使用 `deferred`，Node 包同时携带
