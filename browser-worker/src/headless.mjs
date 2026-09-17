@@ -220,7 +220,7 @@ async function runSession(session) {
       protocol_version: runtime.protocolVersion,
     });
     const mode = value(session.request, "mode") || "probe";
-    if (mode === "hold") return;
+    if (mode === "hold" || mode === "adapter") return;
     if (mode === "crash") {
       terminateBrowser(session.child);
       await finishSession(session, "session_failed", runtimeFailure("transient", "browser_crashed"));

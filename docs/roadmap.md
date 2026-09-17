@@ -31,11 +31,11 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 Nightly release 是首次可交付流程：GitHub Actions 定时构建四个目标，不打 tag、不创建
 GitHub Release，只上传限期 Actions artifacts。版本包含 run number 和短 commit hash；
 产物已拆分为 launcher、服务、浏览器 Worker 和桌面运行时组件，并携带资源校验
-manifest/index。CR-0028 增加了 Rust/Wry 启动器 UI：首次启动通过 `initialize` 展示
-组件选择，设置页复用同一 `component-list`/启停、修复和 settings 契约。CR-0031
-还接入了 `check-update`、插件列表和显式信任/启停/删除操作，并将刷新完成判定
-绑定到所有状态请求。UI 通过 shell-free 子进程调用 Go CLI，CR-0027 的网络下载
-仍不包含 Chromium、真实账号或生产凭证。
+manifest/index。当前交付的是 UI-neutral `chuzi-launcher` CLI、服务、浏览器 Worker
+和桌面运行时；平台 UI 尚未随 nightly 发布。后续 Windows、macOS、Linux 客户端分别
+通过 Stable API Boundary 复用同一启动器/Core 能力，Linux 首阶段采用 GTK，平台
+默认样式和无障碍行为由各自原生框架负责。CR-0027 的网络下载仍不包含 Chromium、
+真实账号或生产凭证。
 
 ## 演进阶段
 
@@ -139,6 +139,46 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
 - Matrix 断线、重复投递和恢复发送有 mock 服务集成测试。
 - 消息只包含账号脱敏标识、request ID、业务状态和必要的错误分类。
 
+### Core 假实现垂直切片
+
+状态：已完成（Core API 第二阶段）。
+
+`internal/core.PipelineRunner` 已将队列租约绑定的 Session Runner、一次性
+`Credential.Use`、`automation.Adapter` 和 Store 的最终状态事务接成可恢复的
+控制面链路。`internal/coretest` 提供不依赖 UI、真实浏览器或外部 Matrix 的
+确定性替身。`tests/core/vertical_test.go` 覆盖成功、幂等提交、取消竞态、超时、
+重试、凭证失败、Worker 崩溃、服务重启后的过期租约恢复以及通知重复投递。
+
+完成标准：
+
+- 通过 Go Core API 提交请求后，Scheduler 可驱动一次完整的队列、租约、会话、凭证、自动化、状态和 outbox 链路。
+- 所有替身都使用显式时钟和 ID，不依赖 sleep、真实浏览器、UI 或外部网络。
+- 失败和重启恢复只通过现有 Account/Store 事务改变业务状态，并可从 Core API 查询结果、审计事件和通知状态。
+
+### Core API wire 与本地客户端边界
+
+状态：已完成首个 transport 增量和 Windows WinUI 3 客户端首个实现；macOS/Linux 客户端尚未开始。
+
+`chuzi.core/v1` 已冻结为独立 DTO、稳定错误码和 JSONL request/response envelope。
+`internal/coretransport` 提供 Unix domain socket 和 Windows named pipe；服务入口实例化
+`core.Service` 后挂载 IPC server。握手、版本拒绝、方法白名单、按 ID 并发响应、业务/传输
+取消、owner-only 权限、endpoint 占用保护、超大帧和敏感字段脱敏均有跨进程契约测试。
+
+完成标准：
+
+- 客户端只消费 `coreapi.API`，不能访问 Store、凭证或 Profile。
+- `hello` 版本协商和错误码在 wire 层稳定；底层错误文本不跨进程返回。
+- 服务重启时 endpoint 可清理 stale socket，但不会删除仍被占用的 endpoint。
+- Go Windows named-pipe 源码已通过 `GOOS=windows GOARCH=amd64` 交叉编译；WinUI 3
+  原生编译与打包由 `chuzi-build-windows-ui` Windows runner 提供证据，本机 Linux 不宣称
+  已完成 Windows native build。
+
+Windows 客户端位于 `ui/windows`，只使用 owner-only named pipe 和 `chuzi.core/v1`，提供
+提交、查询和业务取消的最小界面。`scripts/build_windows_ui.ps1` 与 GitHub Actions
+`chuzi-build-windows-ui` 生成独立 zip 和 SHA-256；该客户端不进入 Go 服务/数据库包，也不
+复制 launcher、Store 或凭证逻辑。Windows 原生构建仍需 Windows runner，Linux 开发机只
+能执行仓库契约和静态边界检查。
+
 ### 阶段七：真实浏览器运行时
 
 状态：进行中，拆分为独立 CR。CR-0014-A 已完成 Rust helper 和协议边界；
@@ -146,7 +186,8 @@ CR-0014-B、CR-0014-C 已集成。Windows/macOS 已由对应原生 CI 完成 Wry
 feature 编译与 helper 打包检查；Ubuntu 24.04 Linux amd64/arm64 已由原生 CI
 执行 WebKitGTK 的 X11/Wayland 本地测试页 smoke。Windows/macOS 的 CI 证据不等于
 GUI 运行时 smoke。这些 helper 不会自动替代服务默认路径；`cmd/service` 只有显式
-选择 Rust backend 才会启动 helper；CR-0017 已接入 headless-CDP 的运行时发现和进程边界，业务自动化仍未完成。
+选择 Rust backend 才会启动 helper；CR-0017 已接入 headless-CDP 的运行时发现和进程边界，
+CR-0043 已接入云原神已授权会话检查，其他业务自动化仍未完成。
 
 #### 7A：Rust runtime boundary（CR-0014-A）
 
@@ -178,16 +219,18 @@ Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩�
 不打包完整 Chromium；使用动态 loopback CDP 端口、服务派生 Profile 和固定安全参数，
 轮询 `/json/version` 并校验 endpoint，覆盖启动失败、发现超时、非法 endpoint、取消、
 关闭和崩溃回收。它不把桌面隐藏 WebView 作为 headless，也不假设 Safari/WKWebView
-可 headless。CR-0021 已实现首个 `chuzi.adapter/v1` 适配器：只服务仓库内本地
-测试页并用假账号读取 marker 验证操作链路，endpoint discovery 不被视为业务成功。
-更广泛的业务自动化适配器、WebDriver、浏览器版本策略、资源限制和四平台运行证据
-仍需后续独立 CR。
+可 headless。CR-0043 已实现首个真实 `chuzi.adapter/v1` 适配器：固定检查云原神
+已授权会话，返回标题、应用根节点和登录状态等脱敏页面事实；Core evaluator 才将
+事实映射为账号结果，未认证或页面结构变化时 fail closed，endpoint discovery 不被视为
+业务成功。仓库内本地测试页仍用于协议
+回归。更广泛的业务自动化适配器、WebDriver、浏览器版本策略、资源限制和四平台运行
+证据仍需后续独立 CR。
 
 #### 7E：业务自动化适配器与插件进程边界（CR-0020 第一增量）
 
-CR-0021 在该契约之上完成首个 Node headless-CDP 适配器的本地垂直切片；它只
-通过显式入口、fake CDP 浏览器和仓库内测试页验证操作链路，不改变服务默认的
-deferred backend，也不扩展生产账号自动化支持。
+CR-0021 完成了本地测试页垂直切片；CR-0043 在同一契约之上接入首个真实云原神
+会话检查流程。它通过显式服务选项启用，不改变服务默认的 deferred backend，也不
+扩展到其他平台。
 
 先建立 `internal/automation` 的跨平台适配器契约和 `internal/plugin` 的原生/Wine
 进程后端。Windows 原生进程是首个正式运行目标；Linux amd64 的 Wine 和
@@ -213,14 +256,18 @@ payload 中。BetterGI 只作为后续通信插件，不在本增量内实现自
 生产运行拼装已提供：`configs/example.json`、`deploy/`、健康检查、Matrix 网络与
 通知 worker、凭证注入、数据库备份恢复和服务入口接线。CR-0025 增加结构化脱敏
 日志与有界轮转、低基数指标、全局 metadata-only 审计查询、并行健康探针和恢复前
-全量数据库校验；稳定版签名发布已由 CR-0024 接入。构建/打包脚本仍按既定 nightly
-与稳定版工作流运行。
+全量数据库校验；CR-0042 增加了可在 CI 运行的生产运行集成验证，以及显式受控
+Matrix homeserver 垂直验证入口、凭证轮换/撤销运维命令和租约/重启/损坏恢复演练；
+稳定版签名发布已由 CR-0024 接入。构建/打包脚本仍按既定 nightly 与稳定版工作流运行。
 
 完成标准：
 
 - 部署示例与 Secret 管理边界清晰，默认配置不会暴露敏感信息。
 - 健康检查能区分服务、存储、队列、Worker 和 Matrix 依赖状态。
 - 备份恢复和租约恢复经过演练或自动化测试。
+- `scripts/test_runtime.sh` 的 deterministic runtime suite 通过 fake Matrix
+  homeserver、fake 账号、测试凭证和本地 Worker 覆盖上述演练；受控环境可显式
+  设置 `CHUZI_RUN_CONTROLLED_MATRIX=1` 再执行真实测试 homeserver 的 sync/send。
 - 观测输出不包含凭证、Cookie、页面内容或原始账号/房间标识，指标标签保持低基数。
 - 发布只通过 UGS 要求的签名 annotated semver tag 和远端构建流程完成。
 

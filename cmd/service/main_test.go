@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -71,7 +72,7 @@ func TestAssembleRuntimeOpensPersistentStoreAndBuildsBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.store == nil || runtime.requests == nil || runtime.runner == nil || runtime.scheduler == nil {
+	if runtime.store == nil || runtime.requests == nil || runtime.runner == nil || runtime.scheduler == nil || runtime.coreAPI == nil {
 		t.Fatalf("assembled runtime has missing boundary: %#v", runtime)
 	}
 	if _, err := runtime.store.SchemaVersion(); err != nil {
@@ -143,6 +144,22 @@ func TestHeadlessBackendRejectsEmptyBrowserCommand(t *testing.T) {
 	}
 }
 
+func TestGenshinAutomationAdapterRequiresExplicitHeadlessBackend(t *testing.T) {
+	options := testServiceOptions()
+	options.automationAdapter = "genshin-cloudgame"
+	if err := options.validate(); !errors.Is(err, errInvalidOptions) {
+		t.Fatalf("node backend adapter validation = %v, want errInvalidOptions", err)
+	}
+	options.backend = backendHeadless
+	if err := options.validate(); err != nil {
+		t.Fatalf("headless adapter validation = %v", err)
+	}
+	options.automationAdapter = "unsupported"
+	if err := options.validate(); !errors.Is(err, errInvalidOptions) {
+		t.Fatalf("unsupported adapter validation = %v, want errInvalidOptions", err)
+	}
+}
+
 func TestDefaultServiceOptionsAreValid(t *testing.T) {
 	options := defaultServiceOptions()
 	if err := options.validate(); err != nil {
@@ -183,5 +200,60 @@ func TestAssembleRuntimeWiresConfiguredMatrixAndCredentialBoundaries(t *testing.
 	}
 	if err := runtime.store.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestCredentialMaintenanceLifecycleUsesRedactedProductionBoundary(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg, err := config.New(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CreateAccount("maintenance-account"); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	raw, err := json.Marshal(struct {
+		DataDir     string                  `json:"data_dir"`
+		Credentials config.CredentialConfig `json:"credentials"`
+	}{DataDir: dataDir, Credentials: config.CredentialConfig{KeyEnv: "CHUZI_MAINT_KEY", KeyIDEnv: "CHUZI_MAINT_KEY_ID", HistoryEnv: "CHUZI_MAINT_KEYS"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	options := defaultServiceOptions()
+	options.configPath = configPath
+	t.Setenv("CHUZI_MAINT_KEY_ID", "old-key")
+	t.Setenv("CHUZI_MAINT_KEY", strings.Repeat("11", 32))
+	t.Setenv("CHUZI_MAINT_SECRET", "maintenance-secret")
+	if err := runMaintenance(context.Background(), options, false, "", "maintenance-account", "", "", "CHUZI_MAINT_SECRET", "operator", false, false, "", "", 100); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CHUZI_MAINT_KEY_ID", "new-key")
+	t.Setenv("CHUZI_MAINT_KEY", strings.Repeat("22", 32))
+	t.Setenv("CHUZI_MAINT_KEYS", `{"old-key":"1111111111111111111111111111111111111111111111111111111111111111"}`)
+	if err := runMaintenance(context.Background(), options, false, "", "", "maintenance-account", "", "", "operator", false, false, "", "", 100); err != nil {
+		t.Fatal(err)
+	}
+	if err := runMaintenance(context.Background(), options, false, "", "", "", "maintenance-account", "", "operator", false, false, "", "", 100); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	record, found, err := reopened.GetCredential("maintenance-account")
+	if err != nil || !found || record.RevokedAt == nil || len(record.Ciphertext) != 0 {
+		t.Fatalf("maintenance credential = %#v/%t: %v", record, found, err)
 	}
 }

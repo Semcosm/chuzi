@@ -9,6 +9,8 @@
 credentials/
 profiles/
 runtime/
+!tests/runtime/
+!tests/runtime/**
 data/
 logs/
 
@@ -17,7 +19,6 @@ bin/
 dist/
 browser-worker/node_modules/
 browser-runtime/target/
-launcher-ui/target/
 browser-worker/report.*.json
 coverage/
 tmp/

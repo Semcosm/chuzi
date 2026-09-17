@@ -3,7 +3,6 @@ name: chuzi-build
 on:
   schedule:
     - cron: '17 2 * * *'
-  pull_request:
   push:
     branches: [main]
     tags: ['v*.*.*']
@@ -11,13 +10,169 @@ on:
 
 permissions:
   contents: read
-  actions: write
+
+concurrency:
+  group: chuzi-build-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-matrix:
-    name: chuzi-build-${{ matrix.target }}
+  contract_checks:
+    name: chuzi-build-contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Validate repository contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/validate_policy_manifest.sh
+          scripts/validate_quality_profile.sh
+          scripts/validate_supply_chain_profile.sh
+          scripts/validate_action_pinning.sh
+          scripts/validate_repository_shape.sh
+          scripts/test_build_contract.sh
+          scripts/test_nightly_package.sh
+          scripts/test_nightly_artifact_validator.sh
+          git diff --check
+
+  go_checks:
+    name: chuzi-build-go-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test Go runtime boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHUZI_TEST_DEBUG=1
+          go test -count=1 -v ./...
+          go vet ./...
+          scripts/test_runtime.sh
+          scripts/test_launcher_consumer.sh
+
+  node_checks:
+    name: chuzi-build-node-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: browser-worker/package-lock.json
+      - name: Test and build browser worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHUZI_WORKER_DEBUG=1
+          npm --prefix browser-worker ci --ignore-scripts
+          npm --prefix browser-worker test
+          scripts/build_worker.sh "$RUNNER_TEMP/chuzi-worker"
+          go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
+      - name: Upload browser worker component
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-worker
+          path: ${{ runner.temp }}/chuzi-worker/browser-worker-dist.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+
+  rust_checks:
+    name: chuzi-build-rust-tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Test Rust protocol helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
+          cargo test --locked --manifest-path browser-runtime/Cargo.toml -- --nocapture
+
+  go_build:
+    name: chuzi-build-go-${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-amd64
+            goos: windows
+            goarch: amd64
+          - target: linux-amd64
+            goos: linux
+            goarch: amd64
+          - target: linux-arm64
+            goos: linux
+            goarch: arm64
+          - target: darwin-arm64
+            goos: darwin
+            goarch: arm64
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve build version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            version="$GITHUB_REF_NAME"
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          else
+            version="dev-${GITHUB_SHA:0:12}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build Go components
+        shell: bash
+        run: scripts/build_go_target.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" "$RUNNER_TEMP/chuzi-go"
+      - name: Upload Go components
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-go-${{ matrix.target }}
+          path: ${{ runner.temp }}/chuzi-go
+          if-no-files-found: error
+          retention-days: 1
+
+  runtime_build:
+    name: chuzi-build-runtime-${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
     strategy:
       fail-fast: false
       matrix:
@@ -30,279 +185,175 @@ jobs:
             runner: ubuntu-24.04-arm
           - target: darwin-arm64
             runner: macos-14
-
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
-
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
-        with:
-          go-version-file: go.mod
-          cache: false
-
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        if: matrix.target == 'linux-arm64'
         with:
           node-version: 20
-          cache: npm
-          cache-dependency-path: browser-worker/package-lock.json
-
       - name: Install Linux WebView dependencies
         if: runner.os == 'Linux'
         shell: bash
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev weston xvfb xauth dbus-x11
-
-      - name: Verify host toolchain
-        shell: bash
-        run: |
-          go version
-          node --version
-          npm --version
-          cargo --version
-
       - name: Verify native Linux ARM64 runner
         if: matrix.target == 'linux-arm64'
         shell: bash
         run: |
           test "$(uname -m)" = "aarch64"
           test "$(node -p 'process.arch')" = "arm64"
-          test "$(go env GOARCH)" = "arm64"
-
-      - name: Validate build contract
+      - name: Build native browser runtime on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/build_runtime.ps1 -Target "${{ matrix.target }}" -OutputDir "$env:RUNNER_TEMP\chuzi-runtime\${{ matrix.target }}"
+      - name: Build native browser runtime on Unix
+        if: runner.os != 'Windows'
         shell: bash
-        run: scripts/test_build_contract.sh
-
-      - name: Validate nightly package contract
+        run: scripts/build_runtime.sh "${{ matrix.target }}" "$RUNNER_TEMP/chuzi-runtime/${{ matrix.target }}"
+      - name: Test native browser runtime helper contract
         shell: bash
-        run: scripts/test_nightly_package.sh
+        run: cargo test --locked --manifest-path browser-runtime/Cargo.toml --features desktop-webview
+      - name: Smoke test Linux WebKitGTK on X11 and Wayland
+        if: runner.os == 'Linux'
+        shell: bash
+        run: scripts/test_desktop_runtime_smoke.sh "$RUNNER_TEMP/chuzi-runtime/${{ matrix.target }}/chuzi-browser-runtime"
+      - name: Upload native browser runtime
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-runtime-${{ matrix.target }}
+          path: ${{ runner.temp }}/chuzi-runtime/${{ matrix.target }}
+          if-no-files-found: error
+          retention-days: 1
 
-      - name: Build service and worker on Windows
+  windows_ui:
+    name: chuzi-build-windows-ui
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: 8.0.x
+      - name: Resolve build version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') {
+            $version = $env:GITHUB_REF_NAME
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'schedule' -or $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $version = "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
+          } else {
+            $version = "dev-$($env:GITHUB_SHA.Substring(0, 12))"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Build and package WinUI 3 client
+        shell: pwsh
+        run: ./scripts/build_windows_ui.ps1 -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui"
+        env:
+          CHUZI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+      - name: Test Windows Core named pipe
+        shell: pwsh
+        run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
+      - name: Upload Windows native client
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-ui-windows
+          path: ${{ runner.temp }}/chuzi-ui/chuzi-native-windows-*.zip*
+          if-no-files-found: error
+          retention-days: 1
+
+  assemble_target:
+    name: chuzi-build-${{ matrix.target }}
+    needs: [go_build, node_checks, runtime_build, windows_ui]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-amd64
+            runner: windows-2022
+          - target: linux-amd64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-arm64
+            runner: macos-14
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ci-go-${{ matrix.target }}
+          path: ${{ runner.temp }}/chuzi-go
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ci-worker
+          path: ${{ runner.temp }}/chuzi-worker
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ci-runtime-${{ matrix.target }}
+          path: ${{ runner.temp }}/chuzi-runtime
+      - name: Resolve build version on Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
-          ./scripts/build.ps1 -Target "${{ matrix.target }}" -Version $version
-
-      - name: Build service and worker on Unix
+          "CHUZI_BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Resolve build version on Unix
         if: runner.os != 'Windows'
         shell: bash
         run: |
           if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
-          scripts/build.sh "${{ matrix.target }}" "$version"
-
-      - name: Test Go service and worker contract
-        shell: bash
-        run: |
-          set -euo pipefail
-          export CHUZI_TEST_DEBUG=1
-          export CHUZI_WORKER_DEBUG=1
-
-          # Keep long-running contract tests observable without imposing a business timeout.
-          phase_file="$(mktemp)"
-          watchdog_pid=""
-          cleanup_debug() {
-            if [ -n "${watchdog_pid:-}" ]; then
-              kill "$watchdog_pid" 2>/dev/null || true
-              wait "$watchdog_pid" 2>/dev/null || true
-            fi
-            rm -f "$phase_file"
-          }
-          trap cleanup_debug EXIT
-
-          now() {
-            date -u '+%Y-%m-%dT%H:%M:%SZ'
-          }
-
-          dump_debug_state() {
-            current_phase="$(cat "$phase_file" 2>/dev/null || printf '%s' 'unknown')"
-            printf '[contract-debug] %s phase=%s\n' "$(now)" "$current_phase"
-            printf '[contract-debug] process snapshot\n'
-            if command -v ps >/dev/null 2>&1; then
-              ps -ef 2>&1 || true
-            elif command -v tasklist.exe >/dev/null 2>&1; then
-              tasklist.exe 2>&1 || true
-            else
-              printf '[contract-debug] no process-list command available\n'
-            fi
-          }
-
-          debug_watchdog() {
-            while sleep 15; do
-              dump_debug_state
-            done
-          }
-          debug_watchdog &
-          watchdog_pid=$!
-
-          run_phase() {
-            phase_name="$1"
-            shift
-            printf '%s\n' "$phase_name" >"$phase_file"
-            phase_started="$(now)"
-            printf '[contract] START %s at %s\n' "$phase_name" "$phase_started"
-            phase_status=0
-            if "$@"; then
-              phase_status=0
-            else
-              phase_status=$?
-            fi
-            phase_finished="$(now)"
-            printf '[contract] END %s at %s exit=%s\n' "$phase_name" "$phase_finished" "$phase_status"
-            if [ "$phase_status" -ne 0 ]; then
-              printf '[contract] FAILURE %s diagnostics\n' "$phase_name" >&2
-              dump_debug_state >&2
-            fi
-            return "$phase_status"
-          }
-
-          run_phase 'go-test' go test -count=1 -v ./...
-          run_phase 'node-test' npm --prefix browser-worker test
-          run_phase 'launcher-consumer-test' scripts/test_launcher_consumer.sh
-          run_phase 'nightly-artifact-validator-test' scripts/test_nightly_artifact_validator.sh
-          run_phase 'launcher-ui-test' scripts/test_launcher_ui.sh
-          run_phase 'cargo-fmt-check' cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
-          run_phase 'cargo-test' cargo test --locked --manifest-path browser-runtime/Cargo.toml -- --nocapture
-          run_phase 'service-self-test' go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
-          printf '%s\n' 'complete' >"$phase_file"
-          printf '[contract] all phases passed at %s\n' "$(now)"
-
-      - name: Test native desktop WebView helper contract
-        if: runner.os == 'Windows' || runner.os == 'macOS' || runner.os == 'Linux'
-        shell: bash
-        run: |
-          cargo test --locked --manifest-path browser-runtime/Cargo.toml --features desktop-webview
-          cargo fmt --manifest-path launcher-ui/Cargo.toml -- --check
-          cargo test --locked --manifest-path launcher-ui/Cargo.toml --features desktop-webview
-          cargo clippy --locked --manifest-path launcher-ui/Cargo.toml --all-targets --features desktop-webview -- -D warnings
-          if [ "${{ runner.os }}" = "Windows" ]; then
-            test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime.exe"
-            test -f "dist/${{ matrix.target }}/stage/chuzi-launcher-ui.exe"
-          elif [ "${{ runner.os }}" = "macOS" ]; then
-            test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
-            test -f "dist/${{ matrix.target }}/stage/chuzi-launcher-ui"
-          else
-            test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
-            test -f "dist/${{ matrix.target }}/stage/chuzi-launcher-ui"
-          fi
-
-      - name: Smoke test Linux WebKitGTK on X11
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          profile_dir="$(mktemp -d)"
-          output_file="$(mktemp)"
-          error_file="$(mktemp)"
-          trap 'rm -rf "$profile_dir" "$output_file" "$error_file"' EXIT
-          run_x11() {
-            timeout 30s xvfb-run -a dbus-run-session -- env GDK_BACKEND=x11 WINIT_UNIX_BACKEND=x11 \
-              WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-              LIBGL_ALWAYS_SOFTWARE=1 \
-              "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
-          }
-          printf '%s\n' \
-            '{"protocol":"v1","id":"hello-x11","type":"hello"}' \
-            "{\"protocol\":\"v1\",\"id\":\"start-x11\",\"type\":\"session_start\",\"payload\":{\"session_id\":\"session-x11\",\"account_id\":\"account-x11\",\"request_id\":\"request-x11\",\"profile_dir\":\"$profile_dir\"}}" \
-            | run_x11 >"$output_file" 2>"$error_file" || {
-              status=$?
-              echo "Linux X11 helper exited with status $status" >&2
-              sed -n '1,160p' "$output_file" >&2
-              sed -n '1,160p' "$error_file" >&2
-              exit "$status"
-            }
-          grep -Fq 'browser-runtime.linux-x11' "$output_file"
-          grep -Fq 'local-test-page-ready' "$output_file"
-
-      - name: Smoke test Linux WebKitGTK on Wayland
-        if: runner.os == 'Linux'
-        shell: bash
-        run: |
-          runtime_dir="$(mktemp -d)"
-          profile_dir="$(mktemp -d)"
-          weston_log="$(mktemp)"
-          output_file="$(mktemp)"
-          error_file="$(mktemp)"
-          chmod 700 "$runtime_dir"
-          weston_pid=""
-          cleanup() {
-            if [ -n "$weston_pid" ] && kill -0 "$weston_pid" 2>/dev/null; then
-              kill "$weston_pid" 2>/dev/null || true
-              wait "$weston_pid" 2>/dev/null || true
-            fi
-            rm -rf "$runtime_dir" "$profile_dir" "$weston_log" "$output_file" "$error_file"
-          }
-          trap cleanup EXIT
-          XDG_RUNTIME_DIR="$runtime_dir" weston \
-            --backend=headless-backend.so --renderer=pixman --socket=wayland-1 --idle-time=0 \
-            >"$weston_log" 2>&1 &
-          weston_pid=$!
-          for _ in $(seq 1 50); do
-            if [ -S "$runtime_dir/wayland-1" ]; then
-              break
-            fi
-            if ! kill -0 "$weston_pid" 2>/dev/null; then
-              sed -n '1,160p' "$weston_log" >&2
-              exit 1
-            fi
-            sleep 0.2
-          done
-          test -S "$runtime_dir/wayland-1"
-          printf '%s\n' \
-            '{"protocol":"v1","id":"hello-wayland","type":"hello"}' \
-            "{\"protocol\":\"v1\",\"id\":\"start-wayland\",\"type\":\"session_start\",\"payload\":{\"session_id\":\"session-wayland\",\"account_id\":\"account-wayland\",\"request_id\":\"request-wayland\",\"profile_dir\":\"$profile_dir\"}}" \
-            | timeout 30s dbus-run-session -- env XDG_RUNTIME_DIR="$runtime_dir" WAYLAND_DISPLAY=wayland-1 \
-                XDG_SESSION_TYPE=wayland GDK_BACKEND=wayland WINIT_UNIX_BACKEND=wayland \
-                WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 \
-                LIBGL_ALWAYS_SOFTWARE=1 \
-                "./dist/${{ matrix.target }}/stage/chuzi-browser-runtime" >"$output_file" 2>"$error_file" || {
-              status=$?
-              echo "Linux Wayland helper exited with status $status" >&2
-              sed -n '1,160p' "$output_file" >&2
-              sed -n '1,160p' "$error_file" >&2
-              sed -n '1,160p' "$weston_log" >&2
-              exit "$status"
-            }
-          grep -Fq 'browser-runtime.linux-wayland' "$output_file"
-          grep -Fq 'local-test-page-ready' "$output_file"
-
-      - name: Package Windows artifact
+          echo "CHUZI_BUILD_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Assemble target on Windows
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
-          ./scripts/package.ps1 -Target "${{ matrix.target }}" -Version $version
-
-      - name: Package Unix artifact
+        run: ./scripts/assemble_target.ps1 -Target "${{ matrix.target }}" -Version "$env:CHUZI_BUILD_VERSION" -GoDir "$env:RUNNER_TEMP\chuzi-go" -WorkerArchive "$env:RUNNER_TEMP\chuzi-worker\browser-worker-dist.tar.gz" -RuntimeBinary "$env:RUNNER_TEMP\chuzi-runtime\chuzi-browser-runtime.exe" -DistRoot "$env:GITHUB_WORKSPACE\dist"
+      - name: Assemble target on Unix
         if: runner.os != 'Windows'
         shell: bash
-        run: |
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
-          scripts/package.sh "${{ matrix.target }}" "$version"
-
+        run: scripts/assemble_target.sh "${{ matrix.target }}" "$CHUZI_BUILD_VERSION" "$RUNNER_TEMP/chuzi-go" "$RUNNER_TEMP/chuzi-worker/browser-worker-dist.tar.gz" "$RUNNER_TEMP/chuzi-runtime/chuzi-browser-runtime" "$GITHUB_WORKSPACE/dist"
+      - name: Package target on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/package.ps1 -Target "${{ matrix.target }}" -Version "$env:CHUZI_BUILD_VERSION"
+      - name: Package target on Unix
+        if: runner.os != 'Windows'
+        shell: bash
+        run: scripts/package.sh "${{ matrix.target }}" "$CHUZI_BUILD_VERSION"
       - name: Verify Unix artifact checksums
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          if command -v sha256sum >/dev/null 2>&1; then
-            checksum_command=(sha256sum -c)
-          elif command -v shasum >/dev/null 2>&1; then
-            checksum_command=(shasum -a 256 -c)
-          else
-            echo "no SHA256 checksum verifier is available" >&2
-            exit 1
-          fi
-          for checksum in dist/*.tar.gz.sha256; do
-            (cd "$(dirname "$checksum")" && "${checksum_command[@]}" "$(basename "$checksum")")
-          done
-
-      - name: Verify release index
+          if command -v sha256sum >/dev/null 2>&1; then checksum_command=(sha256sum -c); elif command -v shasum >/dev/null 2>&1; then checksum_command=(shasum -a 256 -c); else echo "no SHA256 checksum verifier is available" >&2; exit 1; fi
+          for checksum in dist/*.tar.gz.sha256; do (cd "$(dirname "$checksum")" && "${checksum_command[@]}" "$(basename "$checksum")"); done
+      - name: Verify target release index
         shell: bash
         run: |
-          index="$(find dist -maxdepth 1 -type f -name '*-${{ matrix.target }}.index.json' -print -quit)"
+          index="$(find dist -maxdepth 1 -type f -name "*-${{ matrix.target }}.index.json" -print -quit)"
           test -n "$index"
           if [ "${{ runner.os }}" = "Windows" ]; then python scripts/validate_release_index.py --index "$index" --dist dist; else python3 scripts/validate_release_index.py --index "$index" --dist dist; fi
-
+          case "$CHUZI_BUILD_VERSION" in
+            nightly-*) python3 scripts/validate_nightly_artifact.py --artifact dist --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "$CHUZI_BUILD_VERSION" --channel nightly ;;
+            v[0-9]*.[0-9]*.[0-9]*) python3 scripts/validate_nightly_artifact.py --artifact dist --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "$CHUZI_BUILD_VERSION" --channel stable ;;
+          esac
       - name: Upload nightly target bundle
         if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -317,30 +368,83 @@ jobs:
             dist/chuzi-*.index.json.sha256
           if-no-files-found: error
           retention-days: 14
-
       - name: Show artifact digest
         shell: bash
         run: cat dist/*.sha256
 
-  chuzi-build:
-    name: chuzi-build
-    if: always()
-    needs: build-matrix
+  artifact_integration:
+    name: chuzi-build-artifact-integration
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: assemble_target
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - name: Require every target build
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          pattern: chuzi-nightly-*
+          path: dist
+          merge-multiple: false
+      - name: Validate all target artifacts together
         shell: bash
         run: |
-          if [ "${{ needs.build-matrix.result }}" != "success" ]; then
-            echo "one or more chuzi target builds failed" >&2
-            exit 1
+          set -euo pipefail
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            version="$GITHUB_REF_NAME"
+            channel=stable
+          else
+            version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+            channel=nightly
           fi
-          echo "all chuzi target builds passed"
+          for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
+            artifact_dir="dist/chuzi-nightly-$target"
+            index="$artifact_dir/chuzi-${version}-${target}.index.json"
+            test -f "$index"
+            python3 scripts/validate_release_index.py --index "$index" --dist "$artifact_dir"
+            python3 scripts/validate_nightly_artifact.py --artifact "$artifact_dir" --target "$target" --commit "$GITHUB_SHA" --version "$version" --channel "$channel"
+          done
+          echo "all target artifacts validated for $GITHUB_SHA"
+
+  chuzi_build:
+    name: chuzi-build
+    if: always()
+    needs: [contract_checks, go_checks, node_checks, rust_checks, go_build, runtime_build, windows_ui, assemble_target, artifact_integration]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every build stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in \
+            "${{ needs.contract_checks.result }}" \
+            "${{ needs.go_checks.result }}" \
+            "${{ needs.node_checks.result }}" \
+            "${{ needs.rust_checks.result }}" \
+            "${{ needs.go_build.result }}" \
+            "${{ needs.runtime_build.result }}" \
+            "${{ needs.windows_ui.result }}" \
+            "${{ needs.assemble_target.result }}"; do
+            test "$result" = success || { echo "build stage did not succeed: $result" >&2; exit 1; }
+          done
+          case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
+            schedule:*|workflow_dispatch:*|push:refs/tags/v*)
+              test "${{ needs.artifact_integration.result }}" = success || { echo "artifact integration did not succeed" >&2; exit 1; }
+              ;;
+            *)
+              test "${{ needs.artifact_integration.result }}" = skipped || { echo "unexpected artifact integration result" >&2; exit 1; }
+              ;;
+          esac
+          echo "all chuzi build stages passed"
 
   stable-release:
     name: stable-release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-matrix, chuzi-build]
+    needs: [assemble_target, artifact_integration, chuzi_build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -397,17 +501,13 @@ jobs:
           done < <(find dist -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.zip' \) -print0 | sort -z)
           scripts/verify_release_bundle.sh "$GITHUB_REF_NAME" "$GITHUB_SHA" dist dist/attestations "$CHUZI_RELEASE_REPOSITORY"
       - name: Publish GitHub release
-        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
           set -euo pipefail
           release_assets=()
-          while IFS= read -r -d '' asset; do
-            release_assets+=("$asset")
-          done < <(find dist -maxdepth 1 -type f -print0 | sort -z)
-          while IFS= read -r -d '' asset; do
-            release_assets+=("$asset")
-          done < <(find dist/attestations -maxdepth 1 -type f -name '*.signed.json' -print0 | sort -z)
+          while IFS= read -r -d '' asset; do release_assets+=("$asset"); done < <(find dist -maxdepth 1 -type f -print0 | sort -z)
+          while IFS= read -r -d '' asset; do release_assets+=("$asset"); done < <(find dist/attestations -maxdepth 1 -type f -name '*.signed.json' -print0 | sort -z)
           [ "${#release_assets[@]}" -gt 0 ] || { echo 'no release assets were produced' >&2; exit 1; }
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "chuzi $GITHUB_REF_NAME" --notes-file "releases/$GITHUB_REF_NAME.md" "${release_assets[@]}"

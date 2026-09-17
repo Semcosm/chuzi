@@ -45,11 +45,6 @@ $launcherLdflags = "-s -w -X main.version=$Version"
 & go build -trimpath "-ldflags=$launcherLdflags" -o (Join-Path $stageDir "chuzi-launcher.exe") ./cmd/launcher
 if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
 
-$cargoUiArgs = @("build", "--locked", "--manifest-path", (Join-Path $repoRoot "launcher-ui/Cargo.toml"), "--release") + $runtimeFeatures
-& cargo @cargoUiArgs
-if ($LASTEXITCODE -ne 0) { throw "launcher UI build failed" }
-Copy-Item -Force (Join-Path $repoRoot "launcher-ui/target/release/chuzi-launcher-ui.exe") (Join-Path $stageDir "chuzi-launcher-ui.exe")
-
 & npm --prefix (Join-Path $repoRoot "browser-worker") ci --ignore-scripts
 if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 & npm --prefix (Join-Path $repoRoot "browser-worker") run build

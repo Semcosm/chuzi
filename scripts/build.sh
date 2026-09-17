@@ -54,23 +54,14 @@ CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   "$repo_root/cmd/service"
 
 launcher_binary="chuzi-launcher"
-launcher_ui_binary="chuzi-launcher-ui"
 if [ "$target" = "windows-amd64" ]; then
   launcher_binary="chuzi-launcher.exe"
-  launcher_ui_binary="chuzi-launcher-ui.exe"
 fi
 CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   -trimpath \
   -ldflags "-s -w -X main.version=$version" \
   -o "$stage_dir/$launcher_binary" \
   "$repo_root/cmd/launcher"
-
-cargo_ui_args=(build --locked --manifest-path "$repo_root/launcher-ui/Cargo.toml" --release)
-if [ -n "$runtime_features" ]; then
-  cargo_ui_args+=(--features "$runtime_features")
-fi
-cargo "${cargo_ui_args[@]}"
-cp "$repo_root/launcher-ui/target/release/$launcher_ui_binary" "$stage_dir/$launcher_ui_binary"
 
 npm --prefix "$repo_root/browser-worker" ci --ignore-scripts
 npm --prefix "$repo_root/browser-worker" run build

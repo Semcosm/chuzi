@@ -11,21 +11,17 @@ started manually. Scheduled and manually started runs use a
 artifact per target: Windows amd64, Linux amd64, Linux arm64, and macOS arm64.
 
 Each target bundle contains the complete package, `release-manifest.json`, the
-UI-neutral `chuzi-launcher` CLI, the Rust/Wry `chuzi-launcher-ui` binary,
+UI-neutral `chuzi-launcher` CLI, the Rust browser runtime helper,
 SHA-256 sidecars, and independently installable component archives for the
 launcher, service, browser worker, and desktop runtime, plus a
 `release-index.json` catalog with archive sizes and SHA-256 digests. The
 manifest/index are integrity and capability contracts; they do not imply that
 a plugin is trusted or that business automation is implemented.
 
-The UI defaults to the release directory and starts the sibling
-`chuzi-launcher` CLI with direct, shell-free arguments. It renders
-`initialize` required/optional choices, serialized component operations,
-settings, progress, cancellation, and classified failures. Refreshes and
-repeated actions stay ordered behind the install lock; cancellation is a
-separate control message and does not expire a slow operation. The equivalent CLI
-commands remain available for headless administration. Local test servers may
-use `-allow-http-loopback`; production endpoints must use HTTPS.
+The `chuzi-launcher` CLI is the current administration surface. Native Windows,
+macOS, and Linux UI clients will consume the same launcher/Core contracts after
+their platform baselines are selected. Local test servers may use
+`-allow-http-loopback`; production endpoints must use HTTPS.
 
 After a successful manual nightly run on `main`, consume its artifacts with:
 

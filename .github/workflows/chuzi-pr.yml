@@ -1,0 +1,111 @@
+name: chuzi-pr
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chuzi-pr-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pr_contract:
+    name: chuzi-pr-contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Validate repository contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          scripts/test_build_contract.sh
+          scripts/test_nightly_package.sh
+          scripts/test_nightly_artifact_validator.sh
+          git diff --check
+
+  pr_go:
+    name: chuzi-pr-go
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Test Go runtime boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHUZI_TEST_DEBUG=1
+          go test -count=1 -v ./...
+          go vet ./...
+          scripts/test_runtime.sh
+          scripts/test_launcher_consumer.sh
+
+  pr_node:
+    name: chuzi-pr-node
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: browser-worker/package-lock.json
+      - name: Test browser worker protocol
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CHUZI_WORKER_DEBUG=1
+          npm --prefix browser-worker ci --ignore-scripts
+          npm --prefix browser-worker test
+          go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
+
+  pr_rust:
+    name: chuzi-pr-rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Test Rust protocol helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
+          cargo test --locked --manifest-path browser-runtime/Cargo.toml -- --nocapture
+
+  chuzi_build:
+    name: chuzi-build
+    if: always()
+    needs: [pr_contract, pr_go, pr_node, pr_rust]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every pull request stage
+        shell: bash
+        run: |
+          set -euo pipefail
+          for result in \
+            "${{ needs.pr_contract.result }}" \
+            "${{ needs.pr_go.result }}" \
+            "${{ needs.pr_node.result }}" \
+            "${{ needs.pr_rust.result }}"; do
+            test "$result" = success || { echo "pull request stage did not succeed: $result" >&2; exit 1; }
+          done
+          echo "all pull request build stages passed"

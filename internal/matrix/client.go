@@ -54,7 +54,7 @@ func NewHTTPClient(config HTTPClientConfig) (*HTTPClient, error) {
 }
 
 func (c *HTTPClient) Send(ctx context.Context, roomID, eventID, body string) error {
-	if c == nil || ctx == nil || !safeInputToken(roomID) || !safeInputToken(eventID) || strings.TrimSpace(body) == "" || len(body) > 4096 {
+	if c == nil || ctx == nil || !safePathSegment(roomID) || !safePathSegment(eventID) || strings.TrimSpace(body) == "" || len(body) > 4096 {
 		return ErrInvalidClient
 	}
 	payload := struct {
@@ -65,7 +65,9 @@ func (c *HTTPClient) Send(ctx context.Context, roomID, eventID, body string) err
 	if err != nil {
 		return ErrHTTPFailure
 	}
-	path := "/_matrix/client/v3/rooms/" + url.PathEscape(roomID) + "/send/m.room.message/" + url.PathEscape(eventID)
+	// Assign unescaped segments to URL.Path. url.URL.String performs the
+	// escaping exactly once; pre-escaping here would produce %25-encoded IDs.
+	path := "/_matrix/client/v3/rooms/" + roomID + "/send/m.room.message/" + eventID
 	return c.doJSON(ctx, http.MethodPut, path, data, nil)
 }
 
@@ -169,6 +171,10 @@ func (c *HTTPClient) doJSON(ctx context.Context, method, path string, body []byt
 		return ErrSyncProtocol
 	}
 	return nil
+}
+
+func safePathSegment(value string) bool {
+	return safeInputToken(value) && !strings.ContainsRune(value, '/')
 }
 
 // Gateway connects sync events to the existing transport-neutral adapter.

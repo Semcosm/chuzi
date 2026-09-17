@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -18,12 +19,17 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	"github.com/Semcosm/chuzi/internal/automation"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/core"
+	"github.com/Semcosm/chuzi/internal/coreapi"
+	"github.com/Semcosm/chuzi/internal/coretransport"
 	"github.com/Semcosm/chuzi/internal/credential"
 	"github.com/Semcosm/chuzi/internal/health"
 	"github.com/Semcosm/chuzi/internal/matrix"
 	"github.com/Semcosm/chuzi/internal/observability"
+	"github.com/Semcosm/chuzi/internal/plugin"
 	"github.com/Semcosm/chuzi/internal/queue"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
 	"github.com/Semcosm/chuzi/internal/store"
@@ -49,6 +55,7 @@ type serviceOptions struct {
 	workerCommand          string
 	workerScript           string
 	headlessBrowserCommand string
+	automationAdapter      string
 	browserRuntime         string
 	healthListen           string
 	metricsListen          string
@@ -72,7 +79,8 @@ type serviceRuntime struct {
 	store         *store.Store
 	requests      *requestservice.Service
 	credentials   *credential.Service
-	runner        *browser.Runner
+	runner        queue.Runner
+	automation    automation.Adapter
 	scheduler     *queue.Scheduler
 	notifier      *matrix.Notifier
 	gateway       *matrix.Gateway
@@ -82,6 +90,8 @@ type serviceRuntime struct {
 	metrics       *observability.Metrics
 	logger        *observability.JSONLogger
 	metricsListen string
+	coreAPI       coreapi.API
+	coreServer    *coretransport.Server
 }
 
 func (r *serviceRuntime) refreshMetrics(at time.Time) {
@@ -167,15 +177,29 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 		if strings.TrimSpace(options.headlessBrowserCommand) == "" {
 			return nil, fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
 		}
+		workerMode := ""
+		if strings.TrimSpace(options.automationAdapter) != "" {
+			workerMode = "adapter"
+		}
 		return browser.NewProcessFactory(browser.ProcessConfig{
 			Command:    options.workerCommand,
 			Script:     "browser-worker/src/headless.mjs",
 			ScriptArgs: []string{"--browser-command", options.headlessBrowserCommand},
 			Stderr:     workerStderr(),
+			WorkerMode: workerMode,
 		})
 	default:
 		return nil, fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, options.backend, backendNode, backendHeadless, backendRust)
 	}
+}
+
+func hasCapability(descriptor automation.Descriptor, id, version string) bool {
+	for _, capability := range descriptor.Capabilities {
+		if capability.ID == id && capability.Version == version {
+			return true
+		}
+	}
+	return false
 }
 
 func (o serviceOptions) validate() error {
@@ -191,6 +215,10 @@ func (o serviceOptions) validate() error {
 	}
 	if o.backend == backendHeadless && strings.TrimSpace(o.headlessBrowserCommand) == "" {
 		return fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
+	}
+	if strings.TrimSpace(o.automationAdapter) != "" &&
+		(strings.TrimSpace(o.automationAdapter) != "genshin-cloudgame" || o.backend != backendHeadless) {
+		return fmt.Errorf("%w: genshin-cloudgame requires the headless backend", errInvalidOptions)
 	}
 	if strings.TrimSpace(o.metricsListen) != "" {
 		if _, _, err := net.SplitHostPort(strings.TrimSpace(o.metricsListen)); err != nil {
@@ -226,7 +254,11 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		return nil, err
 	}
 	var logger *observability.JSONLogger
+	var automationAdapter automation.Adapter
 	closeOnError := func(closeErr error) (*serviceRuntime, error) {
+		if automationAdapter != nil {
+			_ = automationAdapter.Close(context.Background())
+		}
 		if logger != nil {
 			_ = logger.Close()
 		}
@@ -288,19 +320,52 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
-	keyring := credential.NewEnvKeyring(cfg.Credentials.KeyEnv, cfg.Credentials.KeyIDEnv)
+	keyring := credential.NewEnvKeyringWithHistory(cfg.Credentials.KeyEnv, cfg.Credentials.KeyIDEnv, cfg.Credentials.HistoryEnv)
 	credentials, err := credential.New(database, keyring)
 	if err != nil {
 		return closeOnError(err)
 	}
-	sessionRunner, err := browser.New(factory, database, profiles, browser.Config{
-		LeaseTTL:          options.leaseTTL,
-		HeartbeatInterval: options.heartbeat,
-		CancelTimeout:     options.cancelTimeout,
-		ShutdownTimeout:   options.shutdownTimeout,
-		Clock:             now,
-		Sink:              sink,
-	})
+	var sessionRunner queue.Runner
+	if strings.TrimSpace(options.automationAdapter) != "" {
+		node, lookErr := exec.LookPath(options.workerCommand)
+		if lookErr != nil {
+			return closeOnError(fmt.Errorf("service: automation adapter runtime unavailable"))
+		}
+		adapterPath := filepath.Join("browser-worker", "src", "headless-adapter.mjs")
+		client, startErr := plugin.StartAdapter(context.Background(), plugin.Command{
+			Mode: plugin.Native, Executable: node,
+			Args:   []string{adapterPath, "--browser-command", options.headlessBrowserCommand},
+			Stderr: workerStderr(),
+		})
+		if startErr != nil {
+			return closeOnError(fmt.Errorf("service: automation adapter unavailable"))
+		}
+		automationAdapter = client
+		descriptor, describeErr := client.Describe(context.Background())
+		if describeErr != nil || !hasCapability(descriptor, "genshin-cloudgame", "1") {
+			return closeOnError(fmt.Errorf("service: requested automation capability unavailable"))
+		}
+		pipelineRunner, pipelineErr := core.NewPipelineRunner(database, core.PipelineConfig{
+			Factory: factory, Credentials: credentials, Automation: client, Profiles: profiles,
+			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", Clock: now, Sink: sink},
+			Clock:   now, Actor: options.owner,
+			Operation:          automation.Operation{Name: "genshin.cloudgame.session_probe"},
+			CredentialOptional: true,
+		})
+		if pipelineErr != nil {
+			return closeOnError(pipelineErr)
+		}
+		sessionRunner = pipelineRunner
+	} else {
+		sessionRunner, err = browser.New(factory, database, profiles, browser.Config{
+			LeaseTTL:          options.leaseTTL,
+			HeartbeatInterval: options.heartbeat,
+			CancelTimeout:     options.cancelTimeout,
+			ShutdownTimeout:   options.shutdownTimeout,
+			Clock:             now,
+			Sink:              sink,
+		})
+	}
 	if err != nil {
 		return closeOnError(err)
 	}
@@ -321,9 +386,13 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database})
+	if coreErr != nil {
+		return closeOnError(coreErr)
+	}
 	runtime := &serviceRuntime{
 		store: database, requests: requestService, credentials: credentials,
-		runner: sessionRunner, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger,
+		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, coreAPI: coreAPI,
 	}
 	runtime.metricsListen = cfg.Observability.MetricsListen
 	if strings.TrimSpace(options.metricsListen) != "" {
@@ -467,6 +536,12 @@ func run(ctx context.Context, options serviceOptions) error {
 		return err
 	}
 	defer func() {
+		if runtime.coreServer != nil {
+			_ = runtime.coreServer.Close()
+		}
+		if runtime.automation != nil {
+			_ = runtime.automation.Close(context.Background())
+		}
 		if closeErr := runtime.store.Close(); closeErr != nil {
 			if runtime.logger != nil {
 				runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "failed", ErrorClass: "store_close_failed"})
@@ -477,6 +552,16 @@ func run(ctx context.Context, options serviceOptions) error {
 			_ = runtime.logger.Close()
 		}
 	}()
+	endpoint := coretransport.EndpointPath(cfg.DataDir)
+	listener, err := coretransport.Listen(ctx, endpoint)
+	if err != nil {
+		return err
+	}
+	runtime.coreServer, err = coretransport.NewServer(runtime.coreAPI, listener, coretransport.Config{})
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
 	backgroundCtx, cancelBackground := context.WithCancel(ctx)
 	defer cancelBackground()
 	var background sync.WaitGroup
@@ -493,6 +578,13 @@ func run(ctx context.Context, options serviceOptions) error {
 			}
 		}()
 	}
+	startBackground("core api", func(workerCtx context.Context) error {
+		go func() {
+			<-workerCtx.Done()
+			_ = runtime.coreServer.Close()
+		}()
+		return runtime.coreServer.Serve()
+	})
 	if runtime.notifier != nil {
 		startBackground("matrix notifier", func(workerCtx context.Context) error {
 			return runtime.notifier.Run(workerCtx, time.Second)
@@ -652,7 +744,7 @@ func runDiagnostics(ctx context.Context, options serviceOptions, audit bool, aud
 	}{Snapshot: snapshot, Issues: issues})
 }
 
-func runMaintenance(ctx context.Context, options serviceOptions, backup bool, restorePath string, injectAccount string, credentialEnv string, credentialActor string, diagnostics bool, audit bool, auditAccount string, validateBackupPath string, auditLimit int) error {
+func runMaintenance(ctx context.Context, options serviceOptions, backup bool, restorePath string, injectAccount string, rotateAccount string, revokeAccount string, credentialEnv string, credentialActor string, diagnostics bool, audit bool, auditAccount string, validateBackupPath string, auditLimit int) error {
 	cfg, err := config.Load(options.configPath)
 	if err != nil {
 		return err
@@ -665,6 +757,12 @@ func runMaintenance(ctx context.Context, options serviceOptions, backup bool, re
 		operations++
 	}
 	if strings.TrimSpace(injectAccount) != "" {
+		operations++
+	}
+	if strings.TrimSpace(rotateAccount) != "" {
+		operations++
+	}
+	if strings.TrimSpace(revokeAccount) != "" {
 		operations++
 	}
 	if diagnostics {
@@ -717,28 +815,46 @@ func runMaintenance(ctx context.Context, options serviceOptions, backup bool, re
 		return err
 	}
 	defer database.Close()
-	keyring := credential.NewEnvKeyring(cfg.Credentials.KeyEnv, cfg.Credentials.KeyIDEnv)
+	keyring := credential.NewEnvKeyringWithHistory(cfg.Credentials.KeyEnv, cfg.Credentials.KeyIDEnv, cfg.Credentials.HistoryEnv)
 	credentials, err := credential.New(database, keyring)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(credentialEnv) == "" {
-		return fmt.Errorf("service: -credential-env is required for injection")
-	}
-	source, err := credential.NewEnvSource(credentialEnv)
 	if err != nil {
 		return err
 	}
 	if strings.TrimSpace(credentialActor) == "" {
 		credentialActor = options.owner
 	}
-	metadata, err := credentials.Inject(ctx, injectAccount, credentialActor, time.Now().UTC(), source)
-	if err != nil {
-		return err
+	if strings.TrimSpace(injectAccount) != "" {
+		if strings.TrimSpace(credentialEnv) == "" {
+			return fmt.Errorf("service: -credential-env is required for injection")
+		}
+		source, sourceErr := credential.NewEnvSource(credentialEnv)
+		if sourceErr != nil {
+			return sourceErr
+		}
+		metadata, injectErr := credentials.Inject(ctx, injectAccount, credentialActor, time.Now().UTC(), source)
+		if injectErr != nil {
+			return injectErr
+		}
+		// Print metadata only; never print the injected value or ciphertext.
+		fmt.Printf("credential account=%s version=%d key_id=%s\n", observability.RedactIdentifier(metadata.AccountID), metadata.Version, observability.RedactIdentifier(metadata.KeyID))
+		return nil
 	}
-	// Print metadata only; never print the injected value or ciphertext.
-	fmt.Printf("credential account=%s version=%d key_id=%s\n", observability.RedactIdentifier(metadata.AccountID), metadata.Version, observability.RedactIdentifier(metadata.KeyID))
-	return nil
+	if strings.TrimSpace(rotateAccount) != "" {
+		metadata, rotateErr := credentials.Rotate(ctx, rotateAccount, credentialActor, time.Now().UTC())
+		if rotateErr != nil {
+			return rotateErr
+		}
+		fmt.Printf("credential rotated account=%s version=%d key_id=%s\n", observability.RedactIdentifier(metadata.AccountID), metadata.Version, observability.RedactIdentifier(metadata.KeyID))
+		return nil
+	}
+	if strings.TrimSpace(revokeAccount) != "" {
+		if revokeErr := credentials.Revoke(ctx, revokeAccount, credentialActor, time.Now().UTC()); revokeErr != nil {
+			return revokeErr
+		}
+		fmt.Printf("credential revoked account=%s\n", observability.RedactIdentifier(revokeAccount))
+		return nil
+	}
+	return errInvalidOptions
 }
 
 func main() {
@@ -748,6 +864,7 @@ func main() {
 	flag.StringVar(&options.workerCommand, "worker-command", "node", "Node browser worker executable")
 	flag.StringVar(&options.workerScript, "worker-script", "browser-worker/src/worker.mjs", "Node browser worker script")
 	flag.StringVar(&options.headlessBrowserCommand, "headless-browser-command", "chromium", "externally installed Chromium/Edge executable for the headless backend")
+	flag.StringVar(&options.automationAdapter, "automation-adapter", "", "explicit business adapter (genshin-cloudgame only)")
 	flag.StringVar(&options.browserRuntime, "browser-runtime", "chuzi-browser-runtime", "Rust browser runtime executable")
 	flag.StringVar(&options.healthListen, "health-listen", "", "override the configured local health listener")
 	flag.StringVar(&options.metricsListen, "metrics-listen", "", "optional local Prometheus metrics listener")
@@ -770,6 +887,8 @@ func main() {
 	backup := flag.Bool("backup", false, "create a timestamped database backup and exit")
 	restorePath := flag.String("restore", "", "restore a validated backup under the configured backup directory and exit")
 	injectAccount := flag.String("inject-account", "", "encrypt a credential from -credential-env for this account and exit")
+	rotateAccount := flag.String("rotate-account", "", "re-encrypt an account credential with the current deployment key and exit")
+	revokeAccount := flag.String("revoke-account", "", "invalidate and wipe an account credential and exit")
 	credentialEnv := flag.String("credential-env", "", "environment variable containing one credential for -inject-account")
 	credentialActor := flag.String("credential-actor", "", "audit actor for credential injection")
 	diagnostics := flag.Bool("diagnostics", false, "print redaction-safe operational diagnostics and exit")
@@ -788,8 +907,8 @@ func main() {
 	defer stop()
 
 	var err error
-	if *backup || strings.TrimSpace(*restorePath) != "" || strings.TrimSpace(*injectAccount) != "" || *diagnostics || *audit || strings.TrimSpace(*validateBackupPath) != "" {
-		err = runMaintenance(ctx, options, *backup, *restorePath, *injectAccount, *credentialEnv, *credentialActor, *diagnostics, *audit, *auditAccount, *validateBackupPath, *auditLimit)
+	if *backup || strings.TrimSpace(*restorePath) != "" || strings.TrimSpace(*injectAccount) != "" || strings.TrimSpace(*rotateAccount) != "" || strings.TrimSpace(*revokeAccount) != "" || *diagnostics || *audit || strings.TrimSpace(*validateBackupPath) != "" {
+		err = runMaintenance(ctx, options, *backup, *restorePath, *injectAccount, *rotateAccount, *revokeAccount, *credentialEnv, *credentialActor, *diagnostics, *audit, *auditAccount, *validateBackupPath, *auditLimit)
 	} else if *selfTest {
 		err = runSelfTest(ctx, options.workerCommand, options.workerScript)
 	} else {

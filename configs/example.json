@@ -2,7 +2,8 @@
   "data_dir": "./data",
   "credentials": {
     "key_env": "CHUZI_CREDENTIAL_KEY",
-    "key_id_env": "CHUZI_CREDENTIAL_KEY_ID"
+    "key_id_env": "CHUZI_CREDENTIAL_KEY_ID",
+    "history_env": "CHUZI_CREDENTIAL_KEYS"
   },
   "health": {
     "listen": "127.0.0.1:8080"

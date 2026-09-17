@@ -38,12 +38,10 @@ for target in linux-amd64 windows-amd64; do
   mkdir -p "$stage/browser-worker" "$dist"
   if [ "$target" = "windows-amd64" ]; then
     printf '%s' launcher >"$stage/chuzi-launcher.exe"
-    printf '%s' launcher-ui >"$stage/chuzi-launcher-ui.exe"
     printf '%s' service >"$stage/chuzi.exe"
     printf '%s' runtime >"$stage/chuzi-browser-runtime.exe"
   else
     printf '%s' launcher >"$stage/chuzi-launcher"
-    printf '%s' launcher-ui >"$stage/chuzi-launcher-ui"
     printf '%s' service >"$stage/chuzi"
     printf '%s' runtime >"$stage/chuzi-browser-runtime"
   fi
@@ -52,20 +50,6 @@ for target in linux-amd64 windows-amd64; do
   "$python_command" "$repo_root/scripts/generate_release_manifest.py" \
     --stage "$stage" --target "$target" --version "$version" \
     --commit "$commit" --channel nightly
-
-  missing_stage="$test_root/$target-missing-ui-stage"
-  cp -R "$stage" "$missing_stage"
-  if [ "$target" = "windows-amd64" ]; then
-    rm -f "$missing_stage/chuzi-launcher-ui.exe"
-  else
-    rm -f "$missing_stage/chuzi-launcher-ui"
-  fi
-  if "$python_command" "$repo_root/scripts/generate_release_manifest.py" \
-      --stage "$missing_stage" --target "$target" --version "$version" \
-      --commit "$commit" --channel nightly; then
-    echo "manifest generator accepted a launcher missing its UI binary for $target" >&2
-    exit 1
-  fi
 
   if [ "$target" = "windows-amd64" ]; then
     "$python_command" - "$stage" "$dist" "$version" "$target" <<'PY'
@@ -76,7 +60,7 @@ from pathlib import Path
 stage, dist, version, target = map(Path, sys.argv[1:])
 groups = {
     "bundle": [path for path in stage.rglob("*") if path.is_file()],
-    "launcher": [stage / "chuzi-launcher.exe", stage / "chuzi-launcher-ui.exe", stage / "release-manifest.json"],
+    "launcher": [stage / "chuzi-launcher.exe", stage / "release-manifest.json"],
     "service": [stage / "chuzi.exe"],
     "browser-worker": [path for path in (stage / "browser-worker").rglob("*") if path.is_file()],
     "desktop-runtime": [stage / "chuzi-browser-runtime.exe"],
@@ -94,7 +78,7 @@ PY
       component_dir="$test_root/$target-$component"
       mkdir -p "$component_dir"
       case "$component" in
-        launcher) cp "$stage/chuzi-launcher" "$component_dir/"; cp "$stage/chuzi-launcher-ui" "$component_dir/"; cp "$stage/release-manifest.json" "$component_dir/" ;;
+        launcher) cp "$stage/chuzi-launcher" "$component_dir/"; cp "$stage/release-manifest.json" "$component_dir/" ;;
         service) cp "$stage/chuzi" "$component_dir/" ;;
         browser-worker) cp -R "$stage/browser-worker" "$component_dir/" ;;
         desktop-runtime) cp "$stage/chuzi-browser-runtime" "$component_dir/" ;;
