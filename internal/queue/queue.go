@@ -187,6 +187,10 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	if runnerResult.Succeeded {
 		outcome, err := s.finishSuccess(finishedAt, claim.Request, claim.Lease, Outcome{Request: claim.Request})
 		if err != nil {
+			if cancelled, ok := s.resolveCancellationRace(claim.Request.RequestID, err); ok {
+				s.record(finishedAt, "run", "cancelled", claim.Request.RequestID, "", duration)
+				return cancelled, nil
+			}
 			s.record(finishedAt, "run", "failed", claim.Request.RequestID, "transition_failed", duration)
 		} else {
 			s.record(finishedAt, "run", "succeeded", claim.Request.RequestID, "", duration)
@@ -198,6 +202,10 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	}
 	outcome, err := s.finishFailure(finishedAt, claim.Request, claim.Lease, false, runnerResult.Failure)
 	if err != nil {
+		if cancelled, ok := s.resolveCancellationRace(claim.Request.RequestID, err); ok {
+			s.record(finishedAt, "run", "cancelled", claim.Request.RequestID, "", duration)
+			return cancelled, nil
+		}
 		s.record(finishedAt, "run", "failed", claim.Request.RequestID, "transition_failed", duration)
 	} else if outcome.Retried {
 		s.record(finishedAt, "run", "retried", claim.Request.RequestID, string(runnerResult.Failure), duration)
@@ -205,6 +213,21 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		s.record(finishedAt, "run", "failed", claim.Request.RequestID, string(runnerResult.Failure), duration)
 	}
 	return outcome, err
+}
+
+// resolveCancellationRace treats a stale terminal event as an expected
+// cancellation outcome when the durable request has already moved to
+// CANCELLED. The cancellation transaction owns the business result; the
+// runner must not surface its losing terminal fact as an integration error.
+func (s *Scheduler) resolveCancellationRace(requestID string, transitionErr error) (Outcome, bool) {
+	if s == nil || !errors.Is(transitionErr, account.ErrStaleEvent) {
+		return Outcome{}, false
+	}
+	current, err := s.store.GetRequest(requestID)
+	if err != nil || current.State != account.Cancelled {
+		return Outcome{}, false
+	}
+	return Outcome{Request: current}, true
 }
 
 func (s *Scheduler) record(at time.Time, operation, outcome, requestID, errorClass string, duration time.Duration) {
