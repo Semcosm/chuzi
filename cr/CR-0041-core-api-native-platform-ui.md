@@ -1,16 +1,16 @@
 # CR-0041: establish the Core API boundary for native platform clients
 
 Base: main
-Head or Range: 61f244390bc52de749eda42a706b89560b2f2294..39263dfd0e4d2bc35c509a66dbb030093149495f
+Head or Range: 61f244390bc52de749eda42a706b89560b2f2294..0e53784989480b12c8dbe07a326aef17a08955e1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): establish Core API boundary for native platform clients
-Revision: 3
-Status: pending
-Decision: pending
+Revision: 4
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 61f244390bc52de749eda42a706b89560b2f2294
-Head OID: 39263dfd0e4d2bc35c509a66dbb030093149495f
+Base OID: 0e53784989480b12c8dbe07a326aef17a08955e1
+Head OID: 0e53784989480b12c8dbe07a326aef17a08955e1
 Integrated Result: pending
 
 ## Summary
@@ -108,6 +108,11 @@ queries, cancellation, redacted results, domain events, notification state,
 and the complete queue/session/credential/automation pipeline using temporary
 storage and injected fakes. The tests do not launch the native client or use
 live accounts, credentials, a Matrix endpoint, or an external production service.
+
+Remote evidence: PR #121 required checks all passed, including `ugs-validate`,
+Go/Node/Rust checks, and the aggregate build. The full workflow run
+`35231630250` passed all four target builds, native runtime checks, artifact
+integration, and the Windows WinUI 3 publish job.
 
 ## Risk
 
