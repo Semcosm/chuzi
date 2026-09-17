@@ -1,17 +1,17 @@
 # CR-0041: establish the Core API boundary for native platform clients
 
 Base: main
-Head or Range: 61f244390bc52de749eda42a706b89560b2f2294..0e53784989480b12c8dbe07a326aef17a08955e1
+Head or Range: 2b93f0f2252fbdb1e54a85e7cb8e14c38ab5a053
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): establish Core API boundary for native platform clients
-Revision: 4
-Status: accepted
+Revision: 5
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 0e53784989480b12c8dbe07a326aef17a08955e1
-Head OID: 0e53784989480b12c8dbe07a326aef17a08955e1
-Integrated Result: pending
+Base OID: 2b93f0f2252fbdb1e54a85e7cb8e14c38ab5a053
+Head OID: 2b93f0f2252fbdb1e54a85e7cb8e14c38ab5a053
+Integrated Result: main@2b93f0f2252fbdb1e54a85e7cb8e14c38ab5a053
 
 ## Summary
 
