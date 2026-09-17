@@ -100,6 +100,12 @@ The OS endpoint permission is the local authorization boundary. The service is
 not a network listener, and native clients must use the deployment-derived
 endpoint rather than accepting arbitrary filesystem paths from users.
 
+The contract suite includes a subprocess test that starts an independent Core
+server and connects through the derived endpoint. It verifies version rejection,
+redacted wire DTOs, endpoint permissions, and transport cancellation across the
+process boundary; the Windows build runs the same test against the named-pipe
+implementation.
+
 ## Compatibility
 
 Clients must complete `hello` and may use the returned method list for feature
