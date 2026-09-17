@@ -9,7 +9,8 @@
 目前仓库已完成跨平台基础、领域核心、单节点存储、请求队列、Session
 Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 transport-neutral
 的 Matrix 命令与状态通知边界。服务控制面采用 Go，浏览器 Worker 使用 Node.js；
-真实浏览器自动化、生产 Matrix 传输客户端和部署编排仍按路线图逐步加入。
+生产 Matrix 传输客户端和部署编排仍按路线图逐步加入；真实浏览器适配目前仅覆盖
+云原神的已授权会话检查流程。
 
 `cmd/service` 现在负责加载 `configs/example.json`（也可通过 `-config` 指定），打开
 持久化 bbolt Store，并组装 Request Service、Session Runner 和 Queue Scheduler。
@@ -18,9 +19,16 @@ Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 
 Rust helper，路径由 `-browser-runtime` 指定。`-self-test` 继续使用临时目录运行
 一次 Node Worker 协议 smoke test，不代表生产服务入口或真实浏览器自动化。
 
+需要运行首个真实业务适配器时，必须显式同时设置
+`-browser-backend headless -automation-adapter genshin-cloudgame`。该流程固定访问
+`https://ys.mihoyo.com/cloud/#/`，只检查服务派生 Profile 中已有的授权会话，不提交用户名/密码，
+不处理验证码或风控，也不接受任意 URL。适配器只返回脱敏页面事实，由 Core evaluator
+将未登录或页面结构变化分别映射为凭证失败或未知业务失败。
+
 `cmd/service` 已提供生产运行拼装：凭证服务从部署环境注入密钥，Matrix HTTP
 Client/同步网关和通知 outbox worker 可由配置启用，健康检查可绑定受限 HTTP 端点；
-`-backup`、`-restore`、`-validate-backup`、`-diagnostics`、`-audit` 和 `-inject-account` 提供停止服务后的运维操作。服务仍不会
+`-backup`、`-restore`、`-validate-backup`、`-diagnostics`、`-audit`、
+`-inject-account`、`-rotate-account` 和 `-revoke-account` 提供停止服务后的运维操作。服务仍不会
 自行创建账号，也不会把 Secret 写入普通配置或日志。
 
 观测能力通过 `observability` 配置启用：服务写入结构化脱敏 JSONL 日志并有界轮转，
@@ -32,19 +40,20 @@ Apple Silicon 的 Wry 桌面 WebView 已由对应原生 CI 构建并打包；Ubu
 amd64/arm64 的 WebKitGTK Wry desktop backend 还在 X11 与 Wayland 图形会话中
 通过了内嵌本地测试页 smoke。helper 只能通过显式 backend 选择接入 Go 服务；默认
 仍使用 Node deferred Worker。显式 `-browser-backend headless` 可选择使用部署环境
-提供的 Chromium/Edge；该 backend 已有首个 `chuzi.adapter/v1` 本地测试页适配器，
-只用假账号读取测试页 marker 验证操作链路，不把 CDP endpoint discovery 当作业务
-成功，也不把桌面隐藏窗口当作无显示环境浏览器。
+提供的 Chromium/Edge；该 backend 已有首个 `chuzi.adapter/v1` 云原神适配器和
+本地测试页适配器。云原神流程只返回平台、流程和认证状态等脱敏事实；本地测试页仍只
+用于协议验证。两者都不把 CDP endpoint discovery 当作业务成功，也不把桌面隐藏窗口
+当作无显示环境浏览器。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
 当前首个 release 流程是 nightly：GitHub Actions 每日自动构建并上传四个平台的限期
 artifact，不创建 Git tag 或 GitHub Release。版本格式为
 `nightly-<run-number>-<commit-short-hash>`，完整 commit hash 写入 manifest/index。
-每个目标包含 Tauri 2 启动器 UI、UI-neutral CLI、服务、浏览器 Worker、桌面运行时以及
+每个目标包含 UI-neutral CLI、服务、浏览器 Worker、桌面运行时以及
 `release-manifest.json`；同时提供按组件拆分的归档和带大小/SHA-256 的
 `release-index.json`，安装者不必安装全部运行资源。启动器后台契约位于
-`internal/launcher`，Rust UI 通过受控 IPC 调用同目录的 Go CLI，不复制下载、
+`internal/launcher`，未来的原生平台 UI 通过稳定 API 调用同目录的 Go CLI，不复制下载、
 校验、锁和回滚策略。首次运行的 `initialize` 状态会驱动组件选择和安装进度页面，
 显式的 `-release-index` 才会通过 HTTPS 下载所选组件及依赖。组件启停、插件信任、
 原子行为设置、跨进程安装锁和可取消的操作进度继续由同一 CLI/后台接口提供；不会
@@ -64,7 +73,6 @@ artifact，不创建 Git tag 或 GitHub Release。版本格式为
 ## 文档入口
 
 - [项目文档总览](docs/README.md)
-- [CHUZI Design Language](docs/design-language.md)
 - [长期演进路线图](docs/roadmap.md)
 - [架构与目录规划](docs/architecture.md)
 - [账号状态机](docs/account-state-machine.md)

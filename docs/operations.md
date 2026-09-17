@@ -24,7 +24,8 @@
 
 `cmd/service` 已运行持久化 Store、Queue 和 Session Runner 调度循环；默认 Node
 backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/send client、
-同步网关和通知 worker；凭证注入通过 `-inject-account` 从显式环境变量加密写入。
+同步网关和通知 worker；凭证注入通过 `-inject-account` 从显式环境变量加密写入，
+`-rotate-account` 使用当前部署 key 重加密，`-revoke-account` 在清除密文前执行撤销。
 
 ## 浏览器运行时前置条件
 
@@ -50,6 +51,10 @@ WKWebView 可 headless。`-browser-backend headless` 选择该 worker，
 `--user-data-dir`，只轮询 `/json/version`；发现成功后仍须由上层自动化适配器执行
 页面操作，当前 worker 不报告业务成功。
 
+首个真实流程通过 `-browser-backend headless -automation-adapter genshin-cloudgame`
+显式启用，固定检查 `https://ys.mihoyo.com/cloud/#/` 的已授权会话。它复用 worker 已启动的
+Chromium/CDP 会话，不启动第二个浏览器。
+
 当前 Rust helper 已在发布 stage 中构建；Linux amd64/arm64 的原生 CI 已在
 X11/Wayland 下执行 WebKitGTK smoke，Windows/macOS 则执行 Wry 编译与打包检查，
 尚未完成 Windows/macOS 的 GUI 运行时 smoke。服务入口仍未将 helper 设为默认
@@ -72,7 +77,9 @@ Wry、GTK/WebKitGTK 和 headless 浏览器的运行库要求仍按各自平台�
 
 凭证密钥由部署环境注入。默认环境适配器读取 `CHUZI_CREDENTIAL_KEY_ID` 和
 `CHUZI_CREDENTIAL_KEY`；生产环境进行轮换时，Secret 管理器必须在切换期间
-同时提供旧 key 和当前 key。密钥缺失时服务应安全失败，不能创建明文回退。
+同时提供当前 key 和 `CHUZI_CREDENTIAL_KEYS` JSON map 中的旧 key。密钥缺失
+或历史 map 无法解析时服务应安全失败，不能创建明文回退。轮换窗口内对所有
+账号执行 `-rotate-account`，确认审计和恢复演练完成后再移除旧 key。
 
 配置/存储库层加载示例（`cmd/service` 普通启动使用同一顺序）：
 
@@ -95,7 +102,7 @@ store, err := store.Open(cfg)
 同时生成完整包、按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的
 组件包，以及记录归档大小/SHA-256 的 `release-index.json`；不创建 tag 或 GitHub Release。
 
-完整包内的 `release-manifest.json` 是启动器 UI 与 CLI 的稳定输入，声明目标平台、
+完整包内的 `release-manifest.json` 是启动器 CLI 和未来原生客户端的稳定输入，声明目标平台、
 版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 提供 manifest
 展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
 的更新检查、资源修复、组件启停、插件信任/启停和 `settings`/`settings-save` CLI。
@@ -107,16 +114,11 @@ store, err := store.Open(cfg)
 一致，新 release index 的版本和 commit 会作为候选版本使用。索引或归档校验失败时，
 旧组件状态和文件保持不变，不能把 endpoint 可达或归档下载完成误报为业务安装成功。
 未提供 index 时，修复和组件安装仍只使用显式本地 source root。
-锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件同时包含
-UI-neutral `chuzi-launcher` CLI 和 Tauri 2 `chuzi-launcher-ui`；UI 通过
-`chuzi.launcher-ui/v1` IPC 事件调用 CLI，可显示已校验的更新候选、管理组件，
-以及执行插件列表、安装、启停、信任/取消信任和删除操作。UI 不复制文件、下载、
-校验、执行插件、授予 signer 信任或实现回滚策略；更新候选 manifest 和显式
-signer allowlist 仅作为启动器进程配置传入 Go 后台。
-
-如果桌面 UI 窗口启动后为空白，可从终端启动 `chuzi-launcher-ui` 并检查 Tauri
-运行时错误；前端页面由 `launcher-ui/frontend/dist` 提供。诊断输出不得记录凭证或
-启动器响应 payload。
+锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件当前
+只包含 UI-neutral `chuzi-launcher` CLI。未来的 Windows WinUI 3、macOS SwiftUI
+和 Linux GTK 客户端通过 Stable API Boundary 调用同一 CLI/Core 能力，平台 UI 不复制
+文件、下载、校验、执行插件、授予 signer 信任或实现回滚策略。诊断输出不得记录
+凭证或启动器响应 payload。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的格式和单元测试也在每个目标 runner 上执行，目标矩阵为：
@@ -167,15 +169,16 @@ gh workflow run release-retry.yml --repo Semcosm/chuzi --ref main \
 已接入构建，原生编译由对应 runner 验证。Linux amd64/arm64 在原生 runner 上
 安装 WebKitGTK 4.1，并使用 Xvfb 与 Weston headless compositor 分别覆盖 X11
 和 Wayland 的本地测试页 smoke test；Windows/macOS 没有对应的 GUI 运行时 smoke
-步骤。CDP 的业务操作适配器、WebDriver、浏览器下载或其他原生模块必须在单独
-CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和 smoke test 覆盖范围。
+步骤。当前仅接入云原神会话检查；其他业务适配器、WebDriver、浏览器下载或其他
+原生模块必须在单独 CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和
+smoke test 覆盖范围。
 
 CR-0014-B 合并后，Windows/macOS 发布包携带 Wry helper；CR-0014-C 使 Linux
 发布包也携带 WebKitGTK helper。Windows/macOS/Linux 的运行仍要求对应平台
 WebView2/WKWebView/WebKitGTK 和 GUI session；Wayland smoke 使用 Weston headless
 compositor，不能被误解为真正 headless 浏览器。helper 不会自动替代默认 Node
 backend，只有 `-browser-backend rust` 才会显式组装；headless 则通过
-`-browser-backend headless` 显式选择，业务自动化仍待后续 CR。
+`-browser-backend headless` 显式选择，云原神适配器还需额外显式启用。
 
 业务自动化插件是独立于浏览器 Worker 的进程边界。Windows 可直接启动原生插件
 进程；macOS/Linux 如使用 Wine，必须为每个插件派生独立的 Wine prefix，并验证
@@ -184,10 +187,12 @@ Wine 可执行文件、Windows 运行库、图形会话和目标插件版本。W
 Linux ARM64/macOS arm64 可运行 BetterGI。插件协议使用 `chuzi.adapter/v1`，只传递
 服务派生的 session/request 标识和脱敏运行事实，凭证不得进入 JSONL payload。
 
-CR-0021 的首个适配器通过显式 Node 入口运行，不改变服务默认的 deferred backend：
-`node browser-worker/src/headless-adapter.mjs --browser-command <installed-browser>`。
-测试和 smoke 只把仓库内 fake CDP fixture 作为 `--browser-command`，并使用
-`local.test_page_probe` 与假账号；部署不得把该测试入口解释为生产账号自动化能力。
+CR-0043 的云原神适配器通过显式服务选项运行，不改变服务默认的 deferred backend：
+`chuzi -browser-backend headless -automation-adapter genshin-cloudgame
+-headless-browser-command <installed-browser>`。它只检查已授权 Profile，不接收明文
+凭据，不处理验证码/风控，不接受任意 URL；适配器返回页面事实，由 Core evaluator
+判断认证结果，未认证或页面不匹配时 fail closed。测试和
+CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生产账号已登录。
 
 ## 运维检查
 
@@ -196,6 +201,10 @@ CR-0021 的首个适配器通过显式 Node 入口运行，不改变服务默认
 - 定期检查 Matrix outbox 的待发送数量、过期 claim 和按分类统计的发送失败。
 - 使用 `-diagnostics` 检查 schema、队列、租约、outbox 和数据库大小；使用 `-audit`
   读取有界的脱敏状态/凭证操作审计，使用 `-validate-backup` 在恢复演练前验证备份。
+- 部署变更前运行 `scripts/test_runtime.sh`；它只使用 fake 账号、本地协议测试
+  homeserver、测试凭证和本地 Worker。受控环境可在提供 disposable Matrix
+  homeserver 的 `CHUZI_MATRIX_TEST_*` 变量后额外设置
+  `CHUZI_RUN_CONTROLLED_MATRIX=1`，验证真实 `whoami`、sync、send 和网关/通知链路。
 - `observability.metrics_listen` 提供本地 Prometheus 文本端点；`log_path` 启用
   0600 JSONL 日志并按 `log_max_bytes`/`log_max_files` 轮转。两个端点都必须限制在
   loopback 或受保护管理网络。

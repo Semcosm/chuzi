@@ -33,10 +33,9 @@ def main() -> int:
     binary = "chuzi.exe" if args.target == "windows-amd64" else "chuzi"
     runtime = "chuzi-browser-runtime.exe" if args.target == "windows-amd64" else "chuzi-browser-runtime"
     launcher = "chuzi-launcher.exe" if args.target == "windows-amd64" else "chuzi-launcher"
-    launcher_ui = "chuzi-launcher-ui.exe" if args.target == "windows-amd64" else "chuzi-launcher-ui"
     archive_extension = "zip" if args.target == "windows-amd64" else "tar.gz"
     groups = {
-        "launcher": ([launcher, launcher_ui], True),
+        "launcher": ([launcher,], True),
         "service": ([binary], False),
         "browser-worker": (sorted(
             "browser-worker/" + str(path.relative_to(stage / "browser-worker")).replace(os.sep, "/")

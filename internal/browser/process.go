@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -34,8 +35,8 @@ type ProcessFactory struct {
 // for local/fake protocol fixtures (success, failure, hold, crash); the
 // default deferred mode reports that real browser automation is not enabled.
 type ProcessConfig struct {
-	Command    string
-	Script     string
+	Command string
+	Script  string
 	// ScriptArgs are appended after the standard --stdio argument. They are
 	// restricted to the worker's own startup configuration and are not shell
 	// parsed. Args and ScriptArgs cannot be combined.
@@ -99,10 +100,10 @@ func (f *ProcessFactory) Start(ctx context.Context, spec WorkerSpec) (Worker, er
 		return nil, fmt.Errorf("start browser worker: %w", err)
 	}
 	worker := &processWorker{
-		cmd:       command,
-		stdin:     stdin,
-		messages:  make(chan protocol.Envelope, 8),
-		readDone:  make(chan struct{}),
+		cmd:         command,
+		stdin:       stdin,
+		messages:    make(chan protocol.Envelope, 8),
+		readDone:    make(chan struct{}),
 		processDone: make(chan struct{}),
 	}
 	go worker.readLoop(stdout)
@@ -258,6 +259,13 @@ func (w *processWorker) Run(ctx context.Context) (WorkerResult, error) {
 	if started.Type == protocol.SessionCancelled {
 		return WorkerResult{Failure: account.TransientFailure}, context.Canceled
 	}
+	if started.Type == protocol.SessionStarted && w.spec.Mode == "adapter" {
+		handle, valid := sessionHandle(started.Payload)
+		if !valid {
+			return WorkerResult{}, fmt.Errorf("%w: adapter session handle", ErrWorkerProtocol)
+		}
+		return WorkerResult{Succeeded: true, Handle: handle}, nil
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -272,6 +280,18 @@ func (w *processWorker) Run(ctx context.Context) (WorkerResult, error) {
 			switch message.Type {
 			case protocol.SessionSuccess:
 				return WorkerResult{Succeeded: true}, nil
+			case protocol.SessionStarted:
+				// Adapter mode intentionally leaves the browser lifecycle alive
+				// while Core invokes the business adapter against its CDP endpoint.
+				// The normal hold fixture remains blocking.
+				if w.spec.Mode != "adapter" {
+					continue
+				}
+				handle, valid := sessionHandle(message.Payload)
+				if !valid {
+					return WorkerResult{}, fmt.Errorf("%w: adapter session handle", ErrWorkerProtocol)
+				}
+				return WorkerResult{Succeeded: true, Handle: handle}, nil
 			case protocol.SessionFailure:
 				return WorkerResult{Failure: failureClass(message.Payload["failure"])}, nil
 			case protocol.SessionCancelled:
@@ -285,6 +305,20 @@ func (w *processWorker) Run(ctx context.Context) (WorkerResult, error) {
 			return WorkerResult{}, ErrWorkerCrashed
 		}
 	}
+}
+
+func validCDPPort(value string) bool {
+	port, err := strconv.Atoi(value)
+	return err == nil && port >= 1 && port <= 65535
+}
+
+func sessionHandle(payload map[string]string) (string, bool) {
+	host := payload["cdp_host"]
+	port := payload["cdp_port"]
+	if host != "127.0.0.1" || !validCDPPort(port) {
+		return "", false
+	}
+	return "headless-cdp://" + host + ":" + port, true
 }
 
 func (w *processWorker) Cancel(ctx context.Context) error {

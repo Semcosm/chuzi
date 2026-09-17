@@ -9,8 +9,6 @@
 credentials/
 profiles/
 runtime/
-!launcher-ui/frontend/src/runtime/
-!launcher-ui/frontend/src/runtime/**
 data/
 logs/
 
@@ -19,10 +17,6 @@ bin/
 dist/
 browser-worker/node_modules/
 browser-runtime/target/
-launcher-ui/target/
-launcher-ui/node_modules/
-launcher-ui/frontend/dist/
-launcher-ui/gen/
 browser-worker/report.*.json
 coverage/
 tmp/

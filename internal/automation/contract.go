@@ -143,6 +143,12 @@ type Result struct {
 	Facts     map[string]string `json:"facts,omitempty"`
 }
 
+// CredentialUse is a host-owned, least-privilege callback. An adapter may
+// request short-lived credential material only by invoking this callback; the
+// host decides how to decrypt it and clears the supplied buffer after use.
+// Implementations must not retain the callback or the byte slice.
+type CredentialUse func(context.Context, func([]byte) error) error
+
 func (r Result) Validate() error {
 	if r.Succeeded && r.Failure != nil {
 		return fmt.Errorf("%w: successful result cannot contain failure", ErrInvalidContract)
@@ -183,6 +189,14 @@ type Adapter interface {
 	Execute(context.Context, Session, Operation) (Result, error)
 	Cancel(context.Context, string) error
 	Close(context.Context) error
+}
+
+// CredentialAwareAdapter is an optional in-process extension for an operation
+// that genuinely needs a credential. Isolated JSONL adapters keep using the
+// base Adapter contract, so credentials never cross their protocol payloads.
+type CredentialAwareAdapter interface {
+	Adapter
+	ExecuteWithCredential(context.Context, Session, Operation, CredentialUse) (Result, error)
 }
 
 // SortedCapabilities returns a deterministic copy for manifests and logs.

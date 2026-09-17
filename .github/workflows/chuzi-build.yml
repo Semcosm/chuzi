@@ -3,7 +3,6 @@ name: chuzi-build
 on:
   schedule:
     - cron: '17 2 * * *'
-  pull_request:
   push:
     branches: [main]
     tags: ['v*.*.*']
@@ -47,7 +46,6 @@ jobs:
           cache: npm
           cache-dependency-path: |
             browser-worker/package-lock.json
-            launcher-ui/package-lock.json
 
       - name: Install Linux WebView dependencies
         if: runner.os == 'Linux'
@@ -160,33 +158,27 @@ jobs:
           }
 
           run_phase 'go-test' go test -count=1 -v ./...
+          run_phase 'runtime-integration-test' scripts/test_runtime.sh
           run_phase 'node-test' npm --prefix browser-worker test
           run_phase 'launcher-consumer-test' scripts/test_launcher_consumer.sh
           run_phase 'nightly-artifact-validator-test' scripts/test_nightly_artifact_validator.sh
-          run_phase 'launcher-ui-test' scripts/test_launcher_ui.sh
           run_phase 'cargo-fmt-check' cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
           run_phase 'cargo-test' cargo test --locked --manifest-path browser-runtime/Cargo.toml -- --nocapture
           run_phase 'service-self-test' go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
           printf '%s\n' 'complete' >"$phase_file"
           printf '[contract] all phases passed at %s\n' "$(now)"
 
-      - name: Test native desktop UI and WebView helper contract
+      - name: Test native browser runtime helper contract
         if: runner.os == 'Windows' || runner.os == 'macOS' || runner.os == 'Linux'
         shell: bash
         run: |
           cargo test --locked --manifest-path browser-runtime/Cargo.toml --features desktop-webview
-          cargo fmt --manifest-path launcher-ui/Cargo.toml -- --check
-          cargo test --locked --manifest-path launcher-ui/Cargo.toml
-          cargo clippy --locked --manifest-path launcher-ui/Cargo.toml --all-targets -- -D warnings
           if [ "${{ runner.os }}" = "Windows" ]; then
             test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime.exe"
-            test -f "dist/${{ matrix.target }}/stage/chuzi-launcher-ui.exe"
           elif [ "${{ runner.os }}" = "macOS" ]; then
             test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
-            test -f "dist/${{ matrix.target }}/stage/chuzi-launcher-ui"
           else
             test -f "dist/${{ matrix.target }}/stage/chuzi-browser-runtime"
-            test -f "dist/${{ matrix.target }}/stage/chuzi-launcher-ui"
           fi
 
       - name: Smoke test Linux WebKitGTK on X11
