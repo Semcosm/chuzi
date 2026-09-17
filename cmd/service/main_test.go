@@ -72,7 +72,7 @@ func TestAssembleRuntimeOpensPersistentStoreAndBuildsBoundaries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if runtime.store == nil || runtime.requests == nil || runtime.runner == nil || runtime.scheduler == nil {
+	if runtime.store == nil || runtime.requests == nil || runtime.runner == nil || runtime.scheduler == nil || runtime.coreAPI == nil {
 		t.Fatalf("assembled runtime has missing boundary: %#v", runtime)
 	}
 	if _, err := runtime.store.SchemaVersion(); err != nil {

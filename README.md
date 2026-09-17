@@ -31,6 +31,13 @@ Client/同步网关和通知 outbox worker 可由配置启用，健康检查可�
 `-inject-account`、`-rotate-account` 和 `-revoke-account` 提供停止服务后的运维操作。服务仍不会
 自行创建账号，也不会把 Secret 写入普通配置或日志。
 
+Core API 已有可调用的本地 IPC 形态。服务在数据目录派生固定 endpoint：Unix 使用
+`core.sock`（权限 `0600`），Windows 使用 owner-only named pipe。客户端先完成
+`chuzi.core/v1` `hello` 协商，再通过 JSONL envelope 调用提交、查询、取消、结果、事件和
+通知方法；请求按 ID 多路复用，取消会传播到服务端。原生客户端不得读取 bbolt、凭证或
+Profile。Windows 首个 WinUI 3 客户端位于 `ui/windows`，通过独立的 named-pipe 客户端只消费
+这一边界；macOS SwiftUI/AppKit 与 Linux GTK 客户端仍待后续 CR。
+
 观测能力通过 `observability` 配置启用：服务写入结构化脱敏 JSONL 日志并有界轮转，
 可选的本地 metrics 端点只暴露低基数分类指标；日志、指标、健康和审计输出都不会
 包含凭证、Cookie、页面内容或原始账号/房间标识。
@@ -53,7 +60,7 @@ artifact，不创建 Git tag 或 GitHub Release。版本格式为
 每个目标包含 UI-neutral CLI、服务、浏览器 Worker、桌面运行时以及
 `release-manifest.json`；同时提供按组件拆分的归档和带大小/SHA-256 的
 `release-index.json`，安装者不必安装全部运行资源。启动器后台契约位于
-`internal/launcher`，未来的原生平台 UI 通过稳定 API 调用同目录的 Go CLI，不复制下载、
+`internal/launcher`，原生平台 UI 通过 Core API 调用 Go 服务，并按需使用 UI-neutral CLI，不复制下载、
 校验、锁和回滚策略。首次运行的 `initialize` 状态会驱动组件选择和安装进度页面，
 显式的 `-release-index` 才会通过 HTTPS 下载所选组件及依赖。组件启停、插件信任、
 原子行为设置、跨进程安装锁和可取消的操作进度继续由同一 CLI/后台接口提供；不会
@@ -75,6 +82,7 @@ artifact，不创建 Git tag 或 GitHub Release。版本格式为
 - [项目文档总览](docs/README.md)
 - [长期演进路线图](docs/roadmap.md)
 - [架构与目录规划](docs/architecture.md)
+- [Core API v1](docs/core-api.md)
 - [账号状态机](docs/account-state-machine.md)
 - [状态存储与恢复](docs/storage.md)
 - [安全与凭证管理](docs/security.md)

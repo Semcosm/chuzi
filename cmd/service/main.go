@@ -23,6 +23,8 @@ import (
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/core"
+	"github.com/Semcosm/chuzi/internal/coreapi"
+	"github.com/Semcosm/chuzi/internal/coretransport"
 	"github.com/Semcosm/chuzi/internal/credential"
 	"github.com/Semcosm/chuzi/internal/health"
 	"github.com/Semcosm/chuzi/internal/matrix"
@@ -88,6 +90,8 @@ type serviceRuntime struct {
 	metrics       *observability.Metrics
 	logger        *observability.JSONLogger
 	metricsListen string
+	coreAPI       coreapi.API
+	coreServer    *coretransport.Server
 }
 
 func (r *serviceRuntime) refreshMetrics(at time.Time) {
@@ -382,9 +386,13 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database})
+	if coreErr != nil {
+		return closeOnError(coreErr)
+	}
 	runtime := &serviceRuntime{
 		store: database, requests: requestService, credentials: credentials,
-		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger,
+		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, coreAPI: coreAPI,
 	}
 	runtime.metricsListen = cfg.Observability.MetricsListen
 	if strings.TrimSpace(options.metricsListen) != "" {
@@ -528,6 +536,9 @@ func run(ctx context.Context, options serviceOptions) error {
 		return err
 	}
 	defer func() {
+		if runtime.coreServer != nil {
+			_ = runtime.coreServer.Close()
+		}
 		if runtime.automation != nil {
 			_ = runtime.automation.Close(context.Background())
 		}
@@ -541,6 +552,16 @@ func run(ctx context.Context, options serviceOptions) error {
 			_ = runtime.logger.Close()
 		}
 	}()
+	endpoint := coretransport.EndpointPath(cfg.DataDir)
+	listener, err := coretransport.Listen(ctx, endpoint)
+	if err != nil {
+		return err
+	}
+	runtime.coreServer, err = coretransport.NewServer(runtime.coreAPI, listener, coretransport.Config{})
+	if err != nil {
+		_ = listener.Close()
+		return err
+	}
 	backgroundCtx, cancelBackground := context.WithCancel(ctx)
 	defer cancelBackground()
 	var background sync.WaitGroup
@@ -557,6 +578,13 @@ func run(ctx context.Context, options serviceOptions) error {
 			}
 		}()
 	}
+	startBackground("core api", func(workerCtx context.Context) error {
+		go func() {
+			<-workerCtx.Done()
+			_ = runtime.coreServer.Close()
+		}()
+		return runtime.coreServer.Serve()
+	})
 	if runtime.notifier != nil {
 		startBackground("matrix notifier", func(workerCtx context.Context) error {
 			return runtime.notifier.Run(workerCtx, time.Second)

@@ -27,6 +27,26 @@ backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/sen
 同步网关和通知 worker；凭证注入通过 `-inject-account` 从显式环境变量加密写入，
 `-rotate-account` 使用当前部署 key 重加密，`-revoke-account` 在清除密文前执行撤销。
 
+## Core API 本地 IPC
+
+服务普通启动会同时监听由 `data_dir` 派生的 Core endpoint。Unix 为
+`<data_dir>/core.sock`，目录权限为 `0700`、socket 权限为 `0600`；Windows 为带数据目录
+摘要的 owner-only named pipe。endpoint 不能由请求正文覆盖，活动 socket 也不会被第二个
+服务实例删除。原生客户端应使用 `internal/coretransport.Connect`，先执行
+`chuzi.core/v1` `hello`，再调用 JSONL Core API；不要直接打开 bbolt 或读取 Profile。
+
+每个调用带唯一 request ID，客户端可并发发起调用，服务端按 ID 返回响应。取消 context
+会发送 transport-level `cancel`，业务上的 `cancel_request` 仍是独立的状态机命令。
+响应只含 Core DTO 和稳定错误码，禁止返回 store、凭证、Profile 路径或底层错误文本。
+契约测试覆盖版本拒绝、未知方法、握手前访问、敏感字段脱敏、取消、并发多路复用、超大
+帧、socket 权限和 endpoint 占用。
+
+首个 Windows WinUI 3 客户端在 `ui/windows`，构建脚本为
+`scripts/build_windows_ui.ps1`，Actions 任务 `chuzi-build-windows-ui` 上传独立的
+`chuzi-native-windows-<version>.zip`。它通过 `%ProgramData%\\chuzi`（或部署提供的
+`CHUZI_DATA_DIR`）派生与 Go 相同的 named pipe 名称，执行 `hello` 后调用提交、查询和取消。
+客户端只显示稳定错误码；Windows App SDK、WebView2 与服务进程必须由部署环境单独管理。
+
 ## 浏览器运行时前置条件
 
 桌面 WebView 和真正 headless 是两个部署模式。visible 或 hidden 的桌面
@@ -126,7 +146,7 @@ release retry 的审计契约。nightly/tag 产物再由 `artifact_integration` 
 同时生成完整包、按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的
 组件包，以及记录归档大小/SHA-256 的 `release-index.json`；不创建 tag 或 GitHub Release。
 
-完整包内的 `release-manifest.json` 是启动器 CLI 和未来原生客户端的稳定输入，声明目标平台、
+完整包内的 `release-manifest.json` 是启动器 CLI 和原生客户端的稳定输入，声明目标平台、
 版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 提供 manifest
 展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
 的更新检查、资源修复、组件启停、插件信任/启停和 `settings`/`settings-save` CLI。
@@ -139,9 +159,9 @@ release retry 的审计契约。nightly/tag 产物再由 `artifact_integration` 
 旧组件状态和文件保持不变，不能把 endpoint 可达或归档下载完成误报为业务安装成功。
 未提供 index 时，修复和组件安装仍只使用显式本地 source root。
 锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件当前
-只包含 UI-neutral `chuzi-launcher` CLI。未来的 Windows WinUI 3、macOS SwiftUI
-和 Linux GTK 客户端通过 Stable API Boundary 调用同一 CLI/Core 能力，平台 UI 不复制
-文件、下载、校验、执行插件、授予 signer 信任或实现回滚策略。诊断输出不得记录
+只包含 UI-neutral `chuzi-launcher` CLI；Windows WinUI 3 客户端另以独立 zip 分发，
+macOS SwiftUI 和 Linux GTK 客户端待后续 CR。所有平台 UI 都通过 Stable API Boundary
+调用同一 CLI/Core 能力，不复制文件、下载、校验、执行插件、授予 signer 信任或实现回滚策略。诊断输出不得记录
 凭证或启动器响应 payload。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 

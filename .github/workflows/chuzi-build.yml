@@ -228,9 +228,52 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  windows_ui:
+    name: chuzi-build-windows-ui
+    runs-on: windows-2022
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Resolve build version
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') {
+            $version = $env:GITHUB_REF_NAME
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'schedule' -or $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $version = "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
+          } else {
+            $version = "dev-$($env:GITHUB_SHA.Substring(0, 12))"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Build and package WinUI 3 client
+        shell: pwsh
+        run: ./scripts/build_windows_ui.ps1 -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui"
+        env:
+          CHUZI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+      - name: Test Windows Core named pipe
+        shell: pwsh
+        run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
+      - name: Upload Windows native client
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-ui-windows
+          path: ${{ runner.temp }}/chuzi-ui/chuzi-native-windows-*.zip*
+          if-no-files-found: error
+          retention-days: 1
+
   assemble_target:
     name: chuzi-build-${{ matrix.target }}
-    needs: [go_build, node_checks, runtime_build]
+    needs: [go_build, node_checks, runtime_build, windows_ui]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     permissions:
@@ -367,7 +410,7 @@ jobs:
   chuzi_build:
     name: chuzi-build
     if: always()
-    needs: [contract_checks, go_checks, node_checks, rust_checks, go_build, runtime_build, assemble_target, artifact_integration]
+    needs: [contract_checks, go_checks, node_checks, rust_checks, go_build, runtime_build, windows_ui, assemble_target, artifact_integration]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every build stage
@@ -381,6 +424,7 @@ jobs:
             "${{ needs.rust_checks.result }}" \
             "${{ needs.go_build.result }}" \
             "${{ needs.runtime_build.result }}" \
+            "${{ needs.windows_ui.result }}" \
             "${{ needs.assemble_target.result }}"; do
             test "$result" = success || { echo "build stage did not succeed: $result" >&2; exit 1; }
           done

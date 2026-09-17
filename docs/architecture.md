@@ -47,13 +47,14 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
 ├── browser-runtime/             # Rust helper；deferred/Wry 桌面 WebView
 ├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
-├── ui/                          # 原生平台客户端（规划中）
-│   ├── windows/                  # WinUI 3 客户端
-│   ├── macos/                    # SwiftUI/AppKit 客户端
-│   └── linux/                    # GTK 客户端
+├── ui/                          # 原生平台客户端
+│   ├── windows/                  # 已有 WinUI 3 首个客户端
+│   ├── macos/                    # SwiftUI/AppKit 客户端（后续 CR）
+│   └── linux/                    # GTK 客户端（后续 CR）
 ├── internal/
 │   ├── coreapi/                 # chuzi.core/v1 DTO、API 和稳定错误分类
 │   ├── core/                    # Core 编排 facade，不拥有状态机或存储
+│   ├── coretransport/            # chuzi.core/v1 本地 JSONL IPC（Unix socket/named pipe）
 │   ├── coretest/                # Core 跨模块测试替身（不参与生产拼装）
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
@@ -83,8 +84,8 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 首阶段采用 WinUI 3，macOS 采用 SwiftUI（必要时使用 AppKit），Linux 采用 GTK；
 三者分别遵循目标平台的默认控件、窗口行为、无障碍和主题机制。客户端只负责视图、
 交互和平台生命周期，不读取 bbolt、凭证或 Profile，也不复制下载、校验、锁、插件
-信任和回滚策略。平台 UI 目录当前只记录目标边界，待各平台实现 CR 明确 API 版本、
-打包方式和运行时支持范围。
+信任和回滚策略。Windows 首个客户端已落在 `ui/windows`；macOS/Linux 的实现 CR 仍需
+分别明确 API 版本、打包方式和运行时支持范围。
 
 `internal/coreapi` 定义 `chuzi.core/v1` 的 transport-neutral DTO、命令接口和稳定
 错误代码。`internal/core` 将 Request Service、Store 的只读投影和通知/审计查询
@@ -94,7 +95,15 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 Queue。`internal/coretest` 提供确定性时钟/ID、凭证、Worker、自动化和 Matrix
 Sender 替身，供跨模块测试复用；这些替身不参与生产拼装。
 `tests/core` 使用临时 Store 验证请求提交、账号/请求查询、取消、脱敏结果、领域事件、
-完整假实现链路和通知状态，后续本地 IPC 或原生客户端只能依赖这层契约。
+完整假实现链路和通知状态；`internal/coretransport` 和原生客户端只能依赖这层契约。
+
+`internal/coretransport` 是原生客户端的进程边界。请求和响应使用 JSONL envelope，首个
+请求必须是 `hello` 并协商 `chuzi.core/v1`；方法覆盖 `submit_request`、请求/账号查询、
+`cancel_request`、结果、事件和通知查询。服务端按连接隔离请求上下文，支持按请求 ID 的
+并发响应和传输取消，错误只返回稳定 `coreapi.Code`。Unix endpoint 从服务 `data_dir`
+派生并设为 `0600`，启动时不会覆盖仍在使用的 socket；Windows 使用 `go-winio` named
+pipe 和 owner-only SDDL。客户端不接受任意 endpoint 作为业务参数，UI 只能使用部署派生的
+本地地址。
 
 ## 业务自动化适配器与插件
 
@@ -141,7 +150,7 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 原子资源修复、组件依赖安装、插件归档安全解包、显式 signer 信任、原子设置持久化、
 跨进程锁和可取消进度事件；CR-0027 增加了 `ReleaseIndex`、HTTPS 同源归档下载、
 临时文件原子落盘和首次运行初始化状态。`cmd/launcher` 只在显式提供
-`-release-index` 时联网。未来的原生平台客户端通过 Stable API Boundary 调用该
+`-release-index` 时联网。原生平台客户端通过 Stable API Boundary 调用该
 CLI/Core 能力，接收 UI 请求结果、脱敏进度和分类错误；更新候选、组件管理和插件
 信任操作仍由 Go 后台校验并执行，文件、下载、校验、锁、插件信任和回滚策略不复制
 到任何平台 UI。
