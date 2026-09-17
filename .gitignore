@@ -9,6 +9,8 @@
 credentials/
 profiles/
 runtime/
+!tests/runtime/
+!tests/runtime/**
 data/
 logs/
 

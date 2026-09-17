@@ -61,6 +61,7 @@ Local evidence for the implementation includes:
 - `scripts/test_build_contract.sh`
 - `scripts/test_nightly_package.sh`
 - `scripts/test_nightly_artifact_validator.sh`
+- `scripts/test_runtime.sh`
 - `go test ./...`
 - `go vet ./...`
 - `npm --prefix browser-worker test`
