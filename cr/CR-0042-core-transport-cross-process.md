@@ -5,12 +5,12 @@ Head or Range: 851b73847c55e51d111a603c1605e592de6b0d87..2ea7ef709889e3f8d454452
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: test(core): exercise transport across process boundary
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 851b73847c55e51d111a603c1605e592de6b0d87
-Head OID: 2ea7ef709889e3f8d454452eda3d415e6cb33696
+Base OID: 3c317c12e22d1b3572365d03adc3457af3e366ec
+Head OID: 3c317c12e22d1b3572365d03adc3457af3e366ec
 Integrated Result: pending
 
 ## Summary
