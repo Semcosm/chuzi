@@ -94,6 +94,14 @@ store, err := store.Open(cfg)
 
 ## 构建与发布目标
 
+### Pull request checks
+
+Pull request 更新由 `.github/workflows/chuzi-pr.yml` 执行单 runner 的快速检查，保留
+Go/Node/Rust 默认 feature 测试、宿主平台编译和协议 smoke test。同一个 PR 的旧运行会在
+新 push 后取消，避免分支迭代时堆积过时构建。四平台 native WebView、release package 和
+Linux X11/Wayland smoke 只由主分支、正式 tag、nightly 计划任务或手动 dispatch 的完整
+构建执行；主分支保护仍使用同名的 `chuzi-build` required check。
+
 ### Nightly release（当前首个 release 流程）
 
 `.github/workflows/chuzi-build.yml` 每天 `02:17 UTC` 自动运行，也支持手动

@@ -55,10 +55,18 @@ done
 [ -x "$repo_root/scripts/validate_release_retry_run.sh" ] || fail "release retry validator is missing"
 [ -x "$repo_root/scripts/validate_nightly_artifact.py" ] || fail "nightly artifact validator is missing"
 [ -x "$repo_root/scripts/test_launcher_consumer.sh" ] || fail "launcher consumer acceptance test is missing"
+[ -f "$repo_root/.github/workflows/chuzi-pr.yml" ] || fail "pull request workflow is missing"
 grep -Fq 'TestLauncherConsumerFlow' "$repo_root/cmd/launcher/consumer_test.go" || fail "launcher consumer flow test is missing"
 
 grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build check is missing"
 grep -Eq 'actions/checkout@[0-9a-f]{40}' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow action is not pinned"
+if grep -Eq '^[[:space:]]*pull_request:' "$repo_root/.github/workflows/chuzi-build.yml"; then
+  fail "full build workflow must not run on pull requests"
+fi
+grep -Fq 'pull_request:' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request workflow trigger is missing"
+grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request required check is missing"
+grep -Fq 'cancel-in-progress: true' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request cancellation is missing"
+grep -Eq 'actions/checkout@[0-9a-f]{40}' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request action is not pinned"
 grep -Fq 'cargo test --locked --manifest-path browser-runtime/Cargo.toml' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses browser runtime tests"
 grep -Fq 'chuzi-browser-runtime' "$repo_root/scripts/build.sh" || fail "build.sh misses Rust helper"
 grep -Fq 'chuzi-browser-runtime' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses Rust helper"
