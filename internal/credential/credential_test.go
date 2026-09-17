@@ -251,6 +251,30 @@ func TestEnvKeyringUsesDeploymentVariablesOnly(t *testing.T) {
 	_ = os.Getenv("TEST_CREDENTIAL_KEY")
 }
 
+func TestEnvKeyringRetainsHistoricalKeysDuringRotationWindow(t *testing.T) {
+	t.Setenv("TEST_CREDENTIAL_KEY_ID", "current-key")
+	t.Setenv("TEST_CREDENTIAL_KEY", "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=")
+	t.Setenv("CHUZI_CREDENTIAL_KEYS", `{"old-key":"ERERERERERERERERERERERERERERERERERERERERERE="}`)
+	keyring := NewEnvKeyring("TEST_CREDENTIAL_KEY", "TEST_CREDENTIAL_KEY_ID")
+	current, err := keyring.Current(context.Background())
+	if err != nil || current.ID() != "current-key" {
+		t.Fatalf("current key = %q, %v", current.ID(), err)
+	}
+	historical, err := keyring.Lookup(context.Background(), "old-key")
+	if err != nil || historical.ID() != "old-key" {
+		t.Fatalf("historical key = %q, %v", historical.ID(), err)
+	}
+	t.Setenv("TEST_CREDENTIAL_KEY", "")
+	if _, err := keyring.Current(context.Background()); !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("missing current key error = %v", err)
+	}
+	t.Setenv("TEST_CREDENTIAL_KEY", "IiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiI=")
+	t.Setenv("CHUZI_CREDENTIAL_KEYS", "not-json")
+	if _, err := keyring.Lookup(context.Background(), "old-key"); !errors.Is(err, ErrKeyUnavailable) {
+		t.Fatalf("malformed historical key map error = %v", err)
+	}
+}
+
 func TestEnvSourceAndInjectEncryptsAndWipesInput(t *testing.T) {
 	service, backend, _ := testService(t)
 	t.Setenv("CHUZI_TEST_CREDENTIAL", "injected-secret")

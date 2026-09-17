@@ -9,6 +9,7 @@ const profileArgument = args.find((arg) => arg.startsWith("--user-data-dir="));
 const port = Number(portArgument?.split("=", 2)[1]);
 const mode = process.env.FAKE_CDP_MODE || "valid";
 const profile = profileArgument?.slice("--user-data-dir=".length) || "";
+let evaluationCount = 0;
 if (!Number.isInteger(port) || port < 1 || !profile) process.exit(2);
 if (process.env.FAKE_CDP_PID_FILE) writeFileSync(process.env.FAKE_CDP_PID_FILE, String(process.pid));
 
@@ -41,24 +42,36 @@ function unframe(buffer) {
 }
 
 function cdpResult(message) {
+  const evaluatedResult = (value) => process.env.FAKE_CDP_RESULT_SHAPE === "chromium"
+    ? { result: { type: "object", value } }
+    : { result: { result: { type: "object", value } } };
   switch (message.method) {
     case "Target.createTarget":
+      if (process.env.FAKE_CDP_TARGET_URL_FILE) {
+        writeFileSync(process.env.FAKE_CDP_TARGET_URL_FILE, String(message.params?.url || ""));
+      }
       return { targetId: "fake-target-1" };
     case "Target.attachToTarget":
       return { sessionId: "fake-session-1" };
     case "Runtime.evaluate":
-      return {
-        result: {
-          result: {
-            type: "object",
-            value: {
-              ready: mode !== "marker-missing",
-              accountId: process.env.FAKE_CDP_ACCOUNT_ID || "fake-account-1",
-              title: "chuzi local test page",
-            },
-          },
-        },
-      };
+      if (String(message.params?.expression || "").includes("querySelector('#app')")) {
+        evaluationCount += 1;
+        if (mode === "cloudgame-initial-blank" && evaluationCount === 1) {
+          return evaluatedResult({ ready: true, title: "", shell: false, loggedIn: false, loggedOut: false });
+        }
+        return evaluatedResult({
+          ready: mode !== "cloudgame-loading",
+          title: "云·原神",
+          shell: mode !== "cloudgame-no-shell",
+          loggedIn: mode !== "cloudgame-unauthenticated",
+          loggedOut: mode === "cloudgame-unauthenticated",
+        });
+      }
+      return evaluatedResult({
+        ready: mode !== "marker-missing",
+        accountId: process.env.FAKE_CDP_ACCOUNT_ID || "fake-account-1",
+        title: "chuzi local test page",
+      });
     case "Target.closeTarget":
       return { success: true };
     case "Page.enable":

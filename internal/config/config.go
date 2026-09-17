@@ -48,8 +48,9 @@ type MatrixConfig struct {
 // CredentialConfig names deployment environment variables for the keyring.
 // Values are names only; key material must remain outside ordinary config.
 type CredentialConfig struct {
-	KeyEnv   string `json:"key_env,omitempty"`
-	KeyIDEnv string `json:"key_id_env,omitempty"`
+	KeyEnv     string `json:"key_env,omitempty"`
+	KeyIDEnv   string `json:"key_id_env,omitempty"`
+	HistoryEnv string `json:"history_env,omitempty"`
 }
 
 // HealthConfig controls the optional local health HTTP listener.
@@ -174,7 +175,7 @@ func (m MatrixConfig) Validate() error {
 }
 
 func (c CredentialConfig) Validate() error {
-	for _, name := range []string{strings.TrimSpace(c.KeyEnv), strings.TrimSpace(c.KeyIDEnv)} {
+	for _, name := range []string{strings.TrimSpace(c.KeyEnv), strings.TrimSpace(c.KeyIDEnv), strings.TrimSpace(c.HistoryEnv)} {
 		if name != "" && !envNamePattern.MatchString(name) {
 			return fmt.Errorf("%w: credential environment name is invalid", ErrInvalidConfig)
 		}

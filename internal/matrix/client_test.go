@@ -35,7 +35,7 @@ func TestHTTPClientSendsStableTransactionAndSyncsJoinedMessages(t *testing.T) {
 	if err := client.Send(context.Background(), "!ops:example.org", "reply-1", "safe body"); err != nil {
 		t.Fatal(err)
 	}
-	if auth != "Bearer secret-token" || !strings.Contains(sendPath, "/send/m.room.message/reply-1") {
+	if auth != "Bearer secret-token" || sendPath != "/_matrix/client/v3/rooms/!ops:example.org/send/m.room.message/reply-1" {
 		t.Fatalf("send request path/auth = %q / %q", sendPath, auth)
 	}
 	response, err := client.Sync(context.Background(), "", time.Second)

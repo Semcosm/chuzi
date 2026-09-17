@@ -35,8 +35,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 
 以下是目标目录。`internal/account`、`internal/protocol`、`internal/browser`、
 `internal/request`、`internal/queue`、`internal/credential`、`internal/matrix`、
-`internal/observability`、`internal/store`、`internal/config` 和 `migrations/`
-均已有实现与测试；`tests/` 仍是规划目录。`cmd/service` 已把配置、Store、凭证服务、
+`internal/observability`、`internal/store`、`internal/config`、`internal/coreapi`、
+`internal/core` 和 `migrations/` 均已有实现与测试。`cmd/service` 已把配置、Store、凭证服务、
 Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知 worker 和
 健康端点组装成持久化调度入口；`deploy/` 提供 systemd 与 Secret 边界示例。
 
@@ -47,8 +47,15 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
 ├── browser-runtime/             # Rust helper；deferred/Wry 桌面 WebView
 ├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
-├── launcher-ui/                 # Rust/Wry 跨平台启动器 UI 与 CLI IPC bridge
+├── ui/                          # 原生平台客户端
+│   ├── windows/                  # 已有 WinUI 3 首个客户端
+│   ├── macos/                    # SwiftUI/AppKit 客户端（后续 CR）
+│   └── linux/                    # GTK 客户端（后续 CR）
 ├── internal/
+│   ├── coreapi/                 # chuzi.core/v1 DTO、API 和稳定错误分类
+│   ├── core/                    # Core 编排 facade，不拥有状态机或存储
+│   ├── coretransport/            # chuzi.core/v1 本地 JSONL IPC（Unix socket/named pipe）
+│   ├── coretest/                # Core 跨模块测试替身（不参与生产拼装）
 │   ├── protocol/                # 控制服务与 Worker 的版本化协议
 │   ├── account/                 # 已实现：账号实体与状态机
 │   ├── browser/                 # Profile 生命周期与会话运行器
@@ -63,7 +70,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 │   ├── observability/           # 已实现：结构化脱敏日志、轮转、指标和事件 Sink
 │   └── launcher/                # release manifest、校验和组件/插件管理接口
 ├── migrations/                  # 已实现：bbolt schema 迁移
-├── tests/                       # 规划中：更大规模集成测试与端到端测试
+├── tests/                       # 跨模块集成测试与端到端测试
 ├── configs/                     # 脱敏示例配置
 ├── deploy/                      # systemd 与 Secret/恢复运维示例
 ├── docs/                        # 项目文档与 ADR
@@ -72,6 +79,31 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ├── .githooks/                   # UGS Git hooks
 └── .ugs/                        # UGS 版本与策略清单
 ```
+
+平台 UI 通过 Stable API Boundary 使用 Core 和 `cmd/launcher` 提供的能力。Windows
+首阶段采用 WinUI 3，macOS 采用 SwiftUI（必要时使用 AppKit），Linux 采用 GTK；
+三者分别遵循目标平台的默认控件、窗口行为、无障碍和主题机制。客户端只负责视图、
+交互和平台生命周期，不读取 bbolt、凭证或 Profile，也不复制下载、校验、锁、插件
+信任和回滚策略。Windows 首个客户端已落在 `ui/windows`；macOS/Linux 的实现 CR 仍需
+分别明确 API 版本、打包方式和运行时支持范围。
+
+`internal/coreapi` 定义 `chuzi.core/v1` 的 transport-neutral DTO、命令接口和稳定
+错误代码。`internal/core` 将 Request Service、Store 的只读投影和通知/审计查询
+编排成该接口；它不返回 `store.Request`、bbolt 对象、凭证、Profile 路径或 UI 类型。
+其中 `PipelineRunner` 把 Session Runner、Credential.Use 和
+`automation.Adapter.Execute` 组合为一个 `queue.Runner`，只把脱敏运行事实交还
+Queue。`internal/coretest` 提供确定性时钟/ID、凭证、Worker、自动化和 Matrix
+Sender 替身，供跨模块测试复用；这些替身不参与生产拼装。
+`tests/core` 使用临时 Store 验证请求提交、账号/请求查询、取消、脱敏结果、领域事件、
+完整假实现链路和通知状态；`internal/coretransport` 和原生客户端只能依赖这层契约。
+
+`internal/coretransport` 是原生客户端的进程边界。请求和响应使用 JSONL envelope，首个
+请求必须是 `hello` 并协商 `chuzi.core/v1`；方法覆盖 `submit_request`、请求/账号查询、
+`cancel_request`、结果、事件和通知查询。服务端按连接隔离请求上下文，支持按请求 ID 的
+并发响应和传输取消，错误只返回稳定 `coreapi.Code`。Unix endpoint 从服务 `data_dir`
+派生并设为 `0600`，启动时不会覆盖仍在使用的 socket；Windows 使用 `go-winio` named
+pipe 和 owner-only SDDL。客户端不接受任意 endpoint 作为业务参数，UI 只能使用部署派生的
+本地地址。
 
 ## 业务自动化适配器与插件
 
@@ -118,10 +150,10 @@ browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成�
 原子资源修复、组件依赖安装、插件归档安全解包、显式 signer 信任、原子设置持久化、
 跨进程锁和可取消进度事件；CR-0027 增加了 `ReleaseIndex`、HTTPS 同源归档下载、
 临时文件原子落盘和首次运行初始化状态。`cmd/launcher` 只在显式提供
-`-release-index` 时联网。`launcher-ui` 只通过 shell-free 子进程调用该 CLI，
-将 UI 请求、脱敏进度和分类错误转换为 `chuzi.launcher-ui/v1` IPC 事件；更新
-候选、组件管理和插件信任操作仍由 Go 后台校验并执行，文件、下载、校验、锁、
-插件信任和回滚策略不复制到 UI。
+`-release-index` 时联网。原生平台客户端通过 Stable API Boundary 调用该
+CLI/Core 能力，接收 UI 请求结果、脱敏进度和分类错误；更新候选、组件管理和插件
+信任操作仍由 Go 后台校验并执行，文件、下载、校验、锁、插件信任和回滚策略不复制
+到任何平台 UI。
 
 行为设置文件缺失时使用关闭自动变更的默认值，写入使用 0600 临时文件和原子替换。
 修改安装目录或设置前应先持有 `.chuzi/launcher.lock`；锁不会自动打破，发现遗留锁时
@@ -134,7 +166,7 @@ Rust helper 继续通过现有 Go Worker 的版本化 JSON Lines 边界运行，
 Go/Rust FFI。helper 内部的运行时接口只返回 capability 和脱敏运行事实，业务
 状态、租约、重试和 Profile 路径仍由 Go 控制面决定。
 
-桌面 WebView 后端使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
+`browser-runtime` 的桌面 WebView 后端使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
 WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 WebView
 创建和页面操作 API，不是一个跨平台 headless 浏览器。隐藏窗口仍需要有效的
 用户图形会话、主线程和事件循环。
@@ -142,9 +174,11 @@ WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 We
 真正的 headless 后端单独建模，优先控制部署环境已安装的 Chromium/Edge（CDP
 或 WebDriver），不由 Wry、WebKitGTK 或 WKWebView 假设提供。当前 Node
 headless-CDP worker 已实现外部命令启动、动态 loopback CDP 端口、`/json/version`
-发现与 endpoint 校验、服务派生 Profile 传递以及取消/关闭回收。CR-0021 的首个
-适配器复用该生命周期，通过已验证的 WebSocket 只操作仓库内本地测试页，并要求
-页面 marker 和假账号标识经 CDP 读取后才报告业务成功。该后端不会打包完整
+发现与 endpoint 校验、服务派生 Profile 传递以及取消/关闭回收。当前首个真实适配器
+复用该生命周期，固定访问云原神 `https://ys.mihoyo.com/cloud/#/`，通过已验证的 WebSocket
+采集标题、应用根节点和登录状态等有界页面事实；Core evaluator 再将这些事实映射为
+账号结果，页面结构变化时 fail closed。仓库内本地测试页仍用于
+协议回归。该后端不会打包完整
 Chromium，也不会把桌面隐藏窗口标记为 headless；endpoint discovery 只报告运行时
 事实，不会报告业务成功。
 
@@ -155,7 +189,7 @@ Chromium，也不会把桌面隐藏窗口标记为 headless；endpoint discovery
 | Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式；服务派生 WebContext | 已集成；原生编译/打包检查通过（CR-0014-B） |
 | Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop；当前 ephemeral store | 已集成；原生编译/打包检查通过（CR-0014-B） |
 | Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；X11 与 Wayland GUI session | 已集成；原生编译及 X11/Wayland smoke 通过（CR-0014-C） |
-| Headless browser | 部署环境提供 Chromium/Edge | Node headless-CDP worker；动态 loopback 端口、独立 Profile、CDP discovery 和有界进程回收 | CR-0017 第一增量已集成；业务自动化适配器仍未实现 |
+| Headless browser | 部署环境提供 Chromium/Edge | Node headless-CDP worker；动态 loopback 端口、独立 Profile、CDP discovery 和有界进程回收 | CR-0017 + CR-0043；云原神已授权会话检查已接入，其他平台未支持 |
 
 CR-0014-A 建立 Rust helper、capability/error 契约和本地协议测试页路径；
 CR-0014-B 已在 Windows/macOS target-gated 接入真实 Wry WebView，CR-0014-C 已在
@@ -163,8 +197,8 @@ Ubuntu 24.04 target-gated 接入 WebKitGTK，并在 X11/Wayland GUI session 中�
 内嵌本地测试页。CR-0014-B/C 的证据覆盖 helper 的原生构建、打包，以及 Linux
 X11/Wayland smoke 路径；Windows/macOS 的构建证据不表示 GUI 运行时 smoke 已完成，
 也不表示 Go 服务默认选择该 helper；服务入口只有显式选择 Rust backend 时才会
-启动它；headless-CDP worker 已在 CR-0017 第一增量中接入，但业务自动化适配器
-和生产浏览器操作仍未接入。
+启动它；headless-CDP worker 已在 CR-0017 第一增量中接入，CR-0043 接入云原神
+已授权会话检查。适配器仍不能写状态、队列或审计，也不接收明文凭据。
 
 ## 关键边界
 

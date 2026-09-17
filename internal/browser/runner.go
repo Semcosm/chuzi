@@ -64,6 +64,9 @@ func (s WorkerSpec) validate() error {
 type WorkerResult struct {
 	Succeeded bool
 	Failure   account.FailureClass
+	// Handle is an ephemeral runtime handle for an adapter that shares the
+	// worker's browser process. It is never persisted or exposed to callers.
+	Handle string
 }
 
 func (r WorkerResult) validate() error {

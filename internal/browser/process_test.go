@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,6 +69,31 @@ func TestNewProcessFactorySupportsScriptAndArgumentListModes(t *testing.T) {
 	}
 }
 
+func TestSessionHandleAcceptsOnlyLoopbackCDPPorts(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		payload map[string]string
+		valid   bool
+	}{
+		{name: "valid", payload: map[string]string{"cdp_host": "127.0.0.1", "cdp_port": "9222"}, valid: true},
+		{name: "missing-host", payload: map[string]string{"cdp_port": "9222"}},
+		{name: "remote-host", payload: map[string]string{"cdp_host": "127.0.0.2", "cdp_port": "9222"}},
+		{name: "zero-port", payload: map[string]string{"cdp_host": "127.0.0.1", "cdp_port": "0"}},
+		{name: "large-port", payload: map[string]string{"cdp_host": "127.0.0.1", "cdp_port": "65536"}},
+		{name: "non-decimal-port", payload: map[string]string{"cdp_host": "127.0.0.1", "cdp_port": "9222/path"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			handle, valid := sessionHandle(test.payload)
+			if valid != test.valid {
+				t.Fatalf("sessionHandle(%#v) valid=%v, want %v", test.payload, valid, test.valid)
+			}
+			if test.valid && handle != "headless-cdp://127.0.0.1:9222" {
+				t.Fatalf("sessionHandle() = %q", handle)
+			}
+		})
+	}
+}
+
 func processTestSpec(t *testing.T, profiles *Profiles) WorkerSpec {
 	t.Helper()
 	profile, err := profiles.Prepare("account-1")
@@ -104,6 +130,46 @@ func TestProcessWorkerRunsSessionLifecycle(t *testing.T) {
 		t.Fatalf("worker.Run() = %#v, %v", result, err)
 	}
 	closeProcessTestWorker(t, worker)
+}
+
+func TestProcessWorkerReturnsCDPHandleForAdapterMode(t *testing.T) {
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node is required for the adapter worker integration test")
+	}
+	cfg, err := config.New(filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles, err := NewProfiles(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join("..", "..", "browser-worker")
+	factory, err := NewProcessFactory(ProcessConfig{
+		Command: "node",
+		Script:  filepath.Join(root, "src", "headless.mjs"),
+		ScriptArgs: []string{
+			"--browser-command", "node",
+			"--browser-command-arg", filepath.Join(root, "test", "fixtures", "fake-cdp-browser.mjs"),
+			"--cdp-timeout-ms", "500",
+		},
+		WorkerMode: "adapter",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	worker, err := factory.Start(context.Background(), processTestSpec(t, profiles))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeProcessTestWorker(t, worker)
+	result, err := worker.Run(context.Background())
+	if err != nil || !result.Succeeded || result.Handle == "" {
+		t.Fatalf("adapter worker.Run() = %#v, %v", result, err)
+	}
+	if !strings.HasPrefix(result.Handle, "headless-cdp://127.0.0.1:") {
+		t.Fatalf("adapter worker handle = %q", result.Handle)
+	}
 }
 
 func TestProcessWorkerReportsCrashAndAcceptsCancellation(t *testing.T) {

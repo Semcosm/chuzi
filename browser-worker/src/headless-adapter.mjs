@@ -12,6 +12,8 @@ const adapterID = "chuzi.headless-cdp";
 const adapterVersion = "0.1.0";
 const lifecycleProtocol = "v1";
 const operationName = "local.test_page_probe";
+const genshinCloudGameOperation = "genshin.cloudgame.session_probe";
+const genshinCloudGameURL = "https://ys.mihoyo.com/cloud/#/";
 const localPageFile = resolve(dirname(fileURLToPath(import.meta.url)), "local-test-page.html");
 const browserCommand = option("--browser-command", process.env.CHUZI_HEADLESS_BROWSER_COMMAND || "chromium");
 const browserCommandArgs = options("--browser-command-arg");
@@ -120,11 +122,16 @@ function deadlineFor(request, parentSignal) {
     throw classified("transient", "operation_deadline_exceeded", true);
   }
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.min(operationTimeoutMs, timestamp - Date.now()));
+  let expired = false;
+  const timer = setTimeout(() => {
+    expired = true;
+    controller.abort();
+  }, Math.min(operationTimeoutMs, timestamp - Date.now()));
   const relay = () => controller.abort();
   parentSignal.addEventListener("abort", relay, { once: true });
   return {
     signal: controller.signal,
+    get expired() { return expired; },
     close() {
       clearTimeout(timer);
       parentSignal.removeEventListener("abort", relay);
@@ -301,6 +308,30 @@ class HeadlessLifecycle {
     if (this.child && this.child.exitCode === null && this.child.signalCode === null) this.child.kill();
     this.peer?.close();
   }
+}
+
+// Core may hand the adapter an ephemeral handle for the browser worker that
+// already owns this Profile. Only loopback CDP handles created by the worker
+// are accepted; arbitrary endpoints and caller-provided URLs are rejected.
+class ExternalLifecycle {
+  constructor(handle, signal) {
+    this.handle = handle;
+    this.signal = signal;
+    this.websocketURL = null;
+  }
+
+  async start() {
+    const match = /^headless-cdp:\/\/127\.0\.0\.1:(\d+)$/u.exec(this.handle);
+    const port = Number(match?.[1] || 0);
+    if (!match || !Number.isInteger(port) || port < 1 || port > 65535) {
+      throw classified("configuration", "cdp_handle_invalid");
+    }
+    const version = await fetchVersion(String(port), this.signal);
+    this.websocketURL = version.websocketURL;
+    return { browserProduct: version.browserProduct, protocolVersion: version.protocolVersion };
+  }
+
+  async close() {}
 }
 
 async function fetchVersion(port, signal) {
@@ -480,8 +511,11 @@ class CdpSocket {
     if (!pending) return;
     this.pending.delete(message.id);
     clearTimeout(pending.timer);
-    if (message.error) pending.reject(classified("runtime", "cdp_command_failed", true));
-    else pending.resolve(message.result || {});
+    if (message.error) {
+      pending.reject(classified("runtime", "cdp_command_failed", true));
+    } else {
+      pending.resolve(message.result || {});
+    }
   }
 
   writeFrame(opcode, payload) {
@@ -612,10 +646,12 @@ async function executeLocalPage(session, operation, parameters, signal, lifecycl
           returnByValue: true,
           awaitPromise: true,
         }, attachedSessionID, signal);
-        pageValue = evaluated.result?.result?.value;
+        // Chromium returns the remote object directly; the fake CDP fixture
+        // historically wrapped it in an additional result property.
+        pageValue = evaluated.result?.value ?? evaluated.result?.result?.value;
         if (pageValue?.ready === true && pageValue.accountId === session.accountID) break;
       } catch (error) {
-        if (error?.failure?.failure?.class === "cancelled") throw error;
+        if (error?.failure?.class === "cancelled") throw error;
       }
       await wait(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())), signal);
     }
@@ -639,6 +675,79 @@ async function executeLocalPage(session, operation, parameters, signal, lifecycl
   }
 }
 
+// This is the first real business flow. It only verifies an already
+// authorized Genshin Cloud Game browser profile; it never submits credentials,
+// handles CAPTCHA/risk controls, or infers success from CDP availability.
+async function executeGenshinCloudGame(session, operation, parameters, signal, lifecycle) {
+  if (operation !== genshinCloudGameOperation) throw classified("configuration", "unsupported_operation");
+  if (Object.keys(parameters).length !== 0) throw classified("configuration", "operation_parameters_unsupported");
+  if (session.runtime && session.runtime !== "headless-cdp") throw classified("configuration", "runtime_mismatch");
+  if (!validAccountID(session.accountID)) throw classified("configuration", "account_id_invalid");
+
+  const socket = new CdpSocket(lifecycle.websocketURL, signal);
+  let targetID = "";
+  try {
+    await socket.connect();
+    const target = await socket.command("Target.createTarget", { url: genshinCloudGameURL }, "", signal);
+    targetID = typeof target.targetId === "string" ? target.targetId : "";
+    if (!targetID) throw classified("runtime", "cdp_target_missing", true);
+    const attached = await socket.command("Target.attachToTarget", { targetId: targetID, flatten: true }, "", signal);
+    const attachedSessionID = typeof attached.sessionId === "string" ? attached.sessionId : "";
+    if (!attachedSessionID) throw classified("runtime", "cdp_session_missing", true);
+
+    const deadline = Date.now() + operationTimeoutMs;
+    let pageValue;
+    while (Date.now() < deadline) {
+      try {
+        const evaluated = await socket.command("Runtime.evaluate", {
+          expression: "(() => { const title = document.title || ''; const root = document.querySelector('#app'); const text = document.body?.innerText || ''; const ready = document.readyState === 'complete'; const loggedOut = /(^|\\n)登录(\\n|$)/u.test(text); const loggedIn = /退出登录/u.test(text); return { ready, loaded: ready && !!root && title !== '', title, shell: !!root, loggedIn, loggedOut }; })()",
+          returnByValue: true,
+          awaitPromise: true,
+        }, attachedSessionID, signal);
+        pageValue = evaluated.result?.value ?? evaluated.result?.result?.value;
+        // Target.createTarget may briefly expose its initial about:blank
+        // document. Wait for a non-empty title before treating the page as
+        // loaded, otherwise that transient state would look unrecognized.
+        if (pageValue?.loaded === true || (pageValue?.ready === true && String(pageValue?.title || "") !== "")) break;
+      } catch (error) {
+        if (error?.failure?.class === "cancelled") throw error;
+      }
+      await wait(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())), signal);
+    }
+
+    const pageLoaded = pageValue?.loaded === true ||
+      (pageValue?.ready === true && String(pageValue?.title || "") !== "");
+    if (!pageLoaded) {
+      throw classified("transient", "platform_page_load_timeout", true);
+    }
+    const title = String(pageValue.title || "");
+    const recognizedTitle = /云[·.・]?原神|Genshin\s+Impact\s*[·.]?\s*Cloud/iu.test(title);
+    // The adapter reports only bounded page observations. Core owns the
+    // operation evaluator that turns these observations into account state.
+    return {
+      succeeded: true,
+      facts: {
+        platform: recognizedTitle ? "genshin-cloudgame" : "unknown",
+        flow: "authorized-session-check",
+        page: recognizedTitle && pageValue.shell === true ? "recognized" : "unrecognized",
+        shell: pageValue.shell === true ? "present" : "missing",
+        session: pageValue.loggedIn === true && pageValue.loggedOut !== true
+          ? "authenticated"
+          : pageValue.loggedOut === true ? "not_authenticated" : "unknown",
+      },
+    };
+  } finally {
+    if (targetID) {
+      try {
+        await socket.command("Target.closeTarget", { targetId: targetID }, "", signal);
+      } catch {
+        // the browser may already be closing
+      }
+    }
+    socket.close();
+  }
+}
+
 function terminalPayload(result) {
   if (result.succeeded) return { facts: JSON.stringify(result.facts) };
   return {
@@ -657,6 +766,7 @@ async function runOperation(request, task) {
     requestID: value(request, "request_id"),
     profileDir: value(request, "profile_dir"),
     runtime: value(request, "runtime"),
+    handle: value(request, "session_handle"),
   };
   let deadline;
   let lifecycle;
@@ -670,9 +780,14 @@ async function runOperation(request, task) {
     const parameters = parseParameters(request);
     deadline = deadlineFor(request, task.controller.signal);
     reply(request, "operation_started", { operation_id: value(request, "operation_id") });
-    lifecycle = new HeadlessLifecycle(session, deadline.signal);
+    lifecycle = session.handle
+      ? new ExternalLifecycle(session.handle, deadline.signal)
+      : new HeadlessLifecycle(session, deadline.signal);
     await lifecycle.start();
-    const result = await executeLocalPage(session, value(request, "operation"), parameters, deadline.signal, lifecycle);
+    const operation = value(request, "operation");
+    const result = operation === genshinCloudGameOperation
+      ? await executeGenshinCloudGame(session, operation, parameters, deadline.signal, lifecycle)
+      : await executeLocalPage(session, operation, parameters, deadline.signal, lifecycle);
     reply(request, "operation_succeeded", {
       operation_id: value(request, "operation_id"),
       ...terminalPayload(result),
@@ -682,7 +797,12 @@ async function runOperation(request, task) {
     const resultFailure = classifiedFailure?.class && classifiedFailure?.code
       ? classifiedFailure
       : { class: "runtime", code: "adapter_failed", retryable: true };
-    if (resultFailure.class === "cancelled" || task.controller.signal.aborted) {
+    if (deadline?.expired && resultFailure.class === "cancelled") {
+      reply(request, "operation_failed", {
+        operation_id: value(request, "operation_id"),
+        ...terminalPayload({ succeeded: false, failure: { class: "transient", code: "operation_deadline_exceeded", retryable: true } }),
+      });
+    } else if (resultFailure.class === "cancelled" || task.controller.signal.aborted) {
       reply(request, "operation_cancelled", { operation_id: value(request, "operation_id") });
     } else {
       reply(request, "operation_failed", {
@@ -748,7 +868,7 @@ input.on("line", (line) => {
         adapter_id: adapterID,
         version: adapterVersion,
         api: adapterProtocol,
-        capabilities: "headless-cdp@1,local.test-page@1",
+        capabilities: "headless-cdp@1,local.test-page@1,genshin-cloudgame@1",
       });
       break;
     case "execute":

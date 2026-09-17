@@ -21,7 +21,7 @@ artifact.mkdir()
 commit = "a" * 40
 version = "nightly-500-aaaaaaaaaaaa"
 files = {
-    "launcher": {"chuzi-launcher": b"launcher", "chuzi-launcher-ui": b"ui", "release-manifest.json": None},
+    "launcher": {"chuzi-launcher": b"launcher", "release-manifest.json": None},
     "service": {"chuzi": b"service"},
     "browser-worker": {"browser-worker/index.mjs": b"worker"},
     "desktop-runtime": {"chuzi-browser-runtime": b"runtime"},
@@ -32,7 +32,6 @@ manifest = {
     "components": [
         {"id": "launcher", "version": version, "required": True, "resources": [
             {"path": "chuzi-launcher", "sha256": hashlib.sha256(b"launcher").hexdigest(), "size": 8},
-            {"path": "chuzi-launcher-ui", "sha256": hashlib.sha256(b"ui").hexdigest(), "size": 2},
         ], "artifact": f"chuzi-{version}-linux-amd64-launcher.tar.gz"},
         {"id": "service", "version": version, "required": False, "resources": [
             {"path": "chuzi", "sha256": hashlib.sha256(b"service").hexdigest(), "size": 7},
