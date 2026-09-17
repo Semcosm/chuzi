@@ -1,7 +1,7 @@
 # CR-0044: split CI into a parallel component build DAG
 
 Base: main
-Head or Range: 61f2443..fd201b1 plus CI DAG implementation
+Head or Range: 61f2443..fec42a8
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ci): split cross-platform build into parallel component jobs
@@ -10,19 +10,24 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 61f244390bc52de749eda42a706b89560b2f2294
-Head OID: fd201b17b305ae6b515f0361627506a220d02e27
+Head OID: fec42a80d0e1770f2233e77dad177473259df7a0
 Integrated Result: pending
 
 ## Summary
 
-Replace the target runner's serial all-in-one build with a workflow DAG. Public
-contract, Go, Node, and Rust checks run once in parallel. Go service/launcher
-cross-builds, the Node Worker build, and native Rust/Wry helper builds run as
-independent jobs. Each target runner then downloads the three component
-artifacts, assembles and packages its target, and uploads the existing target
-artifact name. Nightly and stable runs add a final artifact integration job
-which validates every target package before the aggregate `chuzi-build` gate
-and release publisher.
+Consolidate the pending implementation work on this topic branch into one UGS
+change record and replace the target runner's serial all-in-one build with a
+workflow DAG. The branch carries the launcher architecture, production runtime
+validation, Genshin Cloud session probe, documentation synchronization, and
+the CI reform; these implementation slices are integrated and reviewed as one
+protected-branch change because UGS requires one persisted CR to be the exact
+PR body. Public contract, Go, Node, and Rust checks run once in parallel. Go
+service/launcher cross-builds, the Node Worker build, and native Rust/Wry
+helper builds run as independent jobs. Each target runner then downloads the
+three component artifacts, assembles and packages its target, and uploads the
+existing target artifact name. Nightly and stable runs add a final artifact
+integration job which validates every target package before the aggregate
+`chuzi-build` gate and release publisher.
 
 The pull request workflow uses the same parallel source-check domains, omits
 release compilation, and retains a single `chuzi-build` aggregate required
