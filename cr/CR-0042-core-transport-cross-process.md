@@ -1,17 +1,17 @@
 # CR-0042: verify Core transport across a process boundary
 
 Base: main
-Head or Range: 851b73847c55e51d111a603c1605e592de6b0d87..2ea7ef709889e3f8d454452eda3d415e6cb33696
+Head or Range: 3ee86c902d033d6b2e6a6fed4f865981541dd484
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: test(core): exercise transport across process boundary
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 3c317c12e22d1b3572365d03adc3457af3e366ec
-Head OID: 3c317c12e22d1b3572365d03adc3457af3e366ec
-Integrated Result: pending
+Base OID: 3ee86c902d033d6b2e6a6fed4f865981541dd484
+Head OID: 3ee86c902d033d6b2e6a6fed4f865981541dd484
+Integrated Result: main@3ee86c902d033d6b2e6a6fed4f865981541dd484
 
 ## Summary
 
