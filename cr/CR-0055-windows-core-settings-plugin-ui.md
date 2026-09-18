@@ -1,19 +1,22 @@
 # CR-0055: Windows Core, settings, and plugin management UI
 
 Base: main
-Head or Range: feat/windows-launcher-ui
+Head or Range: 026bf7cb67d9591859c7980ea603fc7c2817d0a6
 Integration Strategy: rebase-ff
 Review Evidence: trailers
-Title: feat(windows): add Core setup, settings, and plugin management UI
-Revision: 1
+Title: chore(governance): align CR-0055 head after main integration
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 1259f87ee88295d68f5bebf2fda96f16b7ccab72
-Head OID: 6b33800423ba018a170db9f22cf8c62429794cf7
+Base OID: 026bf7cb67d9591859c7980ea603fc7c2817d0a6
+Head OID: 026bf7cb67d9591859c7980ea603fc7c2817d0a6
 Integrated Result: pending
 
 ## Summary
+
+Align the implementation record with the rebased main commit so the persisted
+change record remains reachable while the final integration result is recorded.
 
 Add the first usable WinUI 3 application surface for the Windows client. The
 client provides Core installation and lifecycle status, launcher behavior
