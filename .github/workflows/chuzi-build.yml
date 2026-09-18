@@ -263,6 +263,20 @@ jobs:
         run: ./scripts/build_windows_ui.ps1 -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui"
         env:
           CHUZI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+      - name: Smoke test WinUI 3 startup
+        shell: pwsh
+        run: |
+          $zip = Get-ChildItem "$env:RUNNER_TEMP\chuzi-ui" -Filter 'chuzi-native-windows-*.zip' | Select-Object -First 1
+          if (-not $zip) { throw 'WinUI zip was not produced' }
+          $root = Join-Path $env:RUNNER_TEMP 'chuzi-ui-smoke'
+          Expand-Archive -Path $zip.FullName -DestinationPath $root -Force
+          $exe = Get-ChildItem $root -Recurse -Filter 'Chuzi.Native.Windows.exe' | Select-Object -First 1
+          if (-not $exe) { throw 'Chuzi.Native.Windows.exe was not found' }
+          $p = Start-Process -FilePath $exe.FullName -WorkingDirectory $exe.DirectoryName -PassThru
+          Start-Sleep -Seconds 10
+          $p.Refresh()
+          if ($p.HasExited) { throw "WinUI exited during startup with code $($p.ExitCode)" }
+          Stop-Process -Id $p.Id -Force
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
