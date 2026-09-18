@@ -4,7 +4,8 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [string]$OutputDir = "",
-    [string]$CertificateThumbprint = ""
+    [string]$CertificateThumbprint = "",
+    [string]$CorePayloadDir = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -14,6 +15,14 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 }
 $project = Join-Path $repoRoot "ui/windows/Chuzi.Native.Windows.csproj"
 if (-not (Test-Path $project)) { throw "Windows client project is missing" }
+$projectRoot = Split-Path $project -Parent
+$projectPayload = Join-Path $projectRoot "CorePayload"
+if (Test-Path $projectPayload) { Remove-Item -Recurse -Force $projectPayload }
+if (-not [string]::IsNullOrWhiteSpace($CorePayloadDir)) {
+    if (-not (Test-Path $CorePayloadDir)) { throw "Core payload directory is missing: $CorePayloadDir" }
+    New-Item -ItemType Directory -Force -Path $projectPayload | Out-Null
+    Copy-Item (Join-Path $CorePayloadDir "*") $projectPayload -Recurse -Force
+}
 
 if (Test-Path $OutputDir) { Remove-Item -Recurse -Force $OutputDir }
 New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
@@ -39,6 +48,7 @@ if ($Mode -eq "UnpackagedZip") {
     $hash = (Get-FileHash -Algorithm SHA256 $artifact).Hash.ToLowerInvariant()
     "$hash  $(Split-Path -Leaf $artifact)" | Set-Content -Encoding ascii "$artifact.sha256"
     Write-Output "built unpackaged Windows native client at $artifact"
+    if (Test-Path $projectPayload) { Remove-Item -Recurse -Force $projectPayload }
     return
 }
 
@@ -76,3 +86,4 @@ if ($packages.Count -eq 0) {
 }
 $packages | Copy-Item -Destination $OutputDir -Force
 $packages | ForEach-Object { Write-Output "built Windows package at $($_.FullName)" }
+if (Test-Path $projectPayload) { Remove-Item -Recurse -Force $projectPayload }

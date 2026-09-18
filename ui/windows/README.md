@@ -1,9 +1,10 @@
 # Windows native client
 
-This is the native Windows client for the `chuzi.core/v1` boundary. The current
-Windows surface intentionally starts from the official WinUI 3 single-project
-template and is kept as a small startup smoke app while controls are added back
-incrementally.
+This is the native Windows client for the `chuzi.core/v1` boundary. The Windows
+surface follows the official WinUI 3 single-project template and provides three
+first-run workflows: Core installation/status, launcher settings, and plugin
+management. The UI remains a client of the launcher/Core boundaries; it never opens
+the bbolt store or reads credentials/Profile directories.
 
 The primary implementation reference is Microsoft's WinUI Gallery:
 
@@ -41,8 +42,24 @@ For local unpackaged diagnostics on a Windows host:
 ./scripts/build_windows_ui.ps1 -Mode UnpackagedZip -Configuration Release -OutputDir "$PWD/dist/windows-ui"
 ```
 
-The unpackaged zip is a diagnostics-only payload. The service remains a
-separately managed process and must already be running.
+The unpackaged zip is a diagnostics-only payload. A packaged MSIX includes a
+`CorePayload` directory containing the matching Windows service, launcher, worker
+files, and release manifest. On first launch, Overview > Install Core copies the
+verified service components into the per-machine data directory, starts the service,
+and confirms readiness over the Core named pipe. If the payload is absent (for
+example in a locally built unpackaged zip), the UI reports that Core must be supplied
+by deployment.
+
+The first-run sequence is:
+
+1. Install the signed MSIX and launch Chuzi.
+2. Select **Install Core** on the Overview page.
+3. Configure plugins and explicitly trust their declared signer before enabling them.
+4. Adjust update and startup behavior under Settings.
+
+The service process is owned by the installation, not by the window. Closing the UI
+leaves Core running; the Stop Core action is explicit and never stops a service that
+was started externally.
 
 The CI path uses the same script in `PackagedMsix` mode and uploads the
 `chuzi-windows-msix-self-contained` artifact. The test-signed package requires
