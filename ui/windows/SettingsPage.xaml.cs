@@ -6,6 +6,7 @@ namespace Chuzi.Native.Windows;
 public sealed partial class SettingsPage : Page
 {
     public event EventHandler<BehaviorSettings>? SaveRequested;
+    public event EventHandler? InstallCoreRequested;
 
     public SettingsPage()
     {
@@ -42,6 +43,13 @@ public sealed partial class SettingsPage : Page
         SaveButton.IsEnabled = !busy;
     }
 
+    public void SetCoreSnapshot(CoreSnapshot snapshot)
+    {
+        CoreStatus.Text = snapshot.Message;
+        InstallCoreButton.Content = snapshot.Status == CoreStatus.Running ? "Start Core" : "Install Core";
+        InstallCoreButton.IsEnabled = snapshot.Status != CoreStatus.Starting;
+    }
+
     public void ShowError(string message)
     {
         MessageBar.Severity = InfoBarSeverity.Error;
@@ -57,4 +65,5 @@ public sealed partial class SettingsPage : Page
     }
 
     private void SaveButton_Click(object sender, RoutedEventArgs e) => SaveRequested?.Invoke(this, GetSettings());
+    private void InstallCoreButton_Click(object sender, RoutedEventArgs e) => InstallCoreRequested?.Invoke(this, EventArgs.Empty);
 }

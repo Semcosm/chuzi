@@ -8,6 +8,11 @@
         <TextBlock Text="Settings" FontSize="32" FontWeight="SemiBold" />
       </StackPanel>
       <StackPanel Spacing="2">
+        <TextBlock Text="Core" FontSize="20" FontWeight="SemiBold" />
+        <TextBlock x:Name="CoreStatus" Text="Core status is being checked." Opacity="0.72" />
+        <Button x:Name="InstallCoreButton" Content="Install Core" Click="InstallCoreButton_Click" HorizontalAlignment="Left" />
+      </StackPanel>
+      <StackPanel Spacing="2">
         <TextBlock Text="Updates" FontSize="20" FontWeight="SemiBold" />
         <ToggleSwitch x:Name="AutoCheckUpdates" Header="Check for updates automatically" />
         <ToggleSwitch x:Name="AutoRepair" Header="Repair missing files automatically" />
