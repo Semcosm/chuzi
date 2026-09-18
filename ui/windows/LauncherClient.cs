@@ -140,7 +140,7 @@ internal sealed class LauncherClient
             try { if (!process.HasExited) process.Kill(entireProcessTree: true); } catch { }
             throw;
         }
-        catch (Win32Exception exception)
+        catch (Win32Exception)
         {
             throw new LauncherException("Launcher could not be started.");
         }
