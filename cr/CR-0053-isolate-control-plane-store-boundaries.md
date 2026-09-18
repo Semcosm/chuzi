@@ -1,7 +1,7 @@
 # CR-0053: isolate control-plane store boundaries
 
 Base: main
-Head or Range: 61f244390bc52de749eda42a706b89560b2f2294..3caea0afa6e309113316b1e3fef4051df7ba4785
+Head or Range: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5..2a92d048e7de817888d4e78bf0c24a04407c9086
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: refactor: isolate control-plane store boundaries
@@ -9,8 +9,8 @@ Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 61f244390bc52de749eda42a706b89560b2f2294
-Head OID: 3caea0afa6e309113316b1e3fef4051df7ba4785
+Base OID: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5
+Head OID: 2a92d048e7de817888d4e78bf0c24a04407c9086
 Integrated Result: pending
 
 ## Summary

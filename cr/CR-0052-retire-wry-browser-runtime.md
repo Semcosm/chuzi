@@ -1,7 +1,7 @@
 # CR-0052: retire the Rust/Wry browser runtime
 
 Base: main
-Head or Range: 61f244390bc52de749eda42a706b89560b2f2294..1e74027c8ef3e3fc34e9d2f8e4683b385ea68fe7
+Head or Range: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5..6241afc69d461d60e028dcbd33edfada1b73b11d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: refactor: retire rust wry browser runtime
@@ -9,8 +9,8 @@ Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 61f244390bc52de749eda42a706b89560b2f2294
-Head OID: 1e74027c8ef3e3fc34e9d2f8e4683b385ea68fe7
+Base OID: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5
+Head OID: 6241afc69d461d60e028dcbd33edfada1b73b11d
 Integrated Result: pending
 
 ## Summary
