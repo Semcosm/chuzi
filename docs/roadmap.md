@@ -174,10 +174,11 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
   已完成 Windows native build。
 
 Windows 客户端位于 `ui/windows`，只使用 owner-only named pipe 和 `chuzi.core/v1`，提供
-提交、查询和业务取消的最小界面。`scripts/build_windows_ui.ps1` 与 GitHub Actions
-`chuzi-build-windows-ui` 生成独立 zip 和 SHA-256；该客户端不进入 Go 服务/数据库包，也不
-复制 launcher、Store 或凭证逻辑。Windows 原生构建仍需 Windows runner，Linux 开发机只
-能执行仓库契约和静态边界检查。
+提交、查询和业务取消的最小界面。`scripts/build_windows_ui.ps1` 的 `PackagedMsix` 模式与
+GitHub Actions `chuzi-build-windows-ui` 生成自包含 Windows App SDK 的
+`chuzi-windows-msix-self-contained`；`UnpackagedZip` 仅用于本地诊断。该客户端不进入 Go
+服务/数据库包，也不复制 launcher、Store 或凭证逻辑。Windows 原生构建仍需 Windows
+runner，Linux 开发机只能执行仓库契约和静态边界检查。
 
 ### 阶段七：headless 浏览器与业务自动化
 
