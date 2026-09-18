@@ -1,16 +1,16 @@
 # CR-0056: expose Windows UI boundary models
 
 Base: main
-Head or Range: fix/windows-ui-public-contract
+Head or Range: fix/windows-ui-build-naming
 Integration Strategy: rebase-ff
 Review Evidence: trailers
-Title: fix(windows): expose UI boundary models
-Revision: 1
+Title: fix(windows): restore packaged WinUI build
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 0cfca60b83bd2fceef358495cfe68c098816d565
-Head OID: 0cfca60b83bd2fceef358495cfe68c098816d565
+Base OID: 0b036431b7e085cc596eb9f24f1facbd2e44d06c
+Head OID: 0b036431b7e085cc596eb9f24f1facbd2e44d06c
 Integrated Result: pending
 
 ## Summary
@@ -19,6 +19,9 @@ Make the Windows UI model and Core snapshot types public at the page boundary.
 This fixes the Windows App SDK build failure caused by public page methods,
 events, and event arguments exposing internal types.
 
+The packaged XAML build also avoids a generated field name colliding with the
+`CoreStatus` enum and removes the unused Win32 exception variable.
+
 ## Motivation
 
 The first Windows Core/settings/plugin UI implementation compiled in local
@@ -26,6 +29,11 @@ source inspection but failed on the GitHub Windows runner with C# accessibility
 errors such as CS0051, CS0050, and CS7025. The page API is intentionally public
 because XAML-generated code and the application shell consume it, so the DTOs
 and snapshot types must have matching accessibility.
+
+The next packaged build exposed a second compiler error because the settings
+page named a `TextBlock` `CoreStatus`, shadowing the enum used by the page
+controller. Giving the generated field a distinct name keeps XAML and C# symbol
+resolution unambiguous.
 
 ## Test Evidence
 

@@ -45,7 +45,7 @@ public sealed partial class SettingsPage : Page
 
     public void SetCoreSnapshot(CoreSnapshot snapshot)
     {
-        CoreStatus.Text = snapshot.Message;
+        CoreStatusText.Text = snapshot.Message;
         InstallCoreButton.Content = snapshot.Status == CoreStatus.Running ? "Start Core" : "Install Core";
         InstallCoreButton.IsEnabled = snapshot.Status != CoreStatus.Starting;
     }

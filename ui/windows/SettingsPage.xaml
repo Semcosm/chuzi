@@ -9,7 +9,7 @@
       </StackPanel>
       <StackPanel Spacing="2">
         <TextBlock Text="Core" FontSize="20" FontWeight="SemiBold" />
-        <TextBlock x:Name="CoreStatus" Text="Core status is being checked." Opacity="0.72" />
+        <TextBlock x:Name="CoreStatusText" Text="Core status is being checked." Opacity="0.72" />
         <Button x:Name="InstallCoreButton" Content="Install Core" Click="InstallCoreButton_Click" HorizontalAlignment="Left" />
       </StackPanel>
       <StackPanel Spacing="2">
