@@ -45,27 +45,16 @@ backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/sen
 `scripts/build_windows_ui.ps1`，Actions 任务 `chuzi-build-windows-ui` 上传独立的
 `chuzi-native-windows-<version>.zip`。它通过 `%ProgramData%\\chuzi`（或部署提供的
 `CHUZI_DATA_DIR`）派生与 Go 相同的 named pipe 名称，执行 `hello` 后调用提交、查询和取消。
-客户端只显示稳定错误码；Windows App SDK、WebView2 与服务进程必须由部署环境单独管理。
+客户端只显示稳定错误码；Windows App SDK 与服务进程必须由部署环境单独管理。
 
 ## 浏览器运行时前置条件
 
-桌面 WebView 和真正 headless 是两个部署模式。visible 或 hidden 的桌面
-WebView 都需要图形会话和平台事件循环；hidden 只是不向用户显示窗口，不等于
-无显示环境运行。
-
-| 平台 | Desktop WebView 运行时 | 首批前置条件与范围 |
-| --- | --- | --- |
-| Windows 10/11 | WebView2 Evergreen 或 Fixed Version Runtime | 启动前检测 Runtime；Windows 10 不能假定系统已有；不依赖普通 Edge 浏览器本体 |
-| macOS 11+ Apple Silicon | 系统 WKWebView | 需要 GUI session/run loop；首批只覆盖 Apple Silicon 原生构建 |
-| Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1 | 构建需要 GTK/WebKitGTK 4.1 开发包，运行需要对应运行库和有效 GUI session；首期覆盖 X11 与 Wayland，其他发行版另行验证 |
-
-WebView2 缺失、GTK/WebKitGTK 缺失、图形会话缺失和权限错误必须返回稳定的
-分类错误，不能伪装成普通账号失败。Profile 由服务生成并保存在受限数据目录，
-运行时不接受请求方提供的文件系统路径。
+当前服务只保留 Node.js Worker。默认 deferred Worker 仅验证协议和生命周期；真实
+浏览器流程必须显式选择 headless-CDP，并由部署环境提供 Chromium/Edge。Profile 由
+服务生成并保存在受限数据目录，运行时不接受请求方提供的文件系统路径。
 
 真正 headless 后端依赖部署环境已安装的 Chromium/Edge，通过独立 Node worker 的
-CDP 连接控制；它不复用桌面 WebView 的“隐藏窗口”模式，也不承诺 Safari 或
-WKWebView 可 headless。`-browser-backend headless` 选择该 worker，
+CDP 连接控制；它不复用任何桌面 WebView 的“隐藏窗口”模式。`-browser-backend headless` 选择该 worker，
 `-headless-browser-command` 必须是部署方明确配置的单一可执行文件路径/名称，参数
 由 worker 固定生成且不经过 shell。worker 使用动态 loopback 端口和服务派生的
 `--user-data-dir`，只轮询 `/json/version`；发现成功后仍须由上层自动化适配器执行
@@ -74,11 +63,6 @@ WKWebView 可 headless。`-browser-backend headless` 选择该 worker，
 首个真实流程通过 `-browser-backend headless -automation-adapter genshin-cloudgame`
 显式启用，固定检查 `https://ys.mihoyo.com/cloud/#/` 的已授权会话。它复用 worker 已启动的
 Chromium/CDP 会话，不启动第二个浏览器。
-
-当前 Rust helper 已在发布 stage 中构建；Linux amd64/arm64 的原生 CI 已在
-X11/Wayland 下执行 WebKitGTK smoke，Windows/macOS 则执行 Wry 编译与打包检查，
-尚未完成 Windows/macOS 的 GUI 运行时 smoke。服务入口仍未将 helper 设为默认
-Worker；部署时不能仅凭 stage 中存在 helper 就推断服务具备真实浏览器自动化能力。
 
 Matrix HTTP client 使用 Client-Server `sync`、`send` 和 `whoami` 接口；access token
 由 `matrix.access_token_env` 指定的环境变量注入。通知 outbox 保存在同一 bbolt
@@ -89,11 +73,6 @@ Matrix HTTP client 使用 Client-Server `sync`、`send` 和 `whoami` 接口；ac
 `Store.Open` 会运行可重复的 schema 迁移并拒绝未知版本；调度器在每次循环开始
 时恢复过期租约并处理截止时间。多实例部署必须在单独的 CR 中选择外部数据库
 和并发/迁移策略。
-
-Rust helper 在构建阶段由 stable Rust/Cargo 编译，发布包携带编译后的
-`chuzi-browser-runtime`，部署主机不需要安装 Rust。Windows/macOS/Linux 构建启用
-Wry；Linux 运行时需要 WebKitGTK 4.1、GTK 和有效的 X11 或 Wayland 图形会话。
-Wry、GTK/WebKitGTK 和 headless 浏览器的运行库要求仍按各自平台和 CR 声明。
 
 凭证密钥由部署环境注入。默认环境适配器读取 `CHUZI_CREDENTIAL_KEY_ID` 和
 `CHUZI_CREDENTIAL_KEY`；生产环境进行轮换时，Secret 管理器必须在切换期间
@@ -116,19 +95,17 @@ store, err := store.Open(cfg)
 
 ### CI DAG and pull request checks
 
-Pull request 更新由 `.github/workflows/chuzi-pr.yml` 执行并行的 contract、Go、Node 和 Rust
+Pull request 更新由 `.github/workflows/chuzi-pr.yml` 执行并行的 contract、Go 和 Node
 源码测试，最后由同名 `chuzi-build` 聚合 job 作为 required check。同一个 PR 的旧运行会在
 新 push 后取消，避免分支迭代时堆积过时检查。PR 不执行 Go/Launcher 发布编译、Worker
-产物构建、四平台 native WebView、release package 或 Linux X11/Wayland smoke。
+产物构建或 release package。
 
 `.github/workflows/chuzi-build.yml` 是 `main` 合并、正式 tag、nightly 计划任务和手动
 dispatch 使用的完整构建 DAG。它不监听普通开发分支的 push；分支 PR 只执行上面的快速
-源码检查，合并到 `main` 后才启动完整目标构建。公共 contract/Go/Node/Rust 校验各自只
+源码检查，合并到 `main` 后才启动完整目标构建。公共 contract/Go/Node 校验各自只
 运行一次，并与以下独立构建并行：
 
 * `go_build` matrix 在 Ubuntu 上交叉编译四个目标的 Go service/launcher。
-* `runtime_build` matrix 在 Windows、Linux x64、Linux ARM64 和 macOS ARM64 原生 runner
-  上编译 Rust/Wry helper，并在 Linux runner 上执行 X11/Wayland smoke。
 * `node_checks` 只构建一次 Node Worker，并通过 `ci-worker` artifact 交给所有目标。
 
 每个 `assemble_target` job 从 `ci-go-*`、`ci-worker` 和 `ci-runtime-*` artifact 组装一个
@@ -143,7 +120,7 @@ release retry 的审计契约。nightly/tag 产物再由 `artifact_integration` 
 `.github/workflows/chuzi-build.yml` 每天 `02:17 UTC` 自动运行，也支持手动
 触发。Nightly 不创建 Git tag 或 GitHub Release，而是为四个平台上传保留 14 天
 的 Actions artifact，并使用 `nightly-<run-number>-<commit-short-hash>` 版本号。每个平台
-同时生成完整包、按 `launcher`、`service`、`browser-worker`、`desktop-runtime` 拆分的
+同时生成完整包、按 `launcher`、`service`、`browser-worker` 拆分的
 组件包，以及记录归档大小/SHA-256 的 `release-index.json`；不创建 tag 或 GitHub Release。
 
 完整包内的 `release-manifest.json` 是启动器 CLI 和原生客户端的稳定输入，声明目标平台、
@@ -165,13 +142,13 @@ macOS SwiftUI 和 Linux GTK 客户端待后续 CR。所有平台 UI 都通过 St
 凭证或启动器响应 payload。
 Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
 
-GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链；Rust helper 的默认格式/单元测试在公共 job 中执行，带 `desktop-webview` feature 的 native 编译和运行时测试在每个目标 runner 上执行，目标矩阵为：
+GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链，目标矩阵为：
 
 | Target | Output | Build mode |
 | --- | --- | --- |
 | `windows-amd64` | `.zip` | Windows native runner |
 | `linux-amd64` | `.tar.gz` | Linux native runner |
-| `linux-arm64` | `.tar.gz` | Linux native ARM64 runner (`ubuntu-24.04-arm`); WebKitGTK desktop helper with X11/Wayland smoke |
+| `linux-arm64` | `.tar.gz` | Linux native ARM64 runner (`ubuntu-24.04-arm`) |
 | `darwin-arm64` | `.tar.gz` | Apple Silicon macOS runner |
 
 构建命令由以下脚本定义：
@@ -181,16 +158,12 @@ scripts/build.sh <target> [version]
 scripts/package.sh <target> <version>
 scripts/build_go_target.sh <target> <version> <output-dir>
 scripts/build_worker.sh <output-dir>
-scripts/build_runtime.sh <target> <output-dir>
-scripts/assemble_target.sh <target> <version> <go-dir> <worker-archive> <runtime-binary> <dist-root>
+scripts/assemble_target.sh <target> <version> <go-dir> <worker-archive> <dist-root>
 ```
 
 Windows runner 使用对应的 `*.ps1` 脚本。`build.sh`/`build.ps1` 保留为本地一体化构建入口，
-并行 CI 使用组件构建和 `assemble_target` 脚本。构建产物必须包含 Go 服务、Worker 文件、
-`chuzi-browser-runtime` 和 `build-manifest.json`，并生成 SHA256 校验文件。
-发布脚本生成的 manifest 将 `browserRuntime` 标为 `wry-desktop`；源码中的
-无 feature Rust helper 和 Node Worker 才使用 `deferred`，Node 包同时携带
-`headless-cdp` 适配器。CI smoke test 只使用
+并行 CI 使用组件构建和 `assemble_target` 脚本。构建产物必须包含 Go 服务、Worker 文件
+和 `build-manifest.json`，并生成 SHA256 校验文件。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 
 稳定版由带签名的 annotated semver tag 触发。tag 构建会复用四平台构建矩阵，
@@ -213,27 +186,14 @@ gh workflow run release-retry.yml --repo Semcosm/chuzi --ref main \
   -f commit_sha=<tag-target-commit>
 ```
 
-当前 Node Worker 继续提供 deferred 协议和生命周期替身，并提供 headless-CDP
-进程边界；四个目标的 Rust/Wry helper
-已接入构建，原生编译由对应 runner 验证。Linux amd64/arm64 在原生 runner 上
-安装 WebKitGTK 4.1，并使用 Xvfb 与 Weston headless compositor 分别覆盖 X11
-和 Wayland 的本地测试页 smoke test；Windows/macOS 没有对应的 GUI 运行时 smoke
-步骤。当前仅接入云原神会话检查；其他业务适配器、WebDriver、浏览器下载或其他
-原生模块必须在单独 CR 中增加，并为四个发布目标分别记录构建、运行库、图形会话和
-smoke test 覆盖范围。
-
-CR-0014-B 合并后，Windows/macOS 发布包携带 Wry helper；CR-0014-C 使 Linux
-发布包也携带 WebKitGTK helper。Windows/macOS/Linux 的运行仍要求对应平台
-WebView2/WKWebView/WebKitGTK 和 GUI session；Wayland smoke 使用 Weston headless
-compositor，不能被误解为真正 headless 浏览器。helper 不会自动替代默认 Node
-backend，只有 `-browser-backend rust` 才会显式组装；headless 则通过
-`-browser-backend headless` 显式选择，云原神适配器还需额外显式启用。
+当前 Node Worker 提供 deferred 协议和生命周期替身，以及显式选择的 headless-CDP
+进程边界；当前仅接入云原神会话检查。其他业务适配器、WebDriver、浏览器下载或
+其他原生模块必须在单独 CR 中增加，并为四个发布目标记录构建和运行覆盖范围。
 
 业务自动化插件是独立于浏览器 Worker 的进程边界。Windows 可直接启动原生插件
 进程；macOS/Linux 如使用 Wine，必须为每个插件派生独立的 Wine prefix，并验证
 Wine 可执行文件、Windows 运行库、图形会话和目标插件版本。Wine 启动不是当前四
-平台 release 的既定能力，尤其不能从 WebKitGTK 或 Rust helper 的构建结果推断
-Linux ARM64/macOS arm64 可运行 BetterGI。插件协议使用 `chuzi.adapter/v1`，只传递
+平台 release 的既定能力。插件协议使用 `chuzi.adapter/v1`，只传递
 服务派生的 session/request 标识和脱敏运行事实，凭证不得进入 JSONL payload。
 
 CR-0043 的云原神适配器通过显式服务选项运行，不改变服务默认的 deferred backend：

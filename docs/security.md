@@ -36,35 +36,22 @@ Matrix command/notification 边界只允许固定命令和显式白名单房间/
 
 ## 浏览器运行时边界
 
-Rust runtime helper 通过独立进程和版本化 JSON Lines 与 Go 控制面通信。Go
-Profile 边界只向它传入服务派生的路径和受限 session 参数；helper 对路径再做
-绝对路径、无父目录跳转的协议校验，不能把请求输入解释为任意文件路径，也不能
-直接读取 Credential Store 或写入账号状态。helper 已由原生
-CI 构建；Linux amd64/arm64 还通过 X11/Wayland WebKitGTK smoke，Windows/macOS
-目前只有 Wry 编译与打包检查，尚未完成 GUI 运行时 smoke。`cmd/service` 默认仍启动
-Node deferred Worker；Rust helper 只有通过 `-browser-backend rust` 才会被显式选择。
-
-桌面 WebView 的 visible/hidden 模式都依赖操作系统图形会话；隐藏窗口不是
-headless 安全边界。真正 headless 后端必须单独审查已安装 Chromium/Edge 的可执行文件、CDP 端口、
+当前服务只启动 Node.js Worker。默认 deferred Worker 仅提供协议和生命周期替身；
+headless backend 才会控制部署环境显式配置的 Chromium/Edge。真正 headless 后端必须
+单独审查浏览器可执行文件、CDP 端口、
 Profile 权限、网络范围和进程隔离。当前 headless worker 只接受服务配置的浏览器
 命令，固定使用 `--headless=new`、loopback CDP 地址、动态端口和服务派生
 `--user-data-dir`，通过 `/json/version` 严格校验 loopback `ws:` endpoint；命令参数
 不经过 shell，浏览器 stdout/stderr 不进入协议。worker 只返回 `session_handle`、
 主机/端口元数据和分类运行事实，不接触 Credential Store。
 
-首个真实 WebView vertical slice 只允许本地测试页、显式导航、有限 JS 执行和
-固定结果读取。不得在 CI 或 smoke test 中注入真实凭证、Cookie、生产 URL、
+首个真实 headless vertical slice 只允许本地测试页、显式导航、有限观察和固定结果读取。
+不得在 CI 或 smoke test 中注入真实凭证、Cookie、生产 URL、
 截图或下载内容。页面内容、脚本错误、Cookie、请求头和运行时堆栈不得进入日志、
 Matrix 消息或 metadata-only 审计。
 
-当前 Windows backend 将服务派生的 `profile_dir` 交给独立 WebContext；Linux
-WebKitGTK backend 也使用服务派生的 `profile_dir` 和独立 WebContext；macOS
-11+ backend 使用 WKWebView ephemeral store，因此当前 helper slice 不宣称
-macOS 持久 Profile 或凭证会话已经可用。Linux X11/Wayland backend 仍需要 GUI
-session，不创建真正 headless 浏览器。
-
 headless 浏览器缺失、CDP endpoint 超时/非法、Profile 路径不合法和进程崩溃必须
-fail closed，并映射为分类 runtime/configuration fact。平台运行时缺失（WebView2、GTK/WebKitGTK、图形会话）也必须 fail closed，并映射
+fail closed，并映射为分类 runtime/configuration fact。浏览器进程或图形依赖缺失也必须 fail closed，并映射
 为分类 runtime/configuration fact；不能自动下载未知浏览器、回退到系统任意
 可执行文件，或借助 CAPTCHA、风控和反检测技术改变第三方服务行为。
 

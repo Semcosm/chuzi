@@ -21,7 +21,7 @@ TARGETS = {
     "linux-arm64": ("tar.gz", ""),
     "darwin-arm64": ("tar.gz", ""),
 }
-COMPONENTS = ("launcher", "service", "browser-worker", "desktop-runtime")
+COMPONENTS = ("launcher", "service", "browser-worker")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 
@@ -186,7 +186,7 @@ def validate(args) -> dict:
         raise ValueError("release manifest sidecar differs from index manifest")
     artifacts = index.get("artifacts")
     if not isinstance(artifacts, list) or len(artifacts) != len(COMPONENTS) + 1:
-        raise ValueError("release index does not contain bundle plus four components")
+        raise ValueError("release index does not contain bundle plus three components")
     artifact_by_component = {}
     expected_names = {"bundle": f"chuzi-{index['version']}-{args.target}.{extension}"}
     expected_names.update({component: f"chuzi-{index['version']}-{args.target}-{component}.{extension}" for component in COMPONENTS})

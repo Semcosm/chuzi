@@ -376,7 +376,7 @@ type UpdateRequest struct {
 }
 
 // InitializationStatus is the first-run payload consumed by a CLI or future
-// Rust UI. It is descriptive only: installation remains an explicit action.
+// native UI client. It is descriptive only: installation remains an explicit action.
 type InitializationStatus struct {
 	FirstRun   bool             `json:"first_run"`
 	Components []ComponentState `json:"components"`

@@ -53,20 +53,6 @@ func TestNewProcessFactorySupportsScriptAndArgumentListModes(t *testing.T) {
 		t.Fatalf("script process args = %#v, want %#v", got, want)
 	}
 
-	runtimeFactory, err := NewProcessFactory(ProcessConfig{Command: "chuzi-browser-runtime", Args: []string{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtimeFactory.args == nil || len(runtimeFactory.args) != 0 {
-		t.Fatalf("runtime process args = %#v, want explicit empty argument list", runtimeFactory.args)
-	}
-
-	if _, err := NewProcessFactory(ProcessConfig{Command: "node", Script: "worker.mjs", Args: []string{}}); !errors.Is(err, ErrInvalidProcessConfig) {
-		t.Fatalf("mixed process arguments error = %v, want ErrInvalidProcessConfig", err)
-	}
-	if _, err := NewProcessFactory(ProcessConfig{Command: "node", Script: "worker.mjs", Args: []string{}, ScriptArgs: []string{"--x"}}); !errors.Is(err, ErrInvalidProcessConfig) {
-		t.Fatalf("mixed argument modes error = %v, want ErrInvalidProcessConfig", err)
-	}
 }
 
 func TestSessionHandleAcceptsOnlyLoopbackCDPPorts(t *testing.T) {

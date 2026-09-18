@@ -107,7 +107,7 @@ func TestNewWorkerFactoryRejectsUnknownBackend(t *testing.T) {
 }
 
 func TestNewWorkerFactorySupportsConfiguredBackends(t *testing.T) {
-	for _, backend := range []string{backendNode, backendHeadless, backendRust} {
+	for _, backend := range []string{backendNode, backendHeadless} {
 		t.Run(backend, func(t *testing.T) {
 			options := testServiceOptions()
 			options.backend = backend

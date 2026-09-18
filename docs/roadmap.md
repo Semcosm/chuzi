@@ -22,17 +22,17 @@ Request、required checks 和集成记录完成。路线图只在对应代码、
 | 账号领域核心 | 已完成 | CR-0005：纯 Go 状态机、幂等事件、审计、重试策略和租约原语 |
 | 业务运行时 | 边界已完成（持久化调度已组装） | 状态存储、队列、凭证和 Matrix transport-neutral 边界已接入并有测试；入口可恢复/调度请求，真实账号浏览器、生产传输和凭证入口仍未接入 |
 
-当前四个平台的构建通过不代表四个平台都具备无显示环境 headless 浏览器覆盖。
-`linux-arm64` 的 Go、Node.js、WebKitGTK 编译和 X11/Wayland smoke test 在 GitHub
-`ubuntu-24.04-arm` 原生 ARM64 runner 执行；真正 headless 仍需单独验证。
+当前四个平台的构建通过不代表四个平台都具备真实账号浏览器自动化覆盖。
+`linux-arm64` 的 Go 和 Node.js 构建在 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner
+执行；真正 headless 仍需部署环境提供 Chromium/Edge 并单独验证。
 
 ### 当前 release 基线
 
 Nightly release 是首次可交付流程：GitHub Actions 定时构建四个目标，不打 tag、不创建
 GitHub Release，只上传限期 Actions artifacts。版本包含 run number 和短 commit hash；
-产物已拆分为 launcher、服务、浏览器 Worker 和桌面运行时组件，并携带资源校验
+产物已拆分为 launcher、服务和浏览器 Worker 组件，并携带资源校验
 manifest/index。当前交付的是 UI-neutral `chuzi-launcher` CLI、服务、浏览器 Worker
-和桌面运行时；平台 UI 尚未随 nightly 发布。后续 Windows、macOS、Linux 客户端分别
+；平台 UI 尚未随 nightly 发布。后续 Windows、macOS、Linux 客户端分别
 通过 Stable API Boundary 复用同一启动器/Core 能力，Linux 首阶段采用 GTK，平台
 默认样式和无障碍行为由各自原生框架负责。CR-0027 的网络下载仍不包含 Chromium、
 真实账号或生产凭证。
@@ -179,46 +179,18 @@ Windows 客户端位于 `ui/windows`，只使用 owner-only named pipe 和 `chuz
 复制 launcher、Store 或凭证逻辑。Windows 原生构建仍需 Windows runner，Linux 开发机只
 能执行仓库契约和静态边界检查。
 
-### 阶段七：真实浏览器运行时
+### 阶段七：headless 浏览器与业务自动化
 
-状态：进行中，拆分为独立 CR。CR-0014-A 已完成 Rust helper 和协议边界；
-CR-0014-B、CR-0014-C 已集成。Windows/macOS 已由对应原生 CI 完成 Wry
-feature 编译与 helper 打包检查；Ubuntu 24.04 Linux amd64/arm64 已由原生 CI
-执行 WebKitGTK 的 X11/Wayland 本地测试页 smoke。Windows/macOS 的 CI 证据不等于
-GUI 运行时 smoke。这些 helper 不会自动替代服务默认路径；`cmd/service` 只有显式
-选择 Rust backend 才会启动 helper；CR-0017 已接入 headless-CDP 的运行时发现和进程边界，
-CR-0043 已接入云原神已授权会话检查，其他业务自动化仍未完成。
+状态：进行中。早期 CR-0014-A/B/C 规划的 Rust/Wry 桌面运行时已经废弃；相关源代码、
+服务 backend、构建矩阵、发布组件和 smoke 测试已清理，不再作为后续路线。原生
+Windows/macOS/Linux 客户端通过 Core API 工作，不依赖浏览器 WebView runtime。
 
-#### 7A：Rust runtime boundary（CR-0014-A）
-
-建立不依赖平台 GUI 库的 Rust helper、capability negotiation、运行时错误
-分类和本地测试页协议路径。它继续由 Go Session Runner 以独立进程管理；Node
-Worker 保留为 fake/deferred 生命周期替身。完成标准是协议兼容、Profile 参数
-边界、取消/关闭和单元测试可重复，不能把 deferred backend 报告为浏览器成功。
-
-#### 7B：Windows/macOS desktop WebView（CR-0014-B）
-
-使用 Wry 的平台后端，Windows 10/11 检测 WebView2 Runtime，macOS 首批覆盖
-11+ Apple Silicon 的 WKWebView。visible/hidden 模式都必须验证 GUI session、
-主线程和事件循环；当前 Windows 使用服务派生 WebContext，macOS 使用 ephemeral
-store；测试只使用内嵌本地测试页。Wry helper 随四个目标的发布 stage；Linux
-首批同时覆盖 X11 与 Wayland GUI session。helper 的 stage 构建不等于 Go 服务
-默认选择该 backend；服务入口只有显式 backend 选择时才会启动它。当前 Actions 对 Windows/macOS 只执行原生编译与打包
-检查，没有 GUI 会话运行步骤；实际桌面运行仍需目标环境验证。
-
-#### 7C：Linux Ubuntu WebKitGTK（CR-0014-C）
-
-首批只承诺 Ubuntu 24.04 LTS amd64/arm64、WebKitGTK 4.1、X11 和 Wayland。
-Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩展。原生
-`ubuntu-24.04-arm` 构建与 Xvfb/Weston smoke test 已通过，证明了 ARM64 图形
-路径；这仍不能替代所有部署环境的运行验证。
-
-#### 7D：真正 headless backend（CR-0017，第一增量）
+#### 7A：真正 headless backend（CR-0017，第一增量）
 
 第一增量已实现 Node headless-CDP worker：它控制部署环境已安装的 Chromium/Edge，
 不打包完整 Chromium；使用动态 loopback CDP 端口、服务派生 Profile 和固定安全参数，
 轮询 `/json/version` 并校验 endpoint，覆盖启动失败、发现超时、非法 endpoint、取消、
-关闭和崩溃回收。它不把桌面隐藏 WebView 作为 headless，也不假设 Safari/WKWebView
+关闭和崩溃回收。它不把桌面隐藏窗口作为 headless，也不假设 Safari/WKWebView
 可 headless。CR-0043 已实现首个真实 `chuzi.adapter/v1` 适配器：固定检查云原神
 已授权会话，返回标题、应用根节点和登录状态等脱敏页面事实；Core evaluator 才将
 事实映射为账号结果，未认证或页面结构变化时 fail closed，endpoint discovery 不被视为
@@ -226,7 +198,7 @@ Ubuntu 22.04、Debian 12 及其他发行版必须有独立运行证据后再扩�
 回归。更广泛的业务自动化适配器、WebDriver、浏览器版本策略、资源限制和四平台运行
 证据仍需后续独立 CR。
 
-#### 7E：业务自动化适配器与插件进程边界（CR-0020 第一增量）
+#### 7B：业务自动化适配器与插件进程边界（CR-0020 第一增量）
 
 CR-0021 完成了本地测试页垂直切片；CR-0043 在同一契约之上接入首个真实云原神
 会话检查流程。它通过显式服务选项启用，不改变服务默认的 deferred backend，也不
@@ -239,7 +211,7 @@ macOS/Linux arm64 的 Wine 只在获得真实运行证据后单独提升支持�
 payload 中。BetterGI 只作为后续通信插件，不在本增量内实现自动化本体或假定其
 具体私有协议。
 
-所有 7B-7D 变更都必须记录浏览器/运行时版本、下载或安装来源、原生依赖、
+所有 7A-7B 变更都必须记录浏览器版本、下载或安装来源、原生依赖、
 资源限制、Profile 保留策略和每个平台的构建与运行覆盖。
 
 完成标准：

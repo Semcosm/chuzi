@@ -31,7 +31,6 @@ def main() -> int:
     args = parser.parse_args()
     stage = args.stage.resolve()
     binary = "chuzi.exe" if args.target == "windows-amd64" else "chuzi"
-    runtime = "chuzi-browser-runtime.exe" if args.target == "windows-amd64" else "chuzi-browser-runtime"
     launcher = "chuzi-launcher.exe" if args.target == "windows-amd64" else "chuzi-launcher"
     archive_extension = "zip" if args.target == "windows-amd64" else "tar.gz"
     groups = {
@@ -41,7 +40,6 @@ def main() -> int:
             "browser-worker/" + str(path.relative_to(stage / "browser-worker")).replace(os.sep, "/")
             for path in (stage / "browser-worker").rglob("*") if path.is_file()
         ), False),
-        "desktop-runtime": ([runtime], False),
     }
     components = []
     for component_id, (files, required) in groups.items():

@@ -39,35 +39,22 @@ type ProcessConfig struct {
 	Script  string
 	// ScriptArgs are appended after the standard --stdio argument. They are
 	// restricted to the worker's own startup configuration and are not shell
-	// parsed. Args and ScriptArgs cannot be combined.
+	// parsed.
 	ScriptArgs []string
-	// Args contains the complete argument list for helpers that do not use a
-	// script entry point, such as the Rust browser runtime. A nil Args value
-	// retains compatibility with Script and invokes <command> <script> --stdio;
-	// a non-nil empty slice intentionally invokes the command with no args.
-	Args       []string
 	Stderr     io.Writer
 	WorkerMode string
 }
 
 func NewProcessFactory(config ProcessConfig) (*ProcessFactory, error) {
 	if strings.TrimSpace(config.Command) == "" ||
-		(config.Args == nil && strings.TrimSpace(config.Script) == "") ||
-		(config.Args != nil && strings.TrimSpace(config.Script) != "") ||
-		(config.Args != nil && len(config.ScriptArgs) != 0) {
+		strings.TrimSpace(config.Script) == "" {
 		return nil, ErrInvalidProcessConfig
 	}
 	if config.Stderr == nil {
 		config.Stderr = io.Discard
 	}
-	var args []string
-	if config.Args == nil {
-		args = []string{config.Script, "--stdio"}
-		args = append(args, config.ScriptArgs...)
-	} else {
-		args = make([]string, len(config.Args))
-		copy(args, config.Args)
-	}
+	args := []string{config.Script, "--stdio"}
+	args = append(args, config.ScriptArgs...)
 	return &ProcessFactory{
 		command:    config.Command,
 		args:       args,

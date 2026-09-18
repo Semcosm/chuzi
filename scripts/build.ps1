@@ -25,14 +25,12 @@ New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "browser-worker")
 
 $goos = ""
 $goarch = ""
-$runtimeBackend = "deferred"
-$runtimeFeatures = @()
 $binary = "chuzi"
 switch ($Target) {
-    "windows-amd64" { $goos = "windows"; $goarch = "amd64"; $binary = "chuzi.exe"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
-    "linux-amd64" { $goos = "linux"; $goarch = "amd64"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
-    "linux-arm64" { $goos = "linux"; $goarch = "arm64"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
-    "darwin-arm64" { $goos = "darwin"; $goarch = "arm64"; $runtimeBackend = "wry-desktop"; $runtimeFeatures = @("--features", "desktop-webview") }
+    "windows-amd64" { $goos = "windows"; $goarch = "amd64"; $binary = "chuzi.exe" }
+    "linux-amd64" { $goos = "linux"; $goarch = "amd64" }
+    "linux-arm64" { $goos = "linux"; $goarch = "arm64" }
+    "darwin-arm64" { $goos = "darwin"; $goarch = "arm64" }
 }
 
 $env:CGO_ENABLED = "0"
@@ -51,11 +49,6 @@ if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 if ($LASTEXITCODE -ne 0) { throw "browser worker build failed" }
 Copy-Item -Recurse -Force (Join-Path $repoRoot "browser-worker/dist/*") (Join-Path $stageDir "browser-worker")
 
-$cargoArgs = @("build", "--locked", "--manifest-path", (Join-Path $repoRoot "browser-runtime/Cargo.toml"), "--release") + $runtimeFeatures
-& cargo @cargoArgs
-if ($LASTEXITCODE -ne 0) { throw "browser runtime build failed" }
-Copy-Item -Force (Join-Path $repoRoot "browser-runtime/target/release/chuzi-browser-runtime.exe") (Join-Path $stageDir "chuzi-browser-runtime.exe")
-
 $commit = $env:GITHUB_SHA
 if ([string]::IsNullOrWhiteSpace($commit)) {
     $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
@@ -67,8 +60,6 @@ if ([string]::IsNullOrWhiteSpace($commit)) {
     goos = $goos
     goarch = $goarch
     cgo = $false
-    rustHelper = "chuzi-browser-runtime"
-    browserRuntime = $runtimeBackend
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
 
 $channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } else { "nightly" }

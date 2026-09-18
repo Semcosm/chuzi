@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 INDEX_FORMAT = "chuzi-release-index/v1"
-COMPONENTS = ("launcher", "service", "browser-worker", "desktop-runtime")
+COMPONENTS = ("launcher", "service", "browser-worker")
 
 
 def digest(path: Path) -> str:
