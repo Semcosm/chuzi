@@ -40,7 +40,6 @@ var version = "dev"
 const (
 	backendNode     = "node"
 	backendHeadless = "headless"
-	backendRust     = "rust"
 )
 
 var (
@@ -56,7 +55,6 @@ type serviceOptions struct {
 	workerScript           string
 	headlessBrowserCommand string
 	automationAdapter      string
-	browserRuntime         string
 	healthListen           string
 	metricsListen          string
 	logPath                string
@@ -125,7 +123,6 @@ func defaultServiceOptions() serviceOptions {
 		workerCommand:          "node",
 		workerScript:           "browser-worker/src/worker.mjs",
 		headlessBrowserCommand: "chromium",
-		browserRuntime:         "chuzi-browser-runtime",
 		owner:                  "service",
 		pollInterval:           500 * time.Millisecond,
 		leaseTTL:               2 * time.Minute,
@@ -164,15 +161,6 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 			Script:  options.workerScript,
 			Stderr:  workerStderr(),
 		})
-	case backendRust:
-		// The Rust helper is a JSONL stdin/stdout process and does not accept
-		// the Node worker's script/--stdio arguments. An explicit empty, non-nil
-		// argument list makes that invocation contract visible to ProcessFactory.
-		return browser.NewProcessFactory(browser.ProcessConfig{
-			Command: options.browserRuntime,
-			Args:    []string{},
-			Stderr:  workerStderr(),
-		})
 	case backendHeadless:
 		if strings.TrimSpace(options.headlessBrowserCommand) == "" {
 			return nil, fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
@@ -189,7 +177,7 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 			WorkerMode: workerMode,
 		})
 	default:
-		return nil, fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, options.backend, backendNode, backendHeadless, backendRust)
+		return nil, fmt.Errorf("%w: %q (want %s or %s)", errInvalidBackend, options.backend, backendNode, backendHeadless)
 	}
 }
 
@@ -210,8 +198,8 @@ func (o serviceOptions) validate() error {
 		(o.heartbeat > 0 && o.heartbeat >= o.leaseTTL) {
 		return fmt.Errorf("%w: invalid service timing or concurrency settings", errInvalidOptions)
 	}
-	if o.backend != backendNode && o.backend != backendHeadless && o.backend != backendRust {
-		return fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, o.backend, backendNode, backendHeadless, backendRust)
+	if o.backend != backendNode && o.backend != backendHeadless {
+		return fmt.Errorf("%w: %q (want %s or %s)", errInvalidBackend, o.backend, backendNode, backendHeadless)
 	}
 	if o.backend == backendHeadless && strings.TrimSpace(o.headlessBrowserCommand) == "" {
 		return fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
@@ -860,12 +848,11 @@ func runMaintenance(ctx context.Context, options serviceOptions, backup bool, re
 func main() {
 	options := defaultServiceOptions()
 	flag.StringVar(&options.configPath, "config", "configs/example.json", "JSON deployment configuration")
-	flag.StringVar(&options.backend, "browser-backend", backendNode, "browser worker backend (node, headless, or rust)")
+	flag.StringVar(&options.backend, "browser-backend", backendNode, "browser worker backend (node or headless)")
 	flag.StringVar(&options.workerCommand, "worker-command", "node", "Node browser worker executable")
 	flag.StringVar(&options.workerScript, "worker-script", "browser-worker/src/worker.mjs", "Node browser worker script")
 	flag.StringVar(&options.headlessBrowserCommand, "headless-browser-command", "chromium", "externally installed Chromium/Edge executable for the headless backend")
 	flag.StringVar(&options.automationAdapter, "automation-adapter", "", "explicit business adapter (genshin-cloudgame only)")
-	flag.StringVar(&options.browserRuntime, "browser-runtime", "chuzi-browser-runtime", "Rust browser runtime executable")
 	flag.StringVar(&options.healthListen, "health-listen", "", "override the configured local health listener")
 	flag.StringVar(&options.metricsListen, "metrics-listen", "", "optional local Prometheus metrics listener")
 	flag.StringVar(&options.logPath, "log-path", "", "optional structured JSONL log path (defaults to stderr)")

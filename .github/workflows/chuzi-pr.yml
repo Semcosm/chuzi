@@ -76,25 +76,10 @@ jobs:
           npm --prefix browser-worker test
           go run ./cmd/service -self-test -worker-command node -worker-script browser-worker/src/worker.mjs
 
-  pr_rust:
-    name: chuzi-pr-rust
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
-        with:
-          fetch-depth: 0
-      - name: Test Rust protocol helper
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo fmt --manifest-path browser-runtime/Cargo.toml -- --check
-          cargo test --locked --manifest-path browser-runtime/Cargo.toml -- --nocapture
-
   chuzi_build:
     name: chuzi-build
     if: always()
-    needs: [pr_contract, pr_go, pr_node, pr_rust]
+    needs: [pr_contract, pr_go, pr_node]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every pull request stage
@@ -104,8 +89,7 @@ jobs:
           for result in \
             "${{ needs.pr_contract.result }}" \
             "${{ needs.pr_go.result }}" \
-            "${{ needs.pr_node.result }}" \
-            "${{ needs.pr_rust.result }}"; do
+            "${{ needs.pr_node.result }}"; do
             test "$result" = success || { echo "pull request stage did not succeed: $result" >&2; exit 1; }
           done
           echo "all pull request build stages passed"

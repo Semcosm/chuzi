@@ -17,13 +17,12 @@ mkdir -p "$repo_root/dist"
 rm -f "$artifact" "$artifact.sha256" "$repo_root/dist/chuzi-${version}-${target}.manifest.json" \
   "$repo_root/dist/chuzi-${version}-${target}.index.json" "$repo_root/dist/chuzi-${version}-${target}.index.json.sha256"
 tar -czf "$artifact" -C "$stage_dir" .
-for component in launcher service browser-worker desktop-runtime; do
+for component in launcher service browser-worker; do
   component_dir="$(mktemp -d)"
   case "$component" in
     launcher) cp "$stage_dir/chuzi-launcher" "$component_dir/"; cp "$stage_dir/release-manifest.json" "$component_dir/" ;;
     service) cp "$stage_dir/chuzi" "$component_dir/" ;;
     browser-worker) cp -R "$stage_dir/browser-worker" "$component_dir/" ;;
-    desktop-runtime) cp "$stage_dir/chuzi-browser-runtime" "$component_dir/" ;;
   esac
   tar -czf "$repo_root/dist/chuzi-${version}-${target}-${component}.tar.gz" -C "$component_dir" .
   rm -rf "$component_dir"

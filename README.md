@@ -15,9 +15,9 @@ Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 
 `cmd/service` 现在负责加载 `configs/example.json`（也可通过 `-config` 指定），打开
 持久化 bbolt Store，并组装 Request Service、Session Runner 和 Queue Scheduler。
 普通启动只运行持久化调度循环；没有排队请求时保持 idle，收到中断后关闭 Store。
-默认 backend 仍是 Node.js deferred Worker；`-browser-backend rust` 才会显式选择
-Rust helper，路径由 `-browser-runtime` 指定。`-self-test` 继续使用临时目录运行
-一次 Node Worker 协议 smoke test，不代表生产服务入口或真实浏览器自动化。
+默认 backend 仍是 Node.js deferred Worker；真实浏览器流程必须显式选择 Node
+headless-CDP backend，并由部署环境提供浏览器可执行文件。`-self-test` 继续使用
+临时目录运行一次 Node Worker 协议 smoke test，不代表生产服务入口或真实浏览器自动化。
 
 需要运行首个真实业务适配器时，必须显式同时设置
 `-browser-backend headless -automation-adapter genshin-cloudgame`。该流程固定访问
@@ -42,22 +42,17 @@ Profile。Windows 首个 WinUI 3 客户端位于 `ui/windows`，通过独立的 
 可选的本地 metrics 端点只暴露低基数分类指标；日志、指标、健康和审计输出都不会
 包含凭证、Cookie、页面内容或原始账号/房间标识。
 
-Rust `browser-runtime` 已建立独立协议 helper。Windows 10/11、macOS 11+
-Apple Silicon 的 Wry 桌面 WebView 已由对应原生 CI 构建并打包；Ubuntu 24.04
-amd64/arm64 的 WebKitGTK Wry desktop backend 还在 X11 与 Wayland 图形会话中
-通过了内嵌本地测试页 smoke。helper 只能通过显式 backend 选择接入 Go 服务；默认
-仍使用 Node deferred Worker。显式 `-browser-backend headless` 可选择使用部署环境
-提供的 Chromium/Edge；该 backend 已有首个 `chuzi.adapter/v1` 云原神适配器和
-本地测试页适配器。云原神流程只返回平台、流程和认证状态等脱敏事实；本地测试页仍只
-用于协议验证。两者都不把 CDP endpoint discovery 当作业务成功，也不把桌面隐藏窗口
-当作无显示环境浏览器。
+浏览器运行时只保留 Node.js Worker：默认 deferred 生命周期替身，以及显式选择的
+headless-CDP Worker。Wry/Rust desktop runtime 路径已废弃，不再属于服务 backend、
+构建矩阵、发布包或客户端架构。headless 流程只使用部署环境提供的 Chromium/Edge，
+返回脱敏运行事实，由 Core evaluator 映射为账号结果。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
 当前首个 release 流程是 nightly：GitHub Actions 每日自动构建并上传四个平台的限期
 artifact，不创建 Git tag 或 GitHub Release。版本格式为
 `nightly-<run-number>-<commit-short-hash>`，完整 commit hash 写入 manifest/index。
-每个目标包含 UI-neutral CLI、服务、浏览器 Worker、桌面运行时以及
+每个目标包含 UI-neutral CLI、服务和浏览器 Worker 以及
 `release-manifest.json`；同时提供按组件拆分的归档和带大小/SHA-256 的
 `release-index.json`，安装者不必安装全部运行资源。启动器后台契约位于
 `internal/launcher`，原生平台 UI 通过 Core API 调用 Go 服务，并按需使用 UI-neutral CLI，不复制下载、
@@ -73,7 +68,7 @@ artifact，不创建 Git tag 或 GitHub Release。版本格式为
 - 账号状态由统一状态机驱动，避免队列、浏览器和通知模块各自维护状态。
 - 凭证默认加密存储，日志和 Matrix 消息不得泄露明文凭证。
 - 调度、会话运行和外部通知解耦，支持失败重试、超时回收和服务重启恢复。
-- 桌面 WebView 与真正 headless 使用不同 backend；隐藏窗口不被当作无显示环境。
+- 浏览器 Worker、调度、会话运行和外部通知解耦；headless 只使用显式配置的外部浏览器。
 - headless backend 不下载或打包 Chromium/Edge，只使用显式配置的外部可执行文件。
 - 只自动化用户有权使用的账号与服务，不实现凭证窃取、访问控制绕过或攻击能力。
 

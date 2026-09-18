@@ -39,11 +39,9 @@ for target in linux-amd64 windows-amd64; do
   if [ "$target" = "windows-amd64" ]; then
     printf '%s' launcher >"$stage/chuzi-launcher.exe"
     printf '%s' service >"$stage/chuzi.exe"
-    printf '%s' runtime >"$stage/chuzi-browser-runtime.exe"
   else
     printf '%s' launcher >"$stage/chuzi-launcher"
     printf '%s' service >"$stage/chuzi"
-    printf '%s' runtime >"$stage/chuzi-browser-runtime"
   fi
   printf '%s' worker >"$stage/browser-worker/index.mjs"
 
@@ -63,7 +61,6 @@ groups = {
     "launcher": [stage / "chuzi-launcher.exe", stage / "release-manifest.json"],
     "service": [stage / "chuzi.exe"],
     "browser-worker": [path for path in (stage / "browser-worker").rglob("*") if path.is_file()],
-    "desktop-runtime": [stage / "chuzi-browser-runtime.exe"],
 }
 for component, files in groups.items():
     suffix = "" if component == "bundle" else f"-{component}"
@@ -74,14 +71,13 @@ for component, files in groups.items():
 PY
   else
     tar -czf "$dist/chuzi-${version}-${target}.tar.gz" -C "$stage" .
-    for component in launcher service browser-worker desktop-runtime; do
+    for component in launcher service browser-worker; do
       component_dir="$test_root/$target-$component"
       mkdir -p "$component_dir"
       case "$component" in
         launcher) cp "$stage/chuzi-launcher" "$component_dir/"; cp "$stage/release-manifest.json" "$component_dir/" ;;
         service) cp "$stage/chuzi" "$component_dir/" ;;
         browser-worker) cp -R "$stage/browser-worker" "$component_dir/" ;;
-        desktop-runtime) cp "$stage/chuzi-browser-runtime" "$component_dir/" ;;
       esac
       tar -czf "$dist/chuzi-${version}-${target}-${component}.tar.gz" -C "$component_dir" .
     done

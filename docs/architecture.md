@@ -20,10 +20,8 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
   服务级限流尚未实现。
 - **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
 - **Browser Worker**：运行在独立进程中，负责浏览器运行时和自动化适配边界；不能直接决定账号业务状态。
-  当前 Node.js Worker 提供 deferred 生命周期替身和 headless-CDP runtime adapter；Rust helper 已提供同一协议的独立
-  Wry/deferred 实现。原生 CI 对 Windows/macOS 执行 Wry 编译与打包检查，对 Linux
-  amd64/arm64 另执行 WebKitGTK 的 X11/Wayland smoke；`cmd/service` 默认使用 Node
-  backend，Rust helper 通过显式 `-browser-backend rust` 选择。
+  当前 Node.js Worker 提供 deferred 生命周期替身和 headless-CDP runtime adapter；原生
+  客户端通过 Core API 工作，不依赖浏览器 WebView runtime。
 - **State Store**：持久化账号、请求、状态转换、租约、队列索引、审计、凭证
   密文和 Matrix 通知 outbox。
 - **Credential Store**：提供加密凭证的读写，不向业务层暴露不必要的明文。
@@ -45,7 +43,6 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ├── cmd/                         # 可执行程序入口
 │   └── service/
 ├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
-├── browser-runtime/             # Rust helper；deferred/Wry 桌面 WebView
 ├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
 ├── ui/                          # 原生平台客户端
 │   ├── windows/                  # 已有 WinUI 3 首个客户端
@@ -130,14 +127,16 @@ GitHub Actions 是唯一的发布构建入口。当前支持四个目标：
 - `linux-arm64`
 - `darwin-arm64`
 
-Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随产物发布，Rust `chuzi-browser-runtime` helper 也随四个目标的 stage 发布。Windows/macOS stage 启用 Wry 桌面 WebView feature；Ubuntu 24.04 Linux stage 也启用 Wry 的 WebKitGTK feature，并在 X11 与 Wayland 图形会话中运行本地测试页。Windows/macOS helper 已由对应原生 CI 构建并打包；Linux amd64/arm64 还通过了 X11/Wayland smoke。`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner，Go、Node.js、WebKitGTK 编译和 smoke test 在 ARM64 主机执行；这仍不等同于无显示环境 headless 浏览器。上述 helper 构建和 smoke 测试不改变 `cmd/service` 默认仍使用 Node deferred Worker、且 Rust 只能显式选择的事实。
+Go 控制服务使用 `CGO_ENABLED=0` 构建，Node.js Worker 以锁定的源码包随四个目标的 stage 发布。
+`linux-arm64` 使用 GitHub `ubuntu-24.04-arm` 原生 ARM64 runner；headless 浏览器始终由部署环境提供，
+不由发布包下载或打包。
 
 控制服务与 Worker 通过版本化 JSON Lines 协议通信。Worker 只报告浏览器运行事实；账号状态机、租约、重试和对外状态仍由 Go 控制面负责。
 
 ## 组件化发布与启动器边界
 
-Nightly release 的最小安装单元是启动器。发布 stage 同时携带服务、Node
-browser-worker 和 Rust desktop runtime，但 package 脚本还为四者生成独立组件归档，
+Nightly release 的最小安装单元是启动器。发布 stage 同时携带服务和 Node
+browser-worker，package 脚本还为三者生成独立组件归档，
 让安装者可以按需安装而不必把所有运行资源放入本地安装。完整包的
 `release-manifest.json` 记录每个组件的版本、依赖、入口和资源 SHA-256/大小；组件
 包本身不是信任凭证，插件仍须通过未来的签名/权限策略审查。
@@ -160,45 +159,13 @@ CLI/Core 能力，接收 UI 请求结果、脱敏进度和分类错误；更新�
 必须先确认记录中的进程已退出。`ProcessServiceController` 只负责当前调用方生命周期
 内的 shell-free 子进程，生产部署仍由 systemd、launchd 或 Windows 服务管理器负责。
 
-## 真实 WebView 与 headless 边界
+## Headless 浏览器边界
 
-Rust helper 继续通过现有 Go Worker 的版本化 JSON Lines 边界运行，不使用
-Go/Rust FFI。helper 内部的运行时接口只返回 capability 和脱敏运行事实，业务
-状态、租约、重试和 Profile 路径仍由 Go 控制面决定。
-
-`browser-runtime` 的桌面 WebView 后端使用 `wry`，由 `tao`/平台事件循环承载：Windows 使用
-WebView2，macOS 使用 WKWebView，Linux 使用 WebKitGTK。Wry 统一的是 WebView
-创建和页面操作 API，不是一个跨平台 headless 浏览器。隐藏窗口仍需要有效的
-用户图形会话、主线程和事件循环。
-
-真正的 headless 后端单独建模，优先控制部署环境已安装的 Chromium/Edge（CDP
-或 WebDriver），不由 Wry、WebKitGTK 或 WKWebView 假设提供。当前 Node
-headless-CDP worker 已实现外部命令启动、动态 loopback CDP 端口、`/json/version`
-发现与 endpoint 校验、服务派生 Profile 传递以及取消/关闭回收。当前首个真实适配器
-复用该生命周期，固定访问云原神 `https://ys.mihoyo.com/cloud/#/`，通过已验证的 WebSocket
-采集标题、应用根节点和登录状态等有界页面事实；Core evaluator 再将这些事实映射为
-账号结果，页面结构变化时 fail closed。仓库内本地测试页仍用于
-协议回归。该后端不会打包完整
-Chromium，也不会把桌面隐藏窗口标记为 headless；endpoint discovery 只报告运行时
-事实，不会报告业务成功。
-
-首批平台基线如下：
-
-| 后端 | 平台基线 | 首批承诺 | 当前状态 |
-| --- | --- | --- | --- |
-| Desktop WebView | Windows 10/11 | WebView2 Runtime 检测；visible/hidden 模式；服务派生 WebContext | 已集成；原生编译/打包检查通过（CR-0014-B） |
-| Desktop WebView | macOS 11+，Apple Silicon | WKWebView；GUI session/run loop；当前 ephemeral store | 已集成；原生编译/打包检查通过（CR-0014-B） |
-| Desktop WebView | Ubuntu 24.04 LTS amd64/arm64 | WebKitGTK 4.1；X11 与 Wayland GUI session | 已集成；原生编译及 X11/Wayland smoke 通过（CR-0014-C） |
-| Headless browser | 部署环境提供 Chromium/Edge | Node headless-CDP worker；动态 loopback 端口、独立 Profile、CDP discovery 和有界进程回收 | CR-0017 + CR-0043；云原神已授权会话检查已接入，其他平台未支持 |
-
-CR-0014-A 建立 Rust helper、capability/error 契约和本地协议测试页路径；
-CR-0014-B 已在 Windows/macOS target-gated 接入真实 Wry WebView，CR-0014-C 已在
-Ubuntu 24.04 target-gated 接入 WebKitGTK，并在 X11/Wayland GUI session 中只加载
-内嵌本地测试页。CR-0014-B/C 的证据覆盖 helper 的原生构建、打包，以及 Linux
-X11/Wayland smoke 路径；Windows/macOS 的构建证据不表示 GUI 运行时 smoke 已完成，
-也不表示 Go 服务默认选择该 helper；服务入口只有显式选择 Rust backend 时才会
-启动它；headless-CDP worker 已在 CR-0017 第一增量中接入，CR-0043 接入云原神
-已授权会话检查。适配器仍不能写状态、队列或审计，也不接收明文凭据。
+真正的 headless 后端由部署环境提供 Chromium/Edge，当前仅保留 Node headless-CDP
+worker。它使用动态 loopback CDP 端口、服务派生 Profile、`/json/version` endpoint
+校验以及有界取消/关闭回收；不会打包完整 Chromium，也不会把桌面隐藏窗口当作
+headless。首个真实适配器固定检查云原神已授权会话，并只返回脱敏页面事实，由 Core
+evaluator 映射为账号结果；endpoint discovery 不代表业务成功。
 
 ## 关键边界
 
@@ -230,11 +197,8 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
 继续提供协议和 deferred-browser failure/synthetic lifecycle 模式，并提供独立的
-headless-CDP 进程边界；Rust helper
-提供同一协议的独立进程边界；Windows/macOS/Linux 的 Wry feature 已显式启用，
-Linux WebKitGTK 同时支持 X11 与 Wayland GUI session。`ProcessFactory` 会启动
-调用方指定的可执行文件和脚本，或启动不带脚本参数的 helper；`cmd/service` 默认
-仍指定 Node deferred Worker，`-browser-backend rust` 选择 Rust helper，
+headless-CDP 进程边界。`ProcessFactory` 会启动
+调用方指定的可执行文件和脚本；`cmd/service` 默认仍指定 Node deferred Worker，
 `-browser-backend headless` 选择 Node headless-CDP worker，并通过
 `-headless-browser-command` 指定部署环境已安装的 Chromium/Edge 可执行文件。
 headless worker 的 session handle 只代表已验证的运行时连接，不代表业务操作已完成。

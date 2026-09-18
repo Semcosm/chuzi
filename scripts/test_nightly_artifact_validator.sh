@@ -24,7 +24,6 @@ files = {
     "launcher": {"chuzi-launcher": b"launcher", "release-manifest.json": None},
     "service": {"chuzi": b"service"},
     "browser-worker": {"browser-worker/index.mjs": b"worker"},
-    "desktop-runtime": {"chuzi-browser-runtime": b"runtime"},
 }
 manifest = {
     "format": "chuzi-release/v1", "channel": "nightly", "version": version,
@@ -39,9 +38,6 @@ manifest = {
         {"id": "browser-worker", "version": version, "required": False, "resources": [
             {"path": "browser-worker/index.mjs", "sha256": hashlib.sha256(b"worker").hexdigest(), "size": 6},
         ], "artifact": f"chuzi-{version}-linux-amd64-browser-worker.tar.gz"},
-        {"id": "desktop-runtime", "version": version, "required": False, "resources": [
-            {"path": "chuzi-browser-runtime", "sha256": hashlib.sha256(b"runtime").hexdigest(), "size": 7},
-        ], "artifact": f"chuzi-{version}-linux-amd64-desktop-runtime.tar.gz"},
     ], "plugins": [],
 }
 for name, members in files.items():
@@ -60,7 +56,7 @@ for name, members in files.items():
     files[name] = members
 
 artifacts = []
-for name in ["bundle", "launcher", "service", "browser-worker", "desktop-runtime"]:
+for name in ["bundle", "launcher", "service", "browser-worker"]:
     source = files["launcher"] if name == "bundle" else files[name]
     if name == "bundle":
         archive_name = f"chuzi-{version}-linux-amd64.tar.gz"

@@ -9,8 +9,6 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$WorkerArchive,
     [Parameter(Mandatory = $true)]
-    [string]$RuntimeBinary,
-    [Parameter(Mandatory = $true)]
     [string]$DistRoot
 )
 
@@ -22,7 +20,6 @@ if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
 New-Item -ItemType Directory -Force -Path (Join-Path $stageDir "browser-worker") | Out-Null
 Copy-Item -Force (Join-Path $GoDir "chuzi.exe") (Join-Path $stageDir "chuzi.exe")
 Copy-Item -Force (Join-Path $GoDir "chuzi-launcher.exe") (Join-Path $stageDir "chuzi-launcher.exe")
-Copy-Item -Force $RuntimeBinary (Join-Path $stageDir "chuzi-browser-runtime.exe")
 tar -xzf $WorkerArchive -C (Join-Path $stageDir "browser-worker")
 if ($LASTEXITCODE -ne 0) { throw "browser worker archive extraction failed" }
 
@@ -35,8 +32,6 @@ if ([string]::IsNullOrWhiteSpace($commit)) { $commit = (& git -C $repoRoot rev-p
     goos = "windows"
     goarch = "amd64"
     cgo = $false
-    rustHelper = "chuzi-browser-runtime"
-    browserRuntime = "wry-desktop"
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
 
 $channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } else { "nightly" }
