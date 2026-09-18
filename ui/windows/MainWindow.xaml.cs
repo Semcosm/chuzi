@@ -13,8 +13,11 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
+        UiDiagnostics.Log("MainWindow.ctor: begin");
         InitializeComponent();
+        UiDiagnostics.Log("MainWindow.ctor: InitializeComponent returned");
         Closed += (_, _) => _client.Dispose();
+        UiDiagnostics.Log("MainWindow.ctor: client initialized");
         StatusText.Text = "Connecting to the local Core service...";
         _ = ConnectAsync();
     }
