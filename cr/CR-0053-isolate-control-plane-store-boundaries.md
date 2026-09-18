@@ -1,16 +1,16 @@
 # CR-0053: retire Wry and isolate control-plane boundaries
 
 Base: main
-Head or Range: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5..2a92d048e7de817888d4e78bf0c24a04407c9086
+Head or Range: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5..ad03ccc199d9a36d6e954d6acd98c36d7e451132
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: refactor: retire Wry and isolate control-plane boundaries
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
 Base OID: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5
-Head OID: 2a92d048e7de817888d4e78bf0c24a04407c9086
+Head OID: ad03ccc199d9a36d6e954d6acd98c36d7e451132
 Integrated Result: pending
 
 ## Summary
