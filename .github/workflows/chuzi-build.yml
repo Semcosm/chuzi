@@ -244,9 +244,6 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $project = Join-Path $env:GITHUB_WORKSPACE 'ui/windows/Chuzi.Native.Windows.csproj'
-          $raw = Get-Content $project -Raw
-          $raw = $raw.Replace('Version="1.6.250205002"', 'Version="1.8.260804001"')
-          Set-Content -Encoding utf8 $project $raw
           $out = Join-Path $env:RUNNER_TEMP 'chuzi-msix'
           New-Item -ItemType Directory -Force -Path $out | Out-Null
           dotnet publish $project `
