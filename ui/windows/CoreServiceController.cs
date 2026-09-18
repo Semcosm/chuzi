@@ -124,8 +124,8 @@ internal sealed class CoreServiceController : IDisposable
             await client.ConnectAsync(cancellationToken);
             return new CoreSnapshot(CoreStatus.Running, processId, owned, "Core is ready.");
         }
-        catch (OperationCanceledException) { throw; }
-        catch (Exception exception) when (exception is IOException or TimeoutException or CoreApiException)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is OperationCanceledException or IOException or TimeoutException or CoreApiException)
         {
             return new CoreSnapshot(fallback, processId, owned, fallback == CoreStatus.Starting ? "Waiting for Core..." : "Core is not reachable.");
         }
@@ -148,12 +148,8 @@ internal sealed class CoreServiceController : IDisposable
 
     private string? FindServiceExecutable()
     {
-        foreach (var root in new[] { _launcher.DataRoot, _launcher.CorePayloadRoot, _launcher.PackageRoot })
-        {
-            var path = Path.Combine(root, "chuzi.exe");
-            if (File.Exists(path)) return path;
-        }
-        return null;
+        var installed = Path.Combine(_launcher.DataRoot, "chuzi.exe");
+        return File.Exists(installed) ? installed : null;
     }
 
     private static async Task DrainAsync(StreamReader reader, StreamWriter log)
