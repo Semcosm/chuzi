@@ -138,6 +138,16 @@ grep -Fq 'test_nightly_artifact_validator.sh' "$repo_root/.github/workflows/chuz
 grep -Fq 'test_launcher_consumer.sh' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses launcher consumer acceptance"
 grep -Fq 'name: chuzi-build-windows-ui' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows native UI build"
 grep -Fq 'build_windows_ui.ps1' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows native UI packaging"
+grep -Fq 'PackagedMsix' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses packaged MSIX mode"
+grep -Fq 'name: chuzi-windows-msix-self-contained' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses self-contained MSIX artifact"
+if grep -Eq '^[[:space:]]{2}windows_msix:' "$repo_root/.github/workflows/chuzi-build.yml"; then
+  fail "workflow retains duplicate Windows MSIX job"
+fi
+if grep -Fq 'name: ci-ui-windows' "$repo_root/.github/workflows/chuzi-build.yml"; then
+  fail "workflow retains obsolete unpackaged UI artifact"
+fi
+grep -Fq 'needs: [go_build, node_checks]' "$repo_root/.github/workflows/chuzi-build.yml" || fail "assemble target still depends on Windows UI job"
+grep -Fq 'ValidateSet("PackagedMsix", "UnpackagedZip")' "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI script misses explicit packaging modes"
 grep -Fq 'NamedPipeClientStream' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI does not use Core named pipe"
 grep -Fq 'chuzi.core/v1' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI misses Core API version"
 grep -Fq 'JsonPropertyName("request_id")' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI misses snake_case request mapping"

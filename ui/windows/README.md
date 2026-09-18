@@ -35,15 +35,16 @@ endpoint from `CHUZI_DATA_DIR` when supplied by deployment, or from
 business call. It never opens the bbolt database or reads credentials/Profile
 directories.
 
-Build on a Windows host with the Windows App SDK workload:
+For local unpackaged diagnostics on a Windows host:
 
 ```powershell
-./scripts/build_windows_ui.ps1 -Configuration Release -OutputDir "$PWD/dist/windows-ui"
+./scripts/build_windows_ui.ps1 -Mode UnpackagedZip -Configuration Release -OutputDir "$PWD/dist/windows-ui"
 ```
 
-The script publishes a self-contained UI payload only as a zip artifact. The
-service remains a separately managed process and must already be running.
+The unpackaged zip is a diagnostics-only payload. The service remains a
+separately managed process and must already be running.
 
-For CI packaging, use the `chuzi-windows-msix-self-contained` artifact. The
-test-signed package requires the CI certificate on the target Windows machine,
-but it does not require a separate `Microsoft.WindowsAppRuntime.*.msix` file.
+The CI path uses the same script in `PackagedMsix` mode and uploads the
+`chuzi-windows-msix-self-contained` artifact. The test-signed package requires
+the CI certificate on the target Windows machine, but it does not require a
+separate `Microsoft.WindowsAppRuntime.*.msix` file.
