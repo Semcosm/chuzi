@@ -5,11 +5,11 @@ Head or Range: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5..ad03ccc199d9a36d6e954d6
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: refactor: retire Wry and isolate control-plane boundaries
-Revision: 2
+Revision: 3
 Status: accepted
 Decision: accepted
 Policy Version: v0.3
-Base OID: 0ecaadfa791ffa82a6db687e8a8856f02030e5e5
+Base OID: ad03ccc199d9a36d6e954d6acd98c36d7e451132
 Head OID: ad03ccc199d9a36d6e954d6acd98c36d7e451132
 Integrated Result: pending
 
