@@ -260,7 +260,7 @@ jobs:
             <Applications>
               <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
                 <uap:VisualElements
-                  AppListEntry="auto"
+                  AppListEntry="default"
                   DisplayName="Chuzi"
                   Description="Chuzi native Windows client"
                   Square150x150Logo="Assets\Square150x150Logo.png"
@@ -273,7 +273,7 @@ jobs:
             </Capabilities>
           </Package>
           '@ | Set-Content -Encoding utf8 (Join-Path $ui 'Package.appxmanifest')
-          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Semcosm' -KeyUsage DigitalSignature -FriendlyName 'Chuzi CI Test Certificate' -CertStoreLocation 'Cert:\CurrentUser\My'
+          $cert = New-SelfSignedCertificate -Type Custom -Subject 'CN=Semcosm' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyUsage DigitalSignature -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3') -FriendlyName 'Chuzi CI Test Certificate' -CertStoreLocation 'Cert:\CurrentUser\My'
           $pwd = ConvertTo-SecureString 'chuzi-ci-test' -AsPlainText -Force
           $pfx = Join-Path $env:RUNNER_TEMP 'Chuzi-CI-Test.pfx'
           Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $pwd | Out-Null
@@ -302,15 +302,22 @@ jobs:
             -p:GenerateAppxPackageOnBuild=true `
             -p:AppxBundle=Never `
             -p:AppxPackageDir="$out\" `
-            -p:AppxPackageSigningEnabled=true `
-            -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\Chuzi-CI-Test.pfx" `
-            -p:PackageCertificatePassword=chuzi-ci-test
+            -p:AppxPackageSigningEnabled=false
           $artifact = Join-Path $env:GITHUB_WORKSPACE 'dist/windows-msix'
           New-Item -ItemType Directory -Force -Path $artifact | Out-Null
           $packages = @(Get-ChildItem -Path $out -Recurse -Include *.msix,*.msixbundle,*.appx)
           if ($packages.Count -eq 0) {
             Get-ChildItem -Path $out -Recurse | Select-Object FullName,Length | Format-Table -AutoSize
             throw 'No MSIX package was generated'
+          }
+          $signTool = Get-ChildItem "$env:ProgramFiles(x86)\Windows Kits\10\bin" -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName |
+            Select-Object -Last 1
+          if (-not $signTool) { throw 'signtool.exe was not found on the runner' }
+          foreach ($package in $packages) {
+            & $signTool.FullName sign /fd SHA256 /f "$env:RUNNER_TEMP\Chuzi-CI-Test.pfx" /p chuzi-ci-test $package.FullName
+            if ($LASTEXITCODE -ne 0) { throw "signtool failed for $($package.Name)" }
           }
           $packages | Copy-Item -Destination $artifact -Force
           Copy-Item "$env:RUNNER_TEMP\Chuzi-CI-Test.cer" $artifact -Force
