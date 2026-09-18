@@ -11,13 +11,12 @@
     <UseWinUI>true</UseWinUI>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <WindowsPackageType>None</WindowsPackageType>
-    <!-- The unpackaged single-file targets provide the WinUI bootstrap and
-         resource payload required by the published executable. -->
-    <EnableMsixTooling>true</EnableMsixTooling>
+    <!-- Keep the unpackaged client self-contained without single-file
+         extraction, which can fail during WinUI XAML startup. -->
+    <EnableMsixTooling>false</EnableMsixTooling>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
     <SelfContained>true</SelfContained>
-    <PublishSingleFile>true</PublishSingleFile>
-    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <PublishSingleFile>false</PublishSingleFile>
     <PublishTrimmed>false</PublishTrimmed>
     <PublishReadyToRun>false</PublishReadyToRun>
     <Nullable>enable</Nullable>
