@@ -20,7 +20,7 @@ import (
 const (
 	defaultQueryLimit = 100
 	maxQueryLimit     = 1000
-	maxAuditReadLimit = 10000
+	maxQueryOffset    = 100000
 )
 
 var (
@@ -40,7 +40,7 @@ type RequestPort interface {
 type StoreReader interface {
 	GetAccount(string) (account.Snapshot, error)
 	ListAuditEntries(store.AuditQuery) ([]store.AuditEntry, error)
-	ListNotifications() ([]store.Notification, error)
+	QueryNotifications(store.NotificationQuery) ([]store.Notification, error)
 }
 
 type Dependencies struct {
@@ -155,26 +155,18 @@ func (s *Service) ListEvents(ctx context.Context, query coreapi.EventQuery) ([]c
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
-	if err := validateQuery(query.AccountID, query.RequestID, query.Since, query.Until, query.Limit); err != nil {
+	if err := validateQuery(query.AccountID, query.RequestID, query.Since, query.Until, 0, query.Limit); err != nil {
 		return nil, classify(err)
 	}
 	limit := normalizedLimit(query.Limit)
-	readLimit := limit
-	if query.RequestID != "" {
-		readLimit = maxAuditReadLimit
-	}
 	entries, err := s.store.ListAuditEntries(store.AuditQuery{
-		AccountID: query.AccountID, Since: query.Since, Until: query.Until, Limit: readLimit,
+		AccountID: query.AccountID, RequestID: query.RequestID, Since: query.Since, Until: query.Until, Limit: limit,
 	})
 	if err != nil {
 		return nil, classify(err)
 	}
 	result := make([]coreapi.Event, 0, min(len(entries), limit))
-	requestLabel := observability.RedactIdentifier(query.RequestID)
 	for _, entry := range entries {
-		if requestLabel != "" && entry.RequestID != requestLabel {
-			continue
-		}
 		result = append(result, projectEvent(entry))
 		if len(result) == limit {
 			break
@@ -190,25 +182,24 @@ func (s *Service) ListNotifications(ctx context.Context, query coreapi.Notificat
 	if err := checkContext(ctx); err != nil {
 		return nil, err
 	}
-	if err := validateQuery(query.AccountID, query.RequestID, query.Since, query.Until, query.Limit); err != nil {
+	if err := validateQuery(query.AccountID, query.RequestID, query.Since, query.Until, query.Offset, query.Limit); err != nil {
 		return nil, classify(err)
 	}
 	limit := normalizedLimit(query.Limit)
-	notifications, err := s.store.ListNotifications()
+	notifications, err := s.store.QueryNotifications(store.NotificationQuery{
+		AccountID: query.AccountID,
+		RequestID: query.RequestID,
+		Since:     query.Since,
+		Until:     query.Until,
+		Offset:    query.Offset,
+		Limit:     limit,
+	})
 	if err != nil {
 		return nil, classify(err)
 	}
 	result := make([]coreapi.Notification, 0, min(len(notifications), limit))
 	for _, notification := range notifications {
-		if query.AccountID != "" && notification.AccountID != query.AccountID ||
-			query.RequestID != "" && notification.RequestID != query.RequestID ||
-			!within(notification.OccurredAt, query.Since, query.Until) {
-			continue
-		}
 		result = append(result, projectNotification(notification))
-		if len(result) == limit {
-			break
-		}
 	}
 	return result, nil
 }
@@ -251,14 +242,14 @@ func validateCancel(input coreapi.CancelRequest) error {
 	return nil
 }
 
-func validateQuery(accountID, requestID string, since, until time.Time, limit int) error {
+func validateQuery(accountID, requestID string, since, until time.Time, offset, limit int) error {
 	if (accountID != "" && !validToken(accountID)) || (requestID != "" && !validToken(requestID)) {
 		return ErrInvalidQuery
 	}
 	if !since.IsZero() && !until.IsZero() && until.Before(since) {
 		return ErrInvalidQuery
 	}
-	if limit < 0 || limit > maxQueryLimit {
+	if offset < 0 || offset > maxQueryOffset || limit < 0 || limit > maxQueryLimit {
 		return ErrInvalidQuery
 	}
 	return nil
@@ -293,10 +284,6 @@ func normalizedLimit(limit int) int {
 		return defaultQueryLimit
 	}
 	return limit
-}
-
-func within(at, since, until time.Time) bool {
-	return (since.IsZero() || !at.Before(since)) && (until.IsZero() || !at.After(until))
 }
 
 func projectRequest(request store.Request) coreapi.Request {

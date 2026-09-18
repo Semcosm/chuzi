@@ -62,6 +62,11 @@ successful negotiation are rejected as `invalid_argument`.
 | `list_events` | `coreapi.EventQuery` | `{events}` |
 | `list_notifications` | `coreapi.NotificationQuery` | `{notifications}` |
 
+`list_notifications` accepts optional `account_id`, `request_id`, `since`,
+`until`, `offset`, and `limit` filters. Filtering, stable creation-time
+ordering, and bounding are applied at the durable store boundary before the
+redacted DTOs are projected.
+
 `cancel` is a transport operation, not a business-state command. Its
 parameters are `{id}` and its result is `{cancelled}`. A client context
 cancellation sends this operation for the in-flight call. `cancel_request`

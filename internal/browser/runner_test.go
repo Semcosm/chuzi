@@ -21,8 +21,8 @@ import (
 var browserTestTime = time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
 
 type fakeFactory struct {
-	worker *fakeWorker
-	specs  []WorkerSpec
+	worker  *fakeWorker
+	specs   []WorkerSpec
 	started chan WorkerSpec
 }
 
@@ -293,11 +293,12 @@ func TestRunnerCancelsWorkerWhenDurableRequestIsCancelled(t *testing.T) {
 		t.Fatal(err)
 	}
 	sessionRunner, err := New(factory, database, profiles, Config{
-		LeaseTTL:          time.Minute,
-		HeartbeatInterval: time.Millisecond,
-		CancelTimeout:     100 * time.Millisecond,
-		ShutdownTimeout:   100 * time.Millisecond,
-		Clock:             func() time.Time { return clock },
+		LeaseTTL:             time.Minute,
+		HeartbeatInterval:    time.Millisecond,
+		CancelTimeout:        100 * time.Millisecond,
+		ShutdownTimeout:      100 * time.Millisecond,
+		CancellationObserver: database,
+		Clock:                func() time.Time { return clock },
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -150,6 +150,10 @@ func (s *Store) OperationalIssues(now time.Time) ([]OperationalIssue, error) {
 	if err != nil {
 		return nil, err
 	}
+	return operationalIssues(snapshot), nil
+}
+
+func operationalIssues(snapshot OperationalSnapshot) []OperationalIssue {
 	issues := make([]OperationalIssue, 0, 5)
 	for _, item := range []OperationalIssue{
 		{Code: "expired_lease", Count: snapshot.ExpiredLeases},
@@ -160,7 +164,7 @@ func (s *Store) OperationalIssues(now time.Time) ([]OperationalIssue, error) {
 			issues = append(issues, item)
 		}
 	}
-	return issues, nil
+	return issues
 }
 
 // Diagnostics is the concise name used by CLI and background health callers.
@@ -169,9 +173,5 @@ func (s *Store) Diagnostics(now time.Time) (OperationalSnapshot, []OperationalIs
 	if err != nil {
 		return OperationalSnapshot{}, nil, err
 	}
-	issues, err := s.OperationalIssues(now)
-	if err != nil {
-		return OperationalSnapshot{}, nil, err
-	}
-	return snapshot, issues, nil
+	return snapshot, operationalIssues(snapshot), nil
 }

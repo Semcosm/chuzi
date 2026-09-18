@@ -11,7 +11,6 @@ import (
 	"github.com/Semcosm/chuzi/internal/account"
 	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/queue"
-	"github.com/Semcosm/chuzi/internal/store"
 )
 
 var (
@@ -32,11 +31,10 @@ type LeaseKeeper interface {
 	HeartbeatLease(accountID string, now time.Time, leaseID, owner string, ttl time.Duration) (account.Lease, error)
 }
 
-// RequestReader is discovered when the lease store also exposes durable
-// request projections (as *store.Store does). It lets a runner notice a
-// cancellation that happened after the worker started.
-type RequestReader interface {
-	GetRequest(requestID string) (store.Request, error)
+// RequestCancellationObserver is the narrow durable fact needed by a running
+// session to stop after a request was cancelled.
+type RequestCancellationObserver interface {
+	IsRequestCancelled(requestID string) (bool, error)
 }
 
 // WorkerSpec contains only service-derived identifiers and the generated
@@ -103,23 +101,24 @@ type WorkerFactory interface {
 // Config controls the session runner. Heartbeats are disabled only when
 // LeaseKeeper is nil; production wiring should always provide durable storage.
 type Config struct {
-	LeaseTTL          time.Duration
-	HeartbeatInterval time.Duration
-	CancelTimeout     time.Duration
-	ShutdownTimeout   time.Duration
-	WorkerMode        string
-	Clock             Clock
-	Sink              observability.Sink
+	LeaseTTL             time.Duration
+	HeartbeatInterval    time.Duration
+	CancelTimeout        time.Duration
+	ShutdownTimeout      time.Duration
+	WorkerMode           string
+	CancellationObserver RequestCancellationObserver
+	Clock                Clock
+	Sink                 observability.Sink
 }
 
 // Runner adapts a WorkerFactory to queue.Runner and keeps worker facts below
 // the account state-machine boundary.
 type Runner struct {
-	factory  WorkerFactory
-	leases   LeaseKeeper
-	requests RequestReader
-	profiles *Profiles
-	config   Config
+	factory       WorkerFactory
+	leases        LeaseKeeper
+	cancellations RequestCancellationObserver
+	profiles      *Profiles
+	config        Config
 }
 
 func New(factory WorkerFactory, leases LeaseKeeper, profiles *Profiles, config Config) (*Runner, error) {
@@ -139,11 +138,7 @@ func New(factory WorkerFactory, leases LeaseKeeper, profiles *Profiles, config C
 	if config.Sink == nil {
 		config.Sink = observability.NopSink{}
 	}
-	var requests RequestReader
-	if reader, ok := leases.(RequestReader); ok {
-		requests = reader
-	}
-	return &Runner{factory: factory, leases: leases, requests: requests, profiles: profiles, config: config}, nil
+	return &Runner{factory: factory, leases: leases, cancellations: config.CancellationObserver, profiles: profiles, config: config}, nil
 }
 
 // Run implements queue.Runner. The queue remains responsible for durable
@@ -334,13 +329,13 @@ func (r *Runner) heartbeat(ctx context.Context, work queue.Work, state *leaseSta
 				sendHeartbeatError(failures, ErrInvalidConfig)
 				return
 			}
-			if r.requests != nil {
-				request, err := r.requests.GetRequest(work.Request.RequestID)
+			if r.cancellations != nil {
+				cancelled, err := r.cancellations.IsRequestCancelled(work.Request.RequestID)
 				if err != nil {
 					sendHeartbeatError(failures, err)
 					return
 				}
-				if request.State == account.Cancelled {
+				if cancelled {
 					sendHeartbeatError(failures, ErrSessionCancelled)
 					return
 				}

@@ -21,6 +21,16 @@ type Sender interface {
 	Send(context.Context, string, string, string) error
 }
 
+// NotificationStore is the outbox capability needed by the Matrix delivery
+// worker. It deliberately excludes account, request, and credential methods.
+type NotificationStore interface {
+	ClaimNotifications(time.Time, string, time.Duration, int) ([]store.Notification, error)
+	RetryNotification(string, string, time.Time, time.Time) error
+	CompleteNotification(string, string, time.Time) error
+}
+
+var _ NotificationStore = (*store.Store)(nil)
+
 // NotifierConfig controls one outbox delivery worker.
 type NotifierConfig struct {
 	Owner     string
@@ -34,7 +44,7 @@ type NotifierConfig struct {
 
 // Notifier drains the durable Matrix outbox without owning business state.
 type Notifier struct {
-	store  *store.Store
+	store  NotificationStore
 	sender Sender
 	config NotifierConfig
 }
@@ -71,7 +81,7 @@ func (n *Notifier) Run(ctx context.Context, interval time.Duration) error {
 }
 
 // NewNotifier validates and constructs an outbox delivery worker.
-func NewNotifier(database *store.Store, sender Sender, config NotifierConfig) (*Notifier, error) {
+func NewNotifier(database NotificationStore, sender Sender, config NotifierConfig) (*Notifier, error) {
 	if database == nil || sender == nil || config.Owner == "" || config.ClaimTTL <= 0 ||
 		config.RetryBase < 0 || config.RetryMax < config.RetryBase || config.BatchSize < 1 {
 		return nil, ErrInvalidNotifier

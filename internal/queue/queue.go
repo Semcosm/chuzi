@@ -24,6 +24,25 @@ var (
 type Clock func() time.Time
 type IDGenerator func(kind string) string
 
+// StorePort is the scheduler's durable capability set. Keeping it here makes
+// the queue testable with a focused store fake and prevents it from depending
+// on unrelated persistence operations.
+type StorePort interface {
+	ClaimNext(time.Time, string, string, time.Duration, string, string, string, store.QueueOptions) (store.Claim, error)
+	ApplyEvent(account.Event) (account.TransitionResult, error)
+	CancelRequestOwned(account.Event, account.Lease, bool) (account.TransitionResult, error)
+	ReleaseLease(string, string, string) error
+	GetRequest(string) (store.Request, error)
+	GetAccount(string) (account.Snapshot, error)
+	CompleteRequestOwned(account.Event, account.Lease) (account.TransitionResult, error)
+	RecordFailureOwned(account.Event, account.FailureClass, time.Time, *account.Event, account.Lease, bool) (store.FailureResult, error)
+	ListRequests() ([]store.Request, error)
+	CancelRequest(account.Event) (account.TransitionResult, error)
+	ListLeases() ([]store.LeaseRecord, error)
+}
+
+var _ StorePort = (*store.Store)(nil)
+
 // Work is the lease-bound unit handed to a session runner.
 type Work struct {
 	Request store.Request
@@ -58,13 +77,13 @@ type Config struct {
 // Scheduler claims and processes at most one request per RunOnce call. A
 // caller can invoke it from a worker loop or use it in deterministic tests.
 type Scheduler struct {
-	store  *store.Store
+	store  StorePort
 	runner Runner
 	config Config
 }
 
 // New validates scheduler dependencies and returns a ready scheduler.
-func New(database *store.Store, runner Runner, config Config) (*Scheduler, error) {
+func New(database StorePort, runner Runner, config Config) (*Scheduler, error) {
 	if database == nil || runner == nil || strings.TrimSpace(config.Owner) == "" ||
 		config.LeaseTTL <= 0 || config.RunTimeout <= 0 || config.MaxGlobalConcurrency < 1 ||
 		config.Clock == nil || config.NewID == nil {

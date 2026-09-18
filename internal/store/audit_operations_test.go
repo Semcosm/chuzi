@@ -33,6 +33,10 @@ func TestGlobalAuditViewIsRedactedAndBounded(t *testing.T) {
 	if entries[0].Account == "account-private" || entries[0].AuditID == "event-private" || entries[0].Actor == "test" || entries[0].RequestID == "request-private" {
 		t.Fatalf("audit leaked raw values = %#v", entries[0])
 	}
+	filtered, err := service.ListAuditEntries(AuditQuery{RequestID: "request-private", Limit: 10})
+	if err != nil || len(filtered) != 1 || filtered[0].Kind != StateAudit {
+		t.Fatalf("request-filtered entries = %#v, %v", filtered, err)
+	}
 	if _, err := service.ListAuditEntries(AuditQuery{Limit: 10001}); !errors.Is(err, ErrInvalidRequest) {
 		t.Fatalf("invalid limit error = %v", err)
 	}
