@@ -25,16 +25,29 @@ type IDGenerator func(kind string) string
 // Clock supplies the current time to keep request behavior replayable.
 type Clock func() time.Time
 
+// StorePort is the durable request capability consumed by this package. It
+// keeps request orchestration independent from the concrete bbolt store.
+type StorePort interface {
+	SubmitRequest(store.Request, account.Event) (store.Request, bool, error)
+	GetRequest(string) (store.Request, error)
+	GetAccount(string) (account.Snapshot, error)
+	GetLease(string) (account.Lease, bool, error)
+	CancelRequest(account.Event) (account.TransitionResult, error)
+	CancelRequestOwned(account.Event, account.Lease, bool) (account.TransitionResult, error)
+}
+
+var _ StorePort = (*store.Store)(nil)
+
 // Service implements request submission, lookup, and cancellation.
 type Service struct {
-	store        *store.Store
+	store        StorePort
 	clock        Clock
 	newID        IDGenerator
 	defaultActor string
 }
 
 // New constructs a request service with explicit time and ID dependencies.
-func New(database *store.Store, clock Clock, newID IDGenerator, defaultActor string) (*Service, error) {
+func New(database StorePort, clock Clock, newID IDGenerator, defaultActor string) (*Service, error) {
 	if database == nil || clock == nil || newID == nil || strings.TrimSpace(defaultActor) == "" {
 		return nil, ErrInvalidInput
 	}

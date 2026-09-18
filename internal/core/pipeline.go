@@ -91,6 +91,9 @@ func NewPipelineRunner(database *store.Store, config PipelineConfig) (*PipelineR
 		operation:          config.Operation,
 		credentialOptional: config.CredentialOptional,
 	}
+	if config.Browser.CancellationObserver == nil {
+		config.Browser.CancellationObserver = database
+	}
 	session, err := browser.New(wrapped, database, config.Profiles, config.Browser)
 	if err != nil {
 		return nil, err

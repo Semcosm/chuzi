@@ -2,19 +2,16 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -335,7 +332,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		}
 		pipelineRunner, pipelineErr := core.NewPipelineRunner(database, core.PipelineConfig{
 			Factory: factory, Credentials: credentials, Automation: client, Profiles: profiles,
-			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", Clock: now, Sink: sink},
+			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", CancellationObserver: database, Clock: now, Sink: sink},
 			Clock:   now, Actor: options.owner,
 			Operation:          automation.Operation{Name: "genshin.cloudgame.session_probe"},
 			CredentialOptional: true,
@@ -346,12 +343,13 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		sessionRunner = pipelineRunner
 	} else {
 		sessionRunner, err = browser.New(factory, database, profiles, browser.Config{
-			LeaseTTL:          options.leaseTTL,
-			HeartbeatInterval: options.heartbeat,
-			CancelTimeout:     options.cancelTimeout,
-			ShutdownTimeout:   options.shutdownTimeout,
-			Clock:             now,
-			Sink:              sink,
+			LeaseTTL:             options.leaseTTL,
+			HeartbeatInterval:    options.heartbeat,
+			CancelTimeout:        options.cancelTimeout,
+			ShutdownTimeout:      options.shutdownTimeout,
+			CancellationObserver: database,
+			Clock:                now,
+			Sink:                 sink,
 		})
 	}
 	if err != nil {
@@ -509,340 +507,6 @@ func runSelfTest(ctx context.Context, command, script string) error {
 		return fmt.Errorf("worker self-test failed: %s", result.Failure)
 	}
 	return nil
-}
-
-func run(ctx context.Context, options serviceOptions) error {
-	cfg, err := config.Load(options.configPath)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(options.healthListen) != "" {
-		cfg.Health.Listen = options.healthListen
-	}
-	runtime, err := assembleRuntime(cfg, options, time.Now)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if runtime.coreServer != nil {
-			_ = runtime.coreServer.Close()
-		}
-		if runtime.automation != nil {
-			_ = runtime.automation.Close(context.Background())
-		}
-		if closeErr := runtime.store.Close(); closeErr != nil {
-			if runtime.logger != nil {
-				runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "failed", ErrorClass: "store_close_failed"})
-			}
-		}
-		if runtime.logger != nil {
-			runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "stopping"})
-			_ = runtime.logger.Close()
-		}
-	}()
-	endpoint := coretransport.EndpointPath(cfg.DataDir)
-	listener, err := coretransport.Listen(ctx, endpoint)
-	if err != nil {
-		return err
-	}
-	runtime.coreServer, err = coretransport.NewServer(runtime.coreAPI, listener, coretransport.Config{})
-	if err != nil {
-		_ = listener.Close()
-		return err
-	}
-	backgroundCtx, cancelBackground := context.WithCancel(ctx)
-	defer cancelBackground()
-	var background sync.WaitGroup
-	errCh := make(chan error, 3)
-	startBackground := func(name string, fn func(context.Context) error) {
-		background.Add(1)
-		go func() {
-			defer background.Done()
-			if err := fn(backgroundCtx); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-				select {
-				case errCh <- fmt.Errorf("%s: %w", name, err):
-				default:
-				}
-			}
-		}()
-	}
-	startBackground("core api", func(workerCtx context.Context) error {
-		go func() {
-			<-workerCtx.Done()
-			_ = runtime.coreServer.Close()
-		}()
-		return runtime.coreServer.Serve()
-	})
-	if runtime.notifier != nil {
-		startBackground("matrix notifier", func(workerCtx context.Context) error {
-			return runtime.notifier.Run(workerCtx, time.Second)
-		})
-	}
-	if runtime.gateway != nil {
-		startBackground("matrix sync", runtime.gateway.Run)
-	}
-	var healthServer *http.Server
-	if runtime.health != nil && strings.TrimSpace(runtime.healthListen) != "" {
-		healthServer = &http.Server{Addr: runtime.healthListen, Handler: runtime.health.Handler(), ReadHeaderTimeout: 5 * time.Second}
-		startBackground("health endpoint", func(workerCtx context.Context) error {
-			go func() {
-				<-workerCtx.Done()
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				_ = healthServer.Shutdown(shutdownCtx)
-			}()
-			err := healthServer.ListenAndServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				return nil
-			}
-			return err
-		})
-	}
-	var metricsServer *http.Server
-	if runtime.metrics != nil && strings.TrimSpace(runtime.metricsListen) != "" {
-		metricsServer = &http.Server{Addr: runtime.metricsListen, Handler: runtime.metrics.Handler(), ReadHeaderTimeout: 5 * time.Second}
-		startBackground("metrics endpoint", func(workerCtx context.Context) error {
-			go func() {
-				<-workerCtx.Done()
-				shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				_ = metricsServer.Shutdown(shutdownCtx)
-			}()
-			err := metricsServer.ListenAndServe()
-			if errors.Is(err, http.ErrServerClosed) {
-				return nil
-			}
-			return err
-		})
-	}
-	defer func() {
-		cancelBackground()
-		background.Wait()
-	}()
-
-	runtime.refreshMetrics(time.Now().UTC())
-	runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "startup", Outcome: "ready", Resource: options.backend})
-	ticker := time.NewTicker(options.pollInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case err := <-errCh:
-			return err
-		default:
-		}
-		outcome, runErr := runtime.scheduler.RunOnce(ctx)
-		if runErr != nil {
-			if errors.Is(runErr, context.Canceled) || (errors.Is(runErr, context.DeadlineExceeded) && ctx.Err() != nil) {
-				return nil
-			}
-			return fmt.Errorf("scheduler pass: %w", runErr)
-		}
-		if !outcome.Idle {
-			runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "scheduler", Outcome: "completed", RequestID: outcome.Request.RequestID})
-		}
-		runtime.refreshMetrics(time.Now().UTC())
-		select {
-		case err := <-errCh:
-			return err
-		case <-ctx.Done():
-			return nil
-		case <-ticker.C:
-		}
-	}
-}
-
-func writeJSON(value any) error {
-	encoder := json.NewEncoder(os.Stdout)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(value)
-}
-
-// cliErrorMessage is the process boundary for maintenance/startup failures.
-// Internal errors can contain paths or identifiers, so the CLI reports only a
-// stable category and keeps detailed values out of journals and CI logs.
-func cliErrorMessage(err error) string {
-	if err == nil {
-		return ""
-	}
-	switch {
-	case errors.Is(err, context.Canceled):
-		return "cancelled"
-	case errors.Is(err, context.DeadlineExceeded):
-		return "deadline exceeded"
-	case errors.Is(err, errInvalidBackend):
-		return "invalid browser backend"
-	case errors.Is(err, errInvalidOptions):
-		return "invalid service options"
-	case errors.Is(err, config.ErrInvalidConfig):
-		return "invalid configuration"
-	case errors.Is(err, store.ErrInvalidRestore):
-		return "invalid restore source"
-	case errors.Is(err, store.ErrCorruptData):
-		return "corrupt database"
-	case errors.Is(err, store.ErrAccountNotFound), errors.Is(err, store.ErrRequestNotFound):
-		return "requested record not found"
-	case errors.Is(err, credential.ErrKeyUnavailable):
-		return "credential key unavailable"
-	case errors.Is(err, matrix.ErrUnauthorized):
-		return "Matrix authorization failed"
-	default:
-		return "operation failed"
-	}
-}
-
-func runDiagnostics(ctx context.Context, options serviceOptions, audit bool, auditAccount string, auditLimit int) error {
-	if ctx == nil {
-		return errInvalidOptions
-	}
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	default:
-	}
-	cfg, err := config.Load(options.configPath)
-	if err != nil {
-		return err
-	}
-	database, err := store.Open(cfg)
-	if err != nil {
-		return err
-	}
-	defer database.Close()
-	if err := database.ValidateDatabase(); err != nil {
-		return err
-	}
-	if audit {
-		entries, err := database.ListAuditEntries(store.AuditQuery{AccountID: strings.TrimSpace(auditAccount), Limit: auditLimit})
-		if err != nil {
-			return err
-		}
-		return writeJSON(entries)
-	}
-	snapshot, err := database.OperationalSnapshot(time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	issues, err := database.OperationalIssues(snapshot.At)
-	if err != nil {
-		return err
-	}
-	return writeJSON(struct {
-		Snapshot store.OperationalSnapshot `json:"snapshot"`
-		Issues   []store.OperationalIssue  `json:"issues"`
-	}{Snapshot: snapshot, Issues: issues})
-}
-
-func runMaintenance(ctx context.Context, options serviceOptions, backup bool, restorePath string, injectAccount string, rotateAccount string, revokeAccount string, credentialEnv string, credentialActor string, diagnostics bool, audit bool, auditAccount string, validateBackupPath string, auditLimit int) error {
-	cfg, err := config.Load(options.configPath)
-	if err != nil {
-		return err
-	}
-	operations := 0
-	if backup {
-		operations++
-	}
-	if strings.TrimSpace(restorePath) != "" {
-		operations++
-	}
-	if strings.TrimSpace(injectAccount) != "" {
-		operations++
-	}
-	if strings.TrimSpace(rotateAccount) != "" {
-		operations++
-	}
-	if strings.TrimSpace(revokeAccount) != "" {
-		operations++
-	}
-	if diagnostics {
-		operations++
-	}
-	if audit {
-		operations++
-	}
-	if strings.TrimSpace(validateBackupPath) != "" {
-		operations++
-	}
-	if operations != 1 {
-		return fmt.Errorf("service: exactly one maintenance operation is required")
-	}
-	if backup {
-		database, err := store.Open(cfg)
-		if err != nil {
-			return err
-		}
-		path, backupErr := database.Backup(time.Now().UTC())
-		closeErr := database.Close()
-		if backupErr != nil {
-			return backupErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		fmt.Println(path)
-		return nil
-	}
-	if strings.TrimSpace(restorePath) != "" {
-		if err := store.Restore(cfg, restorePath); err != nil {
-			return err
-		}
-		fmt.Println("restore complete")
-		return nil
-	}
-	if strings.TrimSpace(validateBackupPath) != "" {
-		if err := store.ValidateBackup(validateBackupPath); err != nil {
-			return err
-		}
-		fmt.Println("backup valid")
-		return nil
-	}
-	if diagnostics || audit {
-		return runDiagnostics(ctx, options, audit, auditAccount, auditLimit)
-	}
-	database, err := store.Open(cfg)
-	if err != nil {
-		return err
-	}
-	defer database.Close()
-	keyring := credential.NewEnvKeyringWithHistory(cfg.Credentials.KeyEnv, cfg.Credentials.KeyIDEnv, cfg.Credentials.HistoryEnv)
-	credentials, err := credential.New(database, keyring)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(credentialActor) == "" {
-		credentialActor = options.owner
-	}
-	if strings.TrimSpace(injectAccount) != "" {
-		if strings.TrimSpace(credentialEnv) == "" {
-			return fmt.Errorf("service: -credential-env is required for injection")
-		}
-		source, sourceErr := credential.NewEnvSource(credentialEnv)
-		if sourceErr != nil {
-			return sourceErr
-		}
-		metadata, injectErr := credentials.Inject(ctx, injectAccount, credentialActor, time.Now().UTC(), source)
-		if injectErr != nil {
-			return injectErr
-		}
-		// Print metadata only; never print the injected value or ciphertext.
-		fmt.Printf("credential account=%s version=%d key_id=%s\n", observability.RedactIdentifier(metadata.AccountID), metadata.Version, observability.RedactIdentifier(metadata.KeyID))
-		return nil
-	}
-	if strings.TrimSpace(rotateAccount) != "" {
-		metadata, rotateErr := credentials.Rotate(ctx, rotateAccount, credentialActor, time.Now().UTC())
-		if rotateErr != nil {
-			return rotateErr
-		}
-		fmt.Printf("credential rotated account=%s version=%d key_id=%s\n", observability.RedactIdentifier(metadata.AccountID), metadata.Version, observability.RedactIdentifier(metadata.KeyID))
-		return nil
-	}
-	if strings.TrimSpace(revokeAccount) != "" {
-		if revokeErr := credentials.Revoke(ctx, revokeAccount, credentialActor, time.Now().UTC()); revokeErr != nil {
-			return revokeErr
-		}
-		fmt.Printf("credential revoked account=%s\n", observability.RedactIdentifier(revokeAccount))
-		return nil
-	}
-	return errInvalidOptions
 }
 
 func main() {

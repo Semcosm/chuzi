@@ -133,6 +133,7 @@ type NotificationQuery struct {
 	RequestID string    `json:"request_id,omitempty"`
 	Since     time.Time `json:"since,omitempty"`
 	Until     time.Time `json:"until,omitempty"`
+	Offset    int       `json:"offset,omitempty"`
 	Limit     int       `json:"limit,omitempty"`
 }
 

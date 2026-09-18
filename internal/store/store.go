@@ -896,6 +896,17 @@ func (s *Store) GetRequest(requestID string) (Request, error) {
 	return result, err
 }
 
+// IsRequestCancelled exposes only the cancellation fact needed by a running
+// session. It avoids making browser code depend on the complete request
+// projection or on the concrete Store type.
+func (s *Store) IsRequestCancelled(requestID string) (bool, error) {
+	request, err := s.GetRequest(requestID)
+	if err != nil {
+		return false, err
+	}
+	return request.State == account.Cancelled, nil
+}
+
 // GetLease returns a lease and whether one exists for the account.
 func (s *Store) GetLease(accountID string) (account.Lease, bool, error) {
 	var result account.Lease

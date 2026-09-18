@@ -40,6 +40,24 @@ type Notification struct {
 	DeliveredAt    time.Time            `json:"delivered_at,omitempty"`
 }
 
+// NotificationQuery bounds a notification read at the durable boundary. The
+// identifiers are internal filters; callers that expose results must redact
+// them before crossing a transport boundary.
+type NotificationQuery struct {
+	AccountID string
+	RequestID string
+	Since     time.Time
+	Until     time.Time
+	Offset    int
+	Limit     int
+}
+
+const (
+	defaultNotificationQueryLimit = 100
+	maxNotificationQueryLimit     = 1000
+	maxNotificationQueryOffset    = 100000
+)
+
 // Validate checks the durable notification projection and keeps values safe
 // for rendering into an external message.
 func (n Notification) Validate() error {
@@ -79,7 +97,43 @@ func (n Notification) Validate() error {
 // ListNotifications returns pending and delivered notifications in durable
 // creation order. It is intended for diagnostics and restart verification.
 func (s *Store) ListNotifications() ([]Notification, error) {
+	return s.queryNotifications(NotificationQuery{}, false)
+}
+
+// QueryNotifications applies filtering, ordering, offset, and limit inside
+// the store. The bounded candidate set prevents a read endpoint from
+// allocating a slice proportional to the entire outbox.
+func (s *Store) QueryNotifications(query NotificationQuery) ([]Notification, error) {
+	if s == nil || s.db == nil {
+		return nil, bbolt.ErrDatabaseNotOpen
+	}
+	if strings.TrimSpace(query.AccountID) != query.AccountID || strings.TrimSpace(query.RequestID) != query.RequestID {
+		return nil, ErrInvalidNotification
+	}
+	if !query.Since.IsZero() && !query.Until.IsZero() && query.Until.Before(query.Since) {
+		return nil, ErrInvalidNotification
+	}
+	if query.Offset < 0 || query.Offset > maxNotificationQueryOffset {
+		return nil, ErrInvalidNotification
+	}
+	limit := query.Limit
+	if limit == 0 {
+		limit = defaultNotificationQueryLimit
+	}
+	if limit < 1 || limit > maxNotificationQueryLimit {
+		return nil, ErrInvalidNotification
+	}
+	query.Limit = limit
+	return s.queryNotifications(query, true)
+}
+
+func (s *Store) queryNotifications(query NotificationQuery, bounded bool) ([]Notification, error) {
 	var result []Notification
+	capacity := 0
+	if bounded {
+		capacity = query.Offset + query.Limit
+		result = make([]Notification, 0, minInt(capacity, defaultNotificationQueryLimit))
+	}
 	err := s.view(func(tx *bbolt.Tx) error {
 		bucket := tx.Bucket([]byte(migrations.MatrixNotificationsBucket))
 		if bucket == nil {
@@ -96,7 +150,16 @@ func (s *Store) ListNotifications() ([]Notification, error) {
 			if err := notification.Validate(); err != nil {
 				return fmt.Errorf("%w: notification %q: %v", ErrCorruptData, notification.EventID, err)
 			}
-			result = append(result, notification)
+			if query.AccountID != "" && notification.AccountID != query.AccountID ||
+				query.RequestID != "" && notification.RequestID != query.RequestID ||
+				!withinNotificationWindow(notification.OccurredAt, query.Since, query.Until) {
+				return nil
+			}
+			if bounded {
+				appendBoundedNotifications(&result, notification, capacity)
+			} else {
+				result = append(result, notification)
+			}
 			return nil
 		})
 	})
@@ -104,7 +167,36 @@ func (s *Store) ListNotifications() ([]Notification, error) {
 		return nil, err
 	}
 	sortNotifications(result)
+	if bounded {
+		if query.Offset >= len(result) {
+			return []Notification{}, nil
+		}
+		result = result[query.Offset:]
+		if len(result) > query.Limit {
+			result = result[:query.Limit]
+		}
+	}
 	return result, nil
+}
+
+func appendBoundedNotifications(result *[]Notification, notification Notification, capacity int) {
+	*result = append(*result, notification)
+	if len(*result) <= capacity {
+		return
+	}
+	sortNotifications(*result)
+	*result = (*result)[:capacity]
+}
+
+func minInt(left, right int) int {
+	if left < right {
+		return left
+	}
+	return right
+}
+
+func withinNotificationWindow(at, since, until time.Time) bool {
+	return (since.IsZero() || !at.Before(since)) && (until.IsZero() || !at.After(until))
 }
 
 // ClaimNotifications claims ready notifications for one delivery worker. A

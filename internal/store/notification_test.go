@@ -130,6 +130,36 @@ func TestRequestsWithoutNotificationRoomsDoNotCreateOutboxRecords(t *testing.T) 
 	}
 }
 
+func TestQueryNotificationsFiltersOrdersAndPaginatesInStore(t *testing.T) {
+	service, _ := openTestStore(t)
+	for _, accountID := range []string{"account-1", "account-2"} {
+		if _, err := service.CreateAccount(accountID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	request := createRequest(t, service, "request-1", "account-1", "idem-request-1", storeTestTime)
+	request.NotificationRoomID = "!ops:example.org"
+	if _, _, err := service.CreateRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	applyEvent(t, service, "event-query-1", "account-1", "request-1", account.NoRequest, account.Queued, storeTestTime.Add(time.Second))
+	applyEvent(t, service, "event-query-2", "account-1", "request-1", account.Queued, account.Starting, storeTestTime.Add(2*time.Second))
+	request = createRequest(t, service, "request-2", "account-2", "idem-request-2", storeTestTime)
+	request.NotificationRoomID = "!ops:example.org"
+	if _, _, err := service.CreateRequest(request); err != nil {
+		t.Fatal(err)
+	}
+	applyEvent(t, service, "event-query-3", "account-2", "request-2", account.NoRequest, account.Queued, storeTestTime.Add(3*time.Second))
+	page, err := service.QueryNotifications(NotificationQuery{AccountID: "account-1", Offset: 1, Limit: 1})
+	if err != nil || len(page) != 1 || page[0].RequestID != "request-1" || page[0].State != account.Starting {
+		t.Fatalf("notification page = %#v, %v", page, err)
+	}
+	window, err := service.QueryNotifications(NotificationQuery{Since: storeTestTime.Add(2 * time.Second), Until: storeTestTime.Add(2 * time.Second), Limit: 10})
+	if err != nil || len(window) != 1 || window[0].RequestID != "request-1" || window[0].State != account.Starting {
+		t.Fatalf("notification window = %#v, %v", window, err)
+	}
+}
+
 func TestFailureNotificationCarriesOnlyClassifiedFailure(t *testing.T) {
 	service, _ := openTestStore(t)
 	if _, err := service.CreateAccount("account-1"); err != nil {

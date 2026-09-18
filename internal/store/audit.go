@@ -24,6 +24,7 @@ const (
 // filter; returned entries always contain a stable redacted account label.
 type AuditQuery struct {
 	AccountID string
+	RequestID string
 	Since     time.Time
 	Until     time.Time
 	Limit     int
@@ -76,7 +77,7 @@ func (s *Store) ListAuditEntries(query AuditQuery) ([]AuditEntry, error) {
 	if s == nil || s.db == nil {
 		return nil, bbolt.ErrDatabaseNotOpen
 	}
-	if strings.TrimSpace(query.AccountID) != query.AccountID {
+	if strings.TrimSpace(query.AccountID) != query.AccountID || strings.TrimSpace(query.RequestID) != query.RequestID {
 		return nil, ErrInvalidAccount
 	}
 	if !query.Since.IsZero() && !query.Until.IsZero() && query.Until.Before(query.Since) {
@@ -125,6 +126,9 @@ func (s *Store) ListAuditEntries(query AuditQuery) ([]AuditEntry, error) {
 					if err := decode(raw, &audit); err != nil {
 						return err
 					}
+					if query.RequestID != "" && audit.Event.RequestID != query.RequestID {
+						return nil
+					}
 					before := len(result)
 					if err := appendStateAudit(&result, audit); err != nil {
 						return err
@@ -161,6 +165,9 @@ func (s *Store) ListAuditEntries(query AuditQuery) ([]AuditEntry, error) {
 						Actor:     observability.RedactIdentifier(audit.Actor),
 						Version:   audit.Version,
 						Resource:  observability.RedactIdentifier(audit.KeyID),
+					}
+					if query.RequestID != "" {
+						return nil
 					}
 					if withinAuditWindow(entry.At, query) {
 						if err := entry.Validate(); err != nil {
