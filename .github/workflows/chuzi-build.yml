@@ -197,6 +197,124 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  windows_msix:
+    name: chuzi-build-windows-msix
+    runs-on: windows-2022
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
+        with:
+          dotnet-version: 8.0.x
+      - name: Create package manifest and test certificate
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $ui = Join-Path $env:GITHUB_WORKSPACE 'ui/windows'
+          $assets = Join-Path $ui 'Assets'
+          New-Item -ItemType Directory -Force -Path $assets | Out-Null
+          Add-Type -AssemblyName System.Drawing
+          foreach ($spec in @(
+            @{ Name = 'Square44x44Logo.png'; Size = 44 },
+            @{ Name = 'Square150x150Logo.png'; Size = 150 },
+            @{ Name = 'StoreLogo.png'; Size = 50 }
+          )) {
+            $bmp = New-Object System.Drawing.Bitmap($spec.Size, $spec.Size)
+            $g = [System.Drawing.Graphics]::FromImage($bmp)
+            $g.Clear([System.Drawing.Color]::FromArgb(29, 35, 48))
+            $font = New-Object System.Drawing.Font('Arial', [Math]::Max(10, [int]($spec.Size / 4)), [System.Drawing.FontStyle]::Bold)
+            $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
+            $fmt = New-Object System.Drawing.StringFormat
+            $fmt.Alignment = [System.Drawing.StringAlignment]::Center
+            $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
+            $g.DrawString('C', $font, $brush, (New-Object System.Drawing.RectangleF(0, 0, $spec.Size, $spec.Size)), $fmt)
+            $bmp.Save((Join-Path $assets $spec.Name), [System.Drawing.Imaging.ImageFormat]::Png)
+            $fmt.Dispose(); $brush.Dispose(); $font.Dispose(); $g.Dispose(); $bmp.Dispose()
+          }
+          @'
+          <?xml version="1.0" encoding="utf-8"?>
+          <Package
+            xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+            xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+            xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+            xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+            IgnorableNamespaces="uap desktop rescap">
+            <Identity Name="Semcosm.Chuzi.Native.Windows" Publisher="CN=Semcosm" Version="0.1.0.0" />
+            <Properties>
+              <DisplayName>Chuzi</DisplayName>
+              <PublisherDisplayName>Semcosm</PublisherDisplayName>
+              <Description>Chuzi native Windows client</Description>
+              <Logo>Assets\StoreLogo.png</Logo>
+            </Properties>
+            <Dependencies>
+              <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26200.0" />
+            </Dependencies>
+            <Resources>
+              <Resource Language="en-us" />
+            </Resources>
+            <Applications>
+              <Application Id="App" Executable="$targetnametoken$.exe" EntryPoint="$targetentrypoint$">
+                <uap:VisualElements
+                  AppListEntry="auto"
+                  DisplayName="Chuzi"
+                  Description="Chuzi native Windows client"
+                  Square150x150Logo="Assets\Square150x150Logo.png"
+                  Square44x44Logo="Assets\Square44x44Logo.png"
+                  BackgroundColor="#1D2330" />
+              </Application>
+            </Applications>
+            <Capabilities>
+              <rescap:Capability Name="runFullTrust" />
+            </Capabilities>
+          </Package>
+          '@ | Set-Content -Encoding utf8 (Join-Path $ui 'Package.appxmanifest')
+          $cert = New-SelfSignedCertificate -Type Custom -Subject 'CN=Semcosm' -KeyUsage DigitalSignature -FriendlyName 'Chuzi CI Test Certificate' -CertStoreLocation 'Cert:\CurrentUser\My'
+          $pwd = ConvertTo-SecureString 'chuzi-ci-test' -AsPlainText -Force
+          $pfx = Join-Path $env:RUNNER_TEMP 'Chuzi-CI-Test.pfx'
+          Export-PfxCertificate -Cert $cert -FilePath $pfx -Password $pwd | Out-Null
+          Export-Certificate -Cert $cert -FilePath (Join-Path $env:RUNNER_TEMP 'Chuzi-CI-Test.cer') | Out-Null
+      - name: Build framework-dependent MSIX
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Join-Path $env:GITHUB_WORKSPACE 'ui/windows/Chuzi.Native.Windows.csproj'
+          $raw = Get-Content $project -Raw
+          $raw = $raw.Replace('Version="1.6.250205002"', 'Version="1.8.260804001"')
+          Set-Content -Encoding utf8 $project $raw
+          $out = Join-Path $env:RUNNER_TEMP 'chuzi-msix'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          dotnet publish $project `
+            --configuration Release `
+            --framework net8.0-windows10.0.19041.0 `
+            --runtime win-x64 `
+            --self-contained false `
+            --output $out `
+            -p:WindowsPackageType=MSIX `
+            -p:EnableMsixTooling=true `
+            -p:WindowsAppSDKSelfContained=false `
+            -p:AppxBundle=Never `
+            -p:AppxPackageDir="$out\" `
+            -p:AppxPackageSigningEnabled=true `
+            -p:PackageCertificateKeyFile="$env:RUNNER_TEMP\Chuzi-CI-Test.pfx" `
+            -p:PackageCertificatePassword=chuzi-ci-test
+          $artifact = Join-Path $env:GITHUB_WORKSPACE 'dist/windows-msix'
+          New-Item -ItemType Directory -Force -Path $artifact | Out-Null
+          Get-ChildItem -Path $out -Recurse -Include *.msix,*.msixbundle,*.appx | Copy-Item -Destination $artifact -Force
+          Copy-Item "$env:RUNNER_TEMP\Chuzi-CI-Test.cer" $artifact -Force
+          Get-ChildItem $artifact | Select-Object Name,Length | Format-Table -AutoSize
+      - name: Upload framework-dependent MSIX
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chuzi-windows-msix-framework-dependent
+          path: dist/windows-msix/*
+          if-no-files-found: error
+          retention-days: 7
+
   assemble_target:
     name: chuzi-build-${{ matrix.target }}
     needs: [go_build, node_checks, windows_ui]
