@@ -9,9 +9,9 @@
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
     <PublishProfile>win-$(Platform).pubxml</PublishProfile>
     <UseWinUI>true</UseWinUI>
-    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
-    <WindowsPackageType>None</WindowsPackageType>
-    <EnableMsixTooling>false</EnableMsixTooling>
+    <WindowsPackageType>MSIX</WindowsPackageType>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WinUISDKReferences>false</WinUISDKReferences>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
