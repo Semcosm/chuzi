@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
         _overview.StopRequested += (_, _) => RunAsync(StopCoreAsync);
         _overview.RefreshRequested += (_, _) => RunAsync(RefreshCoreAsync);
         _settings.SaveRequested += (_, settings) => RunAsync(() => SaveSettingsAsync(settings));
+        _settings.InstallCoreRequested += (_, _) => RunAsync(InstallCoreAsync);
         _plugins.RefreshRequested += (_, _) => RunAsync(RefreshPluginsAsync);
         _plugins.InstallRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "install"));
         _plugins.TrustRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "trust"));
@@ -62,7 +63,12 @@ public sealed partial class MainWindow : Window
 
     private async Task RefreshCoreAsync()
     {
-        try { _overview.SetSnapshot(await _core.GetStatusAsync(_shutdown.Token)); }
+        try
+        {
+            var snapshot = await _core.GetStatusAsync(_shutdown.Token);
+            _overview.SetSnapshot(snapshot);
+            _settings.SetCoreSnapshot(snapshot);
+        }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception) { _overview.ShowError("Core status could not be read."); }
     }
@@ -84,6 +90,7 @@ public sealed partial class MainWindow : Window
             _overview.SetBusy(true);
             var snapshot = await _core.StopAsync(_shutdown.Token);
             _overview.SetSnapshot(snapshot);
+            _settings.SetCoreSnapshot(snapshot);
             _overview.ShowSuccess("Core stopped.");
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
@@ -98,6 +105,7 @@ public sealed partial class MainWindow : Window
             _overview.SetBusy(true);
             var snapshot = await action();
             _overview.SetSnapshot(snapshot);
+            _settings.SetCoreSnapshot(snapshot);
             if (snapshot.Status == CoreStatus.Running) _overview.ShowSuccess(success);
             else _overview.ShowError(snapshot.Message);
         }
