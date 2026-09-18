@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace Chuzi.Native.Windows;
 
-internal enum CoreStatus
+public enum CoreStatus
 {
     Missing,
     Stopped,
@@ -12,7 +12,7 @@ internal enum CoreStatus
     Unavailable,
 }
 
-internal sealed record CoreSnapshot(CoreStatus Status, int? ProcessId, bool OwnedByThisWindow, string Message);
+public sealed record CoreSnapshot(CoreStatus Status, int? ProcessId, bool OwnedByThisWindow, string Message);
 
 internal sealed class CoreServiceController : IDisposable
 {

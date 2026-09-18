@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace Chuzi.Native.Windows;
 
-internal sealed class BehaviorSettings
+public sealed class BehaviorSettings
 {
     [JsonPropertyName("auto_check_updates")] public bool AutoCheckUpdates { get; set; }
     [JsonPropertyName("auto_repair")] public bool AutoRepair { get; set; }
@@ -18,7 +18,7 @@ internal sealed class BehaviorSettings
     }
 }
 
-internal sealed class ComponentState
+public sealed class ComponentState
 {
     [JsonPropertyName("id")] public string ID { get; set; } = "";
     [JsonPropertyName("installed")] public bool Installed { get; set; }
@@ -28,7 +28,7 @@ internal sealed class ComponentState
     [JsonPropertyName("health")] public string Health { get; set; } = "";
 }
 
-internal sealed class PluginDescriptor
+public sealed class PluginDescriptor
 {
     [JsonPropertyName("id")] public string ID { get; set; } = "";
     [JsonPropertyName("version")] public string Version { get; set; } = "";
@@ -39,7 +39,7 @@ internal sealed class PluginDescriptor
     [JsonPropertyName("installable")] public bool Installable { get; set; }
 }
 
-internal sealed class PluginState
+public sealed class PluginState
 {
     [JsonPropertyName("descriptor")] public PluginDescriptor Descriptor { get; set; } = new();
     [JsonPropertyName("installed")] public bool Installed { get; set; }
