@@ -11,17 +11,34 @@
     <UseWinUI>true</UseWinUI>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <WindowsPackageType>None</WindowsPackageType>
-    <EnableMsixTooling>false</EnableMsixTooling>
+    <!-- The unpackaged single-file targets provide the WinUI bootstrap and
+         resource payload required by the published executable. -->
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
   <ItemGroup>
-    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250205002" />
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.250907003" />
   </ItemGroup>
   <ItemGroup>
     <None Update="app.manifest">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
+  <!-- dotnet publish omits the app PRI for unpackaged WinUI projects. -->
+  <Target Name="CopyProjectPriForUnpackagedPublish"
+          AfterTargets="Publish"
+          DependsOnTargets="$(GenerateProjectPriFile)"
+          Condition="'$(WindowsPackageType)' == 'None' and '$(UseWinUI)' == 'true' and Exists('$(ProjectPriFullPath)')">
+    <Copy SourceFiles="$(ProjectPriFullPath)"
+          DestinationFiles="$(PublishDir)$(ProjectPriFileName)"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>

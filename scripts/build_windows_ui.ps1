@@ -21,9 +21,9 @@ if (Test-Path $vswhere) {
     $msbuild = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find "MSBuild\**\Bin\MSBuild.exe" | Select-Object -First 1
 }
 if (-not [string]::IsNullOrWhiteSpace($msbuild) -and (Test-Path $msbuild)) {
-    & $msbuild $project /restore /t:Publish "/p:Configuration=$Configuration" "/p:Platform=x64" "/p:TargetFramework=net8.0-windows10.0.19041.0" "/p:RuntimeIdentifier=win-x64" "/p:SelfContained=false" "/p:PublishDir=$publishDir"
+    & $msbuild $project /restore /t:Publish "/p:Configuration=$Configuration" "/p:Platform=x64" "/p:TargetFramework=net8.0-windows10.0.19041.0" "/p:RuntimeIdentifier=win-x64" "/p:SelfContained=true" "/p:PublishSingleFile=true" "/p:IncludeAllContentForSelfExtract=true" "/p:PublishDir=$publishDir"
 } else {
-    & dotnet publish $project --configuration $Configuration --framework net8.0-windows10.0.19041.0 --runtime win-x64 --self-contained false --output $publishDir
+    & dotnet publish $project --configuration $Configuration --framework net8.0-windows10.0.19041.0 --runtime win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeAllContentForSelfExtract=true --output $publishDir
 }
 if ($LASTEXITCODE -ne 0) { throw "Windows client publish failed" }
 
