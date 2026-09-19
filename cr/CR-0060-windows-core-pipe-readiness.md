@@ -6,12 +6,12 @@ Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): wait for Core pipe readiness before UI calls
 Revision: 6
-Status: integrated
-Decision: accepted
+Status: pending
+Decision: pending
 Policy Version: v0.3
-Base OID: ff980189caebdacac58dd6d86b0edc51cc60ccfa
-Head OID: e9ad8340a9f437db6e8b953e07e5d9278b5185d5
-Integrated Result: main@e9ad8340a9f437db6e8b953e07e5d9278b5185d5
+Base OID: e9ad8340a9f437db6e8b953e07e5d9278b5185d5
+Head OID: 3281f32baec47df60e2e1d86504bdf137d65c956
+Integrated Result: pending
 
 ## Summary
 
