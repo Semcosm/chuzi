@@ -12,7 +12,17 @@ for (var attempt = 0; attempt < 8; attempt++)
 {
     using var client = CoreApiClient.FromDataDirectory(dataDirectory);
     await client.ConnectAsync(cancellation.Token);
+    try
+    {
+        await client.GetAccountAsync("core-pipe-smoke", cancellation.Token).ConfigureAwait(false);
+        throw new InvalidOperationException("Core API smoke unexpectedly found an account.");
+    }
+    catch (CoreApiException exception) when (exception.Code == "not_found")
+    {
+        // The request/response path is healthy. A fresh lifecycle data root
+        // deliberately has no accounts yet.
+    }
 }
 
-Console.WriteLine("Core named-pipe client handshakes passed.");
+Console.WriteLine("Core named-pipe handshake and API round-trip passed.");
 return 0;

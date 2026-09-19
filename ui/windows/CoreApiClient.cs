@@ -44,6 +44,7 @@ internal sealed class CoreApiClient : IDisposable
 {
     private const string Protocol = "chuzi.core/v1";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly UTF8Encoding Utf8 = new(false);
 
     private readonly string _pipeName;
     private NamedPipeClientStream? _pipe;
@@ -132,7 +133,7 @@ internal sealed class CoreApiClient : IDisposable
                     // reports "pipe hasn't been connected yet", retrying a
                     // write on the same stream can never repair its state.
                     _readerTask = ReadLoopAsync(reader);
-                    var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken);
+                    var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken, reconnectOnWriteFailure: false);
                     if (hello.Version != Protocol)
                     {
                         throw new CoreApiException("unavailable", "Core protocol version is not supported.");
@@ -202,7 +203,7 @@ internal sealed class CoreApiClient : IDisposable
         return CallAsync<CoreRequest>("cancel_request", new { request_id = requestID, reason = "cancelled by Windows client" }, cancellationToken);
     }
 
-    private async Task<T> CallAsync<T>(string method, object parameters, CancellationToken cancellationToken)
+    private async Task<T> CallAsync<T>(string method, object parameters, CancellationToken cancellationToken, bool reconnectOnWriteFailure = true)
     {
         var requestID = "ui-call-" + Interlocked.Increment(ref _nextID);
         var pending = new TaskCompletionSource<WireEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -215,7 +216,7 @@ internal sealed class CoreApiClient : IDisposable
                 Id = requestID,
                 Method = method,
                 Params = JsonSerializer.SerializeToElement(parameters, JsonOptions),
-            }, cancellationToken);
+            }, cancellationToken, reconnectOnWriteFailure);
             WireEnvelope response;
             try
             {
@@ -258,7 +259,7 @@ internal sealed class CoreApiClient : IDisposable
                 Id = "ui-cancel-" + Interlocked.Increment(ref _nextID),
                 Method = "cancel",
                 Params = JsonSerializer.SerializeToElement(new { id = requestID }, JsonOptions),
-            }, CancellationToken.None);
+            }, CancellationToken.None, reconnectOnWriteFailure: false);
         }
         catch (Exception exception) when (exception is IOException or ObjectDisposedException or CoreApiException or OperationCanceledException)
         {
@@ -266,14 +267,17 @@ internal sealed class CoreApiClient : IDisposable
         }
     }
 
-    private async Task SendAsync(WireEnvelope envelope, CancellationToken cancellationToken)
+    private async Task SendAsync(WireEnvelope envelope, CancellationToken cancellationToken, bool reconnectOnWriteFailure = true)
     {
         var json = JsonSerializer.Serialize(envelope, JsonOptions);
-        if (Encoding.UTF8.GetByteCount(json) > 1 << 20)
+        var frame = Utf8.GetBytes(json + "\n");
+        if (frame.Length > 1 << 20)
         {
             throw new CoreApiException("invalid_argument", "Core request is too large.");
         }
         await _writeLock.WaitAsync(cancellationToken);
+        Exception? last = null;
+        var reconnect = false;
         try
         {
             for (var attempt = 0; attempt < PipeWriteAttempts; attempt++)
@@ -281,39 +285,73 @@ internal sealed class CoreApiClient : IDisposable
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    // IsConnected is only a hint. A successful ConnectAsync
-                    // is the authoritative signal; the write itself is what
-                    // determines whether the server has finished accepting
-                    // the connection.
-                    // Create a fresh writer for every attempt so a failed
-                    // flush cannot leave buffered JSON to be sent twice.
                     var pipe = _pipe ?? throw new CoreApiException("unavailable", "Core service pipe is not connected.");
-                    using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 1024, leaveOpen: true)
+                    if (!pipe.IsConnected)
                     {
-                        AutoFlush = true,
-                    };
-                    await writer.WriteLineAsync(json.AsMemory(), cancellationToken);
+                        throw new InvalidOperationException("The pipe hasn't been connected yet.");
+                    }
+                    // Write the complete UTF-8 frame directly. Creating and
+                    // disposing a StreamWriter for every request can race the
+                    // Windows named-pipe state transition and surface the
+                    // platform's misleading "pipe hasn't been connected yet"
+                    // exception even after ConnectAsync completed.
+                    await pipe.WriteAsync(frame.AsMemory(), cancellationToken);
                     return;
                 }
                 catch (InvalidOperationException exception)
                 {
-                    _ = exception;
+                    last = exception;
+                    if (reconnectOnWriteFailure && attempt == 0)
+                    {
+                        reconnect = true;
+                        break;
+                    }
                 }
                 catch (IOException exception)
                 {
-                    _ = exception;
+                    last = exception;
+                }
+                catch (CoreApiException exception) when (exception.Code == "unavailable")
+                {
+                    last = exception;
+                    if (reconnectOnWriteFailure && attempt == 0)
+                    {
+                        reconnect = true;
+                        break;
+                    }
                 }
                 if (attempt + 1 < PipeWriteAttempts)
                 {
                     await Task.Delay(PipeWriteRetryDelay, cancellationToken);
                 }
             }
-            throw new CoreApiException("unavailable", "Core service pipe is not connected.");
         }
         finally
         {
             _writeLock.Release();
         }
+        if (reconnect)
+        {
+            await ReconnectAsync(cancellationToken);
+            await SendAsync(envelope, cancellationToken, reconnectOnWriteFailure: false);
+            return;
+        }
+        throw new CoreApiException("unavailable", $"Core service pipe is not connected: {last?.Message ?? "unknown error"}");
+    }
+
+    private async Task ReconnectAsync(CancellationToken cancellationToken)
+    {
+        // Detach the old reader before disposing it. Its EOF/error callback
+        // must not fail the request that will be sent on the replacement
+        // connection.
+        var oldReader = _reader;
+        var oldPipe = _pipe;
+        _reader = null;
+        _pipe = null;
+        _connected = false;
+        oldReader?.Dispose();
+        oldPipe?.Dispose();
+        await ConnectAsync(cancellationToken);
     }
 
     private async Task WaitUntilConnectedAsync(NamedPipeClientStream pipe, CancellationToken cancellationToken)
@@ -359,11 +397,20 @@ internal sealed class CoreApiClient : IDisposable
         }
         catch (Exception exception) when (exception is CoreApiException or IOException or InvalidOperationException or JsonException or OperationCanceledException or ObjectDisposedException)
         {
+            if (!ReferenceEquals(_reader, reader)) return;
             _connected = false;
             var error = exception is JsonException
                 ? new CoreApiException("internal", "Invalid Core response.")
                 : new CoreApiException("unavailable", "Core service disconnected.");
             FailPending(error);
+        }
+        finally
+        {
+            if (ReferenceEquals(_reader, reader))
+            {
+                _connected = false;
+                FailPending(new CoreApiException("unavailable", "Core service disconnected."));
+            }
         }
     }
 
