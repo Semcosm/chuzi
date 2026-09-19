@@ -119,7 +119,13 @@ internal sealed class CoreApiClient : IDisposable
             for (var attempt = 0; attempt < PipeConnectAttempts; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                // Use a synchronous pipe handle for the transport itself. The
+                // async Win32 handle can report IsConnected=true while its
+                // first overlapped write still fails with "pipe hasn't been
+                // connected yet" on some Windows 10/11 builds. StreamReader's
+                // async methods still keep the UI responsive, while ordinary
+                // writes use the stable synchronous handle path.
+                var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.None);
                 var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
                 _pipe = pipe;
                 _reader = reader;
@@ -143,7 +149,11 @@ internal sealed class CoreApiClient : IDisposable
                     // Start the reader before writing hello. If the first
                     // write races the Windows pipe state transition, the
                     // write path replaces this stream and retries the frame.
-                    _readerTask = ReadLoopAsync(reader);
+                    // A synchronous pipe handle may implement ReadAsync via
+                    // a blocking read on some .NET Windows builds. Keep the
+                    // reader off the WinUI dispatcher regardless of the
+                    // handle mode.
+                    _readerTask = Task.Run(() => ReadLoopAsync(reader));
                     var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken, reconnectOnWriteFailure: false).ConfigureAwait(false);
                     if (hello.Version != Protocol)
                     {
@@ -354,9 +364,33 @@ internal sealed class CoreApiClient : IDisposable
         }
         if (reconnect)
         {
-            await ReconnectAsync(cancellationToken);
-            await SendAsync(envelope, cancellationToken, reconnectOnWriteFailure: false);
-            return;
+            // A failed write can leave the underlying Windows pipe handle in
+            // a permanently unusable state. Reconnect a few times with a
+            // fresh handle; retrying writes on the same instance only repeats
+            // the misleading "pipe hasn't been connected yet" exception.
+            Exception? reconnectFailure = last;
+            for (var reconnectAttempt = 0; reconnectAttempt < 3; reconnectAttempt++)
+            {
+                try
+                {
+                    await ReconnectAsync(cancellationToken);
+                    await SendAsync(envelope, cancellationToken, reconnectOnWriteFailure: false);
+                    return;
+                }
+                catch (CoreApiException exception) when (exception.Code == "unavailable")
+                {
+                    reconnectFailure = exception;
+                }
+                catch (IOException exception)
+                {
+                    reconnectFailure = exception;
+                }
+                if (reconnectAttempt + 1 < 3)
+                {
+                    await Task.Delay(PipeWriteRetryDelay, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            throw new CoreApiException("unavailable", $"Core service pipe is not connected: {reconnectFailure?.Message ?? "unknown error"}");
         }
         throw new CoreApiException("unavailable", $"Core service pipe is not connected: {last?.Message ?? "unknown error"}");
     }

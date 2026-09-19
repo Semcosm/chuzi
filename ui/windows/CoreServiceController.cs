@@ -41,6 +41,16 @@ internal sealed class CoreServiceController : IDisposable
         }
         var executable = FindServiceExecutable();
         var metadata = await ReadInstalledMetadataAsync(cancellationToken);
+        // The pipe is the authoritative readiness signal. Process inspection
+        // can fail for an elevated Core process (or briefly race process
+        // startup), so probe it before concluding that Core is missing or
+        // stopped. This also prevents StartAsync from launching a duplicate
+        // process against the same database and named pipe.
+        var pipeSnapshot = await ProbeExistingPipeAsync(metadata, cancellationToken);
+        if (pipeSnapshot is not null)
+        {
+            return pipeSnapshot;
+        }
         if (executable is null)
         {
             return Snapshot(CoreStatus.Missing, null, false, "Core is not installed.", metadata);
@@ -71,8 +81,8 @@ internal sealed class CoreServiceController : IDisposable
             }
         }
         // A named pipe is owned by a live Core process. If no matching process
-        // exists, avoid waiting for the five-second pipe connect timeout on
-        // every refresh and report the stopped state immediately.
+        // exists and the bounded pipe probe above failed, report the stopped
+        // state without waiting for another long connection timeout.
         return Snapshot(CoreStatus.Stopped, null, false, "Core is stopped.", metadata);
     }
 
@@ -251,6 +261,30 @@ internal sealed class CoreServiceController : IDisposable
         catch (Exception exception) when (exception is OperationCanceledException or IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException or ObjectDisposedException or CoreApiException)
         {
             return Snapshot(fallback, processId, owned, fallback == CoreStatus.Starting ? "Waiting for Core..." : "Core is not reachable.", metadata);
+        }
+    }
+
+    private async Task<CoreSnapshot?> ProbeExistingPipeAsync(InstalledMetadata metadata, CancellationToken cancellationToken)
+    {
+        using var probeTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        probeTimeout.CancelAfter(TimeSpan.FromMilliseconds(600));
+        try
+        {
+            using var client = CoreApiClient.FromDataDirectory(DataDirectory);
+            await client.ConnectAsync(probeTimeout.Token).ConfigureAwait(false);
+            return Snapshot(CoreStatus.Running, null, false, "Core is ready.", metadata);
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException or ObjectDisposedException or CoreApiException)
+        {
+            return null;
         }
     }
 

@@ -1,0 +1,70 @@
+# CR-0061: harden Windows Core pipe reconnects
+
+Base: main
+Head or Range: feat/windows-core-release-loop
+Integration Strategy: rebase-ff
+Review Evidence: trailers
+Title: fix(windows): recover Core operations from pipe write races
+Revision: 1
+Status: pending
+Decision: pending
+Policy Version: v0.3
+Base OID: 61c9ad70581eab60c8955d6ab616c7d29158f035
+Head OID: pending
+Integrated Result: pending
+
+## Summary
+
+Harden the Windows native Core client after users reported `pipe hasn't been
+connected yet` during Core operations. The client uses a synchronous named-pipe
+handle for stable first-frame writes, keeps the reader off the WinUI dispatcher,
+and rebuilds the pipe after a failed write instead of retrying a poisoned handle.
+The Core controller also probes the derived pipe before trusting process
+enumeration, preventing a second Core process from being started when the
+existing process is elevated or otherwise hidden from inspection.
+
+## Motivation
+
+`NamedPipeClientStream` can expose a connected state before Windows accepts the
+first write on an asynchronous handle. Retrying that handle does not repair its
+state, so UI actions such as account lookup and task operations surfaced the
+platform exception. Process inspection is not a reliable readiness signal for
+an elevated Core process, and using it alone can cause duplicate starts.
+
+## Test Evidence
+
+Local checks:
+
+`go test ./...`
+
+`go vet ./...`
+
+`./scripts/test_build_contract.sh`
+
+`./scripts/validate_repository_shape.sh`
+
+`git diff --check`
+
+Windows CI must compile the native client and pass the existing Core named-pipe
+round-trip and installed-client smoke tests before integration.
+
+## Risk
+
+The change is limited to the Windows native transport and lifecycle status
+probe. Synchronous writes are bounded by the Core frame limit and the Core
+server continuously reads the connection. The bounded status probe adds a
+short connection attempt during refresh but avoids long waits when Core is not
+running.
+
+## Rollback
+
+Revert the implementation commit. The Core API protocol, data directory, and
+persisted state remain unchanged.
+
+## Breaking Change
+
+No.
+
+## Backport Target
+
+none
