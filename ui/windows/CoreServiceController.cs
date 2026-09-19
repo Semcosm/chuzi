@@ -12,7 +12,11 @@ public enum CoreStatus
     Unavailable,
 }
 
-public sealed record CoreSnapshot(CoreStatus Status, int? ProcessId, bool OwnedByThisWindow, string Message);
+public sealed record CoreSnapshot(CoreStatus Status, int? ProcessId, bool OwnedByThisWindow, string Message)
+{
+    public string DataDirectory { get; init; } = "";
+    public string LogPath { get; init; } = "";
+}
 
 internal sealed class CoreServiceController : IDisposable
 {
@@ -22,12 +26,15 @@ internal sealed class CoreServiceController : IDisposable
 
     public CoreServiceController(LauncherClient launcher) => _launcher = launcher;
 
+    public string DataDirectory => _launcher.DataRoot;
+    public string LogPath => Path.Combine(_launcher.DataRoot, "core.log");
+
     public async Task<CoreSnapshot> GetStatusAsync(CancellationToken cancellationToken)
     {
         var executable = FindServiceExecutable();
         if (executable is null)
         {
-            return new CoreSnapshot(CoreStatus.Missing, null, false, "Core is not installed.");
+            return Snapshot(CoreStatus.Missing, null, false, "Core is not installed.");
         }
         if (_process is { HasExited: false })
         {
@@ -49,7 +56,7 @@ internal sealed class CoreServiceController : IDisposable
         var executable = FindServiceExecutable();
         if (executable is null)
         {
-            return new CoreSnapshot(CoreStatus.Missing, null, false, "Install Core before starting the service.");
+            return Snapshot(CoreStatus.Missing, null, false, "Install Core before starting the service.");
         }
 
         Directory.CreateDirectory(_launcher.DataRoot);
@@ -86,13 +93,13 @@ internal sealed class CoreServiceController : IDisposable
             cancellationToken.ThrowIfCancellationRequested();
             if (process.HasExited)
             {
-                return new CoreSnapshot(CoreStatus.Unavailable, null, true, "Core stopped during startup. Check core.log for details.");
+                return Snapshot(CoreStatus.Unavailable, null, true, "Core stopped during startup. Check core.log for details.");
             }
             var probe = await ProbeAsync(CoreStatus.Starting, process.Id, true, cancellationToken);
             if (probe.Status == CoreStatus.Running) return probe;
             await Task.Delay(250, cancellationToken);
         }
-        return new CoreSnapshot(CoreStatus.Unavailable, process.Id, true, "Core did not become ready. Check core.log for details.");
+        return Snapshot(CoreStatus.Unavailable, process.Id, true, "Core did not become ready. Check core.log for details.");
     }
 
     public async Task<CoreSnapshot> StopAsync(CancellationToken cancellationToken)
@@ -113,7 +120,7 @@ internal sealed class CoreServiceController : IDisposable
             _process = null;
             _ownsProcess = false;
         }
-        return new CoreSnapshot(CoreStatus.Stopped, null, false, "Core is stopped.");
+        return Snapshot(CoreStatus.Stopped, null, false, "Core is stopped.");
     }
 
     private async Task<CoreSnapshot> ProbeAsync(CoreStatus fallback, int? processId, bool owned, CancellationToken cancellationToken)
@@ -122,14 +129,21 @@ internal sealed class CoreServiceController : IDisposable
         {
             using var client = CoreApiClient.FromDeploymentEnvironment();
             await client.ConnectAsync(cancellationToken);
-            return new CoreSnapshot(CoreStatus.Running, processId, owned, "Core is ready.");
+            return Snapshot(CoreStatus.Running, processId, owned, "Core is ready.");
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception exception) when (exception is OperationCanceledException or IOException or TimeoutException or CoreApiException)
         {
-            return new CoreSnapshot(fallback, processId, owned, fallback == CoreStatus.Starting ? "Waiting for Core..." : "Core is not reachable.");
+            return Snapshot(fallback, processId, owned, fallback == CoreStatus.Starting ? "Waiting for Core..." : "Core is not reachable.");
         }
     }
+
+    private CoreSnapshot Snapshot(CoreStatus status, int? processId, bool owned, string message)
+        => new(status, processId, owned, message)
+        {
+            DataDirectory = DataDirectory,
+            LogPath = LogPath,
+        };
 
     private async Task<string> EnsureConfigAsync(CancellationToken cancellationToken)
     {

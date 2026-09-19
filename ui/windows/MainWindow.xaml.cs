@@ -36,7 +36,7 @@ public sealed partial class MainWindow : Window
         _plugins.EnableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "enable"));
         _plugins.DisableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "disable"));
         _plugins.RemoveRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "remove"));
-        ContentFrame.Content = _overview;
+        Navigation.SelectedItem = Navigation.MenuItems[0];
         Activated += MainWindow_Activated;
         Closed += MainWindow_Closed;
     }
@@ -48,9 +48,16 @@ public sealed partial class MainWindow : Window
         RunAsync(RefreshAllAsync);
     }
 
-    private void OverviewButton_Click(object sender, RoutedEventArgs e) => ContentFrame.Content = _overview;
-    private void SettingsButton_Click(object sender, RoutedEventArgs e) => ContentFrame.Content = _settings;
-    private void PluginsButton_Click(object sender, RoutedEventArgs e) => ContentFrame.Content = _plugins;
+    private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    {
+        if (args.SelectedItem is not NavigationViewItem item) return;
+        ContentFrame.Content = item.Tag?.ToString() switch
+        {
+            "settings" => _settings,
+            "plugins" => _plugins,
+            _ => _overview,
+        };
+    }
 
     private async Task RefreshAllAsync()
     {
