@@ -5,12 +5,12 @@ Head or Range: fix/windows-ui-startup
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): wait for Core pipe readiness before UI calls
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b4cd426af69ad1d075b40f4e06235e730d0300fe
-Head OID: dec8f8558c573304b45c3e2e0730c52e05ff8e90
+Head OID: 0003926d619a48535622c9de19b9522112c650e8
 Integrated Result: pending
 
 ## Summary
@@ -20,6 +20,9 @@ complete but before the stream accepts its first write. The client now waits
 for the connected state during the `chuzi.core/v1` handshake, confirms that
 the stream remains connected after the hello response, and reconnects
 automatically before account and task calls when a prior connection ended.
+The Windows client also settles the pipe handle after ConnectAsync and uses a
+complete synchronous frame write so the platform's transient first-write race
+cannot surface as `pipe hasn't been connected yet`.
 The UI keeps the full WinUI Gallery-style XAML navigation and page tree used by
 the successful installed-client smoke baseline; the failed C#-constructed page
 tree experiment is removed. Each write also waits for the stream's connected
@@ -48,6 +51,10 @@ Local checks:
 `./scripts/validate_repository_shape.sh`
 
 `git diff --check`
+
+The Windows client write path was updated to avoid the asynchronous first-frame
+race; the Windows build and named-pipe smoke remain authoritative for the
+platform-specific compile and runtime check.
 
 Windows host validation: `dotnet build` succeeded after setting
 `WindowsSdkPackageVersion=10.0.19041.38`; the initial attempt with the host's
