@@ -161,6 +161,7 @@ grep -Fq 'Source: "{#PayloadDir}\*"' "$repo_root/packaging/windows/Chuzi.iss" ||
 grep -Fq 'UninstallDelete' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses uninstall cleanup"
 grep -Fq 'CorePayloadDir' "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI script misses Core payload staging"
 grep -Fq 'CorePayload' "$repo_root/ui/windows/Chuzi.Native.Windows.csproj" || fail "Windows UI project misses Core payload content"
+grep -Fq 'XamlControlsResources' "$repo_root/ui/windows/App.xaml" || fail "Windows UI app misses WinUI control resources"
 grep -Fq 'CopyProjectPriForUnpackagedPublish' "$repo_root/ui/windows/Chuzi.Native.Windows.csproj" || fail "Windows UI project misses unpackaged PRI copy"
 grep -Fq "did not contain an application PRI" "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI build misses PRI validation"
 grep -Fq 'StartupDiagnostics' "$repo_root/ui/windows/App.xaml.cs" || fail "Windows UI app misses startup diagnostics"
