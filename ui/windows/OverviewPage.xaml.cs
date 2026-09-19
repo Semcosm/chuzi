@@ -21,6 +21,7 @@ public sealed partial class OverviewPage : Page
         InstallButton.IsEnabled = !busy;
         StartButton.IsEnabled = !busy;
         StopButton.IsEnabled = !busy;
+        RefreshButton.IsEnabled = !busy;
     }
 
     public void SetSnapshot(CoreSnapshot snapshot)
@@ -34,7 +35,27 @@ public sealed partial class OverviewPage : Page
             _ => "Core is stopped",
         };
         StatusDetails.Text = snapshot.ProcessId is int pid ? $"{snapshot.Message} Process ID {pid}." : snapshot.Message;
+        DataDirectoryText.Text = string.IsNullOrWhiteSpace(snapshot.DataDirectory)
+            ? string.Empty
+            : $"Data directory: {snapshot.DataDirectory}";
         StatusIcon.Glyph = snapshot.Status == CoreStatus.Running ? "\uE73E" : "\uE783";
+        SetupHint.Text = snapshot.Status switch
+        {
+            CoreStatus.Missing => "Install Core to unlock plugin management and background tasks.",
+            CoreStatus.Starting => "Core is starting. Chuzi will keep checking until it is ready.",
+            CoreStatus.Running => "Core is ready. Continue with plugins and personal settings.",
+            CoreStatus.Unavailable => "Core was found but could not be reached. Check the Core log.",
+            _ => "Core is installed but stopped. Start it to continue setup.",
+        };
+        CoreStepText.Text = snapshot.Status == CoreStatus.Missing
+            ? "1. Install Core"
+            : snapshot.Status == CoreStatus.Running
+                ? "1. Core is ready"
+                : "1. Start Core";
+        PluginStepText.Text = snapshot.Status == CoreStatus.Running
+            ? "2. Configure plugins in Plugins"
+            : "2. Configure plugins after Core starts";
+        SettingsStepText.Text = "3. Personalize settings when you are ready";
         InstallButton.Visibility = snapshot.Status == CoreStatus.Missing ? Visibility.Visible : Visibility.Collapsed;
         StartButton.Visibility = snapshot.Status is CoreStatus.Missing or CoreStatus.Running ? Visibility.Collapsed : Visibility.Visible;
         StopButton.Visibility = snapshot.Status == CoreStatus.Running && snapshot.OwnedByThisWindow ? Visibility.Visible : Visibility.Collapsed;

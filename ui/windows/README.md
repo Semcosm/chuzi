@@ -64,9 +64,15 @@ For a lightweight local diagnostics bundle, use:
 The first-run sequence is:
 
 1. Run `ChuziSetup.exe` and launch Chuzi from the Start Menu or desktop shortcut.
-2. Select **Install Core** on the Overview page.
-3. Configure plugins and explicitly trust their declared signer before enabling them.
-4. Adjust update and startup behavior under Settings.
+2. Use the Gallery-style navigation pane to stay on Overview while setup is in progress.
+3. Select **Install Core** on the Overview page and wait for the ready state.
+4. Configure plugins and explicitly trust their declared signer before enabling them.
+5. Adjust update and startup behavior under Settings.
+
+The Overview page is the first-run status center. It distinguishes missing,
+starting, running, stopped, and unavailable Core states, shows the resolved data
+directory, disables duplicate actions while a lifecycle operation is running,
+and keeps the next setup steps visible until Core is ready.
 
 The service process is owned by the installation, not by the window. Closing the UI
 leaves Core running; the Stop Core action is explicit and never stops a service that
