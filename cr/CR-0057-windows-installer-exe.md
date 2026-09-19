@@ -5,12 +5,12 @@ Head or Range: feat/windows-installer-exe
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): replace MSIX with installer EXE
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 7e27d79a54447a2ee3263954e599895e95ed9abe
-Head OID: 7e27d79a54447a2ee3263954e599895e95ed9abe
+Base OID: a1d14900ad807a75f342b274a9617e47d7ddf8fe
+Head OID: a1d14900ad807a75f342b274a9617e47d7ddf8fe
 Integrated Result: pending
 
 ## Summary
@@ -19,6 +19,9 @@ Replace the Windows MSIX distribution path with a conventional self-contained
 EXE installer. The installer publishes the WinUI 3 client unpackaged, carries
 the .NET and Windows App SDK runtime files, installs under Program Files, and
 creates Start Menu and optional desktop shortcuts.
+
+Revision 2 fixes the Inno Setup preprocessor escaping for the stable installer
+AppId so the Windows runner can compile the setup executable.
 
 ## Motivation
 
