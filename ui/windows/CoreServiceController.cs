@@ -248,7 +248,7 @@ internal sealed class CoreServiceController : IDisposable
             return Snapshot(CoreStatus.Running, processId, owned, "Core is ready.", metadata);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
-        catch (Exception exception) when (exception is OperationCanceledException or IOException or TimeoutException or UnauthorizedAccessException or CoreApiException)
+        catch (Exception exception) when (exception is OperationCanceledException or IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException or ObjectDisposedException or CoreApiException)
         {
             return Snapshot(fallback, processId, owned, fallback == CoreStatus.Starting ? "Waiting for Core..." : "Core is not reachable.", metadata);
         }
