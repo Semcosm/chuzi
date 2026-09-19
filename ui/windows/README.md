@@ -69,6 +69,10 @@ The first-run sequence is:
 4. Configure plugins and explicitly trust their declared signer before enabling them.
 5. Adjust update and startup behavior under Settings.
 
+The Plugins page shows declared permissions and capabilities, requires Core to
+be ready before lifecycle operations, confirms trust changes and removals, and
+rejects enable requests for untrusted plugins before they reach the launcher.
+
 The Overview page is the first-run status center. It distinguishes missing,
 starting, running, stopped, and unavailable Core states, shows the resolved data
 directory, disables duplicate actions while a lifecycle operation is running,
