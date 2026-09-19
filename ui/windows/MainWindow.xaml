@@ -24,6 +24,16 @@
           <SymbolIcon Symbol="Repair" />
         </NavigationViewItem.Icon>
       </NavigationViewItem>
+      <NavigationViewItem Content="Accounts" Tag="accounts">
+        <NavigationViewItem.Icon>
+          <SymbolIcon Symbol="Contact" />
+        </NavigationViewItem.Icon>
+      </NavigationViewItem>
+      <NavigationViewItem Content="Tasks" Tag="tasks">
+        <NavigationViewItem.Icon>
+          <SymbolIcon Symbol="Play" />
+        </NavigationViewItem.Icon>
+      </NavigationViewItem>
     </NavigationView.MenuItems>
     <Frame x:Name="ContentFrame" />
   </NavigationView>

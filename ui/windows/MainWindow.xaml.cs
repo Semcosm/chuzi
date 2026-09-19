@@ -10,6 +10,8 @@ public sealed partial class MainWindow : Window
     private readonly OverviewPage _overview;
     private readonly SettingsPage _settings;
     private readonly PluginsPage _plugins;
+    private readonly AccountPage _accounts;
+    private readonly TasksPage _tasks;
     private readonly CancellationTokenSource _shutdown = new();
     private bool _loaded;
 
@@ -22,6 +24,8 @@ public sealed partial class MainWindow : Window
         _overview = new OverviewPage();
         _settings = new SettingsPage();
         _plugins = new PluginsPage();
+        _accounts = new AccountPage();
+        _tasks = new TasksPage();
 
         _overview.InstallRequested += (_, _) => RunAsync(InstallCoreAsync);
         _overview.StartRequested += (_, _) => RunAsync(StartCoreAsync);
@@ -36,6 +40,10 @@ public sealed partial class MainWindow : Window
         _plugins.EnableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "enable"));
         _plugins.DisableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "disable"));
         _plugins.RemoveRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "remove"));
+        _accounts.LookupRequested += (_, id) => RunAsync(() => LookupAccountAsync(id));
+        _accounts.SubmitRequested += (_, id) => RunAsync(() => SubmitTaskAsync(id));
+        _tasks.RefreshRequested += (_, id) => RunAsync(() => RefreshTaskAsync(id));
+        _tasks.CancelRequested += (_, id) => RunAsync(() => CancelTaskAsync(id));
         Navigation.SelectedItem = Navigation.MenuItems[0];
         Activated += MainWindow_Activated;
         Closed += MainWindow_Closed;
@@ -55,6 +63,8 @@ public sealed partial class MainWindow : Window
         {
             "settings" => _settings,
             "plugins" => _plugins,
+            "accounts" => _accounts,
+            "tasks" => _tasks,
             _ => _overview,
         };
     }
@@ -74,6 +84,8 @@ public sealed partial class MainWindow : Window
             _overview.SetSnapshot(snapshot);
             _settings.SetCoreSnapshot(snapshot);
             _plugins.SetCoreSnapshot(snapshot);
+            _accounts.SetCoreSnapshot(snapshot);
+            _tasks.SetCoreSnapshot(snapshot);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception) { _overview.ShowError("Core status could not be read."); }
@@ -98,6 +110,8 @@ public sealed partial class MainWindow : Window
             _overview.SetSnapshot(snapshot);
             _settings.SetCoreSnapshot(snapshot);
             _plugins.SetCoreSnapshot(snapshot);
+            _accounts.SetCoreSnapshot(snapshot);
+            _tasks.SetCoreSnapshot(snapshot);
             _overview.ShowSuccess("Core stopped.");
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
@@ -114,6 +128,8 @@ public sealed partial class MainWindow : Window
             _overview.SetSnapshot(snapshot);
             _settings.SetCoreSnapshot(snapshot);
             _plugins.SetCoreSnapshot(snapshot);
+            _accounts.SetCoreSnapshot(snapshot);
+            _tasks.SetCoreSnapshot(snapshot);
             if (snapshot.Status == CoreStatus.Running) _overview.ShowSuccess(success);
             else _overview.ShowError(snapshot.Message);
         }
@@ -193,6 +209,115 @@ public sealed partial class MainWindow : Window
         catch (LauncherException exception) { _plugins.ShowError(exception.Message); }
         catch (Exception) { _plugins.ShowError("Plugin operation failed."); }
         finally { _plugins.SetBusy(false); }
+    }
+
+    private async Task LookupAccountAsync(string accountID)
+    {
+        if (!_accounts.IsCoreReady)
+        {
+            _accounts.ShowError("Start Core before looking up an account.");
+            return;
+        }
+        try
+        {
+            _accounts.SetBusy(true);
+            using var client = await ConnectCoreAsync();
+            var account = await client.GetAccountAsync(accountID, _shutdown.Token);
+            _accounts.SetAccount(account);
+            _accounts.ShowSuccess("Account status loaded.");
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (CoreApiException exception) { _accounts.ShowError(exception.Message); }
+        catch (Exception) { _accounts.ShowError("Account status could not be loaded."); }
+        finally { _accounts.SetBusy(false); }
+    }
+
+    private async Task SubmitTaskAsync(string accountID)
+    {
+        if (!_accounts.IsCoreReady)
+        {
+            _accounts.ShowError("Start Core before submitting a task.");
+            return;
+        }
+        try
+        {
+            _accounts.SetBusy(true);
+            using var client = await ConnectCoreAsync();
+            var request = await client.SubmitRequestAsync(accountID, _shutdown.Token);
+            _accounts.SetSubmittedRequest(request);
+            _tasks.SetRequest(request);
+            _accounts.ShowSuccess($"Task submitted: {request.RequestId}");
+            SelectNavigation("tasks");
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (CoreApiException exception) { _accounts.ShowError(exception.Message); }
+        catch (Exception) { _accounts.ShowError("Task could not be submitted."); }
+        finally { _accounts.SetBusy(false); }
+    }
+
+    private async Task RefreshTaskAsync(string requestID)
+    {
+        if (!_tasks.IsCoreReady)
+        {
+            _tasks.ShowError("Start Core before checking task status.");
+            return;
+        }
+        try
+        {
+            _tasks.SetBusy(true);
+            using var client = await ConnectCoreAsync();
+            var request = await client.GetRequestAsync(requestID, _shutdown.Token);
+            _tasks.SetRequest(request);
+            _tasks.ShowSuccess("Task status refreshed.");
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (CoreApiException exception) { _tasks.ShowError(exception.Message); }
+        catch (Exception) { _tasks.ShowError("Task status could not be loaded."); }
+        finally { _tasks.SetBusy(false); }
+    }
+
+    private async Task CancelTaskAsync(string requestID)
+    {
+        if (!_tasks.IsCoreReady)
+        {
+            _tasks.ShowError("Start Core before cancelling a task.");
+            return;
+        }
+        try
+        {
+            _tasks.SetBusy(true);
+            using var client = await ConnectCoreAsync();
+            var request = await client.CancelRequestAsync(requestID, _shutdown.Token);
+            _tasks.SetRequest(request);
+            _tasks.ShowSuccess("Task cancellation requested.");
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (CoreApiException exception) { _tasks.ShowError(exception.Message); }
+        catch (Exception) { _tasks.ShowError("Task could not be cancelled."); }
+        finally { _tasks.SetBusy(false); }
+    }
+
+    private async Task<CoreApiClient> ConnectCoreAsync()
+    {
+        var client = CoreApiClient.FromDeploymentEnvironment();
+        try
+        {
+            await client.ConnectAsync(_shutdown.Token);
+            return client;
+        }
+        catch
+        {
+            client.Dispose();
+            throw;
+        }
+    }
+
+    private void SelectNavigation(string tag)
+    {
+        var item = Navigation.MenuItems
+            .OfType<NavigationViewItem>()
+            .FirstOrDefault(candidate => string.Equals(candidate.Tag?.ToString(), tag, StringComparison.Ordinal));
+        if (item is not null) Navigation.SelectedItem = item;
     }
 
     private void RunAsync(Func<Task> operation) => _ = operation();

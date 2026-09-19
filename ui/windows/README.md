@@ -68,10 +68,18 @@ The first-run sequence is:
 3. Select **Install Core** on the Overview page and wait for the ready state.
 4. Configure plugins and explicitly trust their declared signer before enabling them.
 5. Adjust update and startup behavior under Settings.
+6. Use Accounts to look up an authorized account and submit a Core request.
+7. Use Tasks to refresh or cancel a request by its request ID.
 
 The Plugins page shows declared permissions and capabilities, requires Core to
 be ready before lifecycle operations, confirms trust changes and removals, and
 rejects enable requests for untrusted plugins before they reach the launcher.
+
+The Accounts and Tasks pages use the existing `chuzi.core/v1` methods
+`get_account`, `submit_request`, `get_request`, and `cancel_request`. The first
+UI slice intentionally accepts an authorized account ID instead of inventing a
+client-side account inventory; Core v1 currently exposes account lookup rather
+than a list-accounts method. The UI never stores credentials.
 
 The Overview page is the first-run status center. It distinguishes missing,
 starting, running, stopped, and unavailable Core states, shows the resolved data
