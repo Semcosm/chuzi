@@ -56,6 +56,12 @@ internal sealed class CoreApiClient : IDisposable
     private int _nextID;
     private bool _connected;
 
+    // Windows can complete the named-pipe connect task just before the
+    // stream reports IsConnected. Keep the short settling window here so a
+    // first hello cannot fail with the raw "pipe hasn't been connected yet"
+    // InvalidOperationException.
+    private static readonly TimeSpan PipeSettleTimeout = TimeSpan.FromSeconds(2);
+
     private CoreApiClient(string dataDirectory)
     {
         var absolute = Path.GetFullPath(dataDirectory);
@@ -105,10 +111,7 @@ internal sealed class CoreApiClient : IDisposable
         try
         {
             await _pipe.ConnectAsync(5000, cancellationToken);
-            if (!_pipe.IsConnected)
-            {
-                throw new CoreApiException("unavailable", "Core service pipe did not connect.");
-            }
+            await WaitUntilConnectedAsync(cancellationToken);
 
             // Start the reader before writing hello. Task.Run introduced a
             // scheduling window where the first response could race the
@@ -122,10 +125,14 @@ internal sealed class CoreApiClient : IDisposable
             }
             _connected = true;
         }
-        catch
+        catch (Exception exception)
         {
             _connected = false;
             FailPending(new CoreApiException("unavailable", "Core service pipe connection failed."));
+            if (exception is InvalidOperationException)
+            {
+                throw new CoreApiException("unavailable", "Core service pipe connection failed.");
+            }
             throw;
         }
     }
@@ -235,11 +242,34 @@ internal sealed class CoreApiClient : IDisposable
         await _writeLock.WaitAsync(cancellationToken);
         try
         {
-            await _writer.WriteLineAsync(json.AsMemory(), cancellationToken);
+            await WaitUntilConnectedAsync(cancellationToken);
+            try
+            {
+                await _writer.WriteLineAsync(json.AsMemory(), cancellationToken);
+            }
+            catch (InvalidOperationException)
+            {
+                throw new CoreApiException("unavailable", "Core service pipe is not connected.");
+            }
         }
         finally
         {
             _writeLock.Release();
+        }
+    }
+
+    private async Task WaitUntilConnectedAsync(CancellationToken cancellationToken)
+    {
+        if (_pipe.IsConnected) return;
+        var deadline = DateTime.UtcNow + PipeSettleTimeout;
+        while (!_pipe.IsConnected)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new CoreApiException("unavailable", "Core service pipe did not connect.");
+            }
+            await Task.Delay(25, cancellationToken);
         }
     }
 
