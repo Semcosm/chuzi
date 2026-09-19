@@ -40,10 +40,21 @@
   -->
   <Target Name="CopyProjectPriForUnpackagedPublish"
           AfterTargets="Publish"
-          DependsOnTargets="$(GenerateProjectPriFile)"
-          Condition="'$(WindowsPackageType)' == 'None' and '$(UseWinUI)' == 'true' and Exists('$(ProjectPriFullPath)')">
-    <Copy SourceFiles="$(ProjectPriFullPath)"
-          DestinationFiles="$(PublishDir)$(ProjectPriFileName)"
+          DependsOnTargets="GenerateProjectPriFile"
+          Condition="'$(WindowsPackageType)' == 'None' and '$(UseWinUI)' == 'true'">
+    <!--
+      The SDK's PRI properties are not populated consistently across
+      Microsoft.WindowsAppSDK versions. Find the generated project PRI under
+      obj instead of relying on ProjectPriFullPath, then copy it beside the
+      executable. Without this file an unpackaged WinUI app can fail during
+      XAML resource initialization with STATUS_STOWED_EXCEPTION.
+    -->
+    <ItemGroup>
+      <GeneratedProjectPri Include="$(BaseIntermediateOutputPath)**\*.pri"
+                           Exclude="$(BaseIntermediateOutputPath)**\Microsoft.UI*.pri;$(BaseIntermediateOutputPath)**\Microsoft.Windows*.pri" />
+    </ItemGroup>
+    <Copy SourceFiles="@(GeneratedProjectPri)"
+          DestinationFolder="$(PublishDir)"
           SkipUnchangedFiles="true" />
   </Target>
 </Project>
