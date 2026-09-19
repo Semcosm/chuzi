@@ -5,12 +5,12 @@ Head or Range: feat/windows-installer-exe
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): replace MSIX with installer EXE
-Revision: 3
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: b4cd426af69ad1d075b40f4e06235e730d0300fe
-Head OID: b4cd426af69ad1d075b40f4e06235e730d0300fe
+Base OID: a1d14900ad807a75f342b274a9617e47d7ddf8fe
+Head OID: a1d14900ad807a75f342b274a9617e47d7ddf8fe
 Integrated Result: pending
 
 ## Summary
@@ -21,13 +21,7 @@ the .NET and Windows App SDK runtime files, installs under Program Files, and
 creates Start Menu and optional desktop shortcuts.
 
 Revision 2 fixes the Inno Setup preprocessor escaping for the stable installer
-AppId so the Windows runner can compile the setup executable. Revision 3
-restores the WinUI control resource dictionary required by the Settings,
-Plugins, and Overview pages, constructs child pages after the main window XAML
-is initialized, keeps the unpackaged application resource surface minimal,
-copies the application PRI required by unpackaged WinUI startup, adds startup
-exception diagnostics, and adds an installed-executable startup smoke test to
-CI.
+AppId so the Windows runner can compile the setup executable.
 
 ## Motivation
 
@@ -43,9 +37,8 @@ launcher boundary, and per-machine data directory behavior.
 
 `git diff --check`
 
-The Windows installer publish, Inno Setup compilation, Core named-pipe contract
-test, and installed-executable startup smoke test remain authoritative on the
-GitHub Actions `windows-2022` runner.
+The Windows installer publish, Inno Setup compilation, and Core named-pipe
+contract test remain authoritative on the GitHub Actions `windows-2022` runner.
 
 ## Risk
 
