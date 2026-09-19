@@ -11,7 +11,7 @@
 #define MyAppName "Chuzi"
 #define MyAppPublisher "Semcosm"
 #define MyAppExeName "Chuzi.Native.Windows.exe"
-#define MyAppId "{8E0C5D6C-4B1E-4D42-9D7C-7A7F2A5DF1A2}"
+#define MyAppId "{{8E0C5D6C-4B1E-4D42-9D7C-7A7F2A5DF1A2}}"
 
 [Setup]
 AppId={#MyAppId}
