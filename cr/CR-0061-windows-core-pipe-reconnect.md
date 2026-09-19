@@ -5,7 +5,7 @@ Head or Range: feat/windows-core-release-loop
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): recover Core operations from pipe write races
-Revision: 6
+Revision: 7
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -17,14 +17,14 @@ Integrated Result: pending
 
 Harden the Windows native Core client after users reported `pipe hasn't been
 connected yet` during Core operations. Readiness probes and API calls use fresh
-overlapped named-pipe connections, synchronize the connect state, and batch the
-handshake with each API request in one bounded asynchronous write. Failed writes
-discard the handle and retry the complete exchange, avoiding both the Windows
-overlapped first-write race and synchronous-handle second-write hangs while
-keeping the WinUI dispatcher responsive. The Core controller also probes the
-derived pipe before trusting process enumeration, preventing a second Core
-process from being started when the existing process is elevated or otherwise
-hidden from inspection.
+named-pipe connections, synchronize the connect state, and batch the handshake
+with each API request in one bounded write. Failed writes discard the handle and
+retry the complete exchange. The normal path uses overlapped I/O; affected
+Windows/.NET builds fall back to a synchronous handle with the blocking write
+off the WinUI dispatcher. The Core controller also probes the derived pipe
+before trusting process enumeration, preventing a second Core process from being
+started when the existing process is elevated or otherwise hidden from
+inspection.
 
 ## Motivation
 

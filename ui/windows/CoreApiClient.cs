@@ -120,7 +120,9 @@ internal sealed class CoreApiClient : IDisposable
             for (var attempt = 0; attempt < PipeConnectAttempts; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                var synchronousFallback = attempt >= 1;
+                var pipeOptions = synchronousFallback ? PipeOptions.None : PipeOptions.Asynchronous;
+                var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, pipeOptions);
                 var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
                 try
                 {
@@ -136,7 +138,7 @@ internal sealed class CoreApiClient : IDisposable
                         Method = "hello",
                         Params = JsonSerializer.SerializeToElement(new { version = Protocol }, JsonOptions),
                     };
-                    await WriteFrameWithTimeoutAsync(pipe, Utf8.GetBytes(JsonSerializer.Serialize(hello, JsonOptions) + "\n"), cancellationToken).ConfigureAwait(false);
+                    await WriteFrameWithTimeoutAsync(pipe, Utf8.GetBytes(JsonSerializer.Serialize(hello, JsonOptions) + "\n"), cancellationToken, synchronousFallback).ConfigureAwait(false);
                     var response = await ReadEnvelopeWithTimeoutAsync(reader, cancellationToken).ConfigureAwait(false);
                     ValidateHelloResponse(response, helloID);
                     _connected = true;
@@ -260,10 +262,17 @@ internal sealed class CoreApiClient : IDisposable
         var helloID = "ui-hello-" + Interlocked.Increment(ref _nextID);
         Exception? last = null;
 
-        for (var attempt = 0; attempt < 3; attempt++)
+        for (var attempt = 0; attempt < 4; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+            // A subset of Windows/.NET builds reports a newly connected
+            // overlapped handle as connected but rejects its first
+            // WriteAsync with "pipe hasn't been connected yet". Retry that
+            // exact transport path with a synchronous handle; the blocking
+            // write is kept off the UI thread and remains bounded below.
+            var synchronousFallback = attempt >= 1;
+            var pipeOptions = synchronousFallback ? PipeOptions.None : PipeOptions.Asynchronous;
+            var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, pipeOptions);
             var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
             try
             {
@@ -289,7 +298,7 @@ internal sealed class CoreApiClient : IDisposable
                 {
                     throw new CoreApiException("invalid_argument", "Core request is too large.");
                 }
-                await WriteFrameWithTimeoutAsync(pipe, frame, cancellationToken).ConfigureAwait(false);
+                await WriteFrameWithTimeoutAsync(pipe, frame, cancellationToken, synchronousFallback).ConfigureAwait(false);
 
                 var helloResponse = await ReadEnvelopeWithTimeoutAsync(reader, cancellationToken).ConfigureAwait(false);
                 ValidateHelloResponse(helloResponse, helloID);
@@ -310,7 +319,7 @@ internal sealed class CoreApiClient : IDisposable
                 pipe.Dispose();
             }
 
-            if (attempt + 1 < 3)
+            if (attempt + 1 < 4)
             {
                 await Task.Delay(PipeWriteRetryDelay, cancellationToken).ConfigureAwait(false);
             }
@@ -613,9 +622,19 @@ internal sealed class CoreApiClient : IDisposable
     private static async Task WriteFrameWithTimeoutAsync(
         NamedPipeClientStream pipe,
         byte[] frame,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool synchronous = false)
     {
-        var writeTask = pipe.WriteAsync(frame.AsMemory(), CancellationToken.None).AsTask();
+        // Keep the async implementation for normal overlapped handles. For
+        // the Windows fallback path, a synchronous Write avoids the native
+        // race while Task.Run prevents it from blocking the WinUI dispatcher.
+        var writeTask = synchronous
+            ? Task.Run(() =>
+            {
+                pipe.Write(frame, 0, frame.Length);
+                pipe.Flush();
+            })
+            : pipe.WriteAsync(frame.AsMemory(), CancellationToken.None).AsTask();
         try
         {
             await writeTask.WaitAsync(PipeWriteTimeout, cancellationToken).ConfigureAwait(false);
