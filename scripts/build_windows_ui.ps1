@@ -67,6 +67,9 @@ $publishDir = Join-Path $OutputDir "payload"
     -p:GenerateAppxPackageOnBuild=false `
     -p:PublishSingleFile=false
 if ($LASTEXITCODE -ne 0) { throw "Windows client self-contained publish failed" }
+if (-not (Get-ChildItem -Path $publishDir -Filter '*.pri' -File | Select-Object -First 1)) {
+    throw "Windows client publish did not contain an application PRI file"
+}
 
 $installerScript = Join-Path $repoRoot "packaging/windows/Chuzi.iss"
 if (-not (Test-Path $installerScript)) { throw "Windows installer script is missing" }

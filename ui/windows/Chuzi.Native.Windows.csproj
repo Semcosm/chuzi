@@ -30,4 +30,19 @@
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
+
+  <!--
+    dotnet publish omits the application PRI for unpackaged WinUI projects.
+    WinUI resource initialization then fails at process startup with
+    STATUS_STOWED_EXCEPTION (0xC000027B). Copy the generated PRI into the
+    unpackaged payload until the SDK supplies it through ResolvedFileToPublish.
+  -->
+  <Target Name="CopyProjectPriForUnpackagedPublish"
+          AfterTargets="Publish"
+          DependsOnTargets="$(GenerateProjectPriFile)"
+          Condition="'$(WindowsPackageType)' == 'None' and '$(UseWinUI)' == 'true' and Exists('$(ProjectPriFullPath)')">
+    <Copy SourceFiles="$(ProjectPriFullPath)"
+          DestinationFiles="$(PublishDir)$(ProjectPriFileName)"
+          SkipUnchangedFiles="true" />
+  </Target>
 </Project>
