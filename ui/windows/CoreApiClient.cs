@@ -143,6 +143,13 @@ internal sealed class CoreApiClient : IDisposable
                     {
                         throw new CoreApiException("unavailable", "Core protocol version is not supported.");
                     }
+                    // A response can be delivered while the peer is already
+                    // closing the stream. Do not publish a client that would
+                    // fail its first Core operation on a stale connection.
+                    if (!pipe.IsConnected)
+                    {
+                        throw new InvalidOperationException("The Core pipe disconnected during handshake.");
+                    }
                     _connected = true;
                     return;
                 }
@@ -291,6 +298,7 @@ internal sealed class CoreApiClient : IDisposable
                 try
                 {
                     var pipe = _pipe ?? throw new CoreApiException("unavailable", "Core service pipe is not connected.");
+                    await WaitUntilConnectedAsync(pipe, cancellationToken);
                     // Write the complete UTF-8 frame directly. Creating and
                     // disposing a StreamWriter for every request can race the
                     // Windows named-pipe state transition.

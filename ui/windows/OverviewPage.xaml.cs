@@ -1,104 +1,19 @@
-using Microsoft.UI.Text;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
-using Microsoft.UI.Xaml.Media;
-using Windows.UI;
 
 namespace Chuzi.Native.Windows;
 
-public sealed class OverviewPage : Page
+public sealed partial class OverviewPage : Page
 {
     public event EventHandler? InstallRequested;
     public event EventHandler? StartRequested;
     public event EventHandler? StopRequested;
     public event EventHandler? RefreshRequested;
 
-    private readonly TextBlock SetupHint;
-    private readonly FontIcon StatusIcon;
-    private readonly TextBlock StatusText;
-    private readonly TextBlock StatusDetails;
-    private readonly TextBlock DataDirectoryText;
-    private readonly ProgressRing BusyRing;
-    private readonly Button InstallButton;
-    private readonly Button StartButton;
-    private readonly Button StopButton;
-    private readonly Button RefreshButton;
-    private readonly TextBlock CoreStepText;
-    private readonly TextBlock PluginStepText;
-    private readonly TextBlock SettingsStepText;
-    private readonly InfoBar MessageBar;
-
     public OverviewPage()
     {
-        SetupHint = new TextBlock { Text = "Checking the Core installation...", Opacity = 0.72, TextWrapping = TextWrapping.Wrap };
-        StatusIcon = new FontIcon { Glyph = "\uE930", FontSize = 28, VerticalAlignment = VerticalAlignment.Top };
-        StatusText = new TextBlock { Text = "Checking Core...", FontSize = 20, FontWeight = FontWeights.SemiBold };
-        StatusDetails = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.72 };
-        DataDirectoryText = new TextBlock { TextWrapping = TextWrapping.Wrap, Opacity = 0.62 };
-        BusyRing = new ProgressRing { Width = 24, Height = 24, IsActive = false };
-        InstallButton = new Button { Content = "Install Core" };
-        StartButton = new Button { Content = "Start Core" };
-        StopButton = new Button { Content = "Stop Core" };
-        RefreshButton = new Button { Content = "Refresh" };
-        CoreStepText = new TextBlock { Text = "1. Install Core" };
-        PluginStepText = new TextBlock { Text = "2. Configure plugins" };
-        SettingsStepText = new TextBlock { Text = "3. Personalize settings" };
-        MessageBar = new InfoBar { IsOpen = false, IsClosable = true };
-
-        InstallButton.Click += InstallButton_Click;
-        StartButton.Click += StartButton_Click;
-        StopButton.Click += StopButton_Click;
-        RefreshButton.Click += RefreshButton_Click;
-
-        var statusGrid = new Grid { ColumnSpacing = 18 };
-        statusGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        statusGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        statusGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        statusGrid.Children.Add(StatusIcon);
-        Grid.SetColumn(StatusIcon, 0);
-        var statusText = new StackPanel { Spacing = 5 };
-        statusText.Children.Add(StatusText);
-        statusText.Children.Add(StatusDetails);
-        statusText.Children.Add(DataDirectoryText);
-        statusGrid.Children.Add(statusText);
-        Grid.SetColumn(statusText, 1);
-        statusGrid.Children.Add(BusyRing);
-        Grid.SetColumn(BusyRing, 2);
-
-        var checklist = new StackPanel { Spacing = 8 };
-        checklist.Children.Add(new TextBlock { Text = "First-run checklist", FontSize = 20, FontWeight = FontWeights.SemiBold });
-        checklist.Children.Add(CoreStepText);
-        checklist.Children.Add(PluginStepText);
-        checklist.Children.Add(SettingsStepText);
-
-        var content = new StackPanel { Spacing = 24 };
-        var heading = new StackPanel { Spacing = 6 };
-        heading.Children.Add(new TextBlock { Text = "Welcome to Chuzi", FontSize = 32, FontWeight = FontWeights.SemiBold });
-        heading.Children.Add(SetupHint);
-        content.Children.Add(heading);
-        content.Children.Add(CreateCard(statusGrid, new Thickness(20)));
-        var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-        actions.Children.Add(InstallButton);
-        actions.Children.Add(StartButton);
-        actions.Children.Add(StopButton);
-        actions.Children.Add(RefreshButton);
-        content.Children.Add(actions);
-        content.Children.Add(CreateCard(checklist, new Thickness(20)));
-        content.Children.Add(MessageBar);
-
-        var root = new Border { Padding = new Thickness(32, 28, 32, 32), MaxWidth = 900, Child = content };
-        Content = new ScrollViewer { Content = root };
+        InitializeComponent();
     }
-
-    private static Border CreateCard(UIElement child, Thickness padding)
-        => new()
-        {
-            BorderBrush = new SolidColorBrush(Color.FromArgb(48, 128, 128, 128)),
-            BorderThickness = new Thickness(1),
-            CornerRadius = new CornerRadius(6),
-            Padding = padding,
-            Child = child,
-        };
 
     public void SetBusy(bool busy)
     {
