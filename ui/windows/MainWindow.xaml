@@ -8,6 +8,7 @@
       IsSettingsVisible="False"
       PaneTitle="Chuzi"
       SelectionChanged="Navigation_SelectionChanged">
+    <Frame x:Name="ContentFrame" />
     <NavigationView.MenuItems>
       <NavigationViewItem Content="Overview" Tag="overview">
         <NavigationViewItem.Icon>
@@ -37,6 +38,5 @@
         </NavigationViewItem.Icon>
       </NavigationViewItem>
     </NavigationView.FooterMenuItems>
-    <Frame x:Name="ContentFrame" />
   </NavigationView>
 </Window>
