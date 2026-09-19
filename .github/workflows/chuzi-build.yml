@@ -285,6 +285,22 @@ jobs:
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
+      - name: Smoke test Windows Core controller lifecycle
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $payload = Join-Path $env:RUNNER_TEMP 'chuzi-core-payload'
+          $harness = Join-Path $env:RUNNER_TEMP 'chuzi-core-lifecycle-harness'
+          $root = Join-Path $env:RUNNER_TEMP 'chuzi-ui-core-lifecycle'
+          foreach ($path in @($harness, $root)) {
+            if (Test-Path $path) { Remove-Item -Recurse -Force $path }
+            New-Item -ItemType Directory -Force -Path $path | Out-Null
+          }
+          dotnet build "$env:GITHUB_WORKSPACE\ui\windows\CoreLifecycleSmoke.csproj" `
+            --configuration Release --output $harness
+          New-Item -ItemType Directory -Force -Path (Join-Path $harness 'CorePayload') | Out-Null
+          Copy-Item (Join-Path $payload '*') (Join-Path $harness 'CorePayload') -Recurse -Force
+          dotnet (Join-Path $harness 'CoreLifecycleSmoke.dll') $root
       - name: Smoke test installed WinUI client
         shell: pwsh
         run: |

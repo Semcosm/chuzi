@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="CoreLifecycleSmokeProgram.cs" />
+    <Compile Include="CoreApiClient.cs" Link="CoreApiClient.cs" />
+    <Compile Include="CoreServiceController.cs" Link="CoreServiceController.cs" />
+    <Compile Include="LauncherClient.cs" Link="LauncherClient.cs" />
+    <Compile Include="LauncherModels.cs" Link="LauncherModels.cs" />
+  </ItemGroup>
+</Project>
