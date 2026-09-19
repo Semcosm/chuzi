@@ -21,8 +21,11 @@ for the connected state during the `chuzi.core/v1` handshake and reconnects
 automatically before account and task calls when a prior connection ended.
 The unpackaged UI now constructs the navigation window and all five pages in
 C# because loading even minimal page XAML reproducibly crashes in
-`Microsoft.UI.Xaml` on the Windows CI runner. The XAML files remain aligned
-layout references for the WinUI Gallery-based implementation.
+`Microsoft.UI.Xaml` on the Windows CI runner. The window keeps Overview as its
+initial content without forcing `NavigationView.SelectedItem` during startup,
+which also triggered a native XAML crash in the installed-client smoke test.
+The XAML files remain aligned layout references for the WinUI Gallery-based
+implementation.
 
 ## Motivation
 
