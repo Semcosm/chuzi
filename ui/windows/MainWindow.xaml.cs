@@ -32,6 +32,7 @@ public sealed partial class MainWindow : Window
         _plugins = new PluginsPage();
         _accounts = new AccountPage();
         _tasks = new TasksPage();
+        ContentFrame.Content = _overview;
 
         _overview.InstallRequested += (_, _) => RunAsync(InstallCoreAsync);
         _overview.StartRequested += (_, _) => RunAsync(StartCoreAsync);
@@ -52,9 +53,17 @@ public sealed partial class MainWindow : Window
         _accounts.SubmitRequested += (_, id) => RunAsync(() => SubmitTaskAsync(id));
         _tasks.RefreshRequested += (_, id) => RunAsync(() => RefreshTaskAsync(id));
         _tasks.CancelRequested += (_, id) => RunAsync(() => CancelTaskAsync(id));
-        Navigation.SelectedItem = Navigation.MenuItems[0];
+        Navigation.Loaded += Navigation_Loaded;
         Activated += MainWindow_Activated;
         Closed += MainWindow_Closed;
+    }
+
+    private void Navigation_Loaded(object sender, RoutedEventArgs args)
+    {
+        if (Navigation.SelectedItem is null && Navigation.MenuItems.Count > 0)
+        {
+            Navigation.SelectedItem = Navigation.MenuItems[0];
+        }
     }
 
     private void BuildNavigation()
