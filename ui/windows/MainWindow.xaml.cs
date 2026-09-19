@@ -5,6 +5,12 @@ namespace Chuzi.Native.Windows;
 
 public sealed partial class MainWindow : Window
 {
+    // Keep the startup XAML deliberately minimal. The Windows App SDK parser
+    // has rejected otherwise valid NavigationView markup in unpackaged,
+    // self-contained deployments; constructing the same controls through the
+    // public WinUI API avoids a process-start crash while preserving behavior.
+    private NavigationView Navigation = null!;
+    private Frame ContentFrame = null!;
     private readonly LauncherClient _launcher;
     private readonly CoreServiceController _core;
     private readonly OverviewPage _overview;
@@ -18,6 +24,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        BuildNavigation();
 
         _launcher = new LauncherClient();
         _core = new CoreServiceController(_launcher);
@@ -50,6 +57,33 @@ public sealed partial class MainWindow : Window
         Activated += MainWindow_Activated;
         Closed += MainWindow_Closed;
     }
+
+    private void BuildNavigation()
+    {
+        ContentFrame = new Frame();
+        Navigation = new NavigationView
+        {
+            IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
+            IsSettingsVisible = false,
+            PaneTitle = "Chuzi",
+        };
+        Navigation.SelectionChanged += Navigation_SelectionChanged;
+        Navigation.Content = ContentFrame;
+        Navigation.MenuItems.Add(CreateNavigationItem("Overview", "overview", Symbol.Home));
+        Navigation.MenuItems.Add(CreateNavigationItem("Plugins", "plugins", Symbol.Repair));
+        Navigation.MenuItems.Add(CreateNavigationItem("Accounts", "accounts", Symbol.Contact));
+        Navigation.MenuItems.Add(CreateNavigationItem("Tasks", "tasks", Symbol.Play));
+        Navigation.MenuItems.Add(CreateNavigationItem("Settings", "settings", Symbol.Setting));
+        RootGrid.Children.Add(Navigation);
+    }
+
+    private static NavigationViewItem CreateNavigationItem(string content, string tag, Symbol symbol)
+        => new()
+        {
+            Content = content,
+            Tag = tag,
+            Icon = new SymbolIcon { Symbol = symbol },
+        };
 
     private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
     {
