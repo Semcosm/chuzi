@@ -169,7 +169,7 @@ internal sealed class CoreServiceController : IDisposable
             if (probe.Status == CoreStatus.Running) return probe;
             await Task.Delay(250, cancellationToken);
         }
-        var timedOutID = process.HasExited ? null : process.Id;
+        int? timedOutID = process.HasExited ? null : process.Id;
         if (process.HasExited)
         {
             var exitCode = process.ExitCode;
