@@ -329,9 +329,16 @@ func TestNetworkComponentManagerRejectsManifestContractMismatch(t *testing.T) {
 		Artifacts: []ReleaseArtifact{{Component: "service", Target: manifest.Target, Version: manifest.Version, Path: "service.tar.gz", Size: int64(len(artifactData)), SHA256: hex.EncodeToString(digest[:])}},
 	}
 	local := manifest
-	local.Components = []Component{{ID: "service", Version: "nightly-other", Artifact: "service.tar.gz"}}
-	if _, err := NewNetworkComponentManager(ManagerOptions{InstallRoot: t.TempDir(), Manifest: local}, index, "https://example.invalid/index.json", "", ArtifactDownloader{}); !errors.Is(err, ErrInvalidManifest) {
-		t.Fatalf("manifest mismatch error = %v", err)
+	local.Channel = ChannelStable
+	local.Version = "v0.0.5"
+	local.Components = []Component{{ID: "service", Version: "v0.0.5", Artifact: "service.tar.gz"}}
+	if _, err := NewNetworkComponentManager(ManagerOptions{InstallRoot: t.TempDir(), Manifest: local}, index, "https://example.invalid/index.json", "", ArtifactDownloader{}); err != nil {
+		t.Fatalf("cross-channel candidate was rejected: %v", err)
+	}
+	wrongTarget := local
+	wrongTarget.Target = "windows-amd64"
+	if _, err := NewNetworkComponentManager(ManagerOptions{InstallRoot: t.TempDir(), Manifest: wrongTarget}, index, "https://example.invalid/index.json", "", ArtifactDownloader{}); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("target mismatch error = %v", err)
 	}
 }
 

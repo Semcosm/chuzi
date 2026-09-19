@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -28,6 +29,13 @@ def main() -> int:
     parser.add_argument("--channel", default="nightly")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+
+    if args.channel not in {"nightly", "test", "stable"}:
+        raise SystemExit(f"unsupported release channel: {args.channel}")
+    if args.channel == "test" and not re.fullmatch(r"test-[0-9]+-[0-9a-fA-F]{12}", args.version):
+        raise SystemExit("test versions must match test-<run>-<sha12>")
+    if args.channel == "stable" and not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", args.version):
+        raise SystemExit("stable versions must match v<major>.<minor>.<patch>")
 
     if len(args.commit) != 40 or any(character not in "0123456789abcdefABCDEF" for character in args.commit):
         raise SystemExit("commit must be a full 40-character SHA-1")

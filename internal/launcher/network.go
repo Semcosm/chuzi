@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 )
@@ -30,18 +29,20 @@ func NewNetworkComponentManager(options ManagerOptions, index ReleaseIndex, inde
 	if err := index.Validate(); err != nil {
 		return nil, err
 	}
-	if options.Manifest.Format == "" {
-		options.Manifest = index.Manifest
+	// The index describes the candidate release being installed. The manifest
+	// passed in ManagerOptions may describe the currently installed release,
+	// which is expected to differ during upgrades or stable/test channel
+	// switches. Validate it when present for corruption detection, but use the
+	// candidate manifest as the filesystem manager's source of truth.
+	if options.Manifest.Format != "" {
+		if err := options.Manifest.Validate(); err != nil {
+			return nil, err
+		}
+		if options.Manifest.Target != index.Target {
+			return nil, fmt.Errorf("%w: component index target differs from installed manifest", ErrInvalidManifest)
+		}
 	}
-	if err := options.Manifest.Validate(); err != nil {
-		return nil, err
-	}
-	if options.Manifest.Target != index.Target || options.Manifest.Channel != index.Channel || options.Manifest.Version != index.Version || options.Manifest.Commit != index.Commit {
-		return nil, fmt.Errorf("%w: component index does not match installed manifest", ErrInvalidManifest)
-	}
-	if !reflect.DeepEqual(options.Manifest, index.Manifest) {
-		return nil, fmt.Errorf("%w: component index manifest differs from installed manifest", ErrInvalidManifest)
-	}
+	options.Manifest = index.Manifest
 	if strings.TrimSpace(indexURL) == "" {
 		return nil, fmt.Errorf("%w: release index URL is required", ErrInvalidPath)
 	}

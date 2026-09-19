@@ -46,7 +46,7 @@ $commit = $env:GITHUB_SHA
 if ([string]::IsNullOrWhiteSpace($commit)) {
     $commit = (& git -C $repoRoot rev-parse HEAD).Trim()
 }
-$channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } else { "nightly" }
+$channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } elseif ($Version -like 'test-*') { "test" } else { "nightly" }
 & python (Join-Path $repoRoot "scripts/generate_release_index.py") `
     --manifest (Join-Path $stageDir "release-manifest.json") `
     --dist (Join-Path $repoRoot "dist") `

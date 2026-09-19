@@ -19,7 +19,7 @@ case "$target" in
 esac
 
 case "$version" in
-  dev|dev-*|nightly-*|v[0-9]*.[0-9]*.[0-9]*) ;;
+  dev|dev-*|nightly-*|test-*|v[0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "invalid build version: $version" >&2; exit 2 ;;
 esac
 
@@ -53,7 +53,10 @@ printf '{\n  "target": "%s",\n  "version": "%s",\n  "commit": "%s",\n  "goos": "
   "$target" "$version" "$commit" "$goos" "$goarch" > "$stage_dir/build-manifest.json"
 
 channel=nightly
-case "$version" in v[0-9]*.[0-9]*.[0-9]*) channel=stable ;; esac
+case "$version" in
+  test-*) channel=test ;;
+  v[0-9]*.[0-9]*.[0-9]*) channel=stable ;;
+esac
 python3 "$repo_root/scripts/generate_release_manifest.py" \
   --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit" \
   --channel "$channel"

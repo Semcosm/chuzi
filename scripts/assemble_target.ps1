@@ -34,7 +34,7 @@ if ([string]::IsNullOrWhiteSpace($commit)) { $commit = (& git -C $repoRoot rev-p
     cgo = $false
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
 
-$channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } else { "nightly" }
+$channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } elseif ($Version -like 'test-*') { "test" } else { "nightly" }
 & python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit --channel $channel
 if ($LASTEXITCODE -ne 0) { throw "release manifest generation failed" }
 Write-Output "assembled $Target at $stageDir"

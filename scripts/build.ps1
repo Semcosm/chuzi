@@ -14,7 +14,7 @@ if ($Target -ne "windows-amd64") {
     throw "build.ps1 runs the native Windows desktop target only; use the matching Unix runner for $Target"
 }
 
-if ($Version -notmatch '^(dev|dev-|nightly-|v[0-9]+\.[0-9]+\.[0-9]+)') {
+if ($Version -notmatch '^(dev|dev-|nightly-|test-|v[0-9]+\.[0-9]+\.[0-9]+)') {
     throw "invalid build version: $Version"
 }
 
@@ -62,7 +62,7 @@ if ([string]::IsNullOrWhiteSpace($commit)) {
     cgo = $false
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
 
-$channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } else { "nightly" }
+$channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } elseif ($Version -like 'test-*') { "test" } else { "nightly" }
 & python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit --channel $channel
 if ($LASTEXITCODE -ne 0) { throw "release manifest generation failed" }
 

@@ -32,7 +32,9 @@ public sealed partial class MainWindow : Window
         _overview.StopRequested += (_, _) => RunAsync(StopCoreAsync);
         _overview.RefreshRequested += (_, _) => RunAsync(RefreshCoreAsync);
         _settings.SaveRequested += (_, settings) => RunAsync(() => SaveSettingsAsync(settings));
-        _settings.InstallCoreRequested += (_, _) => RunAsync(InstallCoreAsync);
+        _settings.CoreChannelChanged += (_, channel) => RunAsync(() => RefreshCoreReleasesAsync(channel));
+        _settings.CoreActionRequested += (_, request) => RunAsync(() => HandleCoreActionAsync(request));
+        _settings.UninstallCoreRequested += (_, _) => RunAsync(UninstallCoreAsync);
         _plugins.RefreshRequested += (_, _) => RunAsync(RefreshPluginsAsync);
         _plugins.InstallRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "install"));
         _plugins.TrustRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "trust"));
@@ -73,6 +75,7 @@ public sealed partial class MainWindow : Window
     {
         await RefreshCoreAsync();
         await LoadSettingsAsync();
+        await RefreshCoreReleasesAsync(_settings.SelectedCoreChannel);
         await RefreshPluginsAsync();
     }
 
@@ -93,7 +96,7 @@ public sealed partial class MainWindow : Window
 
     private async Task InstallCoreAsync()
     {
-        await RunCoreActionAsync(() => _core.InstallAndStartAsync(_shutdown.Token), "Core installed and started.");
+        await RunCoreActionAsync(() => _core.InstallAndStartAsync(_settings.SelectedCoreRelease, _shutdown.Token), "Core installed and started.");
     }
 
     private async Task StartCoreAsync()
@@ -106,17 +109,56 @@ public sealed partial class MainWindow : Window
         try
         {
             _overview.SetBusy(true);
+            _settings.SetBusy(true);
             var snapshot = await _core.StopAsync(_shutdown.Token);
-            _overview.SetSnapshot(snapshot);
-            _settings.SetCoreSnapshot(snapshot);
-            _plugins.SetCoreSnapshot(snapshot);
-            _accounts.SetCoreSnapshot(snapshot);
-            _tasks.SetCoreSnapshot(snapshot);
+            ApplyCoreSnapshot(snapshot);
             _overview.ShowSuccess("Core stopped.");
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
-        catch (Exception) { _overview.ShowError("Core could not be stopped."); }
-        finally { _overview.SetBusy(false); }
+        catch (LauncherException exception) { _overview.ShowError(exception.Message); }
+        catch (Exception exception) { _overview.ShowError($"Core could not be stopped: {exception.Message}"); }
+        finally { _overview.SetBusy(false); _settings.SetBusy(false); }
+    }
+
+    private async Task HandleCoreActionAsync(CoreActionRequest request)
+    {
+        switch (request.Action)
+        {
+            case "install":
+                await RunCoreActionAsync(() => _core.InstallAndStartAsync(request.Release, _shutdown.Token), "Core installed and started.");
+                break;
+            case "replace":
+                if (request.Release is null)
+                {
+                    _settings.ShowError("Select a Core version before replacing it.");
+                    return;
+                }
+                await RunCoreActionAsync(() => _core.ReplaceAndStartAsync(request.Release, _shutdown.Token), "Core replaced and started.");
+                break;
+            case "start":
+                await StartCoreAsync();
+                break;
+            case "stop":
+                await StopCoreAsync();
+                break;
+        }
+    }
+
+    private async Task UninstallCoreAsync()
+    {
+        try
+        {
+            _overview.SetBusy(true);
+            _settings.SetBusy(true);
+            var snapshot = await _core.UninstallAsync(_shutdown.Token);
+            ApplyCoreSnapshot(snapshot);
+            if (snapshot.Status == CoreStatus.Missing) _overview.ShowSuccess("Core uninstalled.");
+            else _overview.ShowError(snapshot.Message);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (LauncherException exception) { _overview.ShowError(exception.Message); }
+        catch (Exception exception) { _overview.ShowError($"Core could not be uninstalled: {exception.Message}"); }
+        finally { _overview.SetBusy(false); _settings.SetBusy(false); }
     }
 
     private async Task RunCoreActionAsync(Func<Task<CoreSnapshot>> action, string success)
@@ -124,19 +166,37 @@ public sealed partial class MainWindow : Window
         try
         {
             _overview.SetBusy(true);
+            _settings.SetBusy(true);
             var snapshot = await action();
-            _overview.SetSnapshot(snapshot);
-            _settings.SetCoreSnapshot(snapshot);
-            _plugins.SetCoreSnapshot(snapshot);
-            _accounts.SetCoreSnapshot(snapshot);
-            _tasks.SetCoreSnapshot(snapshot);
+            ApplyCoreSnapshot(snapshot);
             if (snapshot.Status == CoreStatus.Running) _overview.ShowSuccess(success);
             else _overview.ShowError(snapshot.Message);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (LauncherException exception) { _overview.ShowError(exception.Message); }
-        catch (Exception) { _overview.ShowError("Core operation failed."); }
-        finally { _overview.SetBusy(false); }
+        catch (Exception exception) { _overview.ShowError($"Core operation failed: {exception.Message}"); }
+        finally { _overview.SetBusy(false); _settings.SetBusy(false); }
+    }
+
+    private void ApplyCoreSnapshot(CoreSnapshot snapshot)
+    {
+        _overview.SetSnapshot(snapshot);
+        _settings.SetCoreSnapshot(snapshot);
+        _plugins.SetCoreSnapshot(snapshot);
+        _accounts.SetCoreSnapshot(snapshot);
+        _tasks.SetCoreSnapshot(snapshot);
+    }
+
+    private async Task RefreshCoreReleasesAsync(string channel)
+    {
+        try
+        {
+            var catalog = await _launcher.LoadCoreCatalogAsync(channel, _shutdown.Token);
+            _settings.SetCoreReleases(channel, catalog.Releases);
+        }
+        catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
+        catch (LauncherException exception) { _settings.ShowError(exception.Message); }
+        catch (Exception exception) { _settings.ShowError($"Core releases could not be loaded: {exception.Message}"); }
     }
 
     private async Task LoadSettingsAsync()
@@ -299,7 +359,7 @@ public sealed partial class MainWindow : Window
 
     private async Task<CoreApiClient> ConnectCoreAsync()
     {
-        var client = CoreApiClient.FromDeploymentEnvironment();
+        var client = CoreApiClient.FromDataDirectory(_core.DataDirectory);
         try
         {
             await client.ConnectAsync(_shutdown.Token);
@@ -316,6 +376,7 @@ public sealed partial class MainWindow : Window
     {
         var item = Navigation.MenuItems
             .OfType<NavigationViewItem>()
+            .Concat(Navigation.FooterMenuItems.OfType<NavigationViewItem>())
             .FirstOrDefault(candidate => string.Equals(candidate.Tag?.ToString(), tag, StringComparison.Ordinal));
         if (item is not null) Navigation.SelectedItem = item;
     }

@@ -7,6 +7,15 @@ on:
     branches: [main]
     tags: ['v*.*.*']
   workflow_dispatch:
+    inputs:
+      channel:
+        description: Release channel for a manual build
+        required: true
+        type: choice
+        options:
+          - test
+          - nightly
+        default: test
 
 permissions:
   contents: read
@@ -36,6 +45,7 @@ jobs:
           scripts/test_build_contract.sh
           scripts/test_nightly_package.sh
           scripts/test_nightly_artifact_validator.sh
+          scripts/test_release_catalog.sh
           git diff --check
 
   go_checks:
@@ -132,9 +142,14 @@ jobs:
         id: version
         shell: bash
         run: |
+          dispatch_channel="${{ inputs.channel }}"
           if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             version="$GITHUB_REF_NAME"
-          elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$dispatch_channel" = "test" ]; then
+            version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
           else
             version="dev-${GITHUB_SHA:0:12}"
@@ -174,9 +189,14 @@ jobs:
         id: version
         shell: pwsh
         run: |
+          $dispatchChannel = "${{ inputs.channel }}"
           if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') {
             $version = $env:GITHUB_REF_NAME
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'schedule' -or $env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'schedule') {
+            $version = "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $dispatchChannel -eq 'test') {
+            $version = "test-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
+          } elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
             $version = "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
           } else {
             $version = "dev-$($env:GITHUB_SHA.Substring(0, 12))"
@@ -214,6 +234,55 @@ jobs:
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
+      - name: Smoke test Core install, start, health, and stop
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $payload = Join-Path $env:RUNNER_TEMP 'chuzi-core-payload'
+          $root = Join-Path $env:RUNNER_TEMP 'chuzi-core-lifecycle'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $launcher = Join-Path $payload 'chuzi-launcher.exe'
+          $manifest = Join-Path $payload 'release-manifest.json'
+          $installOutput = & $launcher `
+            -root $root `
+            -source-root $payload `
+            -manifest $manifest `
+            -command component-install `
+            -item service 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $installOutput | Out-String | Write-Error
+            throw "Core component installation failed with exit code $LASTEXITCODE"
+          }
+          $service = Join-Path $root 'chuzi.exe'
+          if (-not (Test-Path $service)) { throw "Core service was not installed: $service" }
+          $configPath = Join-Path $root 'core-ci-config.json'
+          @{
+            data_dir = $root
+            health = @{ listen = '127.0.0.1:18080' }
+            observability = @{ log_path = (Join-Path $root 'core-ci.log') }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 $configPath
+          $process = Start-Process -FilePath $service -ArgumentList @('-config', $configPath) -WorkingDirectory $root -PassThru
+          $healthy = $false
+          try {
+            for ($attempt = 0; $attempt -lt 40; $attempt++) {
+              $process.Refresh()
+              if ($process.HasExited) {
+                $log = Join-Path $root 'core-ci.log'
+                if (Test-Path $log) { Get-Content $log -Tail 80 }
+                throw "Core exited during lifecycle smoke test with code $($process.ExitCode)"
+              }
+              try {
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:18080/healthz' -UseBasicParsing -TimeoutSec 2
+                if ($response.StatusCode -eq 200) { $healthy = $true; break }
+              } catch { }
+              Start-Sleep -Milliseconds 250
+            }
+            if (-not $healthy) { throw 'Core did not become healthy during lifecycle smoke test' }
+          } finally {
+            $process.Refresh()
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
       - name: Smoke test installed WinUI client
         shell: pwsh
         run: |
@@ -285,13 +354,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule" -or $env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
+          $dispatchChannel = "${{ inputs.channel }}"
+          $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $dispatchChannel -eq "test") { "test-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
           "CHUZI_BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
       - name: Resolve build version on Unix
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
+          dispatch_channel="${{ inputs.channel }}"
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$dispatch_channel" = "test" ]; then version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
           echo "CHUZI_BUILD_VERSION=$version" >> "$GITHUB_ENV"
       - name: Assemble target on Windows
         if: runner.os == 'Windows'
@@ -323,6 +394,7 @@ jobs:
           if [ "${{ runner.os }}" = "Windows" ]; then python scripts/validate_release_index.py --index "$index" --dist dist; else python3 scripts/validate_release_index.py --index "$index" --dist dist; fi
           case "$CHUZI_BUILD_VERSION" in
             nightly-*) python3 scripts/validate_nightly_artifact.py --artifact dist --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "$CHUZI_BUILD_VERSION" --channel nightly ;;
+            test-*) python3 scripts/validate_nightly_artifact.py --artifact dist --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "$CHUZI_BUILD_VERSION" --channel test ;;
             v[0-9]*.[0-9]*.[0-9]*) python3 scripts/validate_nightly_artifact.py --artifact dist --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "$CHUZI_BUILD_VERSION" --channel stable ;;
           esac
       - name: Upload nightly target bundle
@@ -365,9 +437,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          dispatch_channel="${{ inputs.channel }}"
           if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             version="$GITHUB_REF_NAME"
             channel=stable
+          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$dispatch_channel" = "test" ]; then
+            version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+            channel=test
           else
             version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
             channel=nightly
@@ -480,3 +556,93 @@ jobs:
           while IFS= read -r -d '' asset; do release_assets+=("$asset"); done < <(find dist/attestations -maxdepth 1 -type f -name '*.signed.json' -print0 | sort -z)
           [ "${#release_assets[@]}" -gt 0 ] || { echo 'no release assets were produced' >&2; exit 1; }
           gh release create "$GITHUB_REF_NAME" --verify-tag --title "chuzi $GITHUB_REF_NAME" --notes-file "releases/$GITHUB_REF_NAME.md" "${release_assets[@]}"
+
+  publish-release-catalog:
+    name: publish-release-catalog
+    if: (github.event_name == 'workflow_dispatch' && inputs.channel == 'test') || startsWith(github.ref, 'refs/tags/v')
+    needs: [assemble_target, artifact_integration, chuzi_build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          pattern: chuzi-nightly-*
+          path: dist
+          merge-multiple: false
+      - name: Resolve catalog release metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          dispatch_channel="${{ inputs.channel }}"
+          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            version="$GITHUB_REF_NAME"
+            channel=stable
+          elif [ "$dispatch_channel" = "test" ]; then
+            version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
+            channel=test
+          else
+            echo 'catalog publishing requires a test dispatch or stable tag' >&2
+            exit 1
+          fi
+          {
+            echo "CHUZI_CATALOG_VERSION=$version"
+            echo "CHUZI_CATALOG_CHANNEL=$channel"
+          } >> "$GITHUB_ENV"
+      - name: Validate target artifacts for catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
+            artifact_dir="dist/chuzi-nightly-$target"
+            index="$artifact_dir/chuzi-${CHUZI_CATALOG_VERSION}-${target}.index.json"
+            test -f "$index"
+            python3 scripts/validate_release_index.py --index "$index" --dist "$artifact_dir"
+            python3 scripts/validate_nightly_artifact.py --artifact "$artifact_dir" --target "$target" --commit "$GITHUB_SHA" --version "$CHUZI_CATALOG_VERSION" --channel "$CHUZI_CATALOG_CHANNEL"
+          done
+      - name: Prepare release-catalog worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          catalog_dir="$RUNNER_TEMP/release-catalog"
+          git fetch origin refs/heads/release-catalog:refs/remotes/origin/release-catalog || true
+          if git show-ref --verify --quiet refs/remotes/origin/release-catalog; then
+            git worktree add "$catalog_dir" refs/remotes/origin/release-catalog
+          else
+            git worktree add --detach "$catalog_dir" HEAD
+            git -C "$catalog_dir" switch --orphan release-catalog
+            # The orphan worktree starts with the source checkout still on
+            # disk. Remove it before `git add -A`, otherwise the catalog branch
+            # would accidentally publish the entire repository.
+            git -C "$catalog_dir" clean -fdx
+          fi
+          echo "CHUZI_CATALOG_DIR=$catalog_dir" >> "$GITHUB_ENV"
+      - name: Publish catalog files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/publish_release_catalog.py \
+            --artifact-root dist \
+            --output-root "$CHUZI_CATALOG_DIR" \
+            --channel "$CHUZI_CATALOG_CHANNEL" \
+            --version "$CHUZI_CATALOG_VERSION" \
+            --commit "$GITHUB_SHA" \
+            --base-url "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/release-catalog" \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      - name: Commit and push release catalog
+        shell: bash
+        run: |
+          set -euo pipefail
+          git -C "$CHUZI_CATALOG_DIR" config user.name "github-actions[bot]"
+          git -C "$CHUZI_CATALOG_DIR" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "$CHUZI_CATALOG_DIR" add -A
+          if git -C "$CHUZI_CATALOG_DIR" diff --cached --quiet; then
+            echo 'release catalog already contains this version'
+            exit 0
+          fi
+          git -C "$CHUZI_CATALOG_DIR" commit -m "chore(release): publish $CHUZI_CATALOG_CHANNEL $CHUZI_CATALOG_VERSION"
+          git -C "$CHUZI_CATALOG_DIR" push origin HEAD:release-catalog

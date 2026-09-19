@@ -38,6 +38,7 @@ func main() {
 	settingsInput := flag.String("settings-input", "", "JSON file for settings-save")
 	lockPath := flag.String("lock-path", "", "launcher mutation lock path (default: <root>/.chuzi/launcher.lock)")
 	progress := flag.Bool("progress", false, "write operation progress to stderr")
+	allowRequiredRemoval := flag.Bool("allow-required-removal", false, "allow removal of required components (only for explicit Core uninstall)")
 	showVersion := flag.Bool("version", false, "print launcher version")
 	flag.Parse()
 	if *showVersion {
@@ -73,8 +74,8 @@ func main() {
 		}
 		// An index describes the candidate release, so an installed manifest may
 		// legitimately have an older version or commit during an upgrade.
-		if releaseIndex != nil && (local.Target != manifest.Target || local.Channel != manifest.Channel) {
-			fatal(fmt.Errorf("local manifest target/channel does not match release index"))
+		if releaseIndex != nil && local.Target != manifest.Target {
+			fatal(fmt.Errorf("local manifest target does not match release index"))
 		}
 		if releaseIndex == nil {
 			manifest = local
@@ -268,7 +269,7 @@ func main() {
 			fatal(err)
 		}
 		managerOptions := launcher.ManagerOptions{InstallRoot: root, SourceRoot: source, Manifest: manifest, Trust: launcher.PluginTrustPolicy{AllowedSigners: splitValues(*trustedSigners)}, Progress: progressReporter(*progress)}
-		if handled, err := runComponentCommand(ctx, *command, *item, managerOptions, releaseIndex, *releaseIndexURL, *downloadDir, *allowHTTPForLoopback); handled {
+		if handled, err := runComponentCommand(ctx, *command, *item, managerOptions, releaseIndex, *releaseIndexURL, *downloadDir, *allowHTTPForLoopback, *allowRequiredRemoval); handled {
 			if err != nil {
 				_ = lock.Release()
 				fatal(err)
@@ -378,7 +379,13 @@ func splitValues(value string) []string {
 	return values
 }
 
-func runComponentCommand(ctx context.Context, command, id string, options launcher.ManagerOptions, index *launcher.ReleaseIndex, indexURL, downloadDir string, allowHTTPForLoopback bool) (bool, error) {
+func runComponentCommand(ctx context.Context, command, id string, options launcher.ManagerOptions, index *launcher.ReleaseIndex, indexURL, downloadDir string, allowHTTPForLoopback, allowRequiredRemoval bool) (bool, error) {
+	if command == "component-remove" {
+		if allowRequiredRemoval && id != "service" {
+			return true, fmt.Errorf("%w: required removal is limited to the Core service", launcher.ErrInvalidPath)
+		}
+		options.AllowRequiredRemoval = allowRequiredRemoval
+	}
 	var manager launcher.ComponentManager
 	local, err := launcher.NewFilesystemComponentManager(options)
 	if err != nil {

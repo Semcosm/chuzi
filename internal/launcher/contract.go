@@ -18,6 +18,7 @@ const (
 	ManifestFormat     = "chuzi-release/v1"
 	ReleaseIndexFormat = "chuzi-release-index/v1"
 	ChannelNightly     = "nightly"
+	ChannelTest        = "test"
 	ChannelStable      = "stable"
 	PluginAPIV1        = "chuzi.plugin/v1"
 )
@@ -192,7 +193,7 @@ func (m ReleaseManifest) Validate() error {
 		strings.TrimSpace(m.Version) == "" || strings.TrimSpace(m.Target) == "" {
 		return fmt.Errorf("%w: format, channel, version, and target are required", ErrInvalidManifest)
 	}
-	if m.Channel != ChannelNightly && m.Channel != ChannelStable {
+	if m.Channel != ChannelNightly && m.Channel != ChannelTest && m.Channel != ChannelStable {
 		return fmt.Errorf("%w: unknown channel %q", ErrInvalidManifest, m.Channel)
 	}
 	seenComponents := make(map[string]struct{}, len(m.Components))
@@ -473,7 +474,7 @@ type BehaviorSettings struct {
 }
 
 func (s BehaviorSettings) Validate() error {
-	if s.UpdateChannel != ChannelNightly && s.UpdateChannel != ChannelStable {
+	if s.UpdateChannel != ChannelNightly && s.UpdateChannel != ChannelTest && s.UpdateChannel != ChannelStable {
 		return fmt.Errorf("%w: update channel %q", ErrInvalidManifest, s.UpdateChannel)
 	}
 	if s.CheckInterval < 0 {

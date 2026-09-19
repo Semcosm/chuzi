@@ -82,7 +82,7 @@ func (c ManifestUpdateChecker) Check(ctx context.Context, request UpdateRequest)
 	if strings.TrimSpace(request.CurrentVersion) == "" || strings.TrimSpace(request.Target) == "" {
 		return UpdateInfo{}, fmt.Errorf("%w: current version and target are required", ErrInvalidManifest)
 	}
-	if request.Channel != ChannelNightly && request.Channel != ChannelStable {
+	if request.Channel != ChannelNightly && request.Channel != ChannelTest && request.Channel != ChannelStable {
 		return UpdateInfo{}, fmt.Errorf("%w: update channel %q", ErrInvalidManifest, request.Channel)
 	}
 	if c.Source == nil {

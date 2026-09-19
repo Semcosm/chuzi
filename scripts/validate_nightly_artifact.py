@@ -24,6 +24,7 @@ TARGETS = {
 COMPONENTS = ("launcher", "service", "browser-worker")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
+TEST_VERSION_RE = re.compile(r"^test-[0-9]+-[0-9a-fA-F]{12}$")
 
 
 def digest(path: Path) -> str:
@@ -160,6 +161,8 @@ def validate(args) -> dict:
         raise ValueError("release version is missing")
     if args.channel == "nightly" and not index["version"].startswith("nightly-"):
         raise ValueError("nightly version is missing")
+    if args.channel == "test" and not TEST_VERSION_RE.fullmatch(index["version"]):
+        raise ValueError("test version is missing")
     if args.channel == "stable" and not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", index["version"]):
         raise ValueError("stable version is invalid")
     if not COMMIT_RE.fullmatch(str(index.get("commit", ""))):
@@ -263,7 +266,7 @@ def main() -> int:
     parser.add_argument("--target", required=True)
     parser.add_argument("--commit", default="")
     parser.add_argument("--version", default="")
-    parser.add_argument("--channel", choices=("nightly", "stable"), default="nightly")
+    parser.add_argument("--channel", choices=("nightly", "test", "stable"), default="nightly")
     parser.add_argument("--extract-launcher", type=Path)
     args = parser.parse_args()
     try:

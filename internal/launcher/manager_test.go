@@ -110,6 +110,34 @@ func TestFilesystemComponentManagerDependenciesAndPersistence(t *testing.T) {
 	}
 }
 
+func TestFilesystemComponentManagerExplicitCoreRemovalAllowsRequiredService(t *testing.T) {
+	source, install := t.TempDir(), t.TempDir()
+	resource := resourceFor(t, source, "chuzi.exe", "core")
+	manifest := ReleaseManifest{Format: ManifestFormat, Channel: ChannelTest, Version: "test-1-0123456789ab", Target: "windows-amd64", Components: []Component{{ID: "service", Version: "test-1-0123456789ab", Required: true, Resources: []Resource{resource}}}}
+	manager, err := NewFilesystemComponentManager(ManagerOptions{InstallRoot: install, SourceRoot: source, Manifest: manifest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(context.Background(), "service"); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Remove(context.Background(), "service"); !errors.Is(err, ErrRequired) {
+		t.Fatalf("normal required removal error = %v", err)
+	}
+	privileged, err := NewFilesystemComponentManager(ManagerOptions{
+		InstallRoot: install, SourceRoot: source, Manifest: manifest, AllowRequiredRemoval: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := privileged.Remove(context.Background(), "service"); err != nil {
+		t.Fatalf("explicit Core removal failed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(install, "chuzi.exe")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Core executable remains after removal: %v", err)
+	}
+}
+
 func TestFilesystemManagerInitializationIsExplicitAndDurable(t *testing.T) {
 	root := t.TempDir()
 	launcherResource := resourceFor(t, root, "chuzi-launcher", "launcher")
