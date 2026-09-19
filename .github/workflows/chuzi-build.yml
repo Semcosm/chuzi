@@ -214,6 +214,31 @@ jobs:
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
+      - name: Smoke test installed WinUI client
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'chuzi-ui\ChuziSetup.exe'
+          $installDir = Join-Path ${env:ProgramFiles} 'Chuzi'
+          Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait
+          $exe = Join-Path $installDir 'Chuzi.Native.Windows.exe'
+          if (-not (Test-Path $exe)) { throw "Installed WinUI executable is missing: $exe" }
+          $process = Start-Process -FilePath $exe -WorkingDirectory $installDir -PassThru
+          try {
+            Start-Sleep -Seconds 5
+            $process.Refresh()
+            if ($process.HasExited) {
+              $startupLog = Join-Path $env:LOCALAPPDATA 'Chuzi\startup.log'
+              if (Test-Path $startupLog) { Get-Content $startupLog -Tail 80 }
+              Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-2) } -ErrorAction SilentlyContinue |
+                Where-Object { $_.ProviderName -in @('Application Error', 'Windows Error Reporting', '.NET Runtime') } |
+                Select-Object -First 10 TimeCreated, ProviderName, Id, Message |
+                Format-List
+              throw "Installed WinUI client exited during startup with code $($process.ExitCode)"
+            }
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
       - name: Upload Windows installer EXE
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

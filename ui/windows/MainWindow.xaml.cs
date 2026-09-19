@@ -5,18 +5,24 @@ namespace Chuzi.Native.Windows;
 
 public sealed partial class MainWindow : Window
 {
-    private readonly LauncherClient _launcher = new();
+    private readonly LauncherClient _launcher;
     private readonly CoreServiceController _core;
-    private readonly OverviewPage _overview = new();
-    private readonly SettingsPage _settings = new();
-    private readonly PluginsPage _plugins = new();
+    private readonly OverviewPage _overview;
+    private readonly SettingsPage _settings;
+    private readonly PluginsPage _plugins;
     private readonly CancellationTokenSource _shutdown = new();
     private bool _loaded;
 
     public MainWindow()
     {
         InitializeComponent();
+
+        _launcher = new LauncherClient();
         _core = new CoreServiceController(_launcher);
+        _overview = new OverviewPage();
+        _settings = new SettingsPage();
+        _plugins = new PluginsPage();
+
         _overview.InstallRequested += (_, _) => RunAsync(InstallCoreAsync);
         _overview.StartRequested += (_, _) => RunAsync(StartCoreAsync);
         _overview.StopRequested += (_, _) => RunAsync(StopCoreAsync);
@@ -30,7 +36,6 @@ public sealed partial class MainWindow : Window
         _plugins.EnableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "enable"));
         _plugins.DisableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "disable"));
         _plugins.RemoveRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "remove"));
-        Navigation.SelectedItem = Navigation.MenuItems[0];
         ContentFrame.Content = _overview;
         Activated += MainWindow_Activated;
         Closed += MainWindow_Closed;
@@ -43,16 +48,9 @@ public sealed partial class MainWindow : Window
         RunAsync(RefreshAllAsync);
     }
 
-    private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
-    {
-        if (args.SelectedItem is not NavigationViewItem item) return;
-        ContentFrame.Content = item.Tag?.ToString() switch
-        {
-            "settings" => _settings,
-            "plugins" => _plugins,
-            _ => _overview,
-        };
-    }
+    private void OverviewButton_Click(object sender, RoutedEventArgs e) => ContentFrame.Content = _overview;
+    private void SettingsButton_Click(object sender, RoutedEventArgs e) => ContentFrame.Content = _settings;
+    private void PluginsButton_Click(object sender, RoutedEventArgs e) => ContentFrame.Content = _plugins;
 
     private async Task RefreshAllAsync()
     {
