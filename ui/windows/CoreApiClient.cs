@@ -17,11 +17,17 @@ public sealed record CoreRequest(
     [property: JsonPropertyName("request_id")] string RequestId,
     [property: JsonPropertyName("account")] string Account,
     [property: JsonPropertyName("state")] string State,
-    [property: JsonPropertyName("attempt")] int Attempt);
+    [property: JsonPropertyName("attempt")] int Attempt,
+    [property: JsonPropertyName("last_failure")] string? LastFailure = null);
 
 internal sealed record SubmitResult(CoreRequest Request, bool Idempotent);
 internal sealed record ErrorPayload(string Code, string Message);
 internal sealed record HelloResult(string Version, string[] Methods);
+public sealed record CoreAccount(
+    [property: JsonPropertyName("account")] string Account,
+    [property: JsonPropertyName("state")] string State,
+    [property: JsonPropertyName("request_id")] string RequestID,
+    [property: JsonPropertyName("revision")] ulong Revision);
 
 internal sealed class WireEnvelope
 {
@@ -106,6 +112,12 @@ internal sealed class CoreApiClient : IDisposable
     {
         EnsureConnected();
         return CallAsync<CoreRequest>("get_request", new { request_id = requestID }, cancellationToken);
+    }
+
+    public Task<CoreAccount> GetAccountAsync(string accountID, CancellationToken cancellationToken)
+    {
+        EnsureConnected();
+        return CallAsync<CoreAccount>("get_account", new { account_id = accountID }, cancellationToken);
     }
 
     public Task<CoreRequest> CancelRequestAsync(string requestID, CancellationToken cancellationToken)
