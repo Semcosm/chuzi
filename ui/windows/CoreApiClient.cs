@@ -102,14 +102,32 @@ internal sealed class CoreApiClient : IDisposable
         {
             return;
         }
-        await _pipe.ConnectAsync(5000, cancellationToken);
-        _readerTask = Task.Run(ReadLoopAsync);
-        var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken);
-        if (hello.Version != Protocol)
+        try
         {
-            throw new CoreApiException("unavailable", "Core protocol version is not supported.");
+            await _pipe.ConnectAsync(5000, cancellationToken);
+            if (!_pipe.IsConnected)
+            {
+                throw new CoreApiException("unavailable", "Core service pipe did not connect.");
+            }
+
+            // Start the reader before writing hello. Task.Run introduced a
+            // scheduling window where the first response could race the
+            // reader, and a just-created Windows pipe can briefly report an
+            // unconnected state while the server finishes accepting it.
+            _readerTask = ReadLoopAsync();
+            var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken);
+            if (hello.Version != Protocol)
+            {
+                throw new CoreApiException("unavailable", "Core protocol version is not supported.");
+            }
+            _connected = true;
         }
-        _connected = true;
+        catch
+        {
+            _connected = false;
+            FailPending(new CoreApiException("unavailable", "Core service pipe connection failed."));
+            throw;
+        }
     }
 
     public async Task<CoreRequest> SubmitRequestAsync(string accountID, CancellationToken cancellationToken)
@@ -248,7 +266,7 @@ internal sealed class CoreApiClient : IDisposable
                 }
             }
         }
-        catch (Exception exception) when (exception is CoreApiException or IOException or JsonException or OperationCanceledException or ObjectDisposedException)
+        catch (Exception exception) when (exception is CoreApiException or IOException or InvalidOperationException or JsonException or OperationCanceledException or ObjectDisposedException)
         {
             var error = exception is JsonException
                 ? new CoreApiException("internal", "Invalid Core response.")
