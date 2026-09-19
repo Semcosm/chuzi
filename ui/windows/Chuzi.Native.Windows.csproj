@@ -40,7 +40,6 @@
   -->
   <Target Name="CopyProjectPriForUnpackagedPublish"
           AfterTargets="Publish"
-          DependsOnTargets="GenerateProjectPriFile"
           Condition="'$(WindowsPackageType)' == 'None' and '$(UseWinUI)' == 'true'">
     <!--
       The SDK's PRI properties are not populated consistently across
