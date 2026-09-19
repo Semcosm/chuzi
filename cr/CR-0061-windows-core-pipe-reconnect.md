@@ -5,12 +5,12 @@ Head or Range: feat/windows-core-release-loop
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): recover Core operations from pipe write races
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 61c9ad70581eab60c8955d6ab616c7d29158f035
-Head OID: 1d9dab09410dfa0be17d3e0e62cd83dcf4e4c80d
+Head OID: 3ab323d4cc0a93917e32845781da7e805f84c132
 Integrated Result: pending
 
 ## Summary
@@ -28,8 +28,11 @@ existing process is elevated or otherwise hidden from inspection.
 `NamedPipeClientStream` can expose a connected state before Windows accepts the
 first write on an asynchronous handle. Retrying that handle does not repair its
 state, so UI actions such as account lookup and task operations surfaced the
-platform exception. Process inspection is not a reliable readiness signal for
-an elevated Core process, and using it alone can cause duplicate starts.
+platform exception. A synchronous write avoids that race, but an unbounded
+synchronous write can block when the peer has not completed its first read; the
+write is therefore run off the UI thread with a timeout and a fresh-pipe retry.
+Process inspection is not a reliable readiness signal for an elevated Core
+process, and using it alone can cause duplicate starts.
 
 ## Test Evidence
 
@@ -45,16 +48,19 @@ Local checks:
 
 `git diff --check`
 
+Windows CI is required to pass the Core lifecycle and installed-client smoke
+tests for this revision.
+
 Windows CI must compile the native client and pass the existing Core named-pipe
 round-trip and installed-client smoke tests before integration.
 
 ## Risk
 
 The change is limited to the Windows native transport and lifecycle status
-probe. Synchronous writes are bounded by the Core frame limit and the Core
-server continuously reads the connection. The bounded status probe adds a
-short connection attempt during refresh but avoids long waits when Core is not
-running.
+probe. Writes are bounded by a two-second timeout and the Core frame limit;
+timeouts replace the pipe handle before retrying. The bounded status probe adds
+a short connection attempt during refresh but avoids long waits when Core is
+not running.
 
 ## Rollback
 
