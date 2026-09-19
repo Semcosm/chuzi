@@ -279,6 +279,8 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $healthy) { throw 'Core did not become healthy during lifecycle smoke test' }
+            $pipeSmokeProject = Join-Path $env:GITHUB_WORKSPACE 'ui/windows/CorePipeSmoke.csproj'
+            dotnet run --project $pipeSmokeProject --configuration Release -- $root
           } finally {
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
