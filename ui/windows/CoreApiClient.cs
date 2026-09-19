@@ -48,7 +48,6 @@ internal sealed class CoreApiClient : IDisposable
     private readonly string _pipeName;
     private readonly NamedPipeClientStream _pipe;
     private readonly StreamReader _reader;
-    private readonly StreamWriter _writer;
     private readonly ConcurrentDictionary<string, TaskCompletionSource<WireEnvelope>> _pending = new();
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private readonly CancellationTokenSource _shutdown = new();
@@ -73,7 +72,6 @@ internal sealed class CoreApiClient : IDisposable
         _pipeName = "chuzi-core-" + Convert.ToHexString(hash.AsSpan(0, 8)).ToLowerInvariant();
         _pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         _reader = new StreamReader(_pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
-        _writer = new StreamWriter(_pipe, new UTF8Encoding(false), 1024, leaveOpen: true) { AutoFlush = true };
     }
 
     public static CoreApiClient FromDeploymentEnvironment()
@@ -250,7 +248,13 @@ internal sealed class CoreApiClient : IDisposable
                     // is the authoritative signal; the write itself is what
                     // determines whether the server has finished accepting
                     // the connection.
-                    await _writer.WriteLineAsync(json.AsMemory(), cancellationToken);
+                    // Create a fresh writer for every attempt so a failed
+                    // flush cannot leave buffered JSON to be sent twice.
+                    using var writer = new StreamWriter(_pipe, new UTF8Encoding(false), 1024, leaveOpen: true)
+                    {
+                        AutoFlush = true,
+                    };
+                    await writer.WriteLineAsync(json.AsMemory(), cancellationToken);
                     return;
                 }
                 catch (InvalidOperationException exception)
@@ -329,7 +333,6 @@ internal sealed class CoreApiClient : IDisposable
     {
         _shutdown.Cancel();
         FailPending(new CoreApiException("cancelled", "Core client closed."));
-        _writer.Dispose();
         _reader.Dispose();
         _pipe.Dispose();
         _writeLock.Dispose();
