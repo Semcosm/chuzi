@@ -120,11 +120,7 @@ internal sealed class CoreApiClient : IDisposable
             for (var attempt = 0; attempt < PipeConnectAttempts; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                // Prefer a synchronous handle. Some Windows/.NET builds
-                // report an overlapped client as connected before accepting
-                // its first write. Keep the asynchronous handle as a final
-                // compatibility fallback, never as the first attempt.
-                var synchronous = attempt < PipeConnectAttempts - 1;
+                var synchronous = attempt >= 1;
                 var pipeOptions = synchronous ? PipeOptions.None : PipeOptions.Asynchronous;
                 var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, pipeOptions);
                 var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
@@ -132,24 +128,19 @@ internal sealed class CoreApiClient : IDisposable
                 {
                     await ConnectPipeAsync(pipe, cancellationToken).ConfigureAwait(false);
                     await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
+                    await Task.Delay(PipeWriteRetryDelay, cancellationToken).ConfigureAwait(false);
 
-                    // Publish the connection before sending hello so the
-                    // normal request path and its reader use the same handle.
-                    // The previous implementation disposed this stream in a
-                    // finally block after hello, then left _connected=true;
-                    // the next operation consequently had no connected pipe.
-                    _pipe = pipe;
-                    _reader = reader;
-                    _readerTask = Task.Run(() => ReadLoopAsync(reader));
-                    var hello = await CallAsync<HelloResult>(
-                        "hello",
-                        new { version = Protocol },
-                        cancellationToken,
-                        reconnectOnWriteFailure: false).ConfigureAwait(false);
-                    if (!string.Equals(hello.Version, Protocol, StringComparison.Ordinal))
+                    var helloID = "ui-hello-" + Interlocked.Increment(ref _nextID);
+                    var hello = new WireEnvelope
                     {
-                        throw new CoreApiException("unavailable", "Core protocol version is not supported.");
-                    }
+                        Protocol = Protocol,
+                        Id = helloID,
+                        Method = "hello",
+                        Params = JsonSerializer.SerializeToElement(new { version = Protocol }, JsonOptions),
+                    };
+                    await WriteFrameWithTimeoutAsync(pipe, Utf8.GetBytes(JsonSerializer.Serialize(hello, JsonOptions) + "\n"), cancellationToken, synchronous).ConfigureAwait(false);
+                    var response = await ReadEnvelopeWithTimeoutAsync(reader, cancellationToken).ConfigureAwait(false);
+                    ValidateHelloResponse(response, helloID);
                     _connected = true;
                     return;
                 }
@@ -170,6 +161,11 @@ internal sealed class CoreApiClient : IDisposable
                     ResetConnection(pipe, reader);
                     last = exception;
                     await RetryConnectionAsync(attempt, cancellationToken).ConfigureAwait(false);
+                }
+                finally
+                {
+                    reader.Dispose();
+                    pipe.Dispose();
                 }
             }
             throw new CoreApiException("unavailable", $"Core service pipe connection failed: {last?.Message ?? "unknown error"}");
@@ -282,10 +278,7 @@ internal sealed class CoreApiClient : IDisposable
             // WriteAsync with "pipe hasn't been connected yet". Retry that
             // exact transport path with a synchronous handle; the blocking
             // write is kept off the UI thread and remains bounded below.
-            // Keep synchronous handles as the primary path for the same
-            // first-write reason as ConnectAsync. The asynchronous handle is
-            // retained only as a final compatibility fallback.
-            var synchronous = attempt < 3;
+            var synchronous = attempt >= 1;
             var pipeOptions = synchronous ? PipeOptions.None : PipeOptions.Asynchronous;
             var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, pipeOptions);
             var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
@@ -638,7 +631,7 @@ internal sealed class CoreApiClient : IDisposable
         NamedPipeClientStream pipe,
         byte[] frame,
         CancellationToken cancellationToken,
-        bool synchronous = true)
+        bool synchronous = false)
     {
         // Keep the async implementation for normal overlapped handles. For
         // the Windows fallback path, a synchronous Write avoids the native
@@ -670,7 +663,10 @@ internal sealed class CoreApiClient : IDisposable
 
     private static async Task ConnectPipeAsync(NamedPipeClientStream pipe, CancellationToken cancellationToken)
     {
-        var connectTask = Task.Run(() => pipe.Connect(5000));
+        // Use the native async connect path for overlapped handles. Running
+        // the synchronous Connect method on a worker can publish the handle
+        // one scheduler turn before Windows accepts its first WriteAsync.
+        var connectTask = pipe.ConnectAsync(5000, CancellationToken.None);
         try
         {
             await connectTask.WaitAsync(cancellationToken).ConfigureAwait(false);
