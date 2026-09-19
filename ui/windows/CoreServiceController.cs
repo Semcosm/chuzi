@@ -215,7 +215,7 @@ internal sealed class CoreServiceController : IDisposable
             using var process = Process.GetProcessById(running.Id);
             process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(cancellationToken);
-            await WaitForServiceExitAsync(executable, cancellationToken);
+            await WaitForServiceExitAsync(executable!, cancellationToken);
         }
         catch (ArgumentException) { }
         catch (InvalidOperationException) { }
@@ -370,7 +370,7 @@ internal sealed class CoreServiceController : IDisposable
     {
         if (FindServiceExecutable() is not null) return true;
         var worker = Path.Combine(_launcher.DataRoot, "browser-worker");
-        try { return Directory.Exists(worker) && Directory.EnumerateFileSystemEntries(worker).Any(); }
+        try { return Directory.Exists(worker) && Directory.EnumerateFiles(worker, "*", SearchOption.AllDirectories).Any(); }
         catch (UnauthorizedAccessException) { return true; }
     }
 

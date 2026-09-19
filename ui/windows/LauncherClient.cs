@@ -130,6 +130,7 @@ internal sealed class LauncherClient
             await RemoveComponentWithRetryAsync("browser-worker", allowRequiredRemoval: false, cancellationToken);
         }
         catch (LauncherException exception) when (IsMissingItemError(exception.Message)) { }
+        RemoveEmptyDirectories(Path.Combine(DataRoot, "browser-worker"));
         try { File.Delete(Path.Combine(DataRoot, "release-manifest.json")); } catch (FileNotFoundException) { }
     }
 
@@ -173,6 +174,27 @@ internal sealed class LauncherClient
         {
             throw new LauncherException($"Legacy Core files could not be removed: {exception.Message}");
         }
+    }
+
+    private static void RemoveEmptyDirectories(string root)
+    {
+        if (!Directory.Exists(root)) return;
+        try
+        {
+            foreach (var directory in Directory.EnumerateDirectories(root, "*", SearchOption.AllDirectories)
+                         .OrderByDescending(path => path.Length))
+            {
+                try
+                {
+                    if (!Directory.EnumerateFileSystemEntries(directory).Any()) Directory.Delete(directory);
+                }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+            if (!Directory.EnumerateFileSystemEntries(root).Any()) Directory.Delete(root);
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     public async Task<CoreReleaseCatalog> LoadCoreCatalogAsync(string channel, CancellationToken cancellationToken)
