@@ -231,6 +231,17 @@ internal sealed class CoreApiClient : IDisposable
 
     private async Task<T> CallAsync<T>(string method, object parameters, CancellationToken cancellationToken, bool reconnectOnWriteFailure = true)
     {
+        // Windows named-pipe handles created for synchronous I/O can hang on
+        // their second write on some go-winio/Windows combinations. Keep the
+        // long-lived connection for readiness probes, but issue each API call
+        // over a fresh connection and batch the handshake with the request in
+        // one write. This also avoids the first overlapped-write race seen on
+        // asynchronous handles.
+        if (method != "hello")
+        {
+            return await CallOnFreshConnectionAsync<T>(method, parameters, cancellationToken).ConfigureAwait(false);
+        }
+
         var requestID = "ui-call-" + Interlocked.Increment(ref _nextID);
         var pending = new TaskCompletionSource<WireEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously);
         _pending[requestID] = pending;
@@ -273,6 +284,142 @@ internal sealed class CoreApiClient : IDisposable
         {
             _pending.TryRemove(requestID, out _);
         }
+    }
+
+    private async Task<T> CallOnFreshConnectionAsync<T>(string method, object parameters, CancellationToken cancellationToken)
+    {
+        var requestID = "ui-call-" + Interlocked.Increment(ref _nextID);
+        var helloID = "ui-hello-" + Interlocked.Increment(ref _nextID);
+        Exception? last = null;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.None);
+            var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
+            try
+            {
+                await ConnectPipeAsync(pipe, cancellationToken).ConfigureAwait(false);
+                await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
+
+                var hello = new WireEnvelope
+                {
+                    Protocol = Protocol,
+                    Id = helloID,
+                    Method = "hello",
+                    Params = JsonSerializer.SerializeToElement(new { version = Protocol }, JsonOptions),
+                };
+                var request = new WireEnvelope
+                {
+                    Protocol = Protocol,
+                    Id = requestID,
+                    Method = method,
+                    Params = JsonSerializer.SerializeToElement(parameters, JsonOptions),
+                };
+                var frame = Utf8.GetBytes(JsonSerializer.Serialize(hello, JsonOptions) + "\n" + JsonSerializer.Serialize(request, JsonOptions) + "\n");
+                if (frame.Length > 1 << 20)
+                {
+                    throw new CoreApiException("invalid_argument", "Core request is too large.");
+                }
+                await WriteFrameWithTimeoutAsync(pipe, frame, cancellationToken).ConfigureAwait(false);
+
+                var helloResponse = await ReadEnvelopeWithTimeoutAsync(reader, cancellationToken).ConfigureAwait(false);
+                ValidateHelloResponse(helloResponse, helloID);
+                var response = await ReadEnvelopeWithTimeoutAsync(reader, cancellationToken).ConfigureAwait(false);
+                return DeserializeResponse<T>(response, requestID);
+            }
+            catch (CoreApiException exception) when (exception.Code == "unavailable")
+            {
+                last = exception;
+            }
+            catch (Exception exception) when (exception is IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                last = exception;
+            }
+            finally
+            {
+                reader.Dispose();
+                pipe.Dispose();
+            }
+
+            if (attempt + 1 < 3)
+            {
+                await Task.Delay(PipeWriteRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        throw new CoreApiException("unavailable", $"Core service pipe is not connected: {last?.Message ?? "unknown error"}");
+    }
+
+    private static void ValidateHelloResponse(WireEnvelope response, string requestID)
+    {
+        if (response.Protocol != Protocol || response.Id != requestID)
+        {
+            throw new CoreApiException("internal", "Invalid Core response.");
+        }
+        if (response.Type == "error")
+        {
+            var error = response.Error ?? new ErrorPayload("internal", "Core operation failed.");
+            throw new CoreApiException(error.Code, error.Message);
+        }
+        if (response.Type != "result" || response.Result is null)
+        {
+            throw new CoreApiException("internal", "Invalid Core response.");
+        }
+        var hello = response.Result.Value.Deserialize<HelloResult>(JsonOptions)
+            ?? throw new CoreApiException("internal", "Invalid Core response.");
+        if (hello.Version != Protocol)
+        {
+            throw new CoreApiException("unavailable", "Core protocol version is not supported.");
+        }
+    }
+
+    private static T DeserializeResponse<T>(WireEnvelope response, string requestID)
+    {
+        if (response.Protocol != Protocol || response.Id != requestID)
+        {
+            throw new CoreApiException("internal", "Invalid Core response.");
+        }
+        if (response.Type == "error")
+        {
+            var error = response.Error ?? new ErrorPayload("internal", "Core operation failed.");
+            throw new CoreApiException(error.Code, error.Message);
+        }
+        if (response.Type != "result" || response.Result is null)
+        {
+            throw new CoreApiException("internal", "Invalid Core response.");
+        }
+        return response.Result.Value.Deserialize<T>(JsonOptions)
+            ?? throw new CoreApiException("internal", "Invalid Core response.");
+    }
+
+    private static async Task<WireEnvelope> ReadEnvelopeWithTimeoutAsync(StreamReader reader, CancellationToken cancellationToken)
+    {
+        var readTask = Task.Run(reader.ReadLine);
+        string? line;
+        try
+        {
+            line = await readTask.WaitAsync(PipeWriteTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            _ = readTask.ContinueWith(
+                completed => _ = completed.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+            throw new IOException("Core pipe read timed out.");
+        }
+        if (line is null)
+        {
+            throw new IOException("Core service closed the pipe.");
+        }
+        if (Encoding.UTF8.GetByteCount(line) > 1 << 20)
+        {
+            throw new CoreApiException("invalid_argument", "Core response is too large.");
+        }
+        return JsonSerializer.Deserialize<WireEnvelope>(line, JsonOptions)
+            ?? throw new CoreApiException("internal", "Invalid Core response.");
     }
 
     private async Task SendCancelAsync(string requestID)
