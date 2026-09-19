@@ -59,7 +59,7 @@ internal sealed class CoreApiClient : IDisposable
 
     // Windows can complete the named-pipe connect task just before the first
     // stream write is accepted. Keep retries here instead of exposing the
-    // platform-specific "pipe hasn't been connected yet" exception to the UI.
+    // transient platform exception to the UI.
     private static readonly TimeSpan PipeWriteRetryDelay = TimeSpan.FromMilliseconds(50);
     private const int PipeWriteAttempts = 12;
     private const int PipeConnectAttempts = 4;
@@ -126,12 +126,10 @@ internal sealed class CoreApiClient : IDisposable
                 try
                 {
                     await pipe.ConnectAsync(5000, cancellationToken);
-                    await WaitUntilConnectedAsync(pipe, cancellationToken);
 
-                    // Start the reader before writing hello. A fresh stream is
-                    // required for every attempt: after the Windows runtime
-                    // reports "pipe hasn't been connected yet", retrying a
-                    // write on the same stream can never repair its state.
+                    // Start the reader before writing hello. If the first
+                    // write races the Windows pipe state transition, the
+                    // write path replaces this stream and retries the frame.
                     _readerTask = ReadLoopAsync(reader);
                     var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken, reconnectOnWriteFailure: false);
                     if (hello.Version != Protocol)
@@ -286,15 +284,9 @@ internal sealed class CoreApiClient : IDisposable
                 try
                 {
                     var pipe = _pipe ?? throw new CoreApiException("unavailable", "Core service pipe is not connected.");
-                    if (!pipe.IsConnected)
-                    {
-                        throw new InvalidOperationException("The pipe hasn't been connected yet.");
-                    }
                     // Write the complete UTF-8 frame directly. Creating and
                     // disposing a StreamWriter for every request can race the
-                    // Windows named-pipe state transition and surface the
-                    // platform's misleading "pipe hasn't been connected yet"
-                    // exception even after ConnectAsync completed.
+                    // Windows named-pipe state transition.
                     await pipe.WriteAsync(frame.AsMemory(), cancellationToken);
                     return;
                 }
@@ -357,24 +349,6 @@ internal sealed class CoreApiClient : IDisposable
         oldReader?.Dispose();
         oldPipe?.Dispose();
         await ConnectAsync(cancellationToken);
-    }
-
-    private async Task WaitUntilConnectedAsync(NamedPipeClientStream pipe, CancellationToken cancellationToken)
-    {
-        // ConnectAsync has historically completed one scheduler turn before
-        // NamedPipeClientStream.State changes to Connected on some Windows
-        // builds. Do not issue the handshake while the stream is still in the
-        // Connecting state.
-        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
-        while (!pipe.IsConnected)
-        {
-            cancellationToken.ThrowIfCancellationRequested();
-            if (DateTime.UtcNow >= deadline)
-            {
-                throw new InvalidOperationException("The pipe has not reached the connected state.");
-            }
-            await Task.Delay(PipeWriteRetryDelay, cancellationToken);
-        }
     }
 
     private async Task ReadLoopAsync(StreamReader reader)
