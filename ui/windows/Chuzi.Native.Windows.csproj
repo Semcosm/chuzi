@@ -23,6 +23,12 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="CorePipeSmokeProgram.cs" />
+    <!--
+      MainWindow.xaml is retained as the Gallery layout reference, but the
+      unpackaged self-contained build creates the window tree in C# so WinUI
+      does not invoke LoadComponent for this window during startup.
+    -->
+    <Page Remove="MainWindow.xaml" />
     <None Update="app.manifest">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
