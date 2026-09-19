@@ -17,9 +17,18 @@ The primary implementation reference is Microsoft's WinUI Gallery:
 When adding a control or page, copy the corresponding WinUI Gallery sample
 structure first, then adapt the namespace, assets, and Chuzi behavior. Do not
 invent a second startup path or a custom `Application.Start` entry point unless
-the deployment mode explicitly requires it. Keep window construction cheap:
-`MainWindow` should initialize XAML first and defer Core/network work until the
-window is loaded or the user invokes an action.
+the deployment mode explicitly requires it. Keep window construction cheap and
+defer Core/network work until the window is loaded or the user invokes an
+action.
+
+The unpackaged self-contained build constructs `MainWindow` and its five pages
+in C# rather than loading their page XAML at runtime. The packaged XAML page
+resources reproducibly fail in `Microsoft.UI.Xaml` with
+`XamlParseException`/`0xC000027B` on the Windows CI runner, including the
+minimal Gallery-style navigation layout. The `.xaml` files remain as layout
+references; keep them aligned with their C# counterparts when changing a page.
+`App.xaml` remains the SDK-generated application entry point. The installed
+client smoke test in `chuzi-build.yml` guards this unpackaged startup path.
 
 The installer build follows the Gallery's working WinUI deployment model while
 using a conventional EXE installer instead of AppX/MSIX:

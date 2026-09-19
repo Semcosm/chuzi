@@ -13,6 +13,7 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <WinUISDKReferences>false</WinUISDKReferences>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>
     <AppxPackage>false</AppxPackage>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -29,6 +30,16 @@
       does not invoke LoadComponent for this window during startup.
     -->
     <Page Remove="MainWindow.xaml" />
+    <!--
+      These pages remain in the tree as Gallery-style layout references, but
+      unpackaged Windows App SDK builds must construct them in C# to avoid a
+      runtime XAML resource parse failure before the Core controls are shown.
+    -->
+    <Page Remove="OverviewPage.xaml" />
+    <Page Remove="SettingsPage.xaml" />
+    <Page Remove="PluginsPage.xaml" />
+    <Page Remove="AccountPage.xaml" />
+    <Page Remove="TasksPage.xaml" />
     <None Update="app.manifest">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
