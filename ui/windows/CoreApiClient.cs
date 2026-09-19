@@ -74,9 +74,26 @@ internal sealed class CoreApiClient : IDisposable
     {
         var configured = Environment.GetEnvironmentVariable("CHUZI_DATA_DIR");
         var dataDirectory = string.IsNullOrWhiteSpace(configured)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "chuzi")
+            ? ResolveDefaultDataDirectory()
             : configured;
         return new CoreApiClient(dataDirectory);
+    }
+
+    public static CoreApiClient FromDataDirectory(string dataDirectory)
+        => new(string.IsNullOrWhiteSpace(dataDirectory)
+            ? throw new ArgumentException("Core data directory is required.", nameof(dataDirectory))
+            : dataDirectory);
+
+    private static string ResolveDefaultDataDirectory()
+    {
+        var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "chuzi");
+        var legacy = Path.Combine(root, "data");
+        return Directory.Exists(legacy) &&
+               (File.Exists(Path.Combine(legacy, "chuzi.exe")) ||
+                File.Exists(Path.Combine(legacy, "release-manifest.json")) ||
+                File.Exists(Path.Combine(legacy, "core-config.json")))
+            ? legacy
+            : root;
     }
 
     public async Task ConnectAsync(CancellationToken cancellationToken)

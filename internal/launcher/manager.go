@@ -37,21 +37,25 @@ type ManagerOptions struct {
 	Manifest    ReleaseManifest
 	Trust       PluginTrustPolicy
 	Progress    ProgressReporter
+	// AllowRequiredRemoval is reserved for an explicit Core uninstall flow.
+	// Normal component removal must continue to protect required components.
+	AllowRequiredRemoval bool
 }
 
 // FilesystemManager implements both management interfaces without exposing a
 // UI or transport. Its state file is metadata only; plugin archives are never
 // treated as trusted merely because they appear in a manifest.
 type FilesystemManager struct {
-	mu            sync.Mutex
-	root          string
-	source        string
-	state         string
-	manifest      ReleaseManifest
-	trust         map[string]struct{}
-	requireSigned bool
-	progress      ProgressReporter
-	data          managerState
+	mu                   sync.Mutex
+	root                 string
+	source               string
+	state                string
+	manifest             ReleaseManifest
+	trust                map[string]struct{}
+	requireSigned        bool
+	progress             ProgressReporter
+	allowRequiredRemoval bool
+	data                 managerState
 }
 
 type managerState struct {
@@ -105,7 +109,8 @@ func NewFilesystemManager(options ManagerOptions) (*FilesystemManager, error) {
 		root: options.InstallRoot, source: options.SourceRoot, state: options.StatePath,
 		manifest: options.Manifest, trust: make(map[string]struct{}),
 		requireSigned: options.Trust.RequireSigned, progress: options.Progress,
-		data: managerState{Components: make(map[string]componentRecord), Plugins: make(map[string]pluginRecord)},
+		allowRequiredRemoval: options.AllowRequiredRemoval,
+		data:                 managerState{Components: make(map[string]componentRecord), Plugins: make(map[string]pluginRecord)},
 	}
 	for _, signer := range options.Trust.AllowedSigners {
 		if strings.TrimSpace(signer) != "" {
@@ -382,7 +387,7 @@ func (m *FilesystemManager) Remove(ctx context.Context, id string) error {
 	if !ok {
 		return fmt.Errorf("%w: component %q", ErrNotFound, id)
 	}
-	if component.Required {
+	if component.Required && !m.allowRequiredRemoval {
 		return fmt.Errorf("%w: component %q", ErrRequired, id)
 	}
 	previous := cloneState(m.data)

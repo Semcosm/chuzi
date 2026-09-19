@@ -11,13 +11,22 @@
         <StackPanel Spacing="2">
           <TextBlock Text="Core" FontSize="20" FontWeight="SemiBold" />
           <TextBlock x:Name="CoreStatusText" Text="Core status is being checked." Opacity="0.72" />
-          <Button x:Name="InstallCoreButton" Content="Install Core" Click="InstallCoreButton_Click" HorizontalAlignment="Left" />
+          <TextBlock x:Name="CoreInstalledVersionText" Text="Installed version: none" Opacity="0.72" />
+          <ComboBox x:Name="CoreChannel" Header="Core update channel" Width="300" SelectedIndex="0" SelectionChanged="CoreChannel_SelectionChanged">
+            <ComboBoxItem Content="Test" Tag="test" />
+            <ComboBoxItem Content="Stable" Tag="stable" />
+          </ComboBox>
+          <ComboBox x:Name="CoreVersion" Header="Core version" Width="420" DisplayMemberPath="DisplayName" SelectionChanged="CoreVersion_SelectionChanged" />
+          <StackPanel Orientation="Horizontal" Spacing="10">
+            <Button x:Name="CoreActionButton" Content="Install Core" Click="CoreActionButton_Click" />
+            <Button x:Name="UninstallCoreButton" Content="Uninstall Core" Click="UninstallCoreButton_Click" />
+          </StackPanel>
         </StackPanel>
         <StackPanel Spacing="2">
           <TextBlock Text="Updates" FontSize="20" FontWeight="SemiBold" />
           <ToggleSwitch x:Name="AutoCheckUpdates" Header="Check for updates automatically" />
           <ToggleSwitch x:Name="AutoRepair" Header="Repair missing files automatically" />
-          <ComboBox x:Name="UpdateChannel" Header="Update channel" Width="260" SelectedIndex="0">
+          <ComboBox x:Name="UpdateChannel" Header="App update channel" Width="260" SelectedIndex="0">
             <ComboBoxItem Content="Nightly" Tag="nightly" />
             <ComboBoxItem Content="Stable" Tag="stable" />
           </ComboBox>

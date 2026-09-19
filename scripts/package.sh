@@ -50,7 +50,10 @@ for component_artifact in "$repo_root/dist/chuzi-${version}-${target}-"*.tar.gz;
   write_sha256 "$component_artifact"
 done
 channel=nightly
-case "$version" in v[0-9]*.[0-9]*.[0-9]*) channel=stable ;; esac
+case "$version" in
+  v[0-9]*.[0-9]*.[0-9]*) channel=stable ;;
+  test-*) channel=test ;;
+esac
 python3 "$repo_root/scripts/generate_release_index.py" \
   --manifest "$stage_dir/release-manifest.json" \
   --dist "$repo_root/dist" \

@@ -28,6 +28,37 @@ public sealed class ComponentState
     [JsonPropertyName("health")] public string Health { get; set; } = "";
 }
 
+public sealed class CoreReleaseCatalog
+{
+    [JsonPropertyName("format")] public string Format { get; set; } = "chuzi-release-catalog/v1";
+    [JsonPropertyName("channel")] public string Channel { get; set; } = "test";
+    [JsonPropertyName("target")] public string Target { get; set; } = "windows-amd64";
+    [JsonPropertyName("releases")] public List<CoreRelease> Releases { get; set; } = [];
+}
+
+public sealed class CoreRelease
+{
+    [JsonPropertyName("channel")] public string Channel { get; set; } = "test";
+    [JsonPropertyName("version")] public string Version { get; set; } = "";
+    [JsonPropertyName("commit")] public string Commit { get; set; } = "";
+    [JsonPropertyName("target")] public string Target { get; set; } = "windows-amd64";
+    [JsonPropertyName("index_url")] public string IndexUrl { get; set; } = "";
+    [JsonPropertyName("published_at")] public DateTimeOffset? PublishedAt { get; set; }
+    [JsonPropertyName("prerelease")] public bool Prerelease { get; set; }
+
+    [JsonIgnore]
+    public string DisplayName
+    {
+        get
+        {
+            var shortCommit = string.IsNullOrWhiteSpace(Commit)
+                ? ""
+                : $" · {Commit[..Math.Min(12, Commit.Length)]}";
+            return $"{Version}{shortCommit}";
+        }
+    }
+}
+
 public sealed class PluginDescriptor
 {
     [JsonPropertyName("id")] public string ID { get; set; } = "";

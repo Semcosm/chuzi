@@ -34,7 +34,8 @@ using a conventional EXE installer instead of AppX/MSIX:
 
 The Core transport implementation remains in `CoreApiClient.cs`. It derives the
 endpoint from `CHUZI_DATA_DIR` when supplied by deployment, or from
-`%ProgramData%\chuzi` otherwise. It derives the same owner-only pipe name as
+`%ProgramData%\chuzi` otherwise (and reuses an existing legacy
+`%ProgramData%\chuzi\data` installation). It derives the same owner-only pipe name as
 `internal/coretransport` and performs `hello` version negotiation before any
 business call. It never opens the bbolt database or reads credentials/Profile
 directories.
@@ -87,8 +88,15 @@ directory, disables duplicate actions while a lifecycle operation is running,
 and keeps the next setup steps visible until Core is ready.
 
 The service process is owned by the installation, not by the window. Closing the UI
-leaves Core running; the Stop Core action is explicit and never stops a service that
-was started externally.
+leaves Core running; the Stop Core action is explicit and can recover a Core process
+started by an earlier UI instance or by the same installation. A per-data-directory
+PID marker is used only to recover the managed process and is removed on stop or
+uninstall.
+
+UI-managed Core uses the owner-only named pipe as its readiness check and leaves
+the optional HTTP health listener disabled by default. This avoids a false startup
+failure when an older manually-started Core already occupies port 8080; the data
+directory and named pipe remain the single source of truth for the client.
 
 The CI path uses the same script in `InstallerExe` mode and uploads the
 `chuzi-windows-installer-exe` artifact. The installer is self-contained and does

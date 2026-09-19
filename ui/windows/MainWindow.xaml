@@ -14,11 +14,6 @@
           <SymbolIcon Symbol="Home" />
         </NavigationViewItem.Icon>
       </NavigationViewItem>
-      <NavigationViewItem Content="Settings" Tag="settings">
-        <NavigationViewItem.Icon>
-          <SymbolIcon Symbol="Setting" />
-        </NavigationViewItem.Icon>
-      </NavigationViewItem>
       <NavigationViewItem Content="Plugins" Tag="plugins">
         <NavigationViewItem.Icon>
           <SymbolIcon Symbol="Repair" />
@@ -35,6 +30,13 @@
         </NavigationViewItem.Icon>
       </NavigationViewItem>
     </NavigationView.MenuItems>
+    <NavigationView.FooterMenuItems>
+      <NavigationViewItem Content="Settings" Tag="settings">
+        <NavigationViewItem.Icon>
+          <SymbolIcon Symbol="Setting" />
+        </NavigationViewItem.Icon>
+      </NavigationViewItem>
+    </NavigationView.FooterMenuItems>
     <Frame x:Name="ContentFrame" />
   </NavigationView>
 </Window>

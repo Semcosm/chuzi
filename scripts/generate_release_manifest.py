@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -29,6 +30,12 @@ def main() -> int:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--channel", default="nightly")
     args = parser.parse_args()
+    if args.channel not in {"nightly", "test", "stable"}:
+        raise SystemExit(f"unsupported release channel: {args.channel}")
+    if args.channel == "test" and not re.fullmatch(r"test-[0-9]+-[0-9a-fA-F]{12}", args.version):
+        raise SystemExit("test versions must match test-<run>-<sha12>")
+    if args.channel == "stable" and not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", args.version):
+        raise SystemExit("stable versions must match v<major>.<minor>.<patch>")
     stage = args.stage.resolve()
     binary = "chuzi.exe" if args.target == "windows-amd64" else "chuzi"
     launcher = "chuzi-launcher.exe" if args.target == "windows-amd64" else "chuzi-launcher"

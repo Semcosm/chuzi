@@ -20,7 +20,7 @@ case "$target" in
 esac
 
 case "$version" in
-  dev|dev-*|nightly-*|v[0-9]*.[0-9]*.[0-9]*) ;;
+  dev|dev-*|nightly-*|test-*|v[0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "invalid build version: $version" >&2; exit 2 ;;
 esac
 

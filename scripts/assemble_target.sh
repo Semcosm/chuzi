@@ -52,7 +52,10 @@ with open(path, "w", encoding="utf-8") as stream:
 PY
 
 channel=nightly
-case "$version" in v[0-9]*.[0-9]*.[0-9]*) channel=stable ;; esac
+case "$version" in
+  v[0-9]*.[0-9]*.[0-9]*) channel=stable ;;
+  test-*) channel=test ;;
+esac
 python3 "$repo_root/scripts/generate_release_manifest.py" \
   --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit" --channel "$channel"
 

@@ -58,7 +58,9 @@ public sealed partial class OverviewPage : Page
         SettingsStepText.Text = "3. Personalize settings when you are ready";
         InstallButton.Visibility = snapshot.Status == CoreStatus.Missing ? Visibility.Visible : Visibility.Collapsed;
         StartButton.Visibility = snapshot.Status is CoreStatus.Missing or CoreStatus.Running ? Visibility.Collapsed : Visibility.Visible;
-        StopButton.Visibility = snapshot.Status == CoreStatus.Running && snapshot.OwnedByThisWindow ? Visibility.Visible : Visibility.Collapsed;
+        StopButton.Visibility = snapshot.Status == CoreStatus.Running || snapshot.ProcessId is not null
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     public void ShowError(string message)

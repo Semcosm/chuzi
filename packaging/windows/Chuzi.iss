@@ -37,6 +37,12 @@ RestartApplications=no
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
+[Dirs]
+; Core is launched by the signed-in user, while the installer runs elevated.
+; Create the shared data root with write access before the first launch.
+Name: "{commonappdata}\chuzi"; Permissions: users-modify
+Name: "{commonappdata}\chuzi\data"; Permissions: users-modify
+
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon

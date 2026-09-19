@@ -42,7 +42,7 @@ def main() -> int:
     for field in ("channel", "version", "target", "commit"):
         if index.get(field) != manifest.get(field):
             raise SystemExit(f"index and manifest differ in {field}")
-    if index.get("channel") not in ("nightly", "stable"):
+    if index.get("channel") not in ("nightly", "test", "stable"):
         raise SystemExit("release index channel is invalid")
     if not all(isinstance(index.get(field), str) and index.get(field) for field in ("version", "target")):
         raise SystemExit("release index version and target are required")
