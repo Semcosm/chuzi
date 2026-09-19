@@ -1,0 +1,16 @@
+{
+  "format": "chuzi-release-catalog/v1",
+  "channel": "test",
+  "target": "windows-amd64",
+  "releases": [
+    {
+      "channel": "test",
+      "version": "test-384-72e26bb907f1",
+      "commit": "72e26bb907f16f2c6add795935cfa32555541758",
+      "target": "windows-amd64",
+      "index_url": "https://raw.githubusercontent.com/Semcosm/chuzi/release-catalog/test/windows-amd64/test-384-72e26bb907f1/chuzi-test-384-72e26bb907f1-windows-amd64.index.json",
+      "published_at": "2026-09-19T07:01:44Z",
+      "prerelease": true
+    }
+  ]
+}
