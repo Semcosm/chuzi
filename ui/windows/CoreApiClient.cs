@@ -127,6 +127,13 @@ internal sealed class CoreApiClient : IDisposable
                 {
                     await pipe.ConnectAsync(5000, cancellationToken);
 
+                    // ConnectAsync may complete one scheduler turn before the
+                    // Windows stream transitions to Connected. Waiting here
+                    // prevents the first hello write from surfacing the
+                    // platform's misleading "pipe hasn't been connected yet"
+                    // exception.
+                    await WaitUntilConnectedAsync(pipe, cancellationToken);
+
                     // Start the reader before writing hello. If the first
                     // write races the Windows pipe state transition, the
                     // write path replaces this stream and retries the frame.
@@ -172,7 +179,7 @@ internal sealed class CoreApiClient : IDisposable
 
     public async Task<CoreRequest> SubmitRequestAsync(string accountID, CancellationToken cancellationToken)
     {
-        EnsureConnected();
+        await EnsureConnectedAsync(cancellationToken);
         var requestID = "ui-" + Guid.NewGuid().ToString("N");
         var result = await CallAsync<SubmitResult>("submit_request", new
         {
@@ -183,22 +190,22 @@ internal sealed class CoreApiClient : IDisposable
         return result.Request;
     }
 
-    public Task<CoreRequest> GetRequestAsync(string requestID, CancellationToken cancellationToken)
+    public async Task<CoreRequest> GetRequestAsync(string requestID, CancellationToken cancellationToken)
     {
-        EnsureConnected();
-        return CallAsync<CoreRequest>("get_request", new { request_id = requestID }, cancellationToken);
+        await EnsureConnectedAsync(cancellationToken);
+        return await CallAsync<CoreRequest>("get_request", new { request_id = requestID }, cancellationToken);
     }
 
-    public Task<CoreAccount> GetAccountAsync(string accountID, CancellationToken cancellationToken)
+    public async Task<CoreAccount> GetAccountAsync(string accountID, CancellationToken cancellationToken)
     {
-        EnsureConnected();
-        return CallAsync<CoreAccount>("get_account", new { account_id = accountID }, cancellationToken);
+        await EnsureConnectedAsync(cancellationToken);
+        return await CallAsync<CoreAccount>("get_account", new { account_id = accountID }, cancellationToken);
     }
 
-    public Task<CoreRequest> CancelRequestAsync(string requestID, CancellationToken cancellationToken)
+    public async Task<CoreRequest> CancelRequestAsync(string requestID, CancellationToken cancellationToken)
     {
-        EnsureConnected();
-        return CallAsync<CoreRequest>("cancel_request", new { request_id = requestID, reason = "cancelled by Windows client" }, cancellationToken);
+        await EnsureConnectedAsync(cancellationToken);
+        return await CallAsync<CoreRequest>("cancel_request", new { request_id = requestID, reason = "cancelled by Windows client" }, cancellationToken);
     }
 
     private async Task<T> CallAsync<T>(string method, object parameters, CancellationToken cancellationToken, bool reconnectOnWriteFailure = true)
@@ -401,14 +408,32 @@ internal sealed class CoreApiClient : IDisposable
         }
     }
 
-    private void EnsureConnected()
+    private async Task EnsureConnectedAsync(CancellationToken cancellationToken)
     {
         // Do not gate calls on IsConnected. Windows can report a transient
         // false value after ConnectAsync even though the stream is usable;
         // SendAsync handles the actual write and maps a real disconnect.
         if (!_connected)
         {
+            await ConnectAsync(cancellationToken);
+        }
+        if (!_connected)
+        {
             throw new CoreApiException("unavailable", "Core service is not connected.");
+        }
+    }
+
+    private static async Task WaitUntilConnectedAsync(NamedPipeClientStream pipe, CancellationToken cancellationToken)
+    {
+        var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(2);
+        while (!pipe.IsConnected)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (DateTime.UtcNow >= deadline)
+            {
+                throw new InvalidOperationException("The pipe did not reach the connected state.");
+            }
+            await Task.Delay(PipeWriteRetryDelay, cancellationToken);
         }
     }
 
