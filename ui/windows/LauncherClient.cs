@@ -120,14 +120,14 @@ internal sealed class LauncherClient
             RemoveLegacyCoreFiles();
             return;
         }
-        await RemoveComponentWithRetryAsync("service", allowRequiredRemoval: true, cancellationToken);
+        await RemoveComponentWithRetryAsync("service", allowRequiredRemoval: true, cancellationToken: cancellationToken);
         // Windows can keep the just-exited executable mapped for a short
         // interval. The launcher removes by rename, so retry the operation
         // inside the client rather than exposing a transient file-lock error
         // as a failed uninstall.
         try
         {
-            await RemoveComponentWithRetryAsync("browser-worker", allowRequiredRemoval: false, cancellationToken);
+            await RemoveComponentWithRetryAsync("browser-worker", allowRequiredRemoval: false, cancellationToken: cancellationToken);
         }
         catch (LauncherException exception) when (IsMissingItemError(exception.Message)) { }
         RemoveEmptyDirectories(Path.Combine(DataRoot, "browser-worker"));
