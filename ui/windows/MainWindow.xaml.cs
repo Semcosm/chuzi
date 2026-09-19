@@ -23,7 +23,6 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
-        InitializeComponent();
         BuildNavigation();
 
         _launcher = new LauncherClient();
@@ -74,7 +73,7 @@ public sealed partial class MainWindow : Window
         Navigation.MenuItems.Add(CreateNavigationItem("Accounts", "accounts", Symbol.Contact));
         Navigation.MenuItems.Add(CreateNavigationItem("Tasks", "tasks", Symbol.Play));
         Navigation.MenuItems.Add(CreateNavigationItem("Settings", "settings", Symbol.Setting));
-        RootGrid.Children.Add(Navigation);
+        Content = Navigation;
     }
 
     private static NavigationViewItem CreateNavigationItem(string content, string tag, Symbol symbol)
