@@ -5,6 +5,15 @@
   "releases": [
     {
       "channel": "test",
+      "version": "test-394-b941496e46e2",
+      "commit": "b941496e46e281bf6b5901eebee943ec2670f395",
+      "target": "windows-amd64",
+      "index_url": "https://raw.githubusercontent.com/Semcosm/chuzi/release-catalog/test/windows-amd64/test-394-b941496e46e2/chuzi-test-394-b941496e46e2-windows-amd64.index.json",
+      "published_at": "2026-09-19T09:15:33Z",
+      "prerelease": true
+    },
+    {
+      "channel": "test",
       "version": "test-393-54f73cb544f9",
       "commit": "54f73cb544f9af76fba9d202aa3b797803fb1182",
       "target": "windows-amd64",
