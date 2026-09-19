@@ -182,34 +182,6 @@ jobs:
             $version = "dev-$($env:GITHUB_SHA.Substring(0, 12))"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
-      - name: Create package assets and test certificate
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $ui = Join-Path $env:GITHUB_WORKSPACE 'ui/windows'
-          $assets = Join-Path $ui 'Assets'
-          New-Item -ItemType Directory -Force -Path $assets | Out-Null
-          Add-Type -AssemblyName System.Drawing
-          foreach ($spec in @(
-            @{ Name = 'Square44x44Logo.png'; Size = 44 },
-            @{ Name = 'Square150x150Logo.png'; Size = 150 },
-            @{ Name = 'StoreLogo.png'; Size = 50 }
-          )) {
-            $bmp = New-Object System.Drawing.Bitmap($spec.Size, $spec.Size)
-            $g = [System.Drawing.Graphics]::FromImage($bmp)
-            $g.Clear([System.Drawing.Color]::FromArgb(29, 35, 48))
-            $font = New-Object System.Drawing.Font('Arial', [Math]::Max(10, [int]($spec.Size / 4)), [System.Drawing.FontStyle]::Bold)
-            $brush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::White)
-            $fmt = New-Object System.Drawing.StringFormat
-            $fmt.Alignment = [System.Drawing.StringAlignment]::Center
-            $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-            $g.DrawString('C', $font, $brush, (New-Object System.Drawing.RectangleF(0, 0, $spec.Size, $spec.Size)), $fmt)
-            $bmp.Save((Join-Path $assets $spec.Name), [System.Drawing.Imaging.ImageFormat]::Png)
-            $fmt.Dispose(); $brush.Dispose(); $font.Dispose(); $g.Dispose(); $bmp.Dispose()
-          }
-          $cert = New-SelfSignedCertificate -Type Custom -Subject 'CN=Semcosm' -KeyAlgorithm RSA -KeyLength 2048 -HashAlgorithm SHA256 -KeyUsage DigitalSignature -TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3') -FriendlyName 'Chuzi CI Test Certificate' -CertStoreLocation 'Cert:\CurrentUser\My'
-          "CHUZI_PACKAGE_CERT_THUMBPRINT=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          Export-Certificate -Cert $cert -FilePath (Join-Path $env:RUNNER_TEMP 'Chuzi-CI-Test.cer') | Out-Null
       - name: Assemble Core payload for the UI package
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
@@ -234,26 +206,21 @@ jobs:
             -WorkerArchive (Join-Path $env:RUNNER_TEMP 'chuzi-worker/browser-worker-dist.tar.gz') `
             -DistRoot (Join-Path $env:RUNNER_TEMP 'chuzi-core-dist')
           Copy-Item (Join-Path $env:RUNNER_TEMP 'chuzi-core-dist/windows-amd64/stage/*') $payload -Recurse -Force
-      - name: Build and package self-contained WinUI 3 MSIX
+      - name: Build self-contained WinUI 3 installer EXE
         shell: pwsh
-        run: ./scripts/build_windows_ui.ps1 -Mode PackagedMsix -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CertificateThumbprint "$env:CHUZI_PACKAGE_CERT_THUMBPRINT" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload"
+        run: ./scripts/build_windows_ui.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload"
         env:
           CHUZI_BUILD_VERSION: ${{ steps.version.outputs.version }}
-      - name: Add test certificate to MSIX artifact
-        shell: pwsh
-        run: Copy-Item "$env:RUNNER_TEMP\Chuzi-CI-Test.cer" "$env:RUNNER_TEMP\chuzi-ui" -Force
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
-      - name: Upload self-contained MSIX
+      - name: Upload Windows installer EXE
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: chuzi-windows-msix-self-contained
+          name: chuzi-windows-installer-exe
           path: |
-            ${{ runner.temp }}/chuzi-ui/*.msix
-            ${{ runner.temp }}/chuzi-ui/*.msixbundle
-            ${{ runner.temp }}/chuzi-ui/*.appx
-            ${{ runner.temp }}/chuzi-ui/Chuzi-CI-Test.cer
+            ${{ runner.temp }}/chuzi-ui/*.exe
+            ${{ runner.temp }}/chuzi-ui/*.sha256
           if-no-files-found: error
           retention-days: 7
 
