@@ -37,6 +37,19 @@ public sealed class PluginDescriptor
     [JsonPropertyName("capabilities")] public List<string> Capabilities { get; set; } = [];
     [JsonPropertyName("permissions")] public List<string> Permissions { get; set; } = [];
     [JsonPropertyName("installable")] public bool Installable { get; set; }
+
+    [JsonIgnore]
+    public string SignedByOrUnsigned => string.IsNullOrWhiteSpace(SignedBy) ? "Unsigned" : $"Signed by: {SignedBy}";
+
+    [JsonIgnore]
+    public string PermissionsSummary => Permissions.Count == 0
+        ? "Permissions: none declared"
+        : $"Permissions: {string.Join(", ", Permissions)}";
+
+    [JsonIgnore]
+    public string CapabilitiesSummary => Capabilities.Count == 0
+        ? "Capabilities: none declared"
+        : $"Capabilities: {string.Join(", ", Capabilities)}";
 }
 
 public sealed class PluginState
@@ -46,4 +59,7 @@ public sealed class PluginState
     [JsonPropertyName("enabled")] public bool Enabled { get; set; }
     [JsonPropertyName("trusted")] public bool Trusted { get; set; }
     [JsonPropertyName("health")] public string Health { get; set; } = "";
+
+    [JsonIgnore]
+    public string TrustSummary => Trusted ? "Trusted" : "Not trusted — trust the signer before enabling";
 }

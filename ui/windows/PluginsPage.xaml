@@ -5,13 +5,16 @@
   <Grid RowSpacing="18" Padding="32,28,32,32">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto" />
+      <RowDefinition Height="Auto" />
       <RowDefinition Height="*" />
       <RowDefinition Height="Auto" />
     </Grid.RowDefinitions>
     <StackPanel Spacing="4">
       <TextBlock Text="Plugins" FontSize="32" FontWeight="SemiBold" />
+      <TextBlock Text="Review permissions and trust before enabling a plugin." Opacity="0.72" />
     </StackPanel>
-    <Grid Grid.Row="1">
+    <InfoBar x:Name="CoreRequiredBar" Grid.Row="1" IsOpen="False" IsClosable="False" Severity="Informational" />
+    <Grid Grid.Row="2">
       <ListView x:Name="PluginList" SelectionMode="None" IsItemClickEnabled="False">
       <ListView.ItemTemplate>
         <DataTemplate>
@@ -25,16 +28,18 @@
                 <TextBlock Text="{Binding Descriptor.ID}" FontSize="17" FontWeight="SemiBold" />
                 <TextBlock Text="{Binding Descriptor.Version}" Opacity="0.68" />
                 <TextBlock Text="{Binding Descriptor.API}" Opacity="0.68" />
-                <TextBlock Text="{Binding Descriptor.SignedBy, FallbackValue=Unsigned}" Opacity="0.68" />
+                <TextBlock Text="{Binding TrustSummary}" />
+                <TextBlock Text="{Binding Descriptor.PermissionsSummary}" TextWrapping="Wrap" Opacity="0.68" />
+                <TextBlock Text="{Binding Descriptor.CapabilitiesSummary}" TextWrapping="Wrap" Opacity="0.68" />
                 <TextBlock Text="{Binding Health}" />
               </StackPanel>
               <StackPanel Grid.Column="1" Spacing="8" MinWidth="150">
-                <Button Content="Install" Tag="{Binding Descriptor.ID}" Click="InstallButton_Click" />
-                <Button Content="Trust" Tag="{Binding Descriptor.ID}" Click="TrustButton_Click" />
-                <Button Content="Untrust" Tag="{Binding Descriptor.ID}" Click="UntrustButton_Click" />
-                <Button Content="Enable" Tag="{Binding Descriptor.ID}" Click="EnableButton_Click" />
-                <Button Content="Disable" Tag="{Binding Descriptor.ID}" Click="DisableButton_Click" />
-                <Button Content="Remove" Tag="{Binding Descriptor.ID}" Click="RemoveButton_Click" />
+                <Button Content="Install" IsEnabled="{Binding Descriptor.Installable}" Tag="{Binding Descriptor.ID}" Click="InstallButton_Click" />
+                <Button Content="Trust" IsEnabled="{Binding Installed}" Tag="{Binding Descriptor.ID}" Click="TrustButton_Click" />
+                <Button Content="Untrust" IsEnabled="{Binding Trusted}" Tag="{Binding Descriptor.ID}" Click="UntrustButton_Click" />
+                <Button Content="Enable" IsEnabled="{Binding Trusted}" Tag="{Binding Descriptor.ID}" Click="EnableButton_Click" />
+                <Button Content="Disable" IsEnabled="{Binding Enabled}" Tag="{Binding Descriptor.ID}" Click="DisableButton_Click" />
+                <Button Content="Remove" IsEnabled="{Binding Installed}" Tag="{Binding Descriptor.ID}" Click="RemoveButton_Click" />
               </StackPanel>
             </Grid>
           </Border>
@@ -43,10 +48,10 @@
       </ListView>
       <TextBlock x:Name="EmptyText" Text="No plugins are included in this Core release." HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.72" />
     </Grid>
-    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10">
+    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="10">
       <Button Content="Refresh" Click="RefreshButton_Click" />
       <ProgressRing x:Name="BusyRing" Width="22" Height="22" IsActive="False" />
     </StackPanel>
-    <InfoBar x:Name="MessageBar" Grid.Row="2" IsOpen="False" IsClosable="True" HorizontalAlignment="Right" />
+    <InfoBar x:Name="MessageBar" Grid.Row="3" IsOpen="False" IsClosable="True" HorizontalAlignment="Right" />
   </Grid>
 </Page>

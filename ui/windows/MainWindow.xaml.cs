@@ -73,6 +73,7 @@ public sealed partial class MainWindow : Window
             var snapshot = await _core.GetStatusAsync(_shutdown.Token);
             _overview.SetSnapshot(snapshot);
             _settings.SetCoreSnapshot(snapshot);
+            _plugins.SetCoreSnapshot(snapshot);
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
         catch (Exception) { _overview.ShowError("Core status could not be read."); }
@@ -96,6 +97,7 @@ public sealed partial class MainWindow : Window
             var snapshot = await _core.StopAsync(_shutdown.Token);
             _overview.SetSnapshot(snapshot);
             _settings.SetCoreSnapshot(snapshot);
+            _plugins.SetCoreSnapshot(snapshot);
             _overview.ShowSuccess("Core stopped.");
         }
         catch (OperationCanceledException) when (_shutdown.IsCancellationRequested) { }
@@ -111,6 +113,7 @@ public sealed partial class MainWindow : Window
             var snapshot = await action();
             _overview.SetSnapshot(snapshot);
             _settings.SetCoreSnapshot(snapshot);
+            _plugins.SetCoreSnapshot(snapshot);
             if (snapshot.Status == CoreStatus.Running) _overview.ShowSuccess(success);
             else _overview.ShowError(snapshot.Message);
         }
@@ -153,6 +156,25 @@ public sealed partial class MainWindow : Window
     private async Task PluginOperationAsync(string id, string operation)
     {
         if (string.IsNullOrWhiteSpace(id)) return;
+        if (!_plugins.IsCoreReady)
+        {
+            _plugins.ShowError("Start Core before managing plugins.");
+            return;
+        }
+        var plugin = _plugins.FindPlugin(id);
+        if (plugin is null)
+        {
+            _plugins.ShowError("The selected plugin is no longer available.");
+            return;
+        }
+        if (operation == "enable" && !plugin.Trusted)
+        {
+            _plugins.ShowError("Trust the plugin signer before enabling this plugin.");
+            return;
+        }
+        if (operation == "trust" && !await _plugins.ConfirmTrustAsync(id, true)) return;
+        if (operation == "untrust" && !await _plugins.ConfirmTrustAsync(id, false)) return;
+        if (operation == "remove" && !await _plugins.ConfirmRemoveAsync(id)) return;
         try
         {
             _plugins.SetBusy(true);
