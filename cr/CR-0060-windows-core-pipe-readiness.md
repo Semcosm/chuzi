@@ -5,12 +5,12 @@ Head or Range: fix/windows-ui-startup
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): wait for Core pipe readiness before UI calls
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: b4cd426af69ad1d075b40f4e06235e730d0300fe
-Head OID: 0003926d619a48535622c9de19b9522112c650e8
+Base OID: ff980189caebdacac58dd6d86b0edc51cc60ccfa
+Head OID: aa60805d4cbf6be4a8c09773154250cd92f08a43
 Integrated Result: pending
 
 ## Summary
