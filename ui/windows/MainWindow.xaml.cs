@@ -13,46 +13,19 @@ public sealed partial class MainWindow : Window
     private Frame ContentFrame = null!;
     private readonly LauncherClient _launcher;
     private readonly CoreServiceController _core;
-    private readonly OverviewPage _overview;
-    private readonly SettingsPage _settings;
-    private readonly PluginsPage _plugins;
-    private readonly AccountPage _accounts;
-    private readonly TasksPage _tasks;
+    private OverviewPage _overview = null!;
+    private SettingsPage _settings = null!;
+    private PluginsPage _plugins = null!;
+    private AccountPage _accounts = null!;
+    private TasksPage _tasks = null!;
     private readonly CancellationTokenSource _shutdown = new();
     private bool _loaded;
 
     public MainWindow()
     {
-        BuildNavigation();
-
         _launcher = new LauncherClient();
         _core = new CoreServiceController(_launcher);
-        _overview = new OverviewPage();
-        _settings = new SettingsPage();
-        _plugins = new PluginsPage();
-        _accounts = new AccountPage();
-        _tasks = new TasksPage();
-        ContentFrame.Content = _overview;
-
-        _overview.InstallRequested += (_, _) => RunAsync(InstallCoreAsync);
-        _overview.StartRequested += (_, _) => RunAsync(StartCoreAsync);
-        _overview.StopRequested += (_, _) => RunAsync(StopCoreAsync);
-        _overview.RefreshRequested += (_, _) => RunAsync(RefreshCoreAsync);
-        _settings.SaveRequested += (_, settings) => RunAsync(() => SaveSettingsAsync(settings));
-        _settings.CoreChannelChanged += (_, channel) => RunAsync(() => RefreshCoreReleasesAsync(channel));
-        _settings.CoreActionRequested += (_, request) => RunAsync(() => HandleCoreActionAsync(request));
-        _settings.UninstallCoreRequested += (_, _) => RunAsync(UninstallCoreAsync);
-        _plugins.RefreshRequested += (_, _) => RunAsync(RefreshPluginsAsync);
-        _plugins.InstallRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "install"));
-        _plugins.TrustRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "trust"));
-        _plugins.UntrustRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "untrust"));
-        _plugins.EnableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "enable"));
-        _plugins.DisableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "disable"));
-        _plugins.RemoveRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "remove"));
-        _accounts.LookupRequested += (_, id) => RunAsync(() => LookupAccountAsync(id));
-        _accounts.SubmitRequested += (_, id) => RunAsync(() => SubmitTaskAsync(id));
-        _tasks.RefreshRequested += (_, id) => RunAsync(() => RefreshTaskAsync(id));
-        _tasks.CancelRequested += (_, id) => RunAsync(() => CancelTaskAsync(id));
+        Content = new TextBlock { Text = "Starting Chuzi...", Margin = new Thickness(32) };
         Activated += MainWindow_Activated;
         Closed += MainWindow_Closed;
     }
@@ -88,7 +61,39 @@ public sealed partial class MainWindow : Window
     {
         if (_loaded || args.WindowActivationState == WindowActivationState.Deactivated) return;
         _loaded = true;
+        InitializePages();
         RunAsync(RefreshAllAsync);
+    }
+
+    private void InitializePages()
+    {
+        BuildNavigation();
+        _overview = new OverviewPage();
+        _settings = new SettingsPage();
+        _plugins = new PluginsPage();
+        _accounts = new AccountPage();
+        _tasks = new TasksPage();
+        ContentFrame.Content = _overview;
+
+        _overview.InstallRequested += (_, _) => RunAsync(InstallCoreAsync);
+        _overview.StartRequested += (_, _) => RunAsync(StartCoreAsync);
+        _overview.StopRequested += (_, _) => RunAsync(StopCoreAsync);
+        _overview.RefreshRequested += (_, _) => RunAsync(RefreshCoreAsync);
+        _settings.SaveRequested += (_, settings) => RunAsync(() => SaveSettingsAsync(settings));
+        _settings.CoreChannelChanged += (_, channel) => RunAsync(() => RefreshCoreReleasesAsync(channel));
+        _settings.CoreActionRequested += (_, request) => RunAsync(() => HandleCoreActionAsync(request));
+        _settings.UninstallCoreRequested += (_, _) => RunAsync(UninstallCoreAsync);
+        _plugins.RefreshRequested += (_, _) => RunAsync(RefreshPluginsAsync);
+        _plugins.InstallRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "install"));
+        _plugins.TrustRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "trust"));
+        _plugins.UntrustRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "untrust"));
+        _plugins.EnableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "enable"));
+        _plugins.DisableRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "disable"));
+        _plugins.RemoveRequested += (_, id) => RunAsync(() => PluginOperationAsync(id, "remove"));
+        _accounts.LookupRequested += (_, id) => RunAsync(() => LookupAccountAsync(id));
+        _accounts.SubmitRequested += (_, id) => RunAsync(() => SubmitTaskAsync(id));
+        _tasks.RefreshRequested += (_, id) => RunAsync(() => RefreshTaskAsync(id));
+        _tasks.CancelRequested += (_, id) => RunAsync(() => CancelTaskAsync(id));
     }
 
     private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
