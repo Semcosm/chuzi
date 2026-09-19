@@ -1,16 +1,16 @@
 # CR-0059: Windows Core release channels and lifecycle closure
 
 Base: main
-Head or Range: e9b0d55613a52a64601c5d804df8f922008abe97
+Head or Range: 54f73cb544f9af76fba9d202aa3b797803fb1182
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add Core release channels and lifecycle
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: ac82dce85add95fae54821311fd683a51889b73f
-Head OID: e9b0d55613a52a64601c5d804df8f922008abe97
+Head OID: 54f73cb544f9af76fba9d202aa3b797803fb1182
 Integrated Result: pending
 
 ## Summary
@@ -48,9 +48,10 @@ Local checks:
 
 `git diff --check`
 
-The authoritative Windows validation is the `windows-2022` GitHub Actions
-build, including the named-pipe transport test, Core lifecycle smoke test,
-self-contained installer build, and installed UI startup smoke test.
+The authoritative Windows validation is GitHub Actions Run 393
+(`35432752682`), whose `windows-2022` build passed the named-pipe transport
+test, native C# Core named-pipe handshake smoke test, Core lifecycle smoke
+test, self-contained installer build, and installed UI startup smoke test.
 
 ## Risk
 
