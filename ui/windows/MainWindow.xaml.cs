@@ -53,17 +53,8 @@ public sealed partial class MainWindow : Window
         _accounts.SubmitRequested += (_, id) => RunAsync(() => SubmitTaskAsync(id));
         _tasks.RefreshRequested += (_, id) => RunAsync(() => RefreshTaskAsync(id));
         _tasks.CancelRequested += (_, id) => RunAsync(() => CancelTaskAsync(id));
-        Navigation.Loaded += Navigation_Loaded;
         Activated += MainWindow_Activated;
         Closed += MainWindow_Closed;
-    }
-
-    private void Navigation_Loaded(object sender, RoutedEventArgs args)
-    {
-        if (Navigation.SelectedItem is null && Navigation.MenuItems.Count > 0)
-        {
-            Navigation.SelectedItem = Navigation.MenuItems[0];
-        }
     }
 
     private void BuildNavigation()
