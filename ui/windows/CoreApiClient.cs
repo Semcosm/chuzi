@@ -125,20 +125,26 @@ internal sealed class CoreApiClient : IDisposable
                 _reader = reader;
                 try
                 {
-                    await pipe.ConnectAsync(5000, cancellationToken);
+                    await pipe.ConnectAsync(5000, cancellationToken).ConfigureAwait(false);
 
                     // ConnectAsync may complete one scheduler turn before the
                     // Windows stream transitions to Connected. Waiting here
                     // prevents the first hello write from surfacing the
                     // platform's misleading "pipe hasn't been connected yet"
                     // exception.
-                    await WaitUntilConnectedAsync(pipe, cancellationToken);
+                    await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
+
+                    // On some Windows builds the async pipe state becomes
+                    // observable one scheduler turn before the underlying
+                    // handle accepts an overlapped write. Give the handle a
+                    // short settle period before publishing the connection.
+                    await Task.Delay(PipeWriteRetryDelay, cancellationToken).ConfigureAwait(false);
 
                     // Start the reader before writing hello. If the first
                     // write races the Windows pipe state transition, the
                     // write path replaces this stream and retries the frame.
                     _readerTask = ReadLoopAsync(reader);
-                    var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken, reconnectOnWriteFailure: false);
+                    var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken, reconnectOnWriteFailure: false).ConfigureAwait(false);
                     if (hello.Version != Protocol)
                     {
                         throw new CoreApiException("unavailable", "Core protocol version is not supported.");
@@ -146,7 +152,7 @@ internal sealed class CoreApiClient : IDisposable
                     // A response can be delivered while the peer is already
                     // closing the stream. Do not publish a client that would
                     // fail its first Core operation on a stale connection.
-                    if (!pipe.IsConnected)
+                    if (!pipe.IsConnected || _readerTask is null || _readerTask.IsCompleted)
                     {
                         throw new InvalidOperationException("The Core pipe disconnected during handshake.");
                     }
@@ -298,11 +304,15 @@ internal sealed class CoreApiClient : IDisposable
                 try
                 {
                     var pipe = _pipe ?? throw new CoreApiException("unavailable", "Core service pipe is not connected.");
-                    await WaitUntilConnectedAsync(pipe, cancellationToken);
-                    // Write the complete UTF-8 frame directly. Creating and
-                    // disposing a StreamWriter for every request can race the
-                    // Windows named-pipe state transition.
-                    await pipe.WriteAsync(frame.AsMemory(), cancellationToken);
+                    await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
+                    // Use one synchronous write for the complete frame. The
+                    // Windows named-pipe async write path can still report
+                    // "Pipe hasn't been connected yet" immediately after
+                    // ConnectAsync, even when IsConnected is true. The Core
+                    // server reads frames continuously, so this local write
+                    // is bounded by the pipe buffer and avoids that race.
+                    pipe.Write(frame, 0, frame.Length);
+                    pipe.Flush();
                     return;
                 }
                 catch (InvalidOperationException exception)
