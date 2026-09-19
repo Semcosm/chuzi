@@ -359,17 +359,24 @@ public sealed partial class MainWindow : Window
 
     private async Task<CoreApiClient> ConnectCoreAsync()
     {
-        var client = CoreApiClient.FromDataDirectory(_core.DataDirectory);
-        try
+        Exception? last = null;
+        for (var attempt = 0; attempt < 12; attempt++)
         {
-            await client.ConnectAsync(_shutdown.Token);
-            return client;
+            var client = CoreApiClient.FromDataDirectory(_core.DataDirectory);
+            try
+            {
+                await client.ConnectAsync(_shutdown.Token);
+                return client;
+            }
+            catch (Exception exception) when (exception is CoreApiException or IOException or InvalidOperationException or TimeoutException)
+            {
+                client.Dispose();
+                last = exception;
+                if (attempt == 11) break;
+                await Task.Delay(300, _shutdown.Token);
+            }
         }
-        catch
-        {
-            client.Dispose();
-            throw;
-        }
+        throw last ?? new CoreApiException("unavailable", "Core service pipe could not be connected.");
     }
 
     private void SelectNavigation(string tag)
