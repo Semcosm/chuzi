@@ -120,12 +120,13 @@ internal sealed class CoreApiClient : IDisposable
             for (var attempt = 0; attempt < PipeConnectAttempts; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                // Keep the handle asynchronous so go-winio and .NET use the
-                // same overlapped I/O mode. The Connect method itself is run
-                // synchronously on a worker thread below; ConnectAsync can
-                // publish a handle one scheduler turn before Windows accepts
-                // its first write on this server implementation.
-                var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+                // Use a synchronous handle for the transport itself. On some
+                // Windows 10/11 builds an overlapped .NET named-pipe handle
+                // reports IsConnected=true while its first WriteAsync still
+                // fails with "pipe hasn't been connected yet". The Core
+                // server continuously reads frames, so a synchronous write
+                // is bounded by the pipe buffer and is the reliable path.
+                var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, PipeOptions.None);
                 var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
                 _pipe = pipe;
                 _reader = reader;
@@ -146,10 +147,11 @@ internal sealed class CoreApiClient : IDisposable
                     // short settle period before publishing the connection.
                     await Task.Delay(PipeWriteRetryDelay, cancellationToken).ConfigureAwait(false);
 
-                    // Start the reader before writing hello. If the first
-                    // write races the Windows pipe state transition, the
-                    // write path replaces this stream and retries the frame.
-                    _readerTask = ReadLoopAsync(reader);
+                    // A synchronous pipe handle may implement ReadAsync via
+                    // a blocking read on some .NET Windows builds. Keep the
+                    // reader off the WinUI dispatcher regardless of the
+                    // handle mode.
+                    _readerTask = Task.Run(() => ReadLoopAsync(reader));
                     var hello = await CallAsync<HelloResult>("hello", new { version = Protocol }, cancellationToken, reconnectOnWriteFailure: false).ConfigureAwait(false);
                     if (hello.Version != Protocol)
                     {
@@ -311,12 +313,12 @@ internal sealed class CoreApiClient : IDisposable
                 {
                     var pipe = _pipe ?? throw new CoreApiException("unavailable", "Core service pipe is not connected.");
                     await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
-                    // Use one asynchronous write for the complete frame. The
-                    // explicit synchronous Connect above removes the startup
-                    // race that previously surfaced "pipe hasn't been
-                    // connected yet" on the first overlapped write. Keep a
-                    // timeout so a broken peer cannot leave a UI operation
-                    // waiting indefinitely.
+                    // Use one synchronous write for the complete frame. The
+                    // Windows named-pipe async write path can report "pipe
+                    // hasn't been connected yet" immediately after a
+                    // successful connect, even when IsConnected is true.
+                    // Keep the blocking operation off the UI thread and bound
+                    // it so a broken peer can still be replaced and retried.
                     await WriteFrameWithTimeoutAsync(pipe, frame, cancellationToken).ConfigureAwait(false);
                     return;
                 }
@@ -498,7 +500,11 @@ internal sealed class CoreApiClient : IDisposable
         byte[] frame,
         CancellationToken cancellationToken)
     {
-        var writeTask = pipe.WriteAsync(frame.AsMemory(), cancellationToken).AsTask();
+        var writeTask = Task.Run(() =>
+        {
+            pipe.Write(frame, 0, frame.Length);
+            pipe.Flush();
+        });
         try
         {
             await writeTask.WaitAsync(PipeWriteTimeout, cancellationToken).ConfigureAwait(false);

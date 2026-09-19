@@ -5,7 +5,7 @@ Head or Range: feat/windows-core-release-loop
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): recover Core operations from pipe write races
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -16,24 +16,23 @@ Integrated Result: pending
 ## Summary
 
 Harden the Windows native Core client after users reported `pipe hasn't been
-connected yet` during Core operations. The client uses a synchronous connect on
-a worker thread followed by bounded asynchronous writes, matching the overlapped
-I/O mode used by the Go named-pipe server. A failed or timed-out write replaces
-the handle and retries the request. The Core controller also probes the derived
-pipe before trusting process enumeration, preventing a second Core process from
-being started when the existing process is elevated or otherwise hidden from
-inspection.
+connected yet` during Core operations. The client uses a synchronous named-pipe
+handle and runs bounded synchronous writes on a worker thread. This avoids the
+Windows overlapped-write race while keeping the WinUI dispatcher responsive. A
+failed or timed-out write replaces the handle and retries the request. The Core
+controller also probes the derived pipe before trusting process enumeration,
+preventing a second Core process from being started when the existing process
+is elevated or otherwise hidden from inspection.
 
 ## Motivation
 
 `NamedPipeClientStream` can expose a connected state before Windows accepts the
 first write on an asynchronous handle. Retrying that handle does not repair its
 state, so UI actions such as account lookup and task operations surfaced the
-platform exception. A synchronous connect followed by asynchronous writes avoids
-that race while retaining overlapped I/O compatibility with go-winio. Writes
-have a timeout and a fresh-pipe retry so a broken peer cannot block the UI.
-Process inspection is not a reliable readiness signal for an elevated Core
-process, and using it alone can cause duplicate starts.
+platform exception. A synchronous handle and worker-thread write avoid that
+race; the two-second bound and fresh-pipe retry keep a broken peer from blocking
+the UI. Process inspection is not a reliable readiness signal for an elevated
+Core process, and using it alone can cause duplicate starts.
 
 ## Test Evidence
 

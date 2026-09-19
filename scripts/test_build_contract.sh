@@ -184,6 +184,9 @@ grep -Fq 'StartupDiagnostics' "$repo_root/ui/windows/App.xaml.cs" || fail "Windo
 grep -Fq 'Smoke test installed WinUI client' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Windows UI workflow misses startup smoke test"
 grep -Fq 'Assemble Core payload for the UI package' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Windows UI workflow misses Core payload assembly"
 grep -Fq 'NamedPipeClientStream' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI does not use Core named pipe"
+grep -Fq 'PipeOptions.None' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI must use a synchronous Core pipe handle"
+grep -Fq 'pipe.Write(frame, 0, frame.Length)' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI must use bounded synchronous Core writes"
+grep -Fq 'Task.Run(() => ReadLoopAsync(reader))' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI must keep synchronous pipe reads off the UI thread"
 grep -Fq 'chuzi.core/v1' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI misses Core API version"
 grep -Fq 'JsonPropertyName("request_id")' "$repo_root/ui/windows/CoreApiClient.cs" || fail "Windows UI misses snake_case request mapping"
 
