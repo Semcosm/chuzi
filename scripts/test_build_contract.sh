@@ -138,8 +138,14 @@ grep -Fq 'test_nightly_artifact_validator.sh' "$repo_root/.github/workflows/chuz
 grep -Fq 'test_launcher_consumer.sh' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses launcher consumer acceptance"
 grep -Fq 'name: chuzi-build-windows-ui' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows native UI build"
 grep -Fq 'build_windows_ui.ps1' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows native UI packaging"
-grep -Fq 'PackagedMsix' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses packaged MSIX mode"
-grep -Fq 'name: chuzi-windows-msix-self-contained' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses self-contained MSIX artifact"
+grep -Fq 'InstallerExe' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows installer EXE mode"
+grep -Fq 'name: chuzi-windows-installer-exe' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows installer EXE artifact"
+if grep -Fq 'PackagedMsix' "$repo_root/.github/workflows/chuzi-build.yml"; then
+  fail "workflow retains MSIX packaging mode"
+fi
+if grep -Fq 'chuzi-windows-msix' "$repo_root/.github/workflows/chuzi-build.yml"; then
+  fail "workflow retains MSIX artifact"
+fi
 if grep -Eq '^[[:space:]]{2}windows_msix:' "$repo_root/.github/workflows/chuzi-build.yml"; then
   fail "workflow retains duplicate Windows MSIX job"
 fi
@@ -147,7 +153,12 @@ if grep -Fq 'name: ci-ui-windows' "$repo_root/.github/workflows/chuzi-build.yml"
   fail "workflow retains obsolete unpackaged UI artifact"
 fi
 grep -Fq 'needs: [go_build, node_checks]' "$repo_root/.github/workflows/chuzi-build.yml" || fail "assemble target still depends on Windows UI job"
-grep -Fq 'ValidateSet("PackagedMsix", "UnpackagedZip")' "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI script misses explicit packaging modes"
+grep -Fq 'ValidateSet("InstallerExe", "UnpackagedZip")' "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI script misses explicit packaging modes"
+grep -Fq 'ISCC.exe' "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI script misses Inno Setup compiler"
+grep -Fq 'packaging/windows/Chuzi.iss' "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI script misses installer definition"
+grep -Fq 'OutputBaseFilename=ChuziSetup' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses stable setup filename"
+grep -Fq 'Source: "{#PayloadDir}\*"' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses published payload"
+grep -Fq 'UninstallDelete' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses uninstall cleanup"
 grep -Fq 'CorePayloadDir' "$repo_root/scripts/build_windows_ui.ps1" || fail "Windows UI script misses Core payload staging"
 grep -Fq 'CorePayload' "$repo_root/ui/windows/Chuzi.Native.Windows.csproj" || fail "Windows UI project misses Core payload content"
 grep -Fq 'Assemble Core payload for the UI package' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Windows UI workflow misses Core payload assembly"

@@ -21,11 +21,14 @@ the deployment mode explicitly requires it. Keep window construction cheap:
 `MainWindow` should initialize XAML first and defer Core/network work until the
 window is loaded or the user invokes an action.
 
-The packaged build follows the Gallery's working deployment model:
+The installer build follows the Gallery's working WinUI deployment model while
+using a conventional EXE installer instead of AppX/MSIX:
 
-- packaged MSIX with `WindowsPackageType=MSIX`;
-- `WindowsAppSDKSelfContained=true` so the app carries its Windows App SDK
-  runtime and does not require a separately installed Runtime MSIX;
+- unpackaged WinUI 3 publish with `WindowsPackageType=None`;
+- `WindowsAppSDKSelfContained=true` and a self-contained .NET publish, so the
+  installer carries the Windows App SDK and .NET runtime files;
+- Inno Setup installs the published files under `Program Files\Chuzi`, creates
+  Start Menu and optional desktop shortcuts, and registers an uninstaller;
 - minimum Windows version `10.0.17763.0` (Windows 10 1809+);
 - SDK-generated WinUI entry point, not a hand-written `Program.Main`.
 
@@ -39,20 +42,28 @@ directories.
 For local unpackaged diagnostics on a Windows host:
 
 ```powershell
+./scripts/build_windows_ui.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$PWD/dist/windows-ui" -CorePayloadDir "$PWD/dist/windows-amd64/stage"
+```
+
+`InstallerExe` requires Inno Setup 6 (`ISCC.exe`) on the build host. GitHub
+Actions uses the Windows runner's installed Inno Setup toolchain.
+
+The installer EXE includes a `CorePayload` directory containing the matching
+Windows service, launcher, worker files, and release manifest. On first launch,
+Overview > Install Core copies the verified service components into the per-machine
+data directory, starts the service, and confirms readiness over the Core named pipe.
+If the payload is absent (for example in a locally built diagnostics zip), the UI
+reports that Core must be supplied by deployment.
+
+For a lightweight local diagnostics bundle, use:
+
+```powershell
 ./scripts/build_windows_ui.ps1 -Mode UnpackagedZip -Configuration Release -OutputDir "$PWD/dist/windows-ui"
 ```
 
-The unpackaged zip is a diagnostics-only payload. A packaged MSIX includes a
-`CorePayload` directory containing the matching Windows service, launcher, worker
-files, and release manifest. On first launch, Overview > Install Core copies the
-verified service components into the per-machine data directory, starts the service,
-and confirms readiness over the Core named pipe. If the payload is absent (for
-example in a locally built unpackaged zip), the UI reports that Core must be supplied
-by deployment.
-
 The first-run sequence is:
 
-1. Install the signed MSIX and launch Chuzi.
+1. Run `ChuziSetup.exe` and launch Chuzi from the Start Menu or desktop shortcut.
 2. Select **Install Core** on the Overview page.
 3. Configure plugins and explicitly trust their declared signer before enabling them.
 4. Adjust update and startup behavior under Settings.
@@ -61,7 +72,6 @@ The service process is owned by the installation, not by the window. Closing the
 leaves Core running; the Stop Core action is explicit and never stops a service that
 was started externally.
 
-The CI path uses the same script in `PackagedMsix` mode and uploads the
-`chuzi-windows-msix-self-contained` artifact. The test-signed package requires
-the CI certificate on the target Windows machine, but it does not require a
-separate `Microsoft.WindowsAppRuntime.*.msix` file.
+The CI path uses the same script in `InstallerExe` mode and uploads the
+`chuzi-windows-installer-exe` artifact. The installer is self-contained and does
+not require a separate certificate or `Microsoft.WindowsAppRuntime.*.msix` file.
