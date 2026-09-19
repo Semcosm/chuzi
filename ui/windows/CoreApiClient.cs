@@ -310,6 +310,11 @@ internal sealed class CoreApiClient : IDisposable
                 catch (IOException exception)
                 {
                     last = exception;
+                    if (reconnectOnWriteFailure && attempt == 0)
+                    {
+                        reconnect = true;
+                        break;
+                    }
                 }
                 catch (CoreApiException exception) when (exception.Code == "unavailable")
                 {
