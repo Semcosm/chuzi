@@ -13,9 +13,7 @@
     <EnableMsixTooling>false</EnableMsixTooling>
     <WinUISDKReferences>false</WinUISDKReferences>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <WindowsSdkPackageVersion>10.0.19041.38</WindowsSdkPackageVersion>
     <AppxPackage>false</AppxPackage>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
@@ -25,22 +23,6 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Remove="CorePipeSmokeProgram.cs" />
-    <!--
-      MainWindow.xaml is retained as the Gallery layout reference, but the
-      unpackaged self-contained build creates the window tree in C# so WinUI
-      does not invoke LoadComponent for this window during startup.
-    -->
-    <Page Remove="MainWindow.xaml" />
-    <!--
-      These pages remain in the tree as Gallery-style layout references, but
-      unpackaged Windows App SDK builds must construct them in C# to avoid a
-      runtime XAML resource parse failure before the Core controls are shown.
-    -->
-    <Page Remove="OverviewPage.xaml" />
-    <Page Remove="SettingsPage.xaml" />
-    <Page Remove="PluginsPage.xaml" />
-    <Page Remove="AccountPage.xaml" />
-    <Page Remove="TasksPage.xaml" />
     <None Update="app.manifest">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
@@ -58,20 +40,10 @@
   -->
   <Target Name="CopyProjectPriForUnpackagedPublish"
           AfterTargets="Publish"
-          Condition="'$(WindowsPackageType)' == 'None' and '$(UseWinUI)' == 'true'">
-    <!--
-      The SDK's PRI properties are not populated consistently across
-      Microsoft.WindowsAppSDK versions. Find the generated project PRI under
-      obj instead of relying on ProjectPriFullPath, then copy it beside the
-      executable. Without this file an unpackaged WinUI app can fail during
-      XAML resource initialization with STATUS_STOWED_EXCEPTION.
-    -->
-    <ItemGroup>
-      <GeneratedProjectPri Include="$(BaseIntermediateOutputPath)**\*.pri"
-                           Exclude="$(BaseIntermediateOutputPath)**\Microsoft.UI*.pri;$(BaseIntermediateOutputPath)**\Microsoft.Windows*.pri" />
-    </ItemGroup>
-    <Copy SourceFiles="@(GeneratedProjectPri)"
-          DestinationFolder="$(PublishDir)"
+          DependsOnTargets="$(GenerateProjectPriFile)"
+          Condition="'$(WindowsPackageType)' == 'None' and '$(UseWinUI)' == 'true' and Exists('$(ProjectPriFullPath)')">
+    <Copy SourceFiles="$(ProjectPriFullPath)"
+          DestinationFiles="$(PublishDir)$(ProjectPriFileName)"
           SkipUnchangedFiles="true" />
   </Target>
 </Project>

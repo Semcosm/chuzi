@@ -5,7 +5,7 @@ Head or Range: fix/windows-ui-startup
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): wait for Core pipe readiness before UI calls
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -17,24 +17,23 @@ Integrated Result: pending
 
 Harden the Windows client boundary after a named-pipe connection is reported
 complete but before the stream accepts its first write. The client now waits
-for the connected state during the `chuzi.core/v1` handshake and reconnects
+for the connected state during the `chuzi.core/v1` handshake, confirms that
+the stream remains connected after the hello response, and reconnects
 automatically before account and task calls when a prior connection ended.
-The unpackaged UI now constructs the navigation window and all five pages in
-C# because loading even minimal page XAML reproducibly crashes in
-`Microsoft.UI.Xaml` on the Windows CI runner. The window keeps Overview as its
-initial content without forcing `NavigationView.SelectedItem` during startup,
-which also triggered a native XAML crash in the installed-client smoke test.
-The XAML files remain aligned layout references for the WinUI Gallery-based
-implementation.
+The UI keeps the full WinUI Gallery-style XAML navigation and page tree used by
+the successful installed-client smoke baseline; the failed C#-constructed page
+tree experiment is removed. Each write also waits for the stream's connected
+state so a transient Windows named-pipe race cannot reach the operation error
+surface.
 
 ## Motivation
 
 Users could reach a Core operation with a stale or transitional pipe and see
-the platform error `pipe hasn't been connected yet`. The previous navigation
-layout and each content page could fail during XAML loading, preventing the
-user from reaching Core controls at all. A Windows host investigation also
-confirmed that Core starts and completes the `chuzi.core/v1` named-pipe
-handshake; the installed UI on that host predated the transport retry fix.
+the platform error `pipe hasn't been connected yet`. A Windows host
+investigation confirmed that Core starts and completes the `chuzi.core/v1`
+named-pipe handshake, so the client must keep the connection readiness check
+at the transport boundary. The successful WinUI Gallery-style XAML baseline is
+also retained to avoid introducing native XAML startup regressions.
 
 ## Test Evidence
 

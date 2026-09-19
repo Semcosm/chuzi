@@ -5,75 +5,27 @@ namespace Chuzi.Native.Windows;
 
 public sealed partial class MainWindow : Window
 {
-    // Keep the startup XAML deliberately minimal. The Windows App SDK parser
-    // has rejected otherwise valid NavigationView markup in unpackaged,
-    // self-contained deployments; constructing the same controls through the
-    // public WinUI API avoids a process-start crash while preserving behavior.
-    private NavigationView Navigation = null!;
-    private Frame ContentFrame = null!;
     private readonly LauncherClient _launcher;
     private readonly CoreServiceController _core;
-    private OverviewPage _overview = null!;
-    private SettingsPage _settings = null!;
-    private PluginsPage _plugins = null!;
-    private AccountPage _accounts = null!;
-    private TasksPage _tasks = null!;
+    private readonly OverviewPage _overview;
+    private readonly SettingsPage _settings;
+    private readonly PluginsPage _plugins;
+    private readonly AccountPage _accounts;
+    private readonly TasksPage _tasks;
     private readonly CancellationTokenSource _shutdown = new();
     private bool _loaded;
 
     public MainWindow()
     {
+        InitializeComponent();
+
         _launcher = new LauncherClient();
         _core = new CoreServiceController(_launcher);
-        Content = new TextBlock { Text = "Starting Chuzi...", Margin = new Thickness(32) };
-        Activated += MainWindow_Activated;
-        Closed += MainWindow_Closed;
-    }
-
-    private void BuildNavigation()
-    {
-        ContentFrame = new Frame();
-        Navigation = new NavigationView
-        {
-            IsBackButtonVisible = NavigationViewBackButtonVisible.Collapsed,
-            IsSettingsVisible = false,
-            PaneTitle = "Chuzi",
-        };
-        Navigation.SelectionChanged += Navigation_SelectionChanged;
-        Navigation.Content = ContentFrame;
-        Navigation.MenuItems.Add(CreateNavigationItem("Overview", "overview", Symbol.Home));
-        Navigation.MenuItems.Add(CreateNavigationItem("Plugins", "plugins", Symbol.Repair));
-        Navigation.MenuItems.Add(CreateNavigationItem("Accounts", "accounts", Symbol.Contact));
-        Navigation.MenuItems.Add(CreateNavigationItem("Tasks", "tasks", Symbol.Play));
-        Navigation.MenuItems.Add(CreateNavigationItem("Settings", "settings", Symbol.Setting));
-        Content = Navigation;
-    }
-
-    private static NavigationViewItem CreateNavigationItem(string content, string tag, Symbol symbol)
-        => new()
-        {
-            Content = content,
-            Tag = tag,
-            Icon = new SymbolIcon { Symbol = symbol },
-        };
-
-    private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
-    {
-        if (_loaded || args.WindowActivationState == WindowActivationState.Deactivated) return;
-        _loaded = true;
-        InitializePages();
-        RunAsync(RefreshAllAsync);
-    }
-
-    private void InitializePages()
-    {
-        BuildNavigation();
         _overview = new OverviewPage();
         _settings = new SettingsPage();
         _plugins = new PluginsPage();
         _accounts = new AccountPage();
         _tasks = new TasksPage();
-        ContentFrame.Content = _overview;
 
         _overview.InstallRequested += (_, _) => RunAsync(InstallCoreAsync);
         _overview.StartRequested += (_, _) => RunAsync(StartCoreAsync);
@@ -94,6 +46,16 @@ public sealed partial class MainWindow : Window
         _accounts.SubmitRequested += (_, id) => RunAsync(() => SubmitTaskAsync(id));
         _tasks.RefreshRequested += (_, id) => RunAsync(() => RefreshTaskAsync(id));
         _tasks.CancelRequested += (_, id) => RunAsync(() => CancelTaskAsync(id));
+        Navigation.SelectedItem = Navigation.MenuItems[0];
+        Activated += MainWindow_Activated;
+        Closed += MainWindow_Closed;
+    }
+
+    private void MainWindow_Activated(object sender, WindowActivatedEventArgs args)
+    {
+        if (_loaded || args.WindowActivationState == WindowActivationState.Deactivated) return;
+        _loaded = true;
+        RunAsync(RefreshAllAsync);
     }
 
     private void Navigation_SelectionChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
