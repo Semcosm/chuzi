@@ -1,0 +1,75 @@
+{
+  "format": "chuzi-release/v1",
+  "channel": "test",
+  "version": "test-387-2ebab1c005ad",
+  "commit": "2ebab1c005addf02470980f53c1764c1b8cbf1fc",
+  "target": "windows-amd64",
+  "generated_at": "2026-09-19T07:40:35.692658Z",
+  "components": [
+    {
+      "id": "launcher",
+      "version": "test-387-2ebab1c005ad",
+      "required": true,
+      "dependencies": [],
+      "artifact": "chuzi-test-387-2ebab1c005ad-windows-amd64-launcher.zip",
+      "resources": [
+        {
+          "path": "chuzi-launcher.exe",
+          "sha256": "c2798c06f1bb69b958924e37ab8d18b60b7a456408702aecee195d475dd55883",
+          "size": 6578176
+        }
+      ]
+    },
+    {
+      "id": "service",
+      "version": "test-387-2ebab1c005ad",
+      "required": false,
+      "dependencies": [
+        "browser-worker"
+      ],
+      "artifact": "chuzi-test-387-2ebab1c005ad-windows-amd64-service.zip",
+      "resources": [
+        {
+          "path": "chuzi.exe",
+          "sha256": "c1ceb8f090b269395cfb136486b0d54958a1e02c2c13ad3f7fe4bbf4173e9850",
+          "size": 7962624
+        }
+      ]
+    },
+    {
+      "id": "browser-worker",
+      "version": "test-387-2ebab1c005ad",
+      "required": false,
+      "dependencies": [],
+      "artifact": "chuzi-test-387-2ebab1c005ad-windows-amd64-browser-worker.zip",
+      "resources": [
+        {
+          "path": "browser-worker/src/headless-adapter.mjs",
+          "sha256": "c8cebdf2dfcfc6bfd46f34471886896e1095246558a94fb730c7df0797dddc5f",
+          "size": 34077
+        },
+        {
+          "path": "browser-worker/src/headless.mjs",
+          "sha256": "0ded7e93daabbf238f9c9e45da82b17c7236a4cd502c34bc6f0d7693c2e8b426",
+          "size": 11016
+        },
+        {
+          "path": "browser-worker/src/local-test-page.html",
+          "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+          "size": 397
+        },
+        {
+          "path": "browser-worker/src/worker.mjs",
+          "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+          "size": 3421
+        },
+        {
+          "path": "browser-worker/worker-manifest.json",
+          "sha256": "aeef2f0f90b39dd778493adacbda8223e722372d9b3316c2d64e65b4e68304d3",
+          "size": 380
+        }
+      ]
+    }
+  ],
+  "plugins": []
+}
