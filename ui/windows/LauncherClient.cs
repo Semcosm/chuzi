@@ -120,21 +120,43 @@ internal sealed class LauncherClient
             RemoveLegacyCoreFiles();
             return;
         }
+        await RemoveComponentWithRetryAsync("service", allowRequiredRemoval: true, cancellationToken);
+        // Windows can keep the just-exited executable mapped for a short
+        // interval. The launcher removes by rename, so retry the operation
+        // inside the client rather than exposing a transient file-lock error
+        // as a failed uninstall.
         try
         {
-            await RunAsync("component-remove", cancellationToken, "-item", "service", "-allow-required-removal");
-        }
-        catch (LauncherException exception) when (IsMissingItemError(exception.Message))
-        {
-            // Continue removing the optional browser worker when service state
-            // was already removed by a previous interrupted operation.
-        }
-        try
-        {
-            await RunAsync("component-remove", cancellationToken, "-item", "browser-worker");
+            await RemoveComponentWithRetryAsync("browser-worker", allowRequiredRemoval: false, cancellationToken);
         }
         catch (LauncherException exception) when (IsMissingItemError(exception.Message)) { }
         try { File.Delete(Path.Combine(DataRoot, "release-manifest.json")); } catch (FileNotFoundException) { }
+    }
+
+    private async Task RemoveComponentWithRetryAsync(string id, bool allowRequiredRemoval, CancellationToken cancellationToken)
+    {
+        LauncherException? last = null;
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            try
+            {
+                var arguments = new List<string> { "-item", id };
+                if (allowRequiredRemoval) arguments.Add("-allow-required-removal");
+                await RunAsync("component-remove", cancellationToken, arguments.ToArray());
+                return;
+            }
+            catch (LauncherException exception) when (IsMissingItemError(exception.Message))
+            {
+                return;
+            }
+            catch (LauncherException exception)
+            {
+                last = exception;
+                if (attempt + 1 >= 5) throw;
+                await Task.Delay(TimeSpan.FromMilliseconds(150 * (attempt + 1)), cancellationToken);
+            }
+        }
+        throw last ?? new LauncherException($"Core component '{id}' could not be removed.");
     }
 
     private void RemoveLegacyCoreFiles()

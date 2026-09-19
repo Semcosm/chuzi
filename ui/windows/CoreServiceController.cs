@@ -215,6 +215,7 @@ internal sealed class CoreServiceController : IDisposable
             using var process = Process.GetProcessById(running.Id);
             process.Kill(entireProcessTree: true);
             await process.WaitForExitAsync(cancellationToken);
+            await WaitForServiceExitAsync(executable, cancellationToken);
         }
         catch (ArgumentException) { }
         catch (InvalidOperationException) { }
@@ -231,6 +232,30 @@ internal sealed class CoreServiceController : IDisposable
             CleanupProcess(_process);
         }
         return await GetStatusAsync(cancellationToken);
+    }
+
+    private static async Task WaitForServiceExitAsync(string executable, CancellationToken cancellationToken)
+    {
+        // A process tree can contain a second service instance left by a
+        // previous UI launch. Reap matching instances before the launcher
+        // attempts to rename/remove chuzi.exe on Windows.
+        for (var attempt = 0; attempt < 20; attempt++)
+        {
+            var remaining = FindRunningService(executable);
+            if (remaining is null) return;
+            try
+            {
+                if (!remaining.HasExited) remaining.Kill(entireProcessTree: true);
+                await remaining.WaitForExitAsync(cancellationToken);
+            }
+            catch (ArgumentException) { }
+            catch (InvalidOperationException) { }
+            finally { remaining.Dispose(); }
+            if (attempt + 1 < 20)
+            {
+                await Task.Delay(100, cancellationToken);
+            }
+        }
     }
 
     public async Task<CoreSnapshot> UninstallAsync(CancellationToken cancellationToken)

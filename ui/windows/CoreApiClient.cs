@@ -120,13 +120,19 @@ internal sealed class CoreApiClient : IDisposable
             for (var attempt = 0; attempt < PipeConnectAttempts; attempt++)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                var synchronous = attempt >= 1;
+                // Prefer a fully synchronous native handle on Windows. Some
+                // .NET builds report an overlapped client as connected before
+                // the first write is accepted, producing "pipe hasn't been
+                // connected yet" even though IsConnected is true. The final
+                // attempt keeps the overlapped path as a compatibility
+                // fallback for hosts where synchronous pipes are restricted.
+                var synchronous = attempt < PipeConnectAttempts - 1;
                 var pipeOptions = synchronous ? PipeOptions.None : PipeOptions.Asynchronous;
                 var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, pipeOptions);
                 var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
                 try
                 {
-                    await ConnectPipeAsync(pipe, cancellationToken).ConfigureAwait(false);
+                    await ConnectPipeAsync(pipe, cancellationToken, synchronous).ConfigureAwait(false);
                     await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
                     await Task.Delay(PipeWriteRetryDelay, cancellationToken).ConfigureAwait(false);
 
@@ -278,13 +284,15 @@ internal sealed class CoreApiClient : IDisposable
             // WriteAsync with "pipe hasn't been connected yet". Retry that
             // exact transport path with a synchronous handle; the blocking
             // write is kept off the UI thread and remains bounded below.
-            var synchronous = attempt >= 1;
+            // Keep the synchronous native path first for the same first-write
+            // race described above. The last attempt is an async fallback.
+            var synchronous = attempt < 3;
             var pipeOptions = synchronous ? PipeOptions.None : PipeOptions.Asynchronous;
             var pipe = new NamedPipeClientStream(".", _pipeName, PipeDirection.InOut, pipeOptions);
             var reader = new StreamReader(pipe, Encoding.UTF8, false, 1024, leaveOpen: true);
             try
             {
-                await ConnectPipeAsync(pipe, cancellationToken).ConfigureAwait(false);
+                await ConnectPipeAsync(pipe, cancellationToken, synchronous).ConfigureAwait(false);
                 await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
 
                 var hello = new WireEnvelope
@@ -661,12 +669,19 @@ internal sealed class CoreApiClient : IDisposable
         }
     }
 
-    private static async Task ConnectPipeAsync(NamedPipeClientStream pipe, CancellationToken cancellationToken)
+    private static async Task ConnectPipeAsync(
+        NamedPipeClientStream pipe,
+        CancellationToken cancellationToken,
+        bool synchronous)
     {
-        // Use the native async connect path for overlapped handles. Running
-        // the synchronous Connect method on a worker can publish the handle
-        // one scheduler turn before Windows accepts its first WriteAsync.
-        var connectTask = pipe.ConnectAsync(5000, CancellationToken.None);
+        // A synchronous handle must use the synchronous Win32 connect path as
+        // well. ConnectAsync on PipeOptions.None can complete before Windows
+        // has published the handle, which makes the first write fail with the
+        // misleading "pipe hasn't been connected yet" exception. Keep the
+        // blocking call off the UI dispatcher and bound it below.
+        var connectTask = synchronous
+            ? Task.Run(() => pipe.Connect(5000), CancellationToken.None)
+            : pipe.ConnectAsync(5000, CancellationToken.None);
         try
         {
             await connectTask.WaitAsync(cancellationToken).ConfigureAwait(false);
