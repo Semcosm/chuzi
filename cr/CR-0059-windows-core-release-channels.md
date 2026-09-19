@@ -49,7 +49,7 @@ Local checks:
 `git diff --check`
 
 The authoritative Windows validation is GitHub Actions Run 393
-(`35432752682`), whose `windows-2022` build passed the named-pipe transport
+(`35432752682`, https://github.com/Semcosm/chuzi/actions/runs/35432752682), whose `windows-2022` build passed the named-pipe transport
 test, native C# Core named-pipe handshake smoke test, Core lifecycle smoke
 test, self-contained installer build, and installed UI startup smoke test.
 
