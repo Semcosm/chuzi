@@ -24,7 +24,9 @@ manifest so the UI can recover the selected channel and version after restart.
 The build workflow publishes untagged `test-<run>-<sha12>` artifacts to the
 test catalog and tagged `v<major>.<minor>.<patch>` artifacts to the stable
 catalog. The installer carries a matching Core payload, and the Windows CI
-smoke path exercises component install, Core startup, readiness, and stop.
+smoke path exercises component install, Core startup, readiness, and stop. The
+Windows client recreates its named-pipe stream after a failed handshake so a
+transient connect race cannot poison later Core operations.
 
 ## Motivation
 
