@@ -61,6 +61,7 @@ internal sealed class CoreApiClient : IDisposable
     // stream write is accepted. Keep retries here instead of exposing the
     // transient platform exception to the UI.
     private static readonly TimeSpan PipeWriteRetryDelay = TimeSpan.FromMilliseconds(50);
+    private static readonly TimeSpan PipeWriteTimeout = TimeSpan.FromSeconds(2);
     private const int PipeWriteAttempts = 12;
     private const int PipeConnectAttempts = 4;
 
@@ -316,13 +317,15 @@ internal sealed class CoreApiClient : IDisposable
                     var pipe = _pipe ?? throw new CoreApiException("unavailable", "Core service pipe is not connected.");
                     await WaitUntilConnectedAsync(pipe, cancellationToken).ConfigureAwait(false);
                     // Use one synchronous write for the complete frame. The
-                    // Windows named-pipe async write path can still report
-                    // "Pipe hasn't been connected yet" immediately after
-                    // ConnectAsync, even when IsConnected is true. The Core
-                    // server reads frames continuously, so this local write
-                    // is bounded by the pipe buffer and avoids that race.
-                    pipe.Write(frame, 0, frame.Length);
-                    pipe.Flush();
+                    // Windows named-pipe async write path can report "Pipe
+                    // hasn't been connected yet" immediately after
+                    // ConnectAsync, even when IsConnected is true. Run the
+                    // synchronous operation off the UI thread and bound it:
+                    // a pipe handle can otherwise block forever if the server
+                    // accepted the connection but has not completed its
+                    // first read. A timeout causes the caller to replace the
+                    // handle and retry the request.
+                    await WriteFrameWithTimeoutAsync(pipe, frame, cancellationToken).ConfigureAwait(false);
                     return;
                 }
                 catch (InvalidOperationException exception)
@@ -335,6 +338,15 @@ internal sealed class CoreApiClient : IDisposable
                     }
                 }
                 catch (IOException exception)
+                {
+                    last = exception;
+                    if (reconnectOnWriteFailure && attempt == 0)
+                    {
+                        reconnect = true;
+                        break;
+                    }
+                }
+                catch (TimeoutException exception)
                 {
                     last = exception;
                     if (reconnectOnWriteFailure && attempt == 0)
@@ -486,6 +498,34 @@ internal sealed class CoreApiClient : IDisposable
                 throw new InvalidOperationException("The pipe did not reach the connected state.");
             }
             await Task.Delay(PipeWriteRetryDelay, cancellationToken);
+        }
+    }
+
+    private static async Task WriteFrameWithTimeoutAsync(
+        NamedPipeClientStream pipe,
+        byte[] frame,
+        CancellationToken cancellationToken)
+    {
+        var writeTask = Task.Run(() =>
+        {
+            pipe.Write(frame, 0, frame.Length);
+            pipe.Flush();
+        });
+        try
+        {
+            await writeTask.WaitAsync(PipeWriteTimeout, cancellationToken).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            // ReconnectAsync owns disposal of the timed-out handle. Observe
+            // the detached task so a late native write failure is not raised
+            // as an unobserved task exception.
+            _ = writeTask.ContinueWith(
+                completed => _ = completed.Exception,
+                CancellationToken.None,
+                TaskContinuationOptions.OnlyOnFaulted,
+                TaskScheduler.Default);
+            throw new IOException("Core pipe write timed out.");
         }
     }
 
