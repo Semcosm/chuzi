@@ -37,6 +37,7 @@ var version = "dev"
 const (
 	backendNode     = "node"
 	backendHeadless = "headless"
+	backendHeaded   = "headed"
 )
 
 var (
@@ -51,6 +52,8 @@ type serviceOptions struct {
 	workerCommand          string
 	workerScript           string
 	headlessBrowserCommand string
+	windowsDesktop         string
+	windowsLauncherCommand string
 	automationAdapter      string
 	healthListen           string
 	metricsListen          string
@@ -116,10 +119,11 @@ func (r *serviceRuntime) refreshMetrics(at time.Time) {
 func defaultServiceOptions() serviceOptions {
 	return serviceOptions{
 		configPath:             "configs/example.json",
-		backend:                backendNode,
+		backend:                backendHeaded,
 		workerCommand:          "node",
 		workerScript:           "browser-worker/src/worker.mjs",
 		headlessBrowserCommand: "chromium",
+		windowsLauncherCommand: "chuzi-browser-launcher.exe",
 		owner:                  "service",
 		pollInterval:           500 * time.Millisecond,
 		leaseTTL:               2 * time.Minute,
@@ -158,7 +162,7 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 			Script:  options.workerScript,
 			Stderr:  workerStderr(),
 		})
-	case backendHeadless:
+	case backendHeadless, backendHeaded:
 		if strings.TrimSpace(options.headlessBrowserCommand) == "" {
 			return nil, fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
 		}
@@ -166,15 +170,23 @@ func newWorkerFactory(options serviceOptions) (browser.WorkerFactory, error) {
 		if strings.TrimSpace(options.automationAdapter) != "" {
 			workerMode = "adapter"
 		}
+		browserMode := backendHeadless
+		if options.backend == backendHeaded {
+			browserMode = backendHeaded
+		}
+		scriptArgs := []string{"--browser-command", options.headlessBrowserCommand, "--browser-mode", browserMode, "--windows-launcher-command", options.windowsLauncherCommand}
+		if strings.TrimSpace(options.windowsDesktop) != "" {
+			scriptArgs = append(scriptArgs, "--windows-desktop", options.windowsDesktop)
+		}
 		return browser.NewProcessFactory(browser.ProcessConfig{
 			Command:    options.workerCommand,
 			Script:     "browser-worker/src/headless.mjs",
-			ScriptArgs: []string{"--browser-command", options.headlessBrowserCommand},
+			ScriptArgs: scriptArgs,
 			Stderr:     workerStderr(),
 			WorkerMode: workerMode,
 		})
 	default:
-		return nil, fmt.Errorf("%w: %q (want %s or %s)", errInvalidBackend, options.backend, backendNode, backendHeadless)
+		return nil, fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, options.backend, backendNode, backendHeadless, backendHeaded)
 	}
 }
 
@@ -195,15 +207,18 @@ func (o serviceOptions) validate() error {
 		(o.heartbeat > 0 && o.heartbeat >= o.leaseTTL) {
 		return fmt.Errorf("%w: invalid service timing or concurrency settings", errInvalidOptions)
 	}
-	if o.backend != backendNode && o.backend != backendHeadless {
-		return fmt.Errorf("%w: %q (want %s or %s)", errInvalidBackend, o.backend, backendNode, backendHeadless)
+	if o.backend != backendNode && o.backend != backendHeadless && o.backend != backendHeaded {
+		return fmt.Errorf("%w: %q (want %s, %s, or %s)", errInvalidBackend, o.backend, backendNode, backendHeadless, backendHeaded)
 	}
-	if o.backend == backendHeadless && strings.TrimSpace(o.headlessBrowserCommand) == "" {
+	if (o.backend == backendHeadless || o.backend == backendHeaded) && strings.TrimSpace(o.headlessBrowserCommand) == "" {
 		return fmt.Errorf("%w: empty headless browser command", errInvalidOptions)
 	}
+	if strings.TrimSpace(o.windowsDesktop) != "" && strings.TrimSpace(o.windowsLauncherCommand) == "" {
+		return fmt.Errorf("%w: empty Windows browser launcher command", errInvalidOptions)
+	}
 	if strings.TrimSpace(o.automationAdapter) != "" &&
-		(strings.TrimSpace(o.automationAdapter) != "genshin-cloudgame" || o.backend != backendHeadless) {
-		return fmt.Errorf("%w: genshin-cloudgame requires the headless backend", errInvalidOptions)
+		(strings.TrimSpace(o.automationAdapter) != "genshin-cloudgame" || (o.backend != backendHeadless && o.backend != backendHeaded)) {
+		return fmt.Errorf("%w: genshin-cloudgame requires a CDP backend", errInvalidOptions)
 	}
 	if strings.TrimSpace(o.metricsListen) != "" {
 		if _, _, err := net.SplitHostPort(strings.TrimSpace(o.metricsListen)); err != nil {
@@ -318,9 +333,17 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return closeOnError(fmt.Errorf("service: automation adapter runtime unavailable"))
 		}
 		adapterPath := filepath.Join("browser-worker", "src", "headless-adapter.mjs")
+		adapterMode := backendHeadless
+		if options.backend == backendHeaded {
+			adapterMode = backendHeaded
+		}
+		adapterArgs := []string{adapterPath, "--browser-command", options.headlessBrowserCommand, "--browser-mode", adapterMode, "--windows-launcher-command", options.windowsLauncherCommand}
+		if strings.TrimSpace(options.windowsDesktop) != "" {
+			adapterArgs = append(adapterArgs, "--windows-desktop", options.windowsDesktop)
+		}
 		client, startErr := plugin.StartAdapter(context.Background(), plugin.Command{
 			Mode: plugin.Native, Executable: node,
-			Args:   []string{adapterPath, "--browser-command", options.headlessBrowserCommand},
+			Args:   adapterArgs,
 			Stderr: workerStderr(),
 		})
 		if startErr != nil {
@@ -514,10 +537,13 @@ func runSelfTest(ctx context.Context, command, script string) error {
 func main() {
 	options := defaultServiceOptions()
 	flag.StringVar(&options.configPath, "config", "configs/example.json", "JSON deployment configuration")
-	flag.StringVar(&options.backend, "browser-backend", backendNode, "browser worker backend (node or headless)")
+	flag.StringVar(&options.backend, "browser-backend", backendHeaded, "browser worker backend (node, headless, or headed)")
 	flag.StringVar(&options.workerCommand, "worker-command", "node", "Node browser worker executable")
 	flag.StringVar(&options.workerScript, "worker-script", "browser-worker/src/worker.mjs", "Node browser worker script")
-	flag.StringVar(&options.headlessBrowserCommand, "headless-browser-command", "chromium", "externally installed Chromium/Edge executable for the headless backend")
+	flag.StringVar(&options.headlessBrowserCommand, "browser-command", "chromium", "externally installed Chromium/Edge executable for the CDP backend")
+	flag.StringVar(&options.headlessBrowserCommand, "headless-browser-command", "chromium", "deprecated alias for -browser-command")
+	flag.StringVar(&options.windowsDesktop, "windows-desktop", "", "Windows desktop name for headed browser launch in the current session")
+	flag.StringVar(&options.windowsLauncherCommand, "windows-launcher-command", "chuzi-browser-launcher.exe", "Windows helper used to launch a browser on the selected desktop")
 	flag.StringVar(&options.automationAdapter, "automation-adapter", "", "explicit business adapter (genshin-cloudgame only)")
 	flag.StringVar(&options.healthListen, "health-listen", "", "override the configured local health listener")
 	flag.StringVar(&options.metricsListen, "metrics-listen", "", "optional local Prometheus metrics listener")

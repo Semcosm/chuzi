@@ -51,17 +51,17 @@ backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/sen
 ## 浏览器运行时前置条件
 
 当前服务只保留 Node.js Worker。默认 deferred Worker 仅验证协议和生命周期；真实
-浏览器流程必须显式选择 headless-CDP，并由部署环境提供 Chromium/Edge。Profile 由
+浏览器流程使用可配置的 headed-CDP 或 headless-CDP，并由部署环境提供 Chromium/Edge。Profile 由
 服务生成并保存在受限数据目录，运行时不接受请求方提供的文件系统路径。
 
-真正 headless 后端依赖部署环境已安装的 Chromium/Edge，通过独立 Node worker 的
-CDP 连接控制；它不复用任何桌面 WebView 的“隐藏窗口”模式。`-browser-backend headless` 选择该 worker，
-`-headless-browser-command` 必须是部署方明确配置的单一可执行文件路径/名称，参数
+CDP 后端依赖部署环境已安装的 Chromium/Edge，通过独立 Node worker 的 CDP 连接控制。
+`-browser-backend headless` 选择无头模式，`-browser-backend headed` 选择有头模式；
+`-browser-command` 必须是部署方明确配置的单一可执行文件路径/名称，参数
 由 worker 固定生成且不经过 shell。worker 使用动态 loopback 端口和服务派生的
 `--user-data-dir`，只轮询 `/json/version`；发现成功后仍须由上层自动化适配器执行
 页面操作，当前 worker 不报告业务成功。
 
-首个真实流程通过 `-browser-backend headless -automation-adapter genshin-cloudgame`
+首个真实流程通过 `-browser-backend headed -automation-adapter genshin-cloudgame`
 显式启用，固定检查 `https://ys.mihoyo.com/cloud/#/` 的已授权会话。它复用 worker 已启动的
 Chromium/CDP 会话，不启动第二个浏览器。
 
@@ -194,7 +194,7 @@ gh workflow run release-retry.yml --repo Semcosm/chuzi --ref main \
   -f commit_sha=<tag-target-commit>
 ```
 
-当前 Node Worker 提供 deferred 协议和生命周期替身，以及显式选择的 headless-CDP
+当前 Node Worker 提供 deferred 协议和生命周期替身，以及可配置的 headed/headless-CDP
 进程边界；当前仅接入云原神会话检查。其他业务适配器、WebDriver、浏览器下载或
 其他原生模块必须在单独 CR 中增加，并为四个发布目标记录构建和运行覆盖范围。
 
@@ -205,8 +205,8 @@ Wine 可执行文件、Windows 运行库、图形会话和目标插件版本。W
 服务派生的 session/request 标识和脱敏运行事实，凭证不得进入 JSONL payload。
 
 CR-0043 的云原神适配器通过显式服务选项运行，不改变服务默认的 deferred backend：
-`chuzi -browser-backend headless -automation-adapter genshin-cloudgame
--headless-browser-command <installed-browser>`。它只检查已授权 Profile，不接收明文
+`chuzi -browser-backend headed -automation-adapter genshin-cloudgame
+-browser-command <installed-browser>`。它只检查已授权 Profile，不接收明文
 凭据，不处理验证码/风控，不接受任意 URL；适配器返回页面事实，由 Core evaluator
 判断认证结果，未认证或页面不匹配时 fail closed。测试和
 CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生产账号已登录。

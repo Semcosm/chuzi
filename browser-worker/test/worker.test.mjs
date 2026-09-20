@@ -16,7 +16,7 @@ const worker = resolve(root, "src", "worker.mjs");
 const headlessWorker = resolve(root, "src", "headless.mjs");
 const fakeBrowser = resolve(root, "test", "fixtures", "fake-cdp-browser.mjs");
 
-function spawnHeadless(mode = "valid", timeoutMs = "1000", extraEnv = {}) {
+function spawnHeadless(mode = "valid", timeoutMs = "1000", extraEnv = {}, browserMode = "headless") {
   return spawn(process.execPath, [
     headlessWorker,
     "--stdio",
@@ -26,6 +26,8 @@ function spawnHeadless(mode = "valid", timeoutMs = "1000", extraEnv = {}) {
     fakeBrowser,
     "--cdp-timeout-ms",
     timeoutMs,
+    "--browser-mode",
+    browserMode,
   ], {
     stdio: ["pipe", "pipe", "pipe"],
     env: {
@@ -37,6 +39,23 @@ function spawnHeadless(mode = "valid", timeoutMs = "1000", extraEnv = {}) {
     },
   });
 }
+
+test("headed worker keeps the CDP lifecycle while omitting headless mode", async (t) => {
+  const profile = await mkdtemp(resolve(root, "test-profile-headed-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const child = spawnHeadless("valid", "1000", {}, "headed");
+  const lines = createReader(child, "headed-worker");
+  cleanupChild(t, child, lines);
+  sendMessage(child, "headed-worker", { protocol: "v1", id: "hello-1", type: "hello" });
+  assert.equal((await readMessage(lines)).payload.browserRuntime, "headed-cdp");
+  sendMessage(child, "headed-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
+    session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "success",
+  } });
+  const started = await readMessage(lines);
+  assert.equal(started.payload.runtime, "headed-cdp");
+  assert.equal((await readMessage(lines)).type, "session_succeeded");
+  await stopChild(child, lines);
+});
 
 function cleanupChild(testContext, child, lines) {
   testContext.after(() => {

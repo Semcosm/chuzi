@@ -39,4 +39,11 @@ CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   -o "$output_dir/$launcher_binary" \
   "$repo_root/cmd/launcher"
 
+if [ "$target" = "windows-amd64" ]; then
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+    -trimpath \
+    -o "$output_dir/chuzi-browser-launcher.exe" \
+    "$repo_root/cmd/browser-launcher"
+fi
+
 echo "built Go components for $target at $output_dir"

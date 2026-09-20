@@ -14,7 +14,7 @@ dist_root="$5"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 case "$target" in
-  windows-amd64) service_binary=chuzi.exe; launcher_binary=chuzi-launcher.exe; goos=windows; goarch=amd64 ;;
+  windows-amd64) service_binary=chuzi.exe; launcher_binary=chuzi-launcher.exe; browser_launcher_binary=chuzi-browser-launcher.exe; goos=windows; goarch=amd64 ;;
   linux-amd64) service_binary=chuzi; launcher_binary=chuzi-launcher; goos=linux; goarch=amd64 ;;
   linux-arm64) service_binary=chuzi; launcher_binary=chuzi-launcher; goos=linux; goarch=arm64 ;;
   darwin-arm64) service_binary=chuzi; launcher_binary=chuzi-launcher; goos=darwin; goarch=arm64 ;;
@@ -27,10 +27,14 @@ rm -rf "$target_dir"
 mkdir -p "$stage_dir/browser-worker"
 cp "$go_dir/$service_binary" "$stage_dir/$service_binary"
 cp "$go_dir/$launcher_binary" "$stage_dir/$launcher_binary"
+if [ "$target" = "windows-amd64" ]; then
+  cp "$go_dir/$browser_launcher_binary" "$stage_dir/$browser_launcher_binary"
+fi
 # Artifact archives do not reliably preserve Unix executable bits.
-chmod 0755 \
-  "$stage_dir/$service_binary" \
-  "$stage_dir/$launcher_binary"
+chmod 0755 "$stage_dir/$service_binary" "$stage_dir/$launcher_binary"
+if [ "$target" = "windows-amd64" ]; then
+  chmod 0755 "$stage_dir/$browser_launcher_binary"
+fi
 tar -xzf "$worker_archive" -C "$stage_dir/browser-worker"
 
 commit="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"

@@ -37,25 +37,25 @@ Matrix command/notification 边界只允许固定命令和显式白名单房间/
 ## 浏览器运行时边界
 
 当前服务只启动 Node.js Worker。默认 deferred Worker 仅提供协议和生命周期替身；
-headless backend 才会控制部署环境显式配置的 Chromium/Edge。真正 headless 后端必须
+CDP backend 才会控制部署环境显式配置的 Chromium/Edge。无头或有头后端必须
 单独审查浏览器可执行文件、CDP 端口、
-Profile 权限、网络范围和进程隔离。当前 headless worker 只接受服务配置的浏览器
-命令，固定使用 `--headless=new`、loopback CDP 地址、动态端口和服务派生
+Profile 权限、网络范围和进程隔离。当前 worker 只接受服务配置的浏览器
+命令；headless 固定使用 `--headless=new`，headed 可选 Windows desktop，二者都使用 loopback CDP 地址、动态端口和服务派生
 `--user-data-dir`，通过 `/json/version` 严格校验 loopback `ws:` endpoint；命令参数
 不经过 shell，浏览器 stdout/stderr 不进入协议。worker 只返回 `session_handle`、
 主机/端口元数据和分类运行事实，不接触 Credential Store。
 
-首个真实 headless vertical slice 只允许本地测试页、显式导航、有限观察和固定结果读取。
+首个真实 CDP vertical slice 只允许本地测试页、显式导航、有限观察和固定结果读取。
 不得在 CI 或 smoke test 中注入真实凭证、Cookie、生产 URL、
 截图或下载内容。页面内容、脚本错误、Cookie、请求头和运行时堆栈不得进入日志、
 Matrix 消息或 metadata-only 审计。
 
 浏览器查看能力只允许 Core 根据活动 request ID 请求一次有界 JPEG。客户端不能
 选择 URL、CDP endpoint、Profile 路径或注入鼠标/键盘事件；服务端从活动会话注册表
-取得 adapter-owned CDP handle，并复用该 headless 浏览器。截图按需生成，不缓存、
+取得 adapter-owned CDP handle，并复用该 CDP 浏览器。截图按需生成，不缓存、
 不持久化、不写日志/审计，也不通过 Matrix 转发；无活动会话时 fail closed。
 
-headless 浏览器缺失、CDP endpoint 超时/非法、Profile 路径不合法和进程崩溃必须
+浏览器缺失、CDP endpoint 超时/非法、Profile 路径不合法和进程崩溃必须
 fail closed，并映射为分类 runtime/configuration fact。浏览器进程或图形依赖缺失也必须 fail closed，并映射
 为分类 runtime/configuration fact；不能自动下载未知浏览器、回退到系统任意
 可执行文件，或借助 CAPTCHA、风控和反检测技术改变第三方服务行为。

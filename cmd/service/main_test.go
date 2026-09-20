@@ -107,7 +107,7 @@ func TestNewWorkerFactoryRejectsUnknownBackend(t *testing.T) {
 }
 
 func TestNewWorkerFactorySupportsConfiguredBackends(t *testing.T) {
-	for _, backend := range []string{backendNode, backendHeadless} {
+	for _, backend := range []string{backendNode, backendHeadless, backendHeaded} {
 		t.Run(backend, func(t *testing.T) {
 			options := testServiceOptions()
 			options.backend = backend
@@ -144,7 +144,21 @@ func TestHeadlessBackendRejectsEmptyBrowserCommand(t *testing.T) {
 	}
 }
 
-func TestGenshinAutomationAdapterRequiresExplicitHeadlessBackend(t *testing.T) {
+func TestHeadedBackendCarriesDesktopConfiguration(t *testing.T) {
+	options := testServiceOptions()
+	options.backend = backendHeaded
+	options.windowsDesktop = "ChuziDesktop"
+	options.windowsLauncherCommand = "chuzi-browser-launcher.exe"
+	if err := options.validate(); err != nil {
+		t.Fatalf("headed desktop options rejected: %v", err)
+	}
+	factory, err := newWorkerFactory(options)
+	if err != nil || factory == nil {
+		t.Fatalf("headed worker factory = %#v, %v", factory, err)
+	}
+}
+
+func TestGenshinAutomationAdapterRequiresExplicitCDPBackend(t *testing.T) {
 	options := testServiceOptions()
 	options.automationAdapter = "genshin-cloudgame"
 	if err := options.validate(); !errors.Is(err, errInvalidOptions) {
@@ -153,6 +167,10 @@ func TestGenshinAutomationAdapterRequiresExplicitHeadlessBackend(t *testing.T) {
 	options.backend = backendHeadless
 	if err := options.validate(); err != nil {
 		t.Fatalf("headless adapter validation = %v", err)
+	}
+	options.backend = backendHeaded
+	if err := options.validate(); err != nil {
+		t.Fatalf("headed adapter validation = %v", err)
 	}
 	options.automationAdapter = "unsupported"
 	if err := options.validate(); !errors.Is(err, errInvalidOptions) {

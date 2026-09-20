@@ -15,12 +15,12 @@ Runner/browser-worker 生命周期边界、加密凭证与安全审计，以及 
 `cmd/service` 现在负责加载 `configs/example.json`（也可通过 `-config` 指定），打开
 持久化 bbolt Store，并组装 Request Service、Session Runner 和 Queue Scheduler。
 普通启动只运行持久化调度循环；没有排队请求时保持 idle，收到中断后关闭 Store。
-默认 backend 仍是 Node.js deferred Worker；真实浏览器流程必须显式选择 Node
-headless-CDP backend，并由部署环境提供浏览器可执行文件。`-self-test` 继续使用
+默认真实浏览器 backend 为 Node.js headed-CDP Worker；也可显式选择 headless-CDP，
+两者都由部署环境提供浏览器可执行文件。`-self-test` 继续使用
 临时目录运行一次 Node Worker 协议 smoke test，不代表生产服务入口或真实浏览器自动化。
 
 需要运行首个真实业务适配器时，必须显式同时设置
-`-browser-backend headless -automation-adapter genshin-cloudgame`。该流程固定访问
+`-browser-backend headed -automation-adapter genshin-cloudgame`。该流程固定访问
 `https://ys.mihoyo.com/cloud/#/`，只检查服务派生 Profile 中已有的授权会话，不提交用户名/密码，
 不处理验证码或风控，也不接受任意 URL。适配器只返回脱敏页面事实，由 Core evaluator
 将未登录或页面结构变化分别映射为凭证失败或未知业务失败。
@@ -44,10 +44,9 @@ Profile。Windows 首个 Slint 客户端位于 `ui/windows`，通过独立的 na
 可选的本地 metrics 端点只暴露低基数分类指标；日志、指标、健康和审计输出都不会
 包含凭证、Cookie、页面内容或原始账号/房间标识。
 
-浏览器运行时只保留 Node.js Worker：默认 deferred 生命周期替身，以及显式选择的
-headless-CDP Worker。Wry/Rust desktop runtime 路径已废弃，不再属于服务 backend、
-构建矩阵、发布包或客户端架构。headless 流程只使用部署环境提供的 Chromium/Edge，
-返回脱敏运行事实，由 Core evaluator 映射为账号结果。
+浏览器运行时只保留 Node.js Worker：默认 deferred 生命周期替身，以及可配置的
+headed-CDP/headless-CDP Worker。Windows headed 模式可通过 `-windows-desktop`
+指定当前 Windows session 内的 Win32 desktop；headless 模式不使用可见窗口。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
@@ -71,7 +70,7 @@ artifact，不创建 Git tag 或 GitHub Release。版本格式为
 - 凭证默认加密存储，日志和 Matrix 消息不得泄露明文凭证。
 - 调度、会话运行和外部通知解耦，支持失败重试、超时回收和服务重启恢复。
 - 浏览器 Worker、调度、会话运行和外部通知解耦；headless 只使用显式配置的外部浏览器。
-- headless backend 不下载或打包 Chromium/Edge，只使用显式配置的外部可执行文件。
+- CDP backend 不下载或打包 Chromium/Edge，只使用显式配置的外部可执行文件。
 - 只自动化用户有权使用的账号与服务，不实现凭证窃取、访问控制绕过或攻击能力。
 
 ## 文档入口
