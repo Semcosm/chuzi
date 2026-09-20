@@ -17,6 +17,8 @@ const (
 	OperationFailed    = "operation_failed"
 	Cancel             = "cancel"
 	OperationCancelled = "operation_cancelled"
+	ViewSnapshot       = "view_snapshot"
+	ViewFrameMessage   = "view_frame"
 	Shutdown           = "shutdown"
 	ShutdownAck        = "shutdown_ack"
 	Error              = "error"
@@ -43,7 +45,8 @@ func (e Envelope) Validate() error {
 	}
 	switch e.Type {
 	case Hello, HelloAck, Execute, OperationStarted, OperationSucceeded,
-		OperationFailed, Cancel, OperationCancelled, Shutdown, ShutdownAck, Error:
+		OperationFailed, Cancel, OperationCancelled, ViewSnapshot, ViewFrameMessage,
+		Shutdown, ShutdownAck, Error:
 	default:
 		return fmt.Errorf("%w: unknown message type %q", ErrInvalidContract, e.Type)
 	}

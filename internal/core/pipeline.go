@@ -183,6 +183,26 @@ type pipelineWorker struct {
 	credentialOptional bool
 }
 
+func (w *pipelineWorker) Snapshot(ctx context.Context, width, height int) (browser.ViewSnapshot, error) {
+	if w == nil || w.worker == nil {
+		return browser.ViewSnapshot{}, browser.ErrViewUnavailable
+	}
+	viewer, ok := w.automation.(automation.Viewer)
+	if !ok {
+		return browser.ViewSnapshot{}, browser.ErrViewUnavailable
+	}
+	frame, err := viewer.Snapshot(ctx, w.session, width, height)
+	if err != nil {
+		return browser.ViewSnapshot{}, err
+	}
+	return browser.ViewSnapshot{
+		ContentType: frame.ContentType,
+		Width:       frame.Width,
+		Height:      frame.Height,
+		Data:        frame.Data,
+	}, nil
+}
+
 func (w *pipelineWorker) Run(ctx context.Context) (browser.WorkerResult, error) {
 	if ctx == nil || w == nil || w.worker == nil || w.credentials == nil || w.automation == nil || w.clock == nil {
 		return browser.WorkerResult{Failure: account.ConfigurationFailure}, nil

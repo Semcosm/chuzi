@@ -77,7 +77,9 @@ shown; credentials are never stored by the client.
 ### Tasks
 
 Tasks accepts a request ID and sends `get_request` or `cancel_request`. The page
-shows the redacted request ID, account, state, attempt number, and failure text.
+shows the redacted request ID, account, state, attempt number, and failure text. While the request has an
+active headless browser session, `View page` calls `get_browser_view` to fetch one bounded JPEG frame. The
+frame is read-only and on demand; the client cannot navigate, click, type, or access a browser endpoint.
 
 ## Runtime and packaging
 

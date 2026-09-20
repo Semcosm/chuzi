@@ -301,6 +301,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
+	viewRegistry := browser.NewViewRegistry()
 	requestService, err := requestservice.New(database, now, requestservice.IDGenerator(newID), options.owner)
 	if err != nil {
 		return closeOnError(err)
@@ -332,7 +333,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		}
 		pipelineRunner, pipelineErr := core.NewPipelineRunner(database, core.PipelineConfig{
 			Factory: factory, Credentials: credentials, Automation: client, Profiles: profiles,
-			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", CancellationObserver: database, Clock: now, Sink: sink},
+			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", ViewRegistry: viewRegistry, CancellationObserver: database, Clock: now, Sink: sink},
 			Clock:   now, Actor: options.owner,
 			Operation:          automation.Operation{Name: "genshin.cloudgame.session_probe"},
 			CredentialOptional: true,
@@ -347,6 +348,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			HeartbeatInterval:    options.heartbeat,
 			CancelTimeout:        options.cancelTimeout,
 			ShutdownTimeout:      options.shutdownTimeout,
+			ViewRegistry:         viewRegistry,
 			CancellationObserver: database,
 			Clock:                now,
 			Sink:                 sink,
@@ -372,7 +374,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database})
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}

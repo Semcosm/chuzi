@@ -729,6 +729,7 @@ dependencies = [
 name = "chuzi-native-windows"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "i-slint-backend-testing",
  "png 0.17.16",
  "serde",

@@ -44,7 +44,7 @@ The first request on a connection must be:
 The result contains the negotiated version and supported method names:
 
 ```json
-{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","get_account","cancel_request","get_result","list_events","list_notifications"]}
+{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view"]}
 ```
 
 An unsupported protocol or version is reported as `unavailable`. Calls before
@@ -61,11 +61,20 @@ successful negotiation are rejected as `invalid_argument`.
 | `get_result` | `{request_id}` | `coreapi.Result` |
 | `list_events` | `coreapi.EventQuery` | `{events}` |
 | `list_notifications` | `coreapi.NotificationQuery` | `{notifications}` |
+| `get_browser_view` | `{request_id, width?, height?}` | `coreapi.BrowserView` |
 
 `list_notifications` accepts optional `account_id`, `request_id`, `since`,
 `until`, `offset`, and `limit` filters. Filtering, stable creation-time
 ordering, and bounding are applied at the durable store boundary before the
 redacted DTOs are projected.
+
+`get_browser_view` is an ephemeral, read-only observation of an active request
+session. Width and height default to 640x360 and are bounded to 160-1280 by
+90-720. The result is a bounded `image/jpeg` frame encoded as base64. Core
+accepts only the request ID; it never accepts a URL, CDP endpoint, Profile path,
+mouse input, or keyboard input. If the request has no active browser session,
+the method returns `unavailable`. Frames are not persisted, logged, audited, or
+sent through Matrix.
 
 `cancel` is a transport operation, not a business-state command. Its
 parameters are `{id}` and its result is `{cancelled}`. A client context

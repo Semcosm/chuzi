@@ -167,6 +167,11 @@ worker。它使用动态 loopback CDP 端口、服务派生 Profile、`/json/ver
 headless。首个真实适配器固定检查云原神已授权会话，并只返回脱敏页面事实，由 Core
 evaluator 映射为账号结果；endpoint discovery 不代表业务成功。
 
+活动 headless 会话还提供一个受 Core API 管控的只读 `get_browser_view` 能力。
+它按请求捕获一次有界 JPEG，复用同一浏览器和 CDP 连接，不启动第二个浏览器；
+没有查看请求时不会持续截图或传输画面。该能力不支持鼠标/键盘输入，不接受
+URL、CDP endpoint 或 Profile 路径，帧不持久化也不进入日志、审计或 Matrix。
+
 ## 关键边界
 
 浏览器模块不能直接决定对外业务状态；它只能报告运行事实，由账号状态机根据事件和持久化数据完成状态转换。Matrix 模块不能直接操作凭证，只能提交请求和消费脱敏后的领域事件。

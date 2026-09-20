@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { createServer } from "node:net";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -63,6 +64,62 @@ function execute(child, payload) {
     payload,
   });
 }
+
+async function reservePort() {
+  const server = createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const port = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+async function waitForEndpoint(port) {
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`http://127.0.0.1:${port}/json/version`);
+      if (response.ok) return;
+    } catch {
+      // The fixture may still be starting.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error("fake CDP endpoint did not start");
+}
+
+test("headless-CDP adapter returns an on-demand view frame", async (t) => {
+  const profile = await mkdtemp(resolve(root, "adapter-profile-view-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const port = await reservePort();
+  const browser = spawn(process.execPath, [fakeBrowser, `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`], {
+    stdio: ["ignore", "ignore", "ignore"],
+    env: { ...process.env, FAKE_CDP_MODE: "valid" },
+  });
+  t.after(() => { if (browser.exitCode === null) browser.kill(); });
+  await waitForEndpoint(port);
+
+  const child = spawnAdapter();
+  const lines = createReader(child, "headless-adapter-view");
+  cleanup(t, child, lines);
+  sendMessage(child, "headless-adapter-view", {
+    protocol: "chuzi.adapter/v1", id: "view-1", type: "view_snapshot",
+    payload: {
+      session_id: "session-view", account_id: "authorized-account", request_id: "request-view",
+      profile_dir: profile, runtime: "headless-cdp", session_handle: `headless-cdp://127.0.0.1:${port}`,
+      width: "320", height: "180",
+    },
+  });
+  const frame = await readMessage(lines, "headless-adapter-view");
+  assert.equal(frame.type, "view_frame");
+  assert.equal(frame.payload.content_type, "image/jpeg");
+  assert.equal(frame.payload.width, "320");
+  assert.equal(frame.payload.height, "180");
+  assert.equal(Buffer.from(frame.payload.data, "base64").toString(), "fake-jpeg-frame");
+  await stop(child, lines);
+});
 
 test("headless-CDP adapter performs a local test-page operation with a fake account", async (t) => {
   const profile = await mkdtemp(resolve(root, "adapter-profile-"));

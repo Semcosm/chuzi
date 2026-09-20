@@ -3,6 +3,7 @@ package plugin
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -268,6 +269,44 @@ func (c *Client) Execute(ctx context.Context, session automation.Session, operat
 		return automation.Result{}, err
 	}
 	return result, nil
+}
+
+// Snapshot requests one bounded JPEG observation from the active adapter
+// session. The request carries only service-derived session metadata; the
+// adapter owns the CDP connection and never receives an arbitrary URL.
+func (c *Client) Snapshot(ctx context.Context, session automation.Session, width, height int) (automation.ViewFrame, error) {
+	if err := session.Validate(); err != nil {
+		return automation.ViewFrame{}, err
+	}
+	if width < 160 || width > 1280 || height < 90 || height > 720 {
+		return automation.ViewFrame{}, fmt.Errorf("%w: invalid view dimensions", automation.ErrInvalidContract)
+	}
+	request := automation.Request(c.nextID("view"), automation.ViewSnapshot, map[string]string{
+		"session_id":     session.SessionID,
+		"account_id":     session.AccountID,
+		"request_id":     session.RequestID,
+		"profile_dir":    session.ProfileDir,
+		"runtime":        session.Runtime,
+		"session_handle": session.Handle,
+		"width":          strconv.Itoa(width),
+		"height":         strconv.Itoa(height),
+	})
+	response, err := c.await(ctx, request, automation.ViewFrameMessage)
+	if err != nil {
+		return automation.ViewFrame{}, err
+	}
+	contentType := response.Payload["content_type"]
+	if contentType != "image/jpeg" {
+		return automation.ViewFrame{}, fmt.Errorf("%w: unsupported view content type", automation.ErrInvalidContract)
+	}
+	frameWidth, widthErr := strconv.Atoi(response.Payload["width"])
+	frameHeight, heightErr := strconv.Atoi(response.Payload["height"])
+	data, decodeErr := base64.StdEncoding.DecodeString(response.Payload["data"])
+	if widthErr != nil || heightErr != nil || frameWidth < 160 || frameWidth > 1280 ||
+		frameHeight < 90 || frameHeight > 720 || decodeErr != nil || len(data) == 0 || len(data) > 700<<10 {
+		return automation.ViewFrame{}, fmt.Errorf("%w: invalid view frame", automation.ErrInvalidContract)
+	}
+	return automation.ViewFrame{ContentType: contentType, Width: frameWidth, Height: frameHeight, Data: data}, nil
 }
 
 func (c *Client) Cancel(ctx context.Context, operationID string) error {

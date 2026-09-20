@@ -106,6 +106,7 @@ type Config struct {
 	CancelTimeout        time.Duration
 	ShutdownTimeout      time.Duration
 	WorkerMode           string
+	ViewRegistry         *ViewRegistry
 	CancellationObserver RequestCancellationObserver
 	Clock                Clock
 	Sink                 observability.Sink
@@ -189,6 +190,10 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 	if worker == nil {
 		r.record(r.config.Clock(), "start", "failed", work.Request.RequestID, "worker_unavailable", elapsed(startedAt, r.config.Clock()))
 		return queue.Result{Failure: account.TransientFailure}, ErrWorkerCrashed
+	}
+	if viewer, ok := worker.(Viewer); ok && r.config.ViewRegistry != nil {
+		r.config.ViewRegistry.Register(work.Request.RequestID, viewer)
+		defer r.config.ViewRegistry.Unregister(work.Request.RequestID, viewer)
 	}
 
 	defer func() {

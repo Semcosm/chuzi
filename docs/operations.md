@@ -65,6 +65,11 @@ CDP 连接控制；它不复用任何桌面 WebView 的“隐藏窗口”模式�
 显式启用，固定检查 `https://ys.mihoyo.com/cloud/#/` 的已授权会话。它复用 worker 已启动的
 Chromium/CDP 会话，不启动第二个浏览器。
 
+Windows 客户端 Tasks 页面可通过 Core 的 `get_browser_view` 请求活动会话的一次
+JPEG 快照。该请求只在用户点击查看时产生截图和 IPC 传输；未查看时 headless
+浏览器不会持续编码或发送帧，因此不会引入常驻视频流开销。快照是只读的，当前
+不提供鼠标或键盘控制；请求必须命中仍在运行的 request，否则返回 unavailable。
+
 Matrix HTTP client 使用 Client-Server `sync`、`send` 和 `whoami` 接口；access token
 由 `matrix.access_token_env` 指定的环境变量注入。通知 outbox 保存在同一 bbolt
 数据库，发送 worker 使用稳定 event ID 并在网络失败后保留记录。

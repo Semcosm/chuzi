@@ -242,6 +242,12 @@ func (c *Client) ListNotifications(ctx context.Context, query coreapi.Notificati
 	return result.Notifications, err
 }
 
+func (c *Client) GetBrowserView(ctx context.Context, input coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
+	var result coreapi.BrowserView
+	err := c.Call(ctx, methodGetBrowserView, input, &result)
+	return result, err
+}
+
 func formatUint(value uint64) string {
 	const digits = "0123456789"
 	if value == 0 {

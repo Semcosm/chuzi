@@ -149,6 +149,32 @@ type Notification struct {
 	DeliveredAt time.Time `json:"delivered_at,omitempty"`
 }
 
+// BrowserViewRequest requests one bounded, read-only image from an active
+// browser session. It never accepts a URL, Profile path, or CDP endpoint.
+type BrowserViewRequest struct {
+	RequestID string `json:"request_id"`
+	Width     int    `json:"width,omitempty"`
+	Height    int    `json:"height,omitempty"`
+}
+
+// BrowserView is an ephemeral page projection. Data is base64-encoded by the
+// JSON representation and is never persisted or included in audit events.
+type BrowserView struct {
+	RequestID   string    `json:"request_id"`
+	ContentType string    `json:"content_type"`
+	Width       int       `json:"width"`
+	Height      int       `json:"height"`
+	Data        string    `json:"data"`
+	CapturedAt  time.Time `json:"captured_at"`
+}
+
+// BrowserViewAPI is optional so existing in-process test doubles and older
+// embedders remain source-compatible while the transport advertises the
+// additive method when the implementation supports it.
+type BrowserViewAPI interface {
+	GetBrowserView(context.Context, BrowserViewRequest) (BrowserView, error)
+}
+
 // API is the stable Core contract. Implementations may use any local IPC or
 // in-process transport as long as these DTOs and error codes remain stable.
 type API interface {

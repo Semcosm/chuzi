@@ -1,14 +1,15 @@
 mod core_client;
 mod models;
 
+use base64::Engine;
 use core_client::{core_call, core_handshake, unique_id};
 use models::{
-    default_theme, BehaviorSettings, CoreAccount, CorePlugin, CoreRequest, SubmitResult,
-    UiPreferences,
+    default_theme, BehaviorSettings, BrowserView, CoreAccount, CorePlugin, CoreRequest,
+    SubmitResult, UiPreferences,
 };
 use serde_json::json;
 use slint::language::ColorScheme;
-use slint::{ComponentHandle, SharedString};
+use slint::{ComponentHandle, Image, SharedString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -424,6 +425,61 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             request.to_string(),
             "cancel_request",
         )
+    });
+
+    let weak = ui.as_weak();
+    let view_state = Arc::clone(&state);
+    ui.on_refresh_view(move |request| {
+        let request = request.to_string();
+        if let Some(window) = weak.upgrade() {
+            window.set_browser_view_status("Capturing the active browser page...".into());
+        }
+        run_background_with(
+            &weak,
+            Arc::clone(&view_state),
+            move |state| {
+                validate_text(&request, "request ID")?;
+                let result = core_call(
+                    state,
+                    "get_browser_view",
+                    json!({"request_id": request, "width": 640, "height": 360}),
+                )?;
+                let parsed: BrowserView =
+                    serde_json::from_value(result).map_err(|error| error.to_string())?;
+                Ok(("Browser view captured.".to_owned(), parsed))
+            },
+            |window, view: BrowserView| {
+                let bytes = match base64::engine::general_purpose::STANDARD.decode(&view.data) {
+                    Ok(bytes) => bytes,
+                    Err(error) => {
+                        window.set_browser_view_status(
+                            format!("Invalid browser frame: {error}").into(),
+                        );
+                        return;
+                    }
+                };
+                match Image::load_from_data(&bytes, Some("jpeg")) {
+                    Ok(image) => {
+                        window.set_browser_view(image);
+                        window.set_browser_view_loaded(true);
+                        window.set_browser_view_status(
+                            format!(
+                                "{}x{} {} captured for {} at {}",
+                                view.width,
+                                view.height,
+                                view.content_type,
+                                view.request_id,
+                                view.captured_at
+                            )
+                            .into(),
+                        );
+                    }
+                    Err(error) => window.set_browser_view_status(
+                        format!("Unable to decode browser frame: {error:?}").into(),
+                    ),
+                }
+            },
+        );
     });
 }
 
