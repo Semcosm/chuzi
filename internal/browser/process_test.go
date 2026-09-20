@@ -137,7 +137,7 @@ func TestProcessWorkerReturnsCDPHandleForAdapterMode(t *testing.T) {
 		ScriptArgs: []string{
 			"--browser-command", "node",
 			"--browser-command-arg", filepath.Join(root, "test", "fixtures", "fake-cdp-browser.mjs"),
-			"--cdp-timeout-ms", "500",
+			"--cdp-timeout-ms", "5000",
 		},
 		WorkerMode: "adapter",
 	})

@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
-import { createServer } from "node:net";
+import { createConnection, createServer } from "node:net";
 import { createInterface } from "node:readline";
 import { isAbsolute, normalize, sep } from "node:path";
 
@@ -126,15 +126,70 @@ function terminateBrowser(child) {
   }
 }
 
+function waitForCdpPort(session, deadline) {
+  return new Promise((resolve, reject) => {
+    let socket;
+    let retryTimer;
+    let settled = false;
+
+    const cleanup = () => {
+      if (retryTimer) clearTimeout(retryTimer);
+      if (socket) socket.destroy();
+      session.abortController.signal.removeEventListener("abort", onAbort);
+      session.child?.removeListener("error", onChildError);
+      session.child?.removeListener("exit", onChildExit);
+    };
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      callback(value);
+    };
+    const fail = (failure) => finish(reject, failure);
+    const onAbort = () => fail(runtimeFailure("transient", "cancelled"));
+    const onChildError = () => fail(runtimeFailure("configuration", "browser_command_unavailable"));
+    const onChildExit = () => fail(runtimeFailure("transient", "browser_crashed"));
+    const attempt = () => {
+      if (settled) return;
+      if (session.cancelled) return onAbort();
+      if (session.startError) return fail(session.startError);
+      if (session.child?.exitCode !== null || session.child?.signalCode !== null) {
+        return onChildExit();
+      }
+      if (Date.now() >= deadline) return fail(runtimeFailure("transient", "cdp_endpoint_timeout"));
+
+      socket = createConnection({ host: "127.0.0.1", port: session.port });
+      socket.once("connect", () => {
+        socket.destroy();
+        finish(resolve);
+      });
+      socket.once("error", () => {
+        if (settled) return;
+        socket.destroy();
+        socket = undefined;
+        if (Date.now() >= deadline) {
+          fail(runtimeFailure("transient", "cdp_endpoint_timeout"));
+          return;
+        }
+        retryTimer = setTimeout(attempt, pollIntervalMs);
+      });
+    };
+
+    session.abortController.signal.addEventListener("abort", onAbort, { once: true });
+    session.child?.once("error", onChildError);
+    session.child?.once("exit", onChildExit);
+    attempt();
+  });
+}
+
 async function discoverCdp(session) {
   const deadline = Date.now() + cdpTimeoutMs;
   const endpoint = `http://127.0.0.1:${session.port}/json/version`;
   while (Date.now() < deadline) {
     if (session.cancelled) throw runtimeFailure("transient", "cancelled");
     if (session.startError) throw session.startError;
-    if (session.child.exitCode !== null || session.child.signalCode !== null) {
-      throw runtimeFailure("transient", "browser_crashed");
-    }
+    await waitForCdpPort(session, deadline);
+
     const requestController = new AbortController();
     const remainingMs = Math.max(1, deadline - Date.now());
     const abortRequest = () => requestController.abort();

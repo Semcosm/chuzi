@@ -16,7 +16,7 @@ const worker = resolve(root, "src", "worker.mjs");
 const headlessWorker = resolve(root, "src", "headless.mjs");
 const fakeBrowser = resolve(root, "test", "fixtures", "fake-cdp-browser.mjs");
 
-function spawnHeadless(mode = "valid", timeoutMs = "1000") {
+function spawnHeadless(mode = "valid", timeoutMs = "1000", extraEnv = {}) {
   return spawn(process.execPath, [
     headlessWorker,
     "--stdio",
@@ -28,7 +28,13 @@ function spawnHeadless(mode = "valid", timeoutMs = "1000") {
     timeoutMs,
   ], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, FAKE_CDP_MODE: mode, NODE_OPTIONS: "", CHUZI_FAKE_BROWSER_SCRIPT: fakeBrowser },
+    env: {
+      ...process.env,
+      FAKE_CDP_MODE: mode,
+      NODE_OPTIONS: "",
+      CHUZI_FAKE_BROWSER_SCRIPT: fakeBrowser,
+      ...extraEnv,
+    },
   });
 }
 
@@ -154,12 +160,27 @@ test("headless worker discovers a loopback CDP endpoint and exposes a session ha
   await stopChild(child, lines);
 });
 
+test("headless worker waits for a delayed CDP endpoint before starting the session", async (t) => {
+  const profile = await mkdtemp(resolve(root, "test-profile-delayed-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const child = spawnHeadless("valid", "2000", { FAKE_CDP_START_DELAY_MS: "750" });
+  const lines = createReader(child, "headless-worker-delayed");
+  cleanupChild(t, child, lines);
+  sendMessage(child, "headless-worker-delayed", { protocol: "v1", id: "session-1", type: "session_start", payload: {
+    session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "success",
+  } });
+  const started = await readMessage(lines);
+  assert.equal(started.type, "session_started");
+  assert.equal((await readMessage(lines)).type, "session_succeeded");
+  await stopChild(child, lines);
+});
+
 test("headless worker fails closed for invalid or unavailable CDP endpoints", async (t) => {
   for (const [mode, expectedReason] of [["invalid", "cdp_endpoint_invalid"], ["timeout", "cdp_endpoint_timeout"]]) {
     await t.test(mode, async () => {
       const profile = await mkdtemp(resolve(root, `test-profile-${mode}-`));
       t.after(() => rm(profile, { recursive: true, force: true }));
-      const child = spawnHeadless(mode, "250");
+      const child = spawnHeadless(mode, mode === "invalid" ? "1000" : "250");
       const lines = createReader(child, `headless-worker-${mode}`);
       cleanupChild(t, child, lines);
       sendMessage(child, `headless-worker-${mode}`, { protocol: "v1", id: "session-1", type: "session_start", payload: {
