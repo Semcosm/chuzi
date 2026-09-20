@@ -1,0 +1,117 @@
+{
+  "format": "chuzi-release-index/v1",
+  "channel": "test",
+  "version": "test-452-5e002bf1bc1f",
+  "commit": "5e002bf1bc1f224c169bd603359adc228bc2da8d",
+  "target": "windows-amd64",
+  "generated_at": "2026-09-20T02:31:28.746686Z",
+  "manifest": {
+    "format": "chuzi-release/v1",
+    "channel": "test",
+    "version": "test-452-5e002bf1bc1f",
+    "commit": "5e002bf1bc1f224c169bd603359adc228bc2da8d",
+    "target": "windows-amd64",
+    "generated_at": "2026-09-20T02:31:28.746686Z",
+    "components": [
+      {
+        "id": "launcher",
+        "version": "test-452-5e002bf1bc1f",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-test-452-5e002bf1bc1f-windows-amd64-launcher.zip",
+        "resources": [
+          {
+            "path": "chuzi-launcher.exe",
+            "sha256": "45ec8cbeb3d7f8a84d2f3df9b4472ecb47a508543debb0bffd1e93299d402085",
+            "size": 6578176
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "version": "test-452-5e002bf1bc1f",
+        "required": false,
+        "dependencies": [
+          "browser-worker"
+        ],
+        "artifact": "chuzi-test-452-5e002bf1bc1f-windows-amd64-service.zip",
+        "resources": [
+          {
+            "path": "chuzi.exe",
+            "sha256": "d00201075d1761fc710b25ccfe80377bdeebb5c92658aaa766b3eb23706ee22f",
+            "size": 7962624
+          }
+        ]
+      },
+      {
+        "id": "browser-worker",
+        "version": "test-452-5e002bf1bc1f",
+        "required": false,
+        "dependencies": [],
+        "artifact": "chuzi-test-452-5e002bf1bc1f-windows-amd64-browser-worker.zip",
+        "resources": [
+          {
+            "path": "browser-worker/src/headless-adapter.mjs",
+            "sha256": "c8cebdf2dfcfc6bfd46f34471886896e1095246558a94fb730c7df0797dddc5f",
+            "size": 34077
+          },
+          {
+            "path": "browser-worker/src/headless.mjs",
+            "sha256": "0ded7e93daabbf238f9c9e45da82b17c7236a4cd502c34bc6f0d7693c2e8b426",
+            "size": 11016
+          },
+          {
+            "path": "browser-worker/src/local-test-page.html",
+            "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+            "size": 397
+          },
+          {
+            "path": "browser-worker/src/worker.mjs",
+            "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+            "size": 3421
+          },
+          {
+            "path": "browser-worker/worker-manifest.json",
+            "sha256": "aeef2f0f90b39dd778493adacbda8223e722372d9b3316c2d64e65b4e68304d3",
+            "size": 380
+          }
+        ]
+      }
+    ],
+    "plugins": []
+  },
+  "artifacts": [
+    {
+      "component": "bundle",
+      "target": "windows-amd64",
+      "version": "test-452-5e002bf1bc1f",
+      "path": "chuzi-test-452-5e002bf1bc1f-windows-amd64.zip",
+      "size": 6134841,
+      "sha256": "61438cd5698a20931ec20a48f7638d3b0b8d48f72c5e9d7cb1942a53e1b842a1"
+    },
+    {
+      "component": "launcher",
+      "target": "windows-amd64",
+      "version": "test-452-5e002bf1bc1f",
+      "path": "chuzi-test-452-5e002bf1bc1f-windows-amd64-launcher.zip",
+      "size": 2788318,
+      "sha256": "b16beb006ff678132ccab22a3dbcda185cd5f05281cb427daee1e0e73cf0e3d0"
+    },
+    {
+      "component": "service",
+      "target": "windows-amd64",
+      "version": "test-452-5e002bf1bc1f",
+      "path": "chuzi-test-452-5e002bf1bc1f-windows-amd64-service.zip",
+      "size": 3332032,
+      "sha256": "81f25a6a16ffbc5c9308f447ddb45e70a125cce7e62cf7634c7d32743b8f1089"
+    },
+    {
+      "component": "browser-worker",
+      "target": "windows-amd64",
+      "version": "test-452-5e002bf1bc1f",
+      "path": "chuzi-test-452-5e002bf1bc1f-windows-amd64-browser-worker.zip",
+      "size": 14290,
+      "sha256": "8a219ff4164c5c0456239e815bb907c7acac6445657e15318e9e2bfb27466492"
+    }
+  ]
+}
