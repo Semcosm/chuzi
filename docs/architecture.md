@@ -20,7 +20,7 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
   服务级限流尚未实现。
 - **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
 - **Browser Worker**：运行在独立进程中，负责浏览器运行时和自动化适配边界；不能直接决定账号业务状态。
-  当前 Node.js Worker 提供 deferred 生命周期替身和 headless-CDP runtime adapter；原生
+  当前 Node.js Worker 提供 deferred 生命周期替身和可配置的 headed/headless-CDP runtime adapter；原生
   客户端通过 Core API 工作，不依赖浏览器 WebView runtime。
 - **State Store**：持久化账号、请求、状态转换、租约、队列索引、审计、凭证
   密文和 Matrix 通知 outbox。
@@ -42,7 +42,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 .
 ├── cmd/                         # 可执行程序入口
 │   └── service/
-├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
+├── browser-worker/              # Node.js Worker 协议、deferred 与 headed/headless-CDP 适配器
 ├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
 ├── ui/                          # 原生平台客户端
 │   ├── windows/                  # 已有 Rust + Slint 首个客户端
@@ -159,12 +159,12 @@ CLI/Core 能力，接收 UI 请求结果、脱敏进度和分类错误；更新�
 必须先确认记录中的进程已退出。`ProcessServiceController` 只负责当前调用方生命周期
 内的 shell-free 子进程，生产部署仍由 systemd、launchd 或 Windows 服务管理器负责。
 
-## Headless 浏览器边界
+## CDP 浏览器边界
 
-真正的 headless 后端由部署环境提供 Chromium/Edge，当前仅保留 Node headless-CDP
+CDP 后端由部署环境提供 Chromium/Edge，当前仅保留 Node headed/headless-CDP
 worker。它使用动态 loopback CDP 端口、服务派生 Profile、`/json/version` endpoint
 校验以及有界取消/关闭回收；不会打包完整 Chromium，也不会把桌面隐藏窗口当作
-headless。首个真实适配器固定检查云原神已授权会话，并只返回脱敏页面事实，由 Core
+无头模式不创建可见窗口；headed 模式可在 Windows 当前 session 的指定 Win32 desktop 上创建窗口。首个真实适配器固定检查云原神已授权会话，并只返回脱敏页面事实，由 Core
 evaluator 映射为账号结果；endpoint discovery 不代表业务成功。
 
 活动 headless 会话还提供一个受 Core API 管控的只读 `get_browser_view` 能力。
@@ -202,11 +202,11 @@ JSON Lines 协议驱动一个独立 Worker：先 `hello` 握手，再发送
 
 Worker 只能报告这些运行事实，不能写入账号状态或审计记录。当前 Node Worker
 继续提供协议和 deferred-browser failure/synthetic lifecycle 模式，并提供独立的
-headless-CDP 进程边界。`ProcessFactory` 会启动
+headed/headless-CDP 进程边界。`ProcessFactory` 会启动
 调用方指定的可执行文件和脚本；`cmd/service` 默认仍指定 Node deferred Worker，
-`-browser-backend headless` 选择 Node headless-CDP worker，并通过
-`-headless-browser-command` 指定部署环境已安装的 Chromium/Edge 可执行文件。
-headless worker 的 session handle 只代表已验证的运行时连接，不代表业务操作已完成。
+`-browser-backend headless|headed` 选择 Node CDP worker，并通过
+`-browser-command` 指定部署环境已安装的 Chromium/Edge 可执行文件。
+CDP worker 的 session handle 只代表已验证的运行时连接，不代表业务操作已完成。
 
 ## Credential Store 生命周期契约
 

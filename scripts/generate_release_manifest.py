@@ -39,10 +39,11 @@ def main() -> int:
     stage = args.stage.resolve()
     binary = "chuzi.exe" if args.target == "windows-amd64" else "chuzi"
     launcher = "chuzi-launcher.exe" if args.target == "windows-amd64" else "chuzi-launcher"
+    browser_launcher = "chuzi-browser-launcher.exe"
     archive_extension = "zip" if args.target == "windows-amd64" else "tar.gz"
     groups = {
         "launcher": ([launcher,], True),
-        "service": ([binary], False),
+        "service": ([binary] + ([browser_launcher] if args.target == "windows-amd64" else []), False),
         "browser-worker": (sorted(
             "browser-worker/" + str(path.relative_to(stage / "browser-worker")).replace(os.sep, "/")
             for path in (stage / "browser-worker").rglob("*") if path.is_file()

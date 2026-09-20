@@ -228,6 +228,9 @@ func (w *pipelineWorker) Run(ctx context.Context) (browser.WorkerResult, error) 
 			return browser.WorkerResult{Failure: account.UnknownFailure}, nil
 		}
 		w.session.Handle = runtimeResult.Handle
+		if parsed, parseErr := url.Parse(runtimeResult.Handle); parseErr == nil {
+			w.session.Runtime = parsed.Scheme
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return browser.WorkerResult{Failure: account.TransientFailure}, err
@@ -350,7 +353,7 @@ func evaluateOperation(operation automation.Operation, result automation.Result)
 
 func validRuntimeHandle(value string) bool {
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Scheme != "headless-cdp" || parsed.Hostname() != "127.0.0.1" ||
+	if err != nil || (parsed.Scheme != "headless-cdp" && parsed.Scheme != "headed-cdp") || parsed.Hostname() != "127.0.0.1" ||
 		parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.User != nil {
 		return false
 	}

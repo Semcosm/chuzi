@@ -42,6 +42,8 @@ if ($LASTEXITCODE -ne 0) { throw "go build failed" }
 $launcherLdflags = "-s -w -X main.version=$Version"
 & go build -trimpath "-ldflags=$launcherLdflags" -o (Join-Path $stageDir "chuzi-launcher.exe") ./cmd/launcher
 if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
+& go build -trimpath -o (Join-Path $stageDir "chuzi-browser-launcher.exe") ./cmd/browser-launcher
+if ($LASTEXITCODE -ne 0) { throw "browser launcher build failed" }
 
 & npm --prefix (Join-Path $repoRoot "browser-worker") ci --ignore-scripts
 if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }

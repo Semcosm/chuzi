@@ -305,7 +305,14 @@ func sessionHandle(payload map[string]string) (string, bool) {
 	if host != "127.0.0.1" || !validCDPPort(port) {
 		return "", false
 	}
-	return "headless-cdp://" + host + ":" + port, true
+	runtime := payload["runtime"]
+	if runtime == "" {
+		runtime = "headless-cdp"
+	}
+	if runtime != "headless-cdp" && runtime != "headed-cdp" {
+		return "", false
+	}
+	return runtime + "://" + host + ":" + port, true
 }
 
 func (w *processWorker) Cancel(ctx context.Context) error {

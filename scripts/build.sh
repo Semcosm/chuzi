@@ -44,6 +44,13 @@ CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   -o "$stage_dir/$launcher_binary" \
   "$repo_root/cmd/launcher"
 
+if [ "$target" = "windows-amd64" ]; then
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+    -trimpath \
+    -o "$stage_dir/chuzi-browser-launcher.exe" \
+    "$repo_root/cmd/browser-launcher"
+fi
+
 npm --prefix "$repo_root/browser-worker" ci --ignore-scripts
 npm --prefix "$repo_root/browser-worker" run build
 cp -R "$repo_root/browser-worker/dist/." "$stage_dir/browser-worker/"

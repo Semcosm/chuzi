@@ -15,8 +15,11 @@ const operationName = "local.test_page_probe";
 const genshinCloudGameOperation = "genshin.cloudgame.session_probe";
 const genshinCloudGameURL = "https://ys.mihoyo.com/cloud/#/";
 const localPageFile = resolve(dirname(fileURLToPath(import.meta.url)), "local-test-page.html");
-const browserCommand = option("--browser-command", process.env.CHUZI_HEADLESS_BROWSER_COMMAND || "chromium");
+const browserCommand = option("--browser-command", process.env.CHUZI_BROWSER_COMMAND || process.env.CHUZI_HEADLESS_BROWSER_COMMAND || "chromium");
 const browserCommandArgs = options("--browser-command-arg");
+const browserMode = option("--browser-mode", process.env.CHUZI_BROWSER_MODE || "headless");
+const windowsDesktop = option("--windows-desktop", process.env.CHUZI_WINDOWS_DESKTOP || "");
+const windowsLauncherCommand = option("--windows-launcher-command", process.env.CHUZI_WINDOWS_LAUNCHER_COMMAND || "chuzi-browser-launcher.exe");
 const cdpTimeoutMs = boundedNumber(option("--cdp-timeout-ms", "10000"), 10000, 100, 120000);
 const pollIntervalMs = boundedNumber(option("--poll-interval-ms", "100"), 100, 10, 2000);
 const operationTimeoutMs = boundedNumber(option("--operation-timeout-ms", "10000"), 10000, 100, 120000);
@@ -76,6 +79,10 @@ function validProfileDir(profileDir) {
 
 function validAccountID(accountID) {
   return /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/u.test(accountID);
+}
+
+function isCdpRuntime(runtime) {
+  return runtime === "headless-cdp" || runtime === "headed-cdp";
 }
 
 function wait(milliseconds, signal) {
@@ -228,9 +235,11 @@ class HeadlessLifecycle {
   args() {
     const args = [
       resolve(dirname(fileURLToPath(import.meta.url)), "headless.mjs"),
-      "--stdio", "--browser-command", browserCommand,
+      "--stdio", "--browser-command", browserCommand, "--browser-mode", browserMode,
     ];
     for (const argument of browserCommandArgs) args.push("--browser-command-arg", argument);
+    if (windowsDesktop) args.push("--windows-desktop", windowsDesktop);
+    if (windowsLauncherCommand) args.push("--windows-launcher-command", windowsLauncherCommand);
     args.push("--cdp-timeout-ms", String(cdpTimeoutMs), "--poll-interval-ms", String(pollIntervalMs));
     return args;
   }
@@ -265,7 +274,7 @@ class HeadlessLifecycle {
         },
       }, ["session_started"], this.signal);
       const port = started.payload && started.payload.cdp_port;
-      if (started.payload?.runtime !== "headless-cdp" || !/^\d+$/u.test(port || "")) {
+      if (!isCdpRuntime(started.payload?.runtime) || !/^\d+$/u.test(port || "")) {
         throw classified("runtime", "lifecycle_metadata_invalid", true);
       }
       this.port = port;
@@ -321,7 +330,7 @@ class ExternalLifecycle {
   }
 
   async start() {
-    const match = /^headless-cdp:\/\/127\.0\.0\.1:(\d+)$/u.exec(this.handle);
+    const match = /^(?:headless|headed)-cdp:\/\/127\.0\.0\.1:(\d+)$/u.exec(this.handle);
     const port = Number(match?.[1] || 0);
     if (!match || !Number.isInteger(port) || port < 1 || port > 65535) {
       throw classified("configuration", "cdp_handle_invalid");
@@ -587,7 +596,7 @@ class CdpSocket {
 }
 
 async function captureSnapshot(session, width, height, signal, lifecycle) {
-  if (session.runtime && session.runtime !== "headless-cdp") {
+  if (session.runtime && !isCdpRuntime(session.runtime)) {
     throw classified("configuration", "runtime_mismatch");
   }
   if (!session.handle) throw classified("runtime", "browser_view_unavailable", true);
@@ -715,7 +724,7 @@ async function createLocalPage(accountID) {
 async function executeLocalPage(session, operation, parameters, signal, lifecycle) {
   if (operation !== operationName) throw classified("configuration", "unsupported_operation");
   if (Object.keys(parameters).length !== 0) throw classified("configuration", "operation_parameters_unsupported");
-  if (session.runtime && session.runtime !== "headless-cdp") throw classified("configuration", "runtime_mismatch");
+  if (session.runtime && !isCdpRuntime(session.runtime)) throw classified("configuration", "runtime_mismatch");
   if (!validAccountID(session.accountID)) throw classified("configuration", "account_id_invalid");
 
   const page = await createLocalPage(session.accountID);
@@ -773,7 +782,7 @@ async function executeLocalPage(session, operation, parameters, signal, lifecycl
 async function executeGenshinCloudGame(session, operation, parameters, signal, lifecycle) {
   if (operation !== genshinCloudGameOperation) throw classified("configuration", "unsupported_operation");
   if (Object.keys(parameters).length !== 0) throw classified("configuration", "operation_parameters_unsupported");
-  if (session.runtime && session.runtime !== "headless-cdp") throw classified("configuration", "runtime_mismatch");
+  if (session.runtime && !isCdpRuntime(session.runtime)) throw classified("configuration", "runtime_mismatch");
   if (!validAccountID(session.accountID)) throw classified("configuration", "account_id_invalid");
 
   const socket = new CdpSocket(lifecycle.websocketURL, signal);
@@ -960,7 +969,7 @@ input.on("line", (line) => {
         adapter_id: adapterID,
         version: adapterVersion,
         api: adapterProtocol,
-        capabilities: "headless-cdp@1,browser-view@1,local.test-page@1,genshin-cloudgame@1",
+        capabilities: "cdp@1,headless-cdp@1,headed-cdp@1,browser-view@1,local.test-page@1,genshin-cloudgame@1",
       });
       break;
     case "execute":

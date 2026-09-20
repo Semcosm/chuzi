@@ -62,6 +62,7 @@ func TestSessionHandleAcceptsOnlyLoopbackCDPPorts(t *testing.T) {
 		valid   bool
 	}{
 		{name: "valid", payload: map[string]string{"cdp_host": "127.0.0.1", "cdp_port": "9222"}, valid: true},
+		{name: "headed", payload: map[string]string{"runtime": "headed-cdp", "cdp_host": "127.0.0.1", "cdp_port": "9222"}, valid: true},
 		{name: "missing-host", payload: map[string]string{"cdp_port": "9222"}},
 		{name: "remote-host", payload: map[string]string{"cdp_host": "127.0.0.2", "cdp_port": "9222"}},
 		{name: "zero-port", payload: map[string]string{"cdp_host": "127.0.0.1", "cdp_port": "0"}},
@@ -73,7 +74,7 @@ func TestSessionHandleAcceptsOnlyLoopbackCDPPorts(t *testing.T) {
 			if valid != test.valid {
 				t.Fatalf("sessionHandle(%#v) valid=%v, want %v", test.payload, valid, test.valid)
 			}
-			if test.valid && handle != "headless-cdp://127.0.0.1:9222" {
+			if test.valid && handle != "headless-cdp://127.0.0.1:9222" && handle != "headed-cdp://127.0.0.1:9222" {
 				t.Fatalf("sessionHandle() = %q", handle)
 			}
 		})

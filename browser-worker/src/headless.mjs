@@ -4,7 +4,13 @@ import { createInterface } from "node:readline";
 import { isAbsolute, normalize, sep } from "node:path";
 
 const protocolVersion = "v1";
-const capabilities = ["protocol.v1", "browser-runtime.headless-cdp", "session.cdp"];
+const capabilities = [
+  "protocol.v1",
+  "browser-runtime.cdp",
+  "browser-runtime.headless-cdp",
+  "browser-runtime.headed-cdp",
+  "session.cdp",
+];
 const defaults = {
   browserCommand: "chromium",
   cdpTimeoutMs: 10000,
@@ -29,8 +35,11 @@ function options(name) {
   return values;
 }
 
-const browserCommand = option("--browser-command", process.env.CHUZI_HEADLESS_BROWSER_COMMAND || defaults.browserCommand);
+const browserCommand = option("--browser-command", process.env.CHUZI_BROWSER_COMMAND || process.env.CHUZI_HEADLESS_BROWSER_COMMAND || defaults.browserCommand);
 const browserCommandArgs = options("--browser-command-arg");
+const browserMode = option("--browser-mode", process.env.CHUZI_BROWSER_MODE || "headless");
+const windowsDesktop = option("--windows-desktop", process.env.CHUZI_WINDOWS_DESKTOP || "");
+const windowsLauncherCommand = option("--windows-launcher-command", process.env.CHUZI_WINDOWS_LAUNCHER_COMMAND || "chuzi-browser-launcher.exe");
 const cdpTimeoutMs = boundedNumber(option("--cdp-timeout-ms", defaults.cdpTimeoutMs), defaults.cdpTimeoutMs, 100, 120000);
 const pollIntervalMs = boundedNumber(option("--poll-interval-ms", defaults.pollIntervalMs), defaults.pollIntervalMs, 10, 2000);
 const input = createInterface({ input: process.stdin, crlfDelay: Infinity });
@@ -103,6 +112,14 @@ function redactFailure(errorCode) {
 
 function runtimeFailure(failure, reason) {
   return { failure, reason };
+}
+
+function runtimeName() {
+  return browserMode === "headed" ? "headed-cdp" : "headless-cdp";
+}
+
+function validBrowserMode() {
+  return browserMode === "headed" || browserMode === "headless";
 }
 
 function terminateBrowser(child) {
@@ -225,11 +242,16 @@ async function discoverCdp(session) {
 
 async function startBrowser(session) {
   if (!browserCommand.trim()) throw runtimeFailure("configuration", "browser_command_missing");
+  if (!validBrowserMode()) throw runtimeFailure("configuration", "browser_mode_invalid");
+  if (windowsDesktop.includes("\0")) throw runtimeFailure("configuration", "windows_desktop_invalid");
+  if (windowsDesktop && process.platform !== "win32") {
+    throw runtimeFailure("configuration", "windows_desktop_unsupported");
+  }
   if (!validProfileDir(session.profileDir)) throw runtimeFailure("configuration", "profile_path_invalid");
   session.port = await loopbackPort();
   const args = [
     ...browserCommandArgs,
-    "--headless=new",
+    ...(browserMode === "headless" ? ["--headless=new"] : []),
     "--remote-debugging-address=127.0.0.1",
     `--remote-debugging-port=${session.port}`,
     `--user-data-dir=${session.profileDir}`,
@@ -239,7 +261,11 @@ async function startBrowser(session) {
     "about:blank",
   ];
   try {
-    session.child = spawn(browserCommand, args, {
+    const command = windowsDesktop && process.platform === "win32" ? windowsLauncherCommand : browserCommand;
+    const commandArgs = windowsDesktop && process.platform === "win32"
+      ? ["--desktop", windowsDesktop, "--", browserCommand, ...args]
+      : args;
+    session.child = spawn(command, commandArgs, {
       detached: process.platform !== "win32",
       stdio: ["ignore", "ignore", "ignore"],
     });
@@ -267,7 +293,7 @@ async function runSession(session) {
     if (session.cancelled) return;
     reply(session.request, "session_started", {
       session_id: session.sessionID,
-      runtime: "headless-cdp",
+      runtime: runtimeName(),
       session_handle: session.sessionID,
       cdp_host: "127.0.0.1",
       cdp_port: String(session.port),
@@ -329,7 +355,7 @@ input.on("line", (line) => {
     case "hello":
       reply(request, "hello_ack", {
         service: "chuzi-browser-worker",
-        browserRuntime: "headless-cdp",
+        browserRuntime: runtimeName(),
         capabilities: capabilities.join(","),
       });
       break;
