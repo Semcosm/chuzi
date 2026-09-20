@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add Settings component management
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 85f25a40452d01a37bde34c4d30bac9b8550617a
+Head OID: d17552b3666b14457d19b0b2c6834dfc4dcdf97a
 Integrated Result: pending
 
 ## Summary
@@ -21,6 +21,10 @@ projection and exposes refresh, install, enable, disable, and remove actions,
 including lifecycle state, health, version, and required-component protection.
 Component operations remain available while Core is stopped because they use
 the launcher boundary directly.
+
+The Windows lifecycle path also keeps a Core process identifiable after the UI
+restarts: persisted PID lookup passes the numeric PID directly to PowerShell
+and normalizes canonical Windows path prefixes before comparing executables.
 
 ## Motivation
 
@@ -43,19 +47,23 @@ Core installation path must remain available from Settings.
 
 `git diff --check`
 
+`cargo check --manifest-path ui/windows/Cargo.toml --target x86_64-pc-windows-msvc` (not run: the local host does not have the Windows Rust target installed)
+
 ## Risk
 
 The change is confined to the Windows client presentation and launcher command
 bindings. It does not change the Core API, release manifest schema, component
 manager transaction behavior, plugin trust policy, credentials, or persistence.
 Component actions reuse the existing launcher lock and validation boundaries;
-required components remain protected from disable/remove operations.
+required components remain protected from disable/remove operations. Process
+termination still requires a persisted PID and an executable-path match.
 
 ## Rollback
 
-Revert commit `85f25a40452d01a37bde34c4d30bac9b8550617a`. The prior Overview
-Core installation action and client behavior remain compatible with the
-existing launcher component contract.
+Revert commits `d17552b3666b14457d19b0b2c6834dfc4dcdf97a` and
+`85f25a40452d01a37bde34c4d30bac9b8550617a`. The prior Overview Core
+installation action and client behavior remain compatible with the existing
+launcher component contract.
 
 ## Breaking Change
 
