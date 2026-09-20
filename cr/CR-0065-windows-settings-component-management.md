@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add Settings component management
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: d17552b3666b14457d19b0b2c6834dfc4dcdf97a
+Head OID: b6e579e2e8e8462cd75b990f2a22a05b0d92d914
 Integrated Result: pending
 
 ## Summary
@@ -25,6 +25,10 @@ the launcher boundary directly.
 The Windows lifecycle path also keeps a Core process identifiable after the UI
 restarts: persisted PID lookup passes the numeric PID directly to PowerShell
 and normalizes canonical Windows path prefixes before comparing executables.
+
+Component management now uses a release-manifest-backed selector in Settings,
+so users choose supported component IDs from a dropdown instead of entering
+free-form values.
 
 ## Motivation
 
@@ -60,7 +64,8 @@ termination still requires a persisted PID and an executable-path match.
 
 ## Rollback
 
-Revert commits `d17552b3666b14457d19b0b2c6834dfc4dcdf97a` and
+Revert commit `b6e579e2e8e8462cd75b990f2a22a05b0d92d914`,
+`d17552b3666b14457d19b0b2c6834dfc4dcdf97a`, and
 `85f25a40452d01a37bde34c4d30bac9b8550617a`. The prior Overview Core
 installation action and client behavior remain compatible with the existing
 launcher component contract.
