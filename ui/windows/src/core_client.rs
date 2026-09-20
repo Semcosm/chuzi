@@ -1,5 +1,5 @@
 use crate::models::WireEnvelope;
-use crate::{ensure_core_ready, AppState, CORE_PROTOCOL};
+use crate::{AppState, CORE_PROTOCOL};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::fs::{File, OpenOptions};
@@ -7,20 +7,39 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 
 pub(crate) fn core_call(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
-    ensure_core_ready(state)?;
-    let pipe = pipe_name(&state.data_root);
-    let mut stream = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&pipe)
-        .map_err(|error| format!("connect Core pipe: {error}"))?;
+    let mut stream = connect(&state.data_root)?;
     let id = unique_id();
-    let hello = serde_json::json!({"protocol": CORE_PROTOCOL, "id": format!("hello-{id}"), "method": "hello", "params": {"version": CORE_PROTOCOL}});
+    let hello = hello_request(&id);
     write_json_line(&mut stream, &hello)?;
     let _ = read_response(&mut stream, &format!("hello-{id}"))?;
     let request = serde_json::json!({"protocol": CORE_PROTOCOL, "id": id, "method": method, "params": params});
     write_json_line(&mut stream, &request)?;
     read_response(&mut stream, &id)
+}
+
+pub(crate) fn core_handshake(data_root: &Path) -> Result<(), String> {
+    let mut stream = connect(data_root)?;
+    let id = unique_id();
+    write_json_line(&mut stream, &hello_request(&id))?;
+    let _ = read_response(&mut stream, &format!("hello-{id}"))?;
+    Ok(())
+}
+
+fn connect(data_root: &Path) -> Result<File, String> {
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(pipe_name(data_root))
+        .map_err(|error| format!("connect Core pipe: {error}"))
+}
+
+fn hello_request(id: &str) -> Value {
+    serde_json::json!({
+        "protocol": CORE_PROTOCOL,
+        "id": format!("hello-{id}"),
+        "method": "hello",
+        "params": {"version": CORE_PROTOCOL}
+    })
 }
 
 fn write_json_line(stream: &mut File, value: &Value) -> Result<(), String> {

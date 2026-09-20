@@ -1,7 +1,7 @@
 mod core_client;
 mod models;
 
-use core_client::{core_call, pipe_name, unique_id};
+use core_client::{core_call, core_handshake, unique_id};
 use models::{
     default_theme, BehaviorSettings, CoreAccount, CorePlugin, CoreRequest, SubmitResult,
     UiPreferences,
@@ -9,7 +9,7 @@ use models::{
 use serde_json::json;
 use slint::language::ColorScheme;
 use slint::{ComponentHandle, SharedString};
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -440,22 +440,33 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
         ui,
         state,
         |state| {
-            if state
+            let child_exited = state
                 .service
                 .as_mut()
-                .is_some_and(|process| process.try_wait().ok().flatten().is_some())
-            {
+                .is_some_and(|process| process.try_wait().ok().flatten().is_some());
+            if child_exited {
                 state.service = None;
-                let _ = fs::remove_file(state.data_root.join(".core.pid"));
+                if core_handshake(&state.data_root).is_err() {
+                    let _ = fs::remove_file(state.data_root.join(".core.pid"));
+                }
             }
             let installed = state.service_path().is_file();
-            let ready = state.service.is_some();
+            let ready = core_handshake(&state.data_root).is_ok();
+            let process_alive = read_service_pid(&state.data_root)
+                .is_some_and(|pid| is_service_process(pid, &state.service_path()));
             let snapshot = if ready {
                 CoreSnapshot {
                     ready: true,
                     installed: true,
                     status: "Core is running".to_owned(),
                     details: "Core is running and ready for requests.".to_owned(),
+                }
+            } else if installed && process_alive {
+                CoreSnapshot {
+                    ready: false,
+                    installed: true,
+                    status: "Core is unavailable".to_owned(),
+                    details: "Core is installed and running, but its local API is not responding. Restart Core and refresh its status.".to_owned(),
                 }
             } else if installed {
                 CoreSnapshot {
@@ -639,9 +650,14 @@ fn run_background_with<T, F, A>(
 }
 
 fn start_service(state: &mut AppState) -> Result<(), String> {
+    // A previous UI instance may have left Core running. Probe the endpoint
+    // before spawning another process so startup remains idempotent.
+    if core_handshake(&state.data_root).is_ok() {
+        return Ok(());
+    }
     if let Some(process) = state.service.as_mut() {
         if process.try_wait().ok().flatten().is_none() {
-            return Ok(());
+            return wait_for_core_ready(&state.data_root);
         }
         state.service = None;
     }
@@ -674,24 +690,16 @@ fn start_service(state: &mut AppState) -> Result<(), String> {
     fs::write(state.data_root.join(".core.pid"), process.id().to_string())
         .map_err(|error| error.to_string())?;
     state.service = Some(process);
-    if let Err(error) = wait_for_core_pipe(&state.data_root) {
+    if let Err(error) = wait_for_core_ready(&state.data_root) {
         stop_service(state)?;
         return Err(error);
     }
     Ok(())
 }
 
-fn wait_for_core_pipe(data_root: &Path) -> Result<(), String> {
-    if !cfg!(windows) {
-        return Ok(());
-    }
+fn wait_for_core_ready(data_root: &Path) -> Result<(), String> {
     for _ in 0..40 {
-        if OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(pipe_name(data_root))
-            .is_ok()
-        {
+        if core_handshake(data_root).is_ok() {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
@@ -709,17 +717,89 @@ fn stop_service(state: &mut AppState) -> Result<(), String> {
             process.kill().map_err(|_| "core_stop_failed".to_owned())?;
         }
         process.wait().map_err(|_| "core_stop_failed".to_owned())?;
+    } else if core_handshake(&state.data_root).is_ok() {
+        let pid = read_service_pid(&state.data_root).ok_or("core_stop_unavailable")?;
+        let service_path = state.service_path();
+        if !is_service_process(pid, &service_path) {
+            return Err("core_stop_unavailable".to_owned());
+        }
+        stop_pid(pid)?;
+        for _ in 0..20 {
+            if core_handshake(&state.data_root).is_err() {
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        if core_handshake(&state.data_root).is_ok() {
+            return Err("core_stop_timeout".to_owned());
+        }
     }
     let _ = fs::remove_file(state.data_root.join(".core.pid"));
     Ok(())
 }
 
 fn ensure_core_ready(state: &AppState) -> Result<(), String> {
-    if state.service.is_none() {
-        Err("core_unavailable".to_owned())
-    } else {
-        Ok(())
+    core_handshake(&state.data_root).map_err(|_| "core_unavailable".to_owned())
+}
+
+fn read_service_pid(data_root: &Path) -> Option<u32> {
+    let pid: u32 = fs::read_to_string(data_root.join(".core.pid"))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    (pid > 0).then_some(pid)
+}
+
+fn stop_pid(pid: u32) -> Result<(), String> {
+    let pid = pid.to_string();
+    #[cfg(windows)]
+    let status = Command::new("taskkill")
+        .args(["/PID", pid.as_str(), "/T", "/F"])
+        .status();
+    #[cfg(not(windows))]
+    let status = Command::new("kill").args(["-TERM", pid.as_str()]).status();
+    match status {
+        Ok(status) if status.success() => Ok(()),
+        Ok(_) => Err("core_stop_failed".to_owned()),
+        Err(_) => Err("core_stop_failed".to_owned()),
     }
+}
+
+fn is_service_process(pid: u32, service_path: &Path) -> bool {
+    #[cfg(windows)]
+    let process_path = {
+        let output = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$p = Get-Process -Id $args[0] -ErrorAction Stop; Write-Output $p.Path",
+                &pid.to_string(),
+            ])
+            .output();
+        output.ok().and_then(|output| {
+            output
+                .status
+                .success()
+                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        })
+    };
+    #[cfg(target_os = "linux")]
+    let process_path = fs::read_link(format!("/proc/{pid}/exe"))
+        .ok()
+        .map(|path| path.to_string_lossy().into_owned());
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let process_path: Option<String> = None;
+
+    let Some(process_path) = process_path else {
+        return false;
+    };
+    #[cfg(windows)]
+    let matches = process_path.eq_ignore_ascii_case(&service_path.to_string_lossy());
+    #[cfg(not(windows))]
+    let matches = Path::new(&process_path) == service_path;
+    matches
 }
 
 fn request_action(
@@ -889,6 +969,13 @@ fn friendly_error(error: &str) -> String {
     if value.contains("core_not_installed") || value.contains("launcher is missing") {
         return "Core is not installed. Use Install Core, then try again.".to_owned();
     }
+    if value.contains("core_stop_unavailable") {
+        return "Core is running, but this client cannot identify its process. Restart Core from its owning service.".to_owned();
+    }
+    if value.contains("core_stop_timeout") {
+        return "Core did not stop within the expected time. Refresh its status before trying again."
+            .to_owned();
+    }
     if value.contains("core_start_timeout")
         || value.contains("connect core")
         || value.contains("unavailable")
@@ -955,5 +1042,39 @@ mod tests {
         assert!(plugin.enabled);
         assert!(!plugin.trusted);
         assert!(!(plugin.trusted && plugin.enabled));
+    }
+
+    #[test]
+    fn persisted_service_pid_requires_a_clean_integer() {
+        let root = std::env::temp_dir().join(format!("chuzi-ui-pid-{}", unique_id()));
+        fs::create_dir_all(&root).expect("create test directory");
+        fs::write(root.join(".core.pid"), " 42\n").expect("write pid");
+        assert_eq!(read_service_pid(&root), Some(42));
+        fs::write(root.join(".core.pid"), "42\nextra").expect("write invalid pid");
+        assert_eq!(read_service_pid(&root), None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn persisted_pid_must_identify_the_core_executable() {
+        let executable = std::env::current_exe().expect("resolve current executable");
+        assert!(is_service_process(std::process::id(), &executable));
+        assert!(!is_service_process(
+            std::process::id(),
+            Path::new("/not/the/current/program")
+        ));
+    }
+
+    #[test]
+    fn unavailable_core_error_is_user_actionable() {
+        assert_eq!(
+            friendly_error("core_stop_timeout"),
+            "Core did not stop within the expected time. Refresh its status before trying again."
+        );
+        assert_eq!(
+            friendly_error("core_stop_unavailable"),
+            "Core is running, but this client cannot identify its process. Restart Core from its owning service."
+        );
     }
 }
