@@ -58,6 +58,9 @@ native controls and the content surface update together. The UI-only choice is
 stored in `.chuzi-ui-settings.json` below the resolved Chuzi data directory;
 launcher behavior settings remain in the launcher's validated settings file.
 
+The snapshot example also accepts `--page overview|plugins|accounts|tasks|settings`
+so each page can be checked at the supported window sizes.
+
 ### Plugins
 
 Plugins displays a security-oriented summary and lifecycle actions. Core must
