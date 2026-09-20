@@ -41,9 +41,9 @@ backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/sen
 契约测试覆盖版本拒绝、未知方法、握手前访问、敏感字段脱敏、取消、并发多路复用、超大
 帧、socket 权限和 endpoint 占用。
 
-首个 Windows WinUI 3 客户端在 `ui/windows`，构建脚本为
-`scripts/build_windows_ui.ps1`，Actions 任务 `chuzi-build-windows-ui` 生成并上传
-`chuzi-windows-installer-exe`。安装器把自包含 WinUI 3 发布目录安装到
+首个 Windows Slint 客户端在 `ui/windows`，构建脚本为
+`scripts/build_windows_slint.ps1`，Actions 任务 `chuzi-build-windows-slint` 生成并上传
+`chuzi-windows-installer-exe`。安装器把自包含 Slint 发布目录安装到
 `Program Files\\Chuzi`，并将 Core payload 随安装包放在应用目录中。客户端通过
 `%ProgramData%\\chuzi`（或部署提供的 `CHUZI_DATA_DIR`）派生与 Go 相同的 named pipe 名称，
 执行 `hello` 后调用提交、查询和取消；客户端只显示稳定错误码。
@@ -108,8 +108,8 @@ dispatch 使用的完整构建 DAG。它不监听普通开发分支的 push；�
 
 * `go_build` matrix 在 Ubuntu 上交叉编译四个目标的 Go service/launcher。
 * `node_checks` 只构建一次 Node Worker，并通过 `ci-worker` artifact 交给所有目标。
-* `windows_ui` 在一个 Windows runner 上完成自包含 WinUI 3 安装器 EXE 构建和
-  named-pipe 契约测试；它不再需要 MSIX 测试证书或单独的 Runtime MSIX。
+* `windows_slint` 在一个 Windows runner 上完成自包含 Slint 安装器 EXE 构建和
+  named-pipe 契约测试；它不需要 MSIX 测试证书或单独的 Runtime MSIX。
 
 每个 `assemble_target` job 从 `ci-go-*`、`ci-worker` 和 `ci-runtime-*` artifact 组装一个
 目标包，job 的显示名称仍为 `chuzi-build-<target>`，以保持 nightly acceptance 和
@@ -139,7 +139,7 @@ release retry 的审计契约。nightly/tag 产物再由 `artifact_integration` 
 旧组件状态和文件保持不变，不能把 endpoint 可达或归档下载完成误报为业务安装成功。
 未提供 index 时，修复和组件安装仍只使用显式本地 source root。
 锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件当前
-只包含 UI-neutral `chuzi-launcher` CLI；Windows WinUI 3 客户端另以自包含安装器 EXE 分发，
+只包含 UI-neutral `chuzi-launcher` CLI；Windows Slint 客户端另以自包含安装器 EXE 分发，
 macOS SwiftUI 和 Linux GTK 客户端待后续 CR。所有平台 UI 都通过 Stable API Boundary
 调用同一 CLI/Core 能力，不复制文件、下载、校验、执行插件、授予 signer 信任或实现回滚策略。诊断输出不得记录
 凭证或启动器响应 payload。

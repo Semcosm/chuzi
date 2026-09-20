@@ -19,6 +19,7 @@ bin/
 dist/
 browser-worker/node_modules/
 browser-runtime/target/
+ui/windows/target/
 browser-worker/report.*.json
 coverage/
 tmp/
