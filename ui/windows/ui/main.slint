@@ -98,6 +98,7 @@ export component MainWindow inherits Window {
     in-out property <bool> plugin-enabled: false;
 
     in-out property <string> component-input: "";
+    in-out property <[string]> component-options: [];
     in-out property <bool> component-loaded: false;
     in-out property <string> component-summary: "Refresh to read the release manifest.";
     in-out property <string> component-id: "";
@@ -422,7 +423,11 @@ export component MainWindow inherits Window {
                                 spacing: 8px;
                                 height: 40px;
                                 vertical-stretch: 0;
-                                LineEdit { placeholder-text: "Enter a component ID"; text <=> root.component-input; }
+                                ComboBox {
+                                    model: root.component-options;
+                                    current-value <=> root.component-input;
+                                    enabled: root.component-options.length > 0;
+                                }
                                 Button { text: "Refresh"; enabled: !root.busy; vertical-stretch: 0; clicked => { root.refresh-components(); } }
                                 Button { text: "Install"; enabled: !root.busy && root.component-input != ""; vertical-stretch: 0; clicked => { root.install-component(root.component-input); } }
                                 Button { text: "Install Core"; enabled: !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.install-core(); } }
