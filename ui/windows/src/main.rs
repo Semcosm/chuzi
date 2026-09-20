@@ -4,8 +4,8 @@ mod models;
 use base64::Engine;
 use core_client::{core_call, core_handshake, unique_id};
 use models::{
-    default_theme, BehaviorSettings, BrowserView, CoreAccount, CorePlugin, CoreRequest,
-    SubmitResult, UiPreferences,
+    default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
+    CoreRequest, SubmitResult, UiPreferences,
 };
 use serde_json::json;
 use slint::language::ColorScheme;
@@ -325,6 +325,50 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let weak = ui.as_weak();
+    let component_state = Arc::clone(&state);
+    ui.on_refresh_components(move || refresh_components(&weak, Arc::clone(&component_state)));
+    let weak = ui.as_weak();
+    let component_state = Arc::clone(&state);
+    ui.on_install_component(move |component| {
+        component_action(
+            &weak,
+            Arc::clone(&component_state),
+            "component-install",
+            component.to_string(),
+        )
+    });
+    let weak = ui.as_weak();
+    let component_state = Arc::clone(&state);
+    ui.on_enable_component(move |component| {
+        component_action(
+            &weak,
+            Arc::clone(&component_state),
+            "component-enable",
+            component.to_string(),
+        )
+    });
+    let weak = ui.as_weak();
+    let component_state = Arc::clone(&state);
+    ui.on_disable_component(move |component| {
+        component_action(
+            &weak,
+            Arc::clone(&component_state),
+            "component-disable",
+            component.to_string(),
+        )
+    });
+    let weak = ui.as_weak();
+    let component_state = Arc::clone(&state);
+    ui.on_remove_component(move |component| {
+        component_action(
+            &weak,
+            Arc::clone(&component_state),
+            "component-remove",
+            component.to_string(),
+        )
+    });
+
+    let weak = ui.as_weak();
     let account_state = Arc::clone(&state);
     ui.on_lookup_account(move |account| {
         let account = account.to_string();
@@ -536,7 +580,8 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
                     ready: false,
                     installed: false,
                     status: "Core is not installed".to_owned(),
-                    details: "Install Core to begin using Chuzi.".to_owned(),
+                    details: "Install Core from Settings > Components to begin using Chuzi."
+                        .to_owned(),
                 }
             };
             Ok(("Core status refreshed.".to_owned(), snapshot))
@@ -906,6 +951,95 @@ fn request_action(
     );
 }
 
+fn refresh_components(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    run_background_with(
+        ui,
+        state,
+        |state| {
+            let output = state.run_launcher("component-list", &[])?;
+            let components = parse_components(&output)?;
+            Ok((format_component_summary(&components), components))
+        },
+        apply_components,
+    );
+}
+
+fn component_action(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    command: &'static str,
+    component: String,
+) {
+    if let Err(error) = validate_text(&component, "component ID") {
+        set_feedback(ui, friendly_error(&error), "error");
+        return;
+    }
+    run_background_with(
+        ui,
+        state,
+        move |state| {
+            state.run_launcher(command, &["-item", component.as_str()])?;
+            let output = state.run_launcher("component-list", &[])?;
+            let components = parse_components(&output)?;
+            Ok((component_action_message(command), components))
+        },
+        apply_components,
+    );
+}
+
+fn parse_components(output: &str) -> Result<Vec<CoreComponent>, String> {
+    serde_json::from_str(output).map_err(|error| format!("component projection: {error}"))
+}
+
+fn format_component_summary(components: &[CoreComponent]) -> String {
+    if components.is_empty() {
+        "No components are included in this Core release.".to_owned()
+    } else {
+        let entries = components
+            .iter()
+            .map(|component| format!("{} ({})", component.id, component.health))
+            .collect::<Vec<_>>();
+        format!("{} component(s): {}", components.len(), entries.join(", "))
+    }
+}
+
+fn component_action_message(command: &str) -> String {
+    match command {
+        "component-install" => "Component installed.".to_owned(),
+        "component-enable" => "Component enabled.".to_owned(),
+        "component-disable" => "Component disabled.".to_owned(),
+        "component-remove" => "Component removed.".to_owned(),
+        _ => "Component state updated.".to_owned(),
+    }
+}
+
+fn apply_components(window: &MainWindow, components: Vec<CoreComponent>) {
+    window.set_component_summary(format_component_summary(&components).into());
+    let selected = window.get_component_input().to_string();
+    let component = components
+        .iter()
+        .find(|component| component.id == selected)
+        .or_else(|| components.first());
+    let Some(component) = component else {
+        window.set_component_loaded(false);
+        window.set_component_id(SharedString::default());
+        window.set_component_version(SharedString::default());
+        window.set_component_health(SharedString::default());
+        window.set_component_installed(false);
+        window.set_component_required(false);
+        window.set_component_enabled(false);
+        return;
+    };
+    window.set_component_loaded(true);
+    window.set_component_input(component.id.clone().into());
+    window.set_component_id(component.id.clone().into());
+    window.set_component_version(component.version.clone().into());
+    window.set_component_health(component.health.clone().into());
+    window.set_component_installed(component.installed);
+    window.set_component_required(component.required);
+    window.set_component_enabled(component.enabled);
+}
+
 fn refresh_plugins(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
     run_background_with(
         ui,
@@ -1016,6 +1150,7 @@ fn friendly_error(error: &str) -> String {
     if value.contains("missing_account")
         || value.contains("missing_request")
         || value.contains("missing_plugin")
+        || value.contains("missing_component")
     {
         return "Enter an ID before trying this action.".to_owned();
     }
@@ -1023,7 +1158,7 @@ fn friendly_error(error: &str) -> String {
         return "Core could not find that item. Check the ID and try again.".to_owned();
     }
     if value.contains("core_not_installed") || value.contains("launcher is missing") {
-        return "Core is not installed. Use Install Core, then try again.".to_owned();
+        return "Core is not installed. Use Settings > Components, then try again.".to_owned();
     }
     if value.contains("core_stop_unavailable") {
         return "Core is running, but this client cannot identify its process. Restart Core from its owning service.".to_owned();
@@ -1098,6 +1233,22 @@ mod tests {
         assert!(plugin.enabled);
         assert!(!plugin.trusted);
         assert!(!(plugin.trusted && plugin.enabled));
+    }
+
+    #[test]
+    fn component_projection_preserves_lifecycle_state() {
+        let components = parse_components(
+            r#"[{"id":"service","installed":true,"version":"1","enabled":true,"required":true,"health":"healthy"}]"#,
+        )
+        .expect("valid component projection");
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].id, "service");
+        assert!(components[0].installed);
+        assert!(components[0].required);
+        assert_eq!(
+            format_component_summary(&components),
+            "1 component(s): service (healthy)"
+        );
     }
 
     #[test]

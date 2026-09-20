@@ -51,6 +51,17 @@ pub(crate) struct CorePlugin {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct CoreComponent {
+    pub(crate) id: String,
+    pub(crate) installed: bool,
+    #[serde(default)]
+    pub(crate) version: String,
+    pub(crate) enabled: bool,
+    pub(crate) required: bool,
+    pub(crate) health: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct WireEnvelope {
     pub(crate) protocol: String,
     pub(crate) id: String,
