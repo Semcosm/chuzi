@@ -97,6 +97,16 @@ export component MainWindow inherits Window {
     in-out property <bool> plugin-trusted: false;
     in-out property <bool> plugin-enabled: false;
 
+    in-out property <string> component-input: "";
+    in-out property <bool> component-loaded: false;
+    in-out property <string> component-summary: "Refresh to read the release manifest.";
+    in-out property <string> component-id: "";
+    in-out property <string> component-version: "";
+    in-out property <string> component-health: "";
+    in-out property <bool> component-installed: false;
+    in-out property <bool> component-required: false;
+    in-out property <bool> component-enabled: false;
+
     in-out property <bool> auto-check-updates: false;
     in-out property <bool> auto-repair: false;
     in-out property <string> update-channel: "nightly";
@@ -115,6 +125,11 @@ export component MainWindow inherits Window {
     callback trust-plugin(string);
     callback enable-plugin(string);
     callback remove-plugin(string);
+    callback refresh-components();
+    callback install-component(string);
+    callback enable-component(string);
+    callback disable-component(string);
+    callback remove-component(string);
     callback lookup-account(string);
     callback submit-task(string);
     callback refresh-task(string);
@@ -192,7 +207,6 @@ export component MainWindow inherits Window {
                         spacing: 10px;
                         height: 40px;
                         vertical-stretch: 0;
-                        Button { text: "Install Core"; enabled: !root.core-installed && !root.busy; vertical-stretch: 0; clicked => { root.install-core(); } }
                         Button { text: "Start Core"; enabled: root.core-installed && !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.start-core(); } }
                         Button { text: "Stop Core"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.stop-core(); } }
                         Button { text: "Refresh"; enabled: !root.busy; vertical-stretch: 0; clicked => { root.refresh-core(); } }
@@ -205,9 +219,9 @@ export component MainWindow inherits Window {
                         VerticalBox {
                             padding: 14px;
                             spacing: 9px;
-                            Text { text: root.core-installed ? "1. Core is installed" : "1. Install Core"; color: Palette.foreground; vertical-stretch: 0; }
+                            Text { text: root.core-installed ? "1. Core is installed" : "1. Install Core from Settings > Components"; color: Palette.foreground; wrap: word-wrap; vertical-stretch: 0; }
                             Text { text: root.core-ready ? "2. Core is running" : "2. Start Core to unlock account and plugin actions"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
-                            Text { text: "3. Review plugins, then personalize settings"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: "3. Review components and plugins, then personalize settings"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                         }
                     }
                     GroupBox {
@@ -391,10 +405,39 @@ export component MainWindow inherits Window {
                                 spacing: 8px;
                                 height: 40px;
                                 vertical-stretch: 0;
-                                Button { text: "Install / Replace Core"; enabled: !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.install-core(); } }
                                 Button { text: "Start"; enabled: root.core-installed && !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.start-core(); } }
                                 Button { text: "Stop"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.stop-core(); } }
                             }
+                        }
+                    }
+                    GroupBox {
+                        title: "Components";
+                        max-height: 276px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 8px;
+                            Text { text: root.component-summary; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            HorizontalBox {
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                LineEdit { placeholder-text: "Enter a component ID"; text <=> root.component-input; }
+                                Button { text: "Refresh"; enabled: !root.busy; vertical-stretch: 0; clicked => { root.refresh-components(); } }
+                                Button { text: "Install"; enabled: !root.busy && root.component-input != ""; vertical-stretch: 0; clicked => { root.install-component(root.component-input); } }
+                                Button { text: "Install Core"; enabled: !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.install-core(); } }
+                            }
+                            HorizontalBox {
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                Button { text: "Enable"; enabled: !root.busy && root.component-input == root.component-id && root.component-installed && !root.component-enabled; vertical-stretch: 0; clicked => { root.enable-component(root.component-input); } }
+                                Button { text: "Disable"; enabled: !root.busy && root.component-input == root.component-id && root.component-installed && root.component-enabled && !root.component-required; vertical-stretch: 0; clicked => { root.disable-component(root.component-input); } }
+                                Button { text: "Remove"; enabled: !root.busy && root.component-input == root.component-id && root.component-installed && !root.component-required; vertical-stretch: 0; clicked => { root.remove-component(root.component-input); } }
+                            }
+                            Text { text: root.component-loaded ? root.component-id : "No component loaded."; font-size: 17px; font-weight: 700; vertical-stretch: 0; }
+                            Text { text: root.component-loaded ? "Version: " + root.component-version : "Refresh to read the release manifest."; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.component-loaded ? "Installed: " + (root.component-installed ? "Yes" : "No") + " | Enabled: " + (root.component-enabled ? "Yes" : "No") + " | Required: " + (root.component-required ? "Yes" : "No") + " | Health: " + root.component-health : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                         }
                     }
                     GroupBox {

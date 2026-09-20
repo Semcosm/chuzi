@@ -31,25 +31,25 @@ resolved data directory, lifecycle actions, and the first-run checklist.
 
 ```text
 Welcome to Chuzi
-Install Core, configure plugins, and personalize the client from one place.
+Review Core status, configure components and plugins, and personalize the client from one place.
 
 ┌ Core status ────────────────────────────────────────────────┐
 │ Core is running / Core is stopped / Core is not installed    │
 │ status details and data directory                            │
 └──────────────────────────────────────────────────────────────┘
 
-[Install Core] [Start Core] [Stop Core] [Refresh]
+[Start Core] [Stop Core] [Refresh]
 
 ┌ First-run checklist ────────────────────────────────────────┐
-│ 1. Install or start Core                                     │
-│ 2. Configure plugins after Core starts                       │
-│ 3. Personalize settings                                      │
+│ 1. Install Core from Settings > Components                    │
+│ 2. Start Core to unlock account and plugin actions            │
+│ 3. Review components and plugins                              │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 ### Settings
 
-Settings is divided into Core, Updates, Appearance, and Startup groups. It
+Settings is divided into Core, Components, Updates, Appearance, and Startup groups. It
 exposes Core lifecycle actions, update preferences, login startup,
 close-to-tray behavior, and a save action. Appearance provides System default,
 Light, and Dark modes.
@@ -60,6 +60,14 @@ launcher behavior settings remain in the launcher's validated settings file.
 
 The snapshot example also accepts `--page overview|plugins|accounts|tasks|settings`
 so each page can be checked at the supported window sizes.
+
+### Components
+
+Component management is grouped under Settings. It reads the release manifest
+through the launcher and exposes component listing, installation, enablement,
+disablement, and removal. Core lifecycle status and start/stop actions remain
+on Overview and in the Settings Core group; component operations do not require
+Core to be running.
 
 ### Plugins
 
