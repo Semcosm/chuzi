@@ -870,13 +870,15 @@ fn stop_pid(pid: u32) -> Result<(), String> {
 fn is_service_process(pid: u32, service_path: &Path) -> bool {
     #[cfg(windows)]
     let process_path = {
+        let command = format!(
+            "$p = Get-Process -Id {pid} -ErrorAction Stop; if ($null -eq $p.Path) {{ exit 1 }}; Write-Output $p.Path"
+        );
         let output = Command::new("powershell.exe")
             .args([
                 "-NoProfile",
                 "-NonInteractive",
                 "-Command",
-                "$p = Get-Process -Id $args[0] -ErrorAction Stop; Write-Output $p.Path",
-                &pid.to_string(),
+                command.as_str(),
             ])
             .output();
         output.ok().and_then(|output| {
@@ -897,10 +899,26 @@ fn is_service_process(pid: u32, service_path: &Path) -> bool {
         return false;
     };
     #[cfg(windows)]
-    let matches = process_path.eq_ignore_ascii_case(&service_path.to_string_lossy());
+    let expected_path = fs::canonicalize(service_path)
+        .unwrap_or_else(|_| service_path.to_path_buf())
+        .to_string_lossy()
+        .into_owned();
+    #[cfg(windows)]
+    let matches = normalize_windows_path(&process_path) == normalize_windows_path(&expected_path);
     #[cfg(not(windows))]
     let matches = Path::new(&process_path) == service_path;
     matches
+}
+
+#[cfg(windows)]
+fn normalize_windows_path(value: &str) -> String {
+    let mut path = value.trim().replace('/', "\\");
+    if let Some(stripped) = path.strip_prefix(r"\\?\UNC\") {
+        path = format!(r"\\{stripped}");
+    } else if let Some(stripped) = path.strip_prefix(r"\\?\") {
+        path = stripped.to_owned();
+    }
+    path.trim_end_matches('\\').to_ascii_lowercase()
 }
 
 fn request_action(
@@ -1260,6 +1278,19 @@ mod tests {
         fs::write(root.join(".core.pid"), "42\nextra").expect("write invalid pid");
         assert_eq!(read_service_pid(&root), None);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_process_paths_ignore_canonical_prefix_and_case() {
+        assert_eq!(
+            normalize_windows_path(r"\\?\C:\Chuzi\chuzi.exe\"),
+            r"c:\chuzi\chuzi.exe"
+        );
+        assert_eq!(
+            normalize_windows_path(r"C:/CHUZI/chuzi.exe"),
+            r"c:\chuzi\chuzi.exe"
+        );
     }
 
     #[cfg(target_os = "linux")]
