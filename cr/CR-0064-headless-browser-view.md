@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add on-demand headless browser views
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: bfcb881c442a2ed810be6d5dde39a1c5f4a00c3a
+Head OID: aa1feda74e3a4b6b328a7311a3fd970e1e92d0c0
 Integrated Result: pending
 
 ## Summary
@@ -26,6 +26,11 @@ dimensions. URL, CDP endpoint, Profile path, credentials, mouse input, and
 keyboard input remain outside the client contract. Frames are ephemeral and are
 not persisted, logged, audited, or sent through Matrix.
 
+Browser startup readiness is event-driven at the process and loopback TCP
+boundaries, followed by a CDP version handshake. A bounded deadline remains
+as a failure guard, so slow CI or host startup does not turn a fixed 500 ms
+assumption into a transient browser failure.
+
 ## Motivation
 
 Users need to inspect an active browser page without changing the worker to a
@@ -39,7 +44,7 @@ while providing enough visibility for the Windows operational client.
 
 `GOTMPDIR="$PWD/.gotmp" go vet ./...`
 
-`npm test --prefix browser-worker` (16 Node tests, including on-demand JPEG capture)
+`npm test --prefix browser-worker` (17 Node tests, including delayed CDP readiness and on-demand JPEG capture)
 
 `cargo fmt --manifest-path ui/windows/Cargo.toml -- --check`
 
@@ -70,11 +75,14 @@ classification. The UI remains read-only and cannot navigate or inject input.
 
 The build-contract check was updated to inspect `ui/windows/src/core_client.rs`,
 where the existing named-pipe derivation now lives after the Windows UI
-refactor.
+refactor. The browser process integration test now allows a bounded multi-
+second startup window suitable for cross-platform CI runners.
 
 ## Rollback
 
-Revert commit `bfcb881e16f0b4cb81a9eaef4f8731e79b2c7bc5` and this CR. Existing
+Revert commit `aa1feda74e3a4b6b328a7311a3fd970e1e92d0c0`, then commit
+`bfcb881c442a2ed810be6d5dde39a1c5f4a00c3a`,
+and this CR. Existing
 Core methods, headless worker lifecycle, and Windows Tasks status operations
 remain compatible; clients that do not advertise `get_browser_view` continue
 to use the prior method list.
