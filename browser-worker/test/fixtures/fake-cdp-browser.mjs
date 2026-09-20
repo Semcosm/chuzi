@@ -9,6 +9,7 @@ const profileArgument = args.find((arg) => arg.startsWith("--user-data-dir="));
 const port = Number(portArgument?.split("=", 2)[1]);
 const mode = process.env.FAKE_CDP_MODE || "valid";
 const profile = profileArgument?.slice("--user-data-dir=".length) || "";
+const startDelayMs = Number(process.env.FAKE_CDP_START_DELAY_MS || "0");
 let evaluationCount = 0;
 if (!Number.isInteger(port) || port < 1 || !profile) process.exit(2);
 if (process.env.FAKE_CDP_PID_FILE) writeFileSync(process.env.FAKE_CDP_PID_FILE, String(process.pid));
@@ -129,6 +130,18 @@ server.on("upgrade", (request, socket) => {
   socket.on("error", () => socket.destroy());
 });
 
-server.listen(port, "127.0.0.1");
-process.on("SIGTERM", () => server.close(() => process.exit(0)));
-process.on("SIGINT", () => server.close(() => process.exit(0)));
+const startServer = () => server.listen(port, "127.0.0.1");
+if (Number.isFinite(startDelayMs) && startDelayMs > 0) {
+  setTimeout(startServer, startDelayMs);
+} else {
+  startServer();
+}
+const stop = () => {
+  if (!server.listening) {
+    process.exit(0);
+    return;
+  }
+  server.close(() => process.exit(0));
+};
+process.on("SIGTERM", stop);
+process.on("SIGINT", stop);
