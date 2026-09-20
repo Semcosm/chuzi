@@ -9,7 +9,7 @@ use models::{
 };
 use serde_json::json;
 use slint::language::ColorScheme;
-use slint::{ComponentHandle, Image, SharedString};
+use slint::{ComponentHandle, Image, ModelRc, SharedString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -1033,6 +1033,11 @@ fn component_action_message(command: &str) -> String {
 
 fn apply_components(window: &MainWindow, components: Vec<CoreComponent>) {
     window.set_component_summary(format_component_summary(&components).into());
+    let options = components
+        .iter()
+        .map(|component| SharedString::from(component.id.clone()))
+        .collect::<Vec<_>>();
+    window.set_component_options(ModelRc::from(options.as_slice()));
     let selected = window.get_component_input().to_string();
     let component = components
         .iter()
@@ -1040,6 +1045,7 @@ fn apply_components(window: &MainWindow, components: Vec<CoreComponent>) {
         .or_else(|| components.first());
     let Some(component) = component else {
         window.set_component_loaded(false);
+        window.set_component_input(SharedString::default());
         window.set_component_id(SharedString::default());
         window.set_component_version(SharedString::default());
         window.set_component_health(SharedString::default());
