@@ -1,28 +1,101 @@
 import { Button, CheckBox, ComboBox, GroupBox, LineEdit, Palette, ScrollView, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
 export { Palette } from "std-widgets.slint";
 
+component PageHeader inherits Rectangle {
+    in property <string> title;
+    in property <string> subtitle;
+    height: 78px;
+    background: transparent;
+
+    VerticalBox {
+        spacing: 5px;
+        Text { text: root.title; color: Palette.foreground; font-size: 30px; font-weight: 700; vertical-stretch: 0; }
+        Text { text: root.subtitle; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+    }
+}
+
+component StatusBadge inherits Rectangle {
+    in property <string> label;
+    in property <string> detail;
+    in property <color> accent: #2a9d67;
+    height: 96px;
+    background: Palette.alternate-background;
+    border-color: Palette.border;
+    border-width: 1px;
+    border-radius: 8px;
+
+    HorizontalBox {
+        padding: 18px;
+        spacing: 14px;
+        Rectangle { width: 12px; height: 12px; background: root.accent; border-radius: 6px; }
+        VerticalBox {
+            spacing: 4px;
+            Text { text: root.label; color: Palette.foreground; font-size: 19px; font-weight: 700; vertical-stretch: 0; }
+            Text { text: root.detail; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+        }
+    }
+}
+
+component FeedbackBar inherits Rectangle {
+    in property <string> text;
+    in property <color> accent: #526c92;
+    height: root.text == "" ? 0px : 44px;
+    background: Palette.alternate-background;
+    border-color: root.accent;
+    border-width: 1px;
+    border-radius: 6px;
+    visible: root.text != "";
+    Text { text: root.text; color: Palette.foreground; wrap: word-wrap; vertical-alignment: center; x: 14px; width: parent.width - 28px; }
+}
+
 export component MainWindow inherits Window {
     title: "Chuzi";
-    min-width: 760px;
-    min-height: 540px;
+    min-width: 800px;
+    min-height: 600px;
     preferred-width: 1120px;
     preferred-height: 760px;
 
     in-out property <string> page: "overview";
     in-out property <string> theme: "system";
-    in-out property <string> core-status: "Checking Core...";
-    in-out property <string> core-details: "";
+    in-out property <string> core-status: "Checking Core";
+    in-out property <string> core-details: "Checking the local Core service.";
     in-out property <string> data-directory: "";
     in-out property <string> message: "";
+    in-out property <string> message-kind: "info";
     in-out property <bool> busy: false;
+    in-out property <string> busy-operation: "";
     in-out property <bool> core-ready: false;
+    in-out property <bool> core-installed: false;
+
     in-out property <string> account-input: "";
-    in-out property <string> request-input: "";
+    in-out property <bool> account-loaded: false;
     in-out property <string> account-status: "No account loaded.";
-    in-out property <string> task-status: "No task loaded.";
+    in-out property <string> account-state: "";
+    in-out property <string> account-revision: "";
+    in-out property <string> account-request: "";
+
+    in-out property <string> request-input: "";
+    in-out property <bool> task-loaded: false;
+    in-out property <string> task-request-id: "";
+    in-out property <string> task-status: "No request loaded.";
+    in-out property <string> task-account: "";
+    in-out property <string> task-state: "";
+    in-out property <string> task-attempt: "";
+    in-out property <string> task-failure: "";
+
+    in-out property <string> plugin-input: "";
+    in-out property <bool> plugin-loaded: false;
     in-out property <string> plugin-summary: "Core is not ready. Start Core to load plugins.";
+    in-out property <string> plugin-id: "";
+    in-out property <string> plugin-version: "";
+    in-out property <string> plugin-health: "";
+    in-out property <bool> plugin-installed: false;
+    in-out property <bool> plugin-trusted: false;
+    in-out property <bool> plugin-enabled: false;
+
     in-out property <bool> auto-check-updates: false;
     in-out property <bool> auto-repair: false;
+    in-out property <string> update-channel: "nightly";
     in-out property <bool> launch-on-login: false;
     in-out property <bool> close-to-tray: false;
     in-out property <int> update-interval: 60;
@@ -34,10 +107,10 @@ export component MainWindow inherits Window {
     callback save-settings();
     callback theme-changed(string);
     callback refresh-plugins();
-    callback install-plugin();
-    callback trust-plugin();
-    callback enable-plugin();
-    callback remove-plugin();
+    callback install-plugin(string);
+    callback trust-plugin(string);
+    callback enable-plugin(string);
+    callback remove-plugin(string);
     callback lookup-account(string);
     callback submit-task(string);
     callback refresh-task(string);
@@ -49,27 +122,49 @@ export component MainWindow inherits Window {
         spacing: 0px;
 
         Rectangle {
-            preferred-width: 218px;
-            min-width: 190px;
+            preferred-width: 224px;
+            min-width: 196px;
             max-width: 250px;
             background: Palette.alternate-background;
             border-color: Palette.border;
             border-width: 1px;
+
             VerticalBox {
                 padding-top: 22px;
-                padding-bottom: 22px;
+                padding-bottom: 18px;
                 padding-left: 14px;
                 padding-right: 14px;
-                spacing: 8px;
+                spacing: 7px;
                 Text { text: "Chuzi"; color: Palette.foreground; font-size: 24px; font-weight: 700; horizontal-alignment: center; vertical-stretch: 0; }
                 Text { text: "CONTROL CENTER"; color: Palette.alternate-foreground; font-size: 11px; horizontal-alignment: center; vertical-stretch: 0; }
-                Rectangle { height: 12px; background: transparent; }
-                Button { text: "Overview"; clicked => { root.page = "overview"; } }
-                Button { text: "Plugins"; clicked => { root.page = "plugins"; } }
-                Button { text: "Accounts"; clicked => { root.page = "accounts"; } }
-                Button { text: "Tasks"; clicked => { root.page = "tasks"; } }
+                Rectangle { height: 14px; background: transparent; vertical-stretch: 0; }
+
+                HorizontalBox {
+                    spacing: 4px;
+                    Rectangle { width: 3px; background: root.page == "overview" ? #3d6f9f : transparent; border-radius: 2px; }
+                    Button { text: "Overview"; clicked => { root.page = "overview"; } }
+                }
+                HorizontalBox {
+                    spacing: 4px;
+                    Rectangle { width: 3px; background: root.page == "plugins" ? #3d6f9f : transparent; border-radius: 2px; }
+                    Button { text: "Plugins"; clicked => { root.page = "plugins"; } }
+                }
+                HorizontalBox {
+                    spacing: 4px;
+                    Rectangle { width: 3px; background: root.page == "accounts" ? #3d6f9f : transparent; border-radius: 2px; }
+                    Button { text: "Accounts"; clicked => { root.page = "accounts"; } }
+                }
+                HorizontalBox {
+                    spacing: 4px;
+                    Rectangle { width: 3px; background: root.page == "tasks" ? #3d6f9f : transparent; border-radius: 2px; }
+                    Button { text: "Tasks"; clicked => { root.page = "tasks"; } }
+                }
                 Rectangle { vertical-stretch: 1; background: transparent; }
-                Button { text: "Settings"; clicked => { root.page = "settings"; } }
+                HorizontalBox {
+                    spacing: 4px;
+                    Rectangle { width: 3px; background: root.page == "settings" ? #3d6f9f : transparent; border-radius: 2px; }
+                    Button { text: "Settings"; clicked => { root.page = "settings"; } }
+                }
             }
         }
 
@@ -79,91 +174,231 @@ export component MainWindow inherits Window {
 
             if root.page == "overview": ScrollView {
                 VerticalBox {
-                    padding: 36px;
-                    spacing: 24px;
-                    Text { text: "Welcome to Chuzi"; font-size: 30px; font-weight: 700; color: Palette.foreground; }
-                    Text { text: "Install Core, configure plugins, and personalize the client from one place."; color: Palette.alternate-foreground; wrap: word-wrap; }
-                    Rectangle {
-                        border-width: 1px;
-                        border-color: Palette.border;
-                        background: Palette.alternate-background;
-                        border-radius: 6px;
-                        min-height: 132px;
-                        preferred-height: 132px;
-                        HorizontalBox {
-                            padding: 18px;
-                            spacing: 16px;
-                            Text { text: "●"; color: #2a9d67; font-size: 26px; vertical-alignment: top; }
-                            VerticalBox {
-                                horizontal-stretch: 1;
-                                spacing: 5px;
-                                Text { text: root.core-status; font-size: 20px; font-weight: 700; color: Palette.foreground; }
-                                Text { text: root.core-details; color: Palette.alternate-foreground; wrap: word-wrap; }
-                                Text { text: root.data-directory; color: Palette.alternate-foreground; font-size: 12px; wrap: word-wrap; }
-                            }
-                            Rectangle { horizontal-stretch: 1; background: transparent; }
-                            if root.busy: Text { text: "Working..."; color: Palette.alternate-foreground; vertical-alignment: center; }
-                        }
+                    padding: 32px;
+                    spacing: 18px;
+                    PageHeader { title: "Overview"; subtitle: "A clear view of Core readiness and the next action."; }
+                    StatusBadge {
+                        label: root.core-status;
+                        detail: root.core-details;
+                        accent: root.core-ready ? #2a9d67 : root.core-installed ? #c18a35 : #7a8490;
+                        vertical-stretch: 0;
                     }
                     HorizontalBox {
                         spacing: 10px;
-                        Button { text: "Install Core"; enabled: !root.core-ready && root.core-status == "Core is not installed" && !root.busy; clicked => { root.install-core(); } }
-                        Button { text: "Start Core"; enabled: !root.core-ready && root.core-status != "Core is not installed" && !root.busy; clicked => { root.start-core(); } }
-                        Button { text: "Stop Core"; enabled: root.core-ready && !root.busy; clicked => { root.stop-core(); } }
-                        Button { text: "Refresh"; enabled: !root.busy; clicked => { root.refresh-core(); } }
+                        height: 40px;
+                        vertical-stretch: 0;
+                        Button { text: "Install Core"; enabled: !root.core-installed && !root.busy; vertical-stretch: 0; clicked => { root.install-core(); } }
+                        Button { text: "Start Core"; enabled: root.core-installed && !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.start-core(); } }
+                        Button { text: "Stop Core"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.stop-core(); } }
+                        Button { text: "Refresh"; enabled: !root.busy; vertical-stretch: 0; clicked => { root.refresh-core(); } }
                     }
+                    FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : root.message-kind == "success" ? #4b8c6a : #526c92; vertical-stretch: 0; }
                     GroupBox {
                         title: "First-run checklist";
+                        max-height: 150px;
+                        vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
-                            spacing: 8px;
-                            Text { text: root.core-ready ? "1. Core is ready" : "1. Install or start Core"; }
-                            Text { text: root.core-ready ? "2. Configure plugins in Plugins" : "2. Configure plugins after Core starts"; color: Palette.alternate-foreground; }
-                            Text { text: "3. Personalize settings when you are ready"; color: Palette.alternate-foreground; }
+                            spacing: 9px;
+                            Text { text: root.core-installed ? "1. Core is installed" : "1. Install Core"; color: Palette.foreground; vertical-stretch: 0; }
+                            Text { text: root.core-ready ? "2. Core is running" : "2. Start Core to unlock account and plugin actions"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: "3. Review plugins, then personalize settings"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                         }
                     }
-                    if root.message != "": Text { text: root.message; color: #9a3d32; wrap: word-wrap; }
+                    GroupBox {
+                        title: "Quick access";
+                        max-height: 92px;
+                        vertical-stretch: 0;
+                        HorizontalBox {
+                            padding: 14px;
+                            spacing: 10px;
+                            height: 40px;
+                            Button { text: "Open Plugins"; clicked => { root.page = "plugins"; } }
+                            Button { text: "Open Accounts"; clicked => { root.page = "accounts"; } }
+                            Button { text: "Open Tasks"; clicked => { root.page = "tasks"; } }
+                            Button { text: "Open Settings"; clicked => { root.page = "settings"; } }
+                        }
+                    }
+                }
+            }
+
+            if root.page == "plugins": ScrollView {
+                VerticalBox {
+                    padding: 32px;
+                    spacing: 18px;
+                    PageHeader { title: "Plugins"; subtitle: "Review installation, signer trust, and enablement independently."; }
+                    Text { text: root.plugin-summary; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                    if !root.core-ready: FeedbackBar { text: "Core is not running. Start Core before changing plugins."; accent: #c18a35; vertical-stretch: 0; }
+                    GroupBox {
+                        title: "Plugin actions";
+                        max-height: 132px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 10px;
+                            LineEdit { placeholder-text: "Enter a plugin ID"; text <=> root.plugin-input; }
+                            HorizontalBox {
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                Button { text: "Refresh"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.refresh-plugins(); } }
+                                Button { text: "Install"; enabled: root.core-ready && !root.busy && root.plugin-input != ""; vertical-stretch: 0; clicked => { root.install-plugin(root.plugin-input); } }
+                                Button { text: "Trust"; enabled: root.core-ready && !root.busy && root.plugin-input == root.plugin-id && root.plugin-installed && !root.plugin-trusted; vertical-stretch: 0; clicked => { root.trust-plugin(root.plugin-input); } }
+                                Button { text: "Enable"; enabled: root.core-ready && !root.busy && root.plugin-input == root.plugin-id && root.plugin-installed && root.plugin-trusted && !root.plugin-enabled; vertical-stretch: 0; clicked => { root.enable-plugin(root.plugin-input); } }
+                                Button { text: "Remove"; enabled: root.core-ready && !root.busy && root.plugin-input == root.plugin-id && root.plugin-installed; vertical-stretch: 0; clicked => { root.remove-plugin(root.plugin-input); } }
+                            }
+                        }
+                    }
+                    GroupBox {
+                        title: "Current plugin";
+                        max-height: 190px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 7px;
+                            Text { text: root.plugin-loaded ? root.plugin-id : "No plugin loaded."; font-size: 17px; font-weight: 700; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Version: " + root.plugin-version : "Refresh to read the manifest."; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Installed: " + (root.plugin-installed ? "Yes" : "No") : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Trusted: " + (root.plugin-trusted ? "Yes" : "No") : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Enabled: " + (root.plugin-trusted && root.plugin-enabled ? "Yes" : "No") : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Health: " + root.plugin-health : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                        }
+                    }
+                    FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : #526c92; vertical-stretch: 0; }
+                }
+            }
+
+            if root.page == "accounts": ScrollView {
+                VerticalBox {
+                    padding: 32px;
+                    spacing: 18px;
+                    PageHeader { title: "Accounts"; subtitle: "Look up a redacted account projection or submit a request."; }
+                    if !root.core-ready: FeedbackBar { text: "Core is not running. Start Core before looking up an account."; accent: #c18a35; vertical-stretch: 0; }
+                    GroupBox {
+                        title: "Account ID";
+                        max-height: 132px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 10px;
+                            LineEdit { placeholder-text: "Enter an authorized account ID"; text <=> root.account-input; }
+                            HorizontalBox {
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                Button { text: "Check status"; enabled: root.core-ready && !root.busy && root.account-input != ""; vertical-stretch: 0; clicked => { root.lookup-account(root.account-input); } }
+                                Button { text: "Submit request"; enabled: root.core-ready && !root.busy && root.account-input != ""; vertical-stretch: 0; clicked => { root.submit-task(root.account-input); } }
+                            }
+                        }
+                    }
+                    GroupBox {
+                        title: "Account projection";
+                        max-height: 170px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 7px;
+                            Text { text: root.account-loaded ? root.account-status : "No account loaded."; font-size: 17px; font-weight: 700; vertical-stretch: 0; }
+                            Text { text: root.account-loaded ? "State: " + root.account-state : "Enter an account ID and choose Check status."; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.account-loaded ? "Revision: " + root.account-revision : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.account-loaded ? "Current request: " + (root.account-request == "" ? "None" : root.account-request) : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                        }
+                    }
+                    FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : #526c92; vertical-stretch: 0; }
+                }
+            }
+
+            if root.page == "tasks": ScrollView {
+                VerticalBox {
+                    padding: 32px;
+                    spacing: 18px;
+                    PageHeader { title: "Tasks"; subtitle: "Inspect a Core request, its attempts, and its latest failure."; }
+                    if !root.core-ready: FeedbackBar { text: "Core is not running. Start Core before checking a request."; accent: #c18a35; vertical-stretch: 0; }
+                    GroupBox {
+                        title: "Request ID";
+                        max-height: 132px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 10px;
+                            LineEdit { placeholder-text: "Enter a request ID"; text <=> root.request-input; }
+                            HorizontalBox {
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                Button { text: "Refresh status"; enabled: root.core-ready && !root.busy && root.request-input != ""; vertical-stretch: 0; clicked => { root.refresh-task(root.request-input); } }
+                                Button { text: "Cancel request"; enabled: root.core-ready && !root.busy && root.request-input != "" && root.task-loaded && root.request-input == root.task-request-id; vertical-stretch: 0; clicked => { root.cancel-task(root.request-input); } }
+                            }
+                        }
+                    }
+                    GroupBox {
+                        title: "Request projection";
+                        max-height: 190px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 7px;
+                            Text { text: root.task-loaded ? root.task-status : "No request loaded."; font-size: 17px; font-weight: 700; vertical-stretch: 0; }
+                            Text { text: root.task-loaded ? "Account: " + root.task-account : "Enter a request ID and choose Refresh status."; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.task-loaded ? "State: " + root.task-state : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.task-loaded ? "Attempt: " + root.task-attempt : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.task-loaded && root.task-failure != "" ? "Latest failure: " + root.task-failure : ""; color: #b04a3a; wrap: word-wrap; vertical-stretch: 0; }
+                        }
+                    }
+                    FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : #526c92; vertical-stretch: 0; }
                 }
             }
 
             if root.page == "settings": ScrollView {
                 VerticalBox {
-                    padding: 36px;
-                    spacing: 24px;
-                    Text { text: "Settings"; font-size: 30px; font-weight: 700; color: Palette.foreground; }
-                    Text { text: "Manage Core lifecycle, updates, appearance, and startup behavior."; color: Palette.alternate-foreground; wrap: word-wrap; }
+                    padding: 32px;
+                    spacing: 18px;
+                    PageHeader { title: "Settings"; subtitle: "Keep UI appearance separate from Core and launcher behavior."; }
                     GroupBox {
                         title: "Core";
+                        max-height: 160px;
+                        vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
                             spacing: 8px;
-                            Text { text: root.core-status; font-size: 17px; font-weight: 700; }
-                            Text { text: root.data-directory; color: Palette.alternate-foreground; wrap: word-wrap; }
+                            Text { text: root.core-status; font-size: 17px; font-weight: 700; vertical-stretch: 0; }
+                            Text { text: root.data-directory; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                             HorizontalBox {
-                                spacing: 10px;
-                                Button { text: "Install / Replace Core"; enabled: !root.busy; clicked => { root.install-core(); } }
-                                Button { text: "Start"; enabled: !root.core-ready && !root.busy; clicked => { root.start-core(); } }
-                                Button { text: "Stop"; enabled: root.core-ready && !root.busy; clicked => { root.stop-core(); } }
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                Button { text: "Install / Replace Core"; enabled: !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.install-core(); } }
+                                Button { text: "Start"; enabled: root.core-installed && !root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.start-core(); } }
+                                Button { text: "Stop"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.stop-core(); } }
                             }
                         }
                     }
                     GroupBox {
                         title: "Updates";
+                        max-height: 190px;
+                        vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
-                            spacing: 8px;
+                            spacing: 9px;
                             CheckBox { text: "Check for updates automatically"; checked: root.auto-check-updates; toggled => { root.auto-check-updates = self.checked; } }
                             CheckBox { text: "Repair missing files automatically"; checked: root.auto-repair; toggled => { root.auto-repair = self.checked; } }
-                            ComboBox { model: ["Nightly", "Stable"]; current-index: 0; }
-                            SpinBox { value: root.update-interval; minimum: 0; maximum: 10080; }
+                            ComboBox {
+                                model: ["Nightly", "Stable"];
+                                current-index: root.update-channel == "stable" ? 1 : 0;
+                                selected => { root.update-channel = self.current-index == 1 ? "stable" : "nightly"; }
+                            }
+                            SpinBox { value <=> root.update-interval; minimum: 5; maximum: 10080; }
+                            Text { text: "Update check interval (minutes)"; color: Palette.alternate-foreground; font-size: 12px; vertical-stretch: 0; }
                         }
                     }
                     GroupBox {
                         title: "Appearance";
+                        max-height: 150px;
+                        vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
                             spacing: 8px;
-                            Text { text: "Choose how Chuzi follows your system."; color: Palette.alternate-foreground; wrap: word-wrap; }
+                            Text { text: "Choose System, Light, or Dark. The preview applies immediately."; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                             ComboBox {
                                 model: ["System default", "Light", "Dark"];
                                 current-index: root.theme == "light" ? 1 : root.theme == "dark" ? 2 : 0;
@@ -176,6 +411,8 @@ export component MainWindow inherits Window {
                     }
                     GroupBox {
                         title: "Startup";
+                        max-height: 130px;
+                        vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
                             spacing: 8px;
@@ -185,83 +422,12 @@ export component MainWindow inherits Window {
                     }
                     HorizontalBox {
                         spacing: 10px;
-                        Button { text: "Save settings"; enabled: !root.busy; clicked => { root.save-settings(); } }
-                        if root.message != "": Text { text: root.message; color: #3d6f58; vertical-alignment: center; }
+                        height: 40px;
+                        vertical-stretch: 0;
+                        Button { text: "Save settings"; enabled: !root.busy; vertical-stretch: 0; clicked => { root.save-settings(); } }
+                        Text { text: root.busy ? "Saving..." : ""; color: Palette.alternate-foreground; vertical-alignment: center; }
                     }
-                }
-            }
-
-            if root.page == "plugins": ScrollView {
-                VerticalBox {
-                    padding: 34px;
-                    spacing: 18px;
-                    Text { text: "Plugins"; font-size: 30px; font-weight: 700; color: Palette.foreground; }
-                    Text { text: "Review permissions and trust before enabling a plugin."; color: Palette.alternate-foreground; wrap: word-wrap; }
-                    if !root.core-ready: Text { text: "Start Core before installing, trusting, enabling, or removing plugins."; color: #d29a4a; wrap: word-wrap; }
-                    GroupBox {
-                        title: "Installed and available plugins";
-                        VerticalBox {
-                            padding: 14px;
-                            spacing: 8px;
-                            Text { text: root.plugin-summary; color: Palette.alternate-foreground; wrap: word-wrap; }
-                            HorizontalBox {
-                                spacing: 10px;
-                                Button { text: "Refresh"; enabled: root.core-ready && !root.busy; clicked => { root.refresh-plugins(); } }
-                                Button { text: "Install"; enabled: root.core-ready && !root.busy; clicked => { root.install-plugin(); } }
-                                Button { text: "Trust"; enabled: root.core-ready && !root.busy; clicked => { root.trust-plugin(); } }
-                                Button { text: "Enable"; enabled: root.core-ready && !root.busy; clicked => { root.enable-plugin(); } }
-                                Button { text: "Remove"; enabled: root.core-ready && !root.busy; clicked => { root.remove-plugin(); } }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if root.page == "accounts": ScrollView {
-                VerticalBox {
-                    padding: 34px;
-                    spacing: 18px;
-                    Text { text: "Accounts"; font-size: 30px; font-weight: 700; color: Palette.foreground; }
-                    Text { text: "Look up a redacted account state or submit a new task."; color: Palette.alternate-foreground; wrap: word-wrap; }
-                    if !root.core-ready: Text { text: "Start Core before looking up an account."; color: #d29a4a; }
-                    GroupBox {
-                        title: "Account ID";
-                        VerticalBox {
-                            padding: 14px;
-                            spacing: 10px;
-                            LineEdit { placeholder-text: "Enter an authorized account ID"; text <=> root.account-input; }
-                            HorizontalBox {
-                                spacing: 10px;
-                                Button { text: "Check status"; enabled: root.core-ready && !root.busy; clicked => { root.lookup-account(root.account-input); } }
-                                Button { text: "Submit task"; enabled: root.core-ready && !root.busy; clicked => { root.submit-task(root.account-input); } }
-                            }
-                        }
-                    }
-                    GroupBox { title: "Account status"; VerticalBox { padding: 14px; Text { text: root.account-status; color: Palette.alternate-foreground; wrap: word-wrap; } } }
-                }
-            }
-
-            if root.page == "tasks": ScrollView {
-                VerticalBox {
-                    padding: 34px;
-                    spacing: 18px;
-                    Text { text: "Tasks"; font-size: 30px; font-weight: 700; color: Palette.foreground; }
-                    Text { text: "Track a Core request and cancel it when it is still active."; color: Palette.alternate-foreground; wrap: word-wrap; }
-                    if !root.core-ready: Text { text: "Start Core before checking task status."; color: #d29a4a; }
-                    GroupBox {
-                        title: "Request ID";
-                        VerticalBox {
-                            padding: 14px;
-                            spacing: 10px;
-                            LineEdit { placeholder-text: "Enter a request ID"; text <=> root.request-input; }
-                            HorizontalBox {
-                                spacing: 10px;
-                                Button { text: "Refresh status"; enabled: root.core-ready && !root.busy; clicked => { root.refresh-task(root.request-input); } }
-                                Button { text: "Cancel task"; enabled: root.core-ready && !root.busy; clicked => { root.cancel-task(root.request-input); } }
-                            }
-                        }
-                    }
-                    GroupBox { title: "Task status"; VerticalBox { padding: 14px; Text { text: root.task-status; color: Palette.alternate-foreground; wrap: word-wrap; } } }
+                    FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : root.message-kind == "success" ? #4b8c6a : #526c92; vertical-stretch: 0; }
                 }
             }
         }

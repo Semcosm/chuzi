@@ -1,85 +1,31 @@
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
+mod core_client;
+mod models;
+
+use core_client::{core_call, pipe_name, unique_id};
+use models::{
+    default_theme, BehaviorSettings, CoreAccount, CorePlugin, CoreRequest, SubmitResult,
+    UiPreferences,
+};
+use serde_json::json;
 use slint::language::ColorScheme;
 use slint::{ComponentHandle, SharedString};
-use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 slint::include_modules!();
 
-const CORE_PROTOCOL: &str = "chuzi.core/v1";
+pub(crate) const CORE_PROTOCOL: &str = "chuzi.core/v1";
 
 #[derive(Default)]
 struct AppState {
     data_root: PathBuf,
     payload_root: PathBuf,
     service: Option<Child>,
-}
-
-#[derive(Debug, Deserialize)]
-struct CoreAccount {
-    account: String,
-    state: String,
-    #[serde(default)]
-    request_id: String,
-    revision: u64,
-}
-
-#[derive(Debug, Deserialize)]
-struct CoreRequest {
-    request_id: String,
-    account: String,
-    state: String,
-    attempt: i32,
-    #[serde(default)]
-    last_failure: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct SubmitResult {
-    request: CoreRequest,
-    idempotent: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct WireEnvelope {
-    protocol: String,
-    id: String,
-    #[serde(rename = "type")]
-    kind: Option<String>,
-    result: Option<Value>,
-    error: Option<WireError>,
-}
-
-#[derive(Debug, Deserialize)]
-struct WireError {
-    code: String,
-    message: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct BehaviorSettings {
-    auto_check_updates: bool,
-    auto_repair: bool,
-    update_channel: String,
-    launch_on_login: bool,
-    close_to_tray: bool,
-    check_interval: i64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct UiPreferences {
-    #[serde(default = "default_theme")]
-    theme: String,
-}
-
-fn default_theme() -> String {
-    "system".to_owned()
+    busy: bool,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -125,6 +71,7 @@ impl AppState {
             data_root,
             payload_root: package_root.join("CorePayload"),
             service: None,
+            busy: false,
         })
     }
 
@@ -258,11 +205,12 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     ui.on_save_settings(move || {
         let weak = weak.clone();
         let state = Arc::clone(&settings_state);
-        let (auto_check, auto_repair, launch, tray, interval, theme) =
+        let (auto_check, auto_repair, channel, launch, tray, interval, theme) =
             (weak.upgrade().map(|window| {
                 (
                     window.get_auto_check_updates(),
                     window.get_auto_repair(),
+                    window.get_update_channel().to_string(),
                     window.get_launch_on_login(),
                     window.get_close_to_tray(),
                     window.get_update_interval(),
@@ -270,15 +218,27 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                 )
             }),)
                 .0
-                .unwrap_or((false, false, false, false, 60, default_theme()));
+                .unwrap_or((
+                    false,
+                    false,
+                    "nightly".to_owned(),
+                    false,
+                    false,
+                    60,
+                    default_theme(),
+                ));
         run_background(&weak, state, move |state| {
             let settings = BehaviorSettings {
                 auto_check_updates: auto_check,
                 auto_repair,
-                update_channel: "nightly".to_owned(),
+                update_channel: if channel == "stable" {
+                    "stable".to_owned()
+                } else {
+                    "nightly".to_owned()
+                },
                 launch_on_login: launch,
                 close_to_tray: tray,
-                check_interval: i64::from(interval) * 60_000_000_000,
+                check_interval: i64::from(interval.max(5)) * 60_000_000_000,
             };
             let input = state.data_root.join(".chuzi-settings-input.json");
             fs::write(
@@ -305,77 +265,146 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             window.set_theme(theme.clone().into());
             apply_theme(&window, &theme);
         }
-        if let Err(error) = theme_state.lock().unwrap().save_ui_theme(&theme) {
-            if let Some(window) = weak.upgrade() {
-                window.set_message(format!("Theme could not be saved: {error}").into());
+        let weak = weak.clone();
+        let theme_state = Arc::clone(&theme_state);
+        thread::spawn(move || {
+            let result = theme_state.lock().unwrap().save_ui_theme(&theme);
+            if let Err(error) = result {
+                set_feedback(
+                    &weak,
+                    friendly_error(&format!("settings: {error}")),
+                    "error",
+                );
             }
-        }
+        });
     });
 
     let weak = ui.as_weak();
     let plugin_state = Arc::clone(&state);
-    ui.on_refresh_plugins(move || {
-        run_background(&weak, Arc::clone(&plugin_state), |state| {
-            let output = state.run_launcher("plugin-list", &[])?;
-            Ok(format_plugin_summary(&output))
-        })
+    ui.on_refresh_plugins(move || refresh_plugins(&weak, Arc::clone(&plugin_state)));
+    let weak = ui.as_weak();
+    let plugin_state = Arc::clone(&state);
+    ui.on_install_plugin(move |plugin| {
+        plugin_action(
+            &weak,
+            Arc::clone(&plugin_state),
+            "plugin-install",
+            plugin.to_string(),
+        )
     });
     let weak = ui.as_weak();
     let plugin_state = Arc::clone(&state);
-    ui.on_install_plugin(move || plugin_action(&weak, Arc::clone(&plugin_state), "plugin-install"));
+    ui.on_trust_plugin(move |plugin| {
+        plugin_action(
+            &weak,
+            Arc::clone(&plugin_state),
+            "plugin-trust",
+            plugin.to_string(),
+        )
+    });
     let weak = ui.as_weak();
     let plugin_state = Arc::clone(&state);
-    ui.on_trust_plugin(move || plugin_action(&weak, Arc::clone(&plugin_state), "plugin-trust"));
+    ui.on_enable_plugin(move |plugin| {
+        plugin_action(
+            &weak,
+            Arc::clone(&plugin_state),
+            "plugin-enable",
+            plugin.to_string(),
+        )
+    });
     let weak = ui.as_weak();
     let plugin_state = Arc::clone(&state);
-    ui.on_enable_plugin(move || plugin_action(&weak, Arc::clone(&plugin_state), "plugin-enable"));
-    let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_remove_plugin(move || plugin_action(&weak, Arc::clone(&plugin_state), "plugin-remove"));
+    ui.on_remove_plugin(move |plugin| {
+        plugin_action(
+            &weak,
+            Arc::clone(&plugin_state),
+            "plugin-remove",
+            plugin.to_string(),
+        )
+    });
 
     let weak = ui.as_weak();
     let account_state = Arc::clone(&state);
     ui.on_lookup_account(move |account| {
         let account = account.to_string();
-        run_background(&weak, Arc::clone(&account_state), move |state| {
-            let result = core_call(state, "get_account", json!({"account_id": account}))?;
-            let parsed: CoreAccount =
-                serde_json::from_value(result).map_err(|error| error.to_string())?;
-            Ok(format!(
-                "{} · state={} · request={} · revision={}",
-                parsed.account, parsed.state, parsed.request_id, parsed.revision
-            ))
-        });
+        if let Some(window) = weak.upgrade() {
+            window.set_account_loaded(false);
+        }
+        run_background_with(
+            &weak,
+            Arc::clone(&account_state),
+            move |state| {
+                validate_text(&account, "account ID")?;
+                let result = core_call(state, "get_account", json!({"account_id": account}))?;
+                let parsed: CoreAccount =
+                    serde_json::from_value(result).map_err(|error| error.to_string())?;
+                Ok(("Account status loaded.".to_owned(), parsed))
+            },
+            |window, account: CoreAccount| {
+                window.set_account_loaded(true);
+                window.set_account_status(format!("Account {}", account.account).into());
+                window.set_account_state(account.state.into());
+                window.set_account_revision(account.revision.to_string().into());
+                window.set_account_request(account.request_id.into());
+            },
+        );
     });
 
     let weak = ui.as_weak();
     let submit_state = Arc::clone(&state);
     ui.on_submit_task(move |account| {
         let account = account.to_string();
-        run_background(&weak, Arc::clone(&submit_state), move |state| {
-            let id = format!("ui-{}", unique_id());
-            let result = core_call(
-                state,
-                "submit_request",
-                json!({
-                    "request_id": id,
-                    "account_id": account,
-                    "idempotency_key": format!("ui-{id}"),
-                    "actor": "windows-ui"
-                }),
-            )?;
-            let parsed: SubmitResult =
-                serde_json::from_value(result).map_err(|error| error.to_string())?;
-            Ok(format!(
-                "submitted {} · state={} · idempotent={}",
-                parsed.request.request_id, parsed.request.state, parsed.idempotent
-            ))
-        });
+        if let Some(window) = weak.upgrade() {
+            window.set_task_loaded(false);
+        }
+        run_background_with(
+            &weak,
+            Arc::clone(&submit_state),
+            move |state| {
+                validate_text(&account, "account ID")?;
+                let id = format!("ui-{}", unique_id());
+                let result = core_call(
+                    state,
+                    "submit_request",
+                    json!({
+                        "request_id": id,
+                        "account_id": account,
+                        "idempotency_key": format!("ui-{id}"),
+                        "actor": "windows-ui"
+                    }),
+                )?;
+                let parsed: SubmitResult =
+                    serde_json::from_value(result).map_err(|error| error.to_string())?;
+                Ok((
+                    if parsed.idempotent {
+                        "Request already existed; showing the existing request.".to_owned()
+                    } else {
+                        "Request submitted.".to_owned()
+                    },
+                    parsed,
+                ))
+            },
+            |window, result: SubmitResult| {
+                let request = result.request;
+                window.set_request_input(request.request_id.clone().into());
+                window.set_task_request_id(request.request_id.clone().into());
+                window.set_task_loaded(true);
+                window.set_task_status("Request submitted".into());
+                window.set_task_account(request.account.into());
+                window.set_task_state(request.state.into());
+                window.set_task_attempt(request.attempt.to_string().into());
+                window.set_task_failure(request.last_failure.into());
+                window.set_page("tasks".into());
+            },
+        );
     });
 
     let weak = ui.as_weak();
     let task_state = Arc::clone(&state);
     ui.on_refresh_task(move |request| {
+        if let Some(window) = weak.upgrade() {
+            window.set_task_loaded(false);
+        }
         request_action(
             &weak,
             Arc::clone(&task_state),
@@ -386,6 +415,9 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let weak = ui.as_weak();
     let cancel_state = Arc::clone(&state);
     ui.on_cancel_task(move |request| {
+        if let Some(window) = weak.upgrade() {
+            window.set_task_loaded(false);
+        }
         request_action(
             &weak,
             Arc::clone(&cancel_state),
@@ -395,30 +427,60 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
+#[derive(Debug)]
+struct CoreSnapshot {
+    ready: bool,
+    installed: bool,
+    status: String,
+    details: String,
+}
+
 fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
-    let weak = ui.clone();
-    let data = state.lock().unwrap().data_root.clone();
-    let service = state.lock().unwrap().service.is_some();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(window) = weak.upgrade() {
-            window.set_core_ready(service);
-            window.set_core_status(if service {
-                "Core is running".into()
-            } else if data
-                .join(if cfg!(windows) { "chuzi.exe" } else { "chuzi" })
-                .is_file()
+    run_background_with(
+        ui,
+        state,
+        |state| {
+            if state
+                .service
+                .as_mut()
+                .is_some_and(|process| process.try_wait().ok().flatten().is_some())
             {
-                "Core is stopped".into()
+                state.service = None;
+                let _ = fs::remove_file(state.data_root.join(".core.pid"));
+            }
+            let installed = state.service_path().is_file();
+            let ready = state.service.is_some();
+            let snapshot = if ready {
+                CoreSnapshot {
+                    ready: true,
+                    installed: true,
+                    status: "Core is running".to_owned(),
+                    details: "Core is running and ready for requests.".to_owned(),
+                }
+            } else if installed {
+                CoreSnapshot {
+                    ready: false,
+                    installed: true,
+                    status: "Core is stopped".to_owned(),
+                    details: "Start Core to enable accounts, tasks, and plugins.".to_owned(),
+                }
             } else {
-                "Core is not installed".into()
-            });
-            window.set_core_details(if service {
-                "Core process is running.".into()
-            } else {
-                "Install Core to unlock plugins and tasks.".into()
-            });
-        }
-    });
+                CoreSnapshot {
+                    ready: false,
+                    installed: false,
+                    status: "Core is not installed".to_owned(),
+                    details: "Install Core to begin using Chuzi.".to_owned(),
+                }
+            };
+            Ok(("Core status refreshed.".to_owned(), snapshot))
+        },
+        |window, snapshot: CoreSnapshot| {
+            window.set_core_ready(snapshot.ready);
+            window.set_core_installed(snapshot.installed);
+            window.set_core_status(snapshot.status.into());
+            window.set_core_details(snapshot.details.into());
+        },
+    );
 }
 
 fn apply_theme(ui: &MainWindow, theme: &str) {
@@ -442,19 +504,35 @@ fn load_settings(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let weak = ui.as_weak();
     thread::spawn(move || {
         let result = state.lock().unwrap().run_launcher("settings", &[]);
-        if let Ok(output) = result {
-            if let Ok(settings) = serde_json::from_str::<BehaviorSettings>(&output) {
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(window) = weak.upgrade() {
-                        window.set_auto_check_updates(settings.auto_check_updates);
-                        window.set_auto_repair(settings.auto_repair);
-                        window.set_launch_on_login(settings.launch_on_login);
-                        window.set_close_to_tray(settings.close_to_tray);
-                        window
-                            .set_update_interval((settings.check_interval / 60_000_000_000) as i32);
-                    }
-                });
-            }
+        let feedback = match result {
+            Ok(output) => match serde_json::from_str::<BehaviorSettings>(&output) {
+                Ok(settings) => {
+                    let settings_weak = weak.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(window) = settings_weak.upgrade() {
+                            window.set_auto_check_updates(settings.auto_check_updates);
+                            window.set_auto_repair(settings.auto_repair);
+                            window.set_update_channel(settings.update_channel.into());
+                            window.set_launch_on_login(settings.launch_on_login);
+                            window.set_close_to_tray(settings.close_to_tray);
+                            window.set_update_interval(
+                                (settings.check_interval / 60_000_000_000).max(5) as i32,
+                            );
+                        }
+                    });
+                    None
+                }
+                Err(_) => Some("Saved launcher settings could not be read. Defaults are in use."),
+            },
+            Err(_) => Some("Launcher settings are unavailable until Core is installed."),
+        };
+        if let Some(message) = feedback {
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak.upgrade() {
+                    window.set_message(message.into());
+                    window.set_message_kind("info".into());
+                }
+            });
         }
     });
 }
@@ -463,7 +541,12 @@ fn run_background<F>(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>, 
 where
     F: FnOnce(&mut AppState) -> Result<String, String> + Send + 'static,
 {
-    run_background_status(ui, state, operation, None);
+    run_background_with(
+        ui,
+        state,
+        move |state| operation(state).map(|message| (message, ())),
+        |_window, _| {},
+    );
 }
 
 fn run_background_status<F>(
@@ -474,38 +557,80 @@ fn run_background_status<F>(
 ) where
     F: FnOnce(&mut AppState) -> Result<String, String> + Send + 'static,
 {
+    run_background_with(
+        ui,
+        state,
+        move |state| operation(state).map(|message| (message, core_ready)),
+        |window, ready: Option<bool>| {
+            if let Some(ready) = ready {
+                window.set_core_ready(ready);
+                window.set_core_status(
+                    if ready {
+                        "Core is running"
+                    } else {
+                        "Core is stopped"
+                    }
+                    .into(),
+                );
+                window.set_core_installed(true);
+            }
+        },
+    );
+}
+
+fn run_background_with<T, F, A>(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    operation: F,
+    apply: A,
+) where
+    T: Send + 'static,
+    F: FnOnce(&mut AppState) -> Result<(String, T), String> + Send + 'static,
+    A: FnOnce(&MainWindow, T) + Send + 'static,
+{
+    {
+        let mut guard = state.lock().unwrap();
+        if guard.busy {
+            return;
+        }
+        guard.busy = true;
+    }
     let weak = ui.clone();
     let _ = slint::invoke_from_event_loop({
         let weak = weak.clone();
         move || {
             if let Some(window) = weak.upgrade() {
                 window.set_busy(true);
+                window.set_busy_operation("Working...".into());
                 window.set_message("Working...".into());
+                window.set_message_kind("info".into());
             }
         }
     });
     thread::spawn(move || {
         let result = operation(&mut state.lock().unwrap());
+        state.lock().unwrap().busy = false;
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(window) = weak.upgrade() {
                 window.set_busy(false);
+                window.set_busy_operation(SharedString::default());
                 match result {
-                    Ok(message) => {
+                    Ok((message, value)) => {
                         window.set_message(message.into());
-                        if let Some(ready) = core_ready {
-                            window.set_core_ready(ready);
-                            window.set_core_status(
-                                if ready {
-                                    "Core is running"
-                                } else {
-                                    "Core is stopped"
-                                }
-                                .into(),
-                            );
-                        }
+                        window.set_message_kind("success".into());
+                        apply(&window, value);
                     }
                     Err(error) => {
-                        window.set_message(format!("Core operation failed: {error}").into())
+                        if is_core_unavailable(&error) {
+                            window.set_core_ready(false);
+                            window.set_core_status("Core unavailable".into());
+                            window.set_core_details(
+                                "Core is installed but not accepting requests. Refresh or restart it."
+                                    .into(),
+                            );
+                        }
+                        window.set_message(friendly_error(&error).into());
+                        window.set_message_kind("error".into());
                     }
                 }
             }
@@ -514,18 +639,14 @@ fn run_background_status<F>(
 }
 
 fn start_service(state: &mut AppState) -> Result<(), String> {
-    if state
-        .service
-        .as_mut()
-        .is_some_and(|process| process.try_wait().ok().flatten().is_none())
-    {
-        return Ok(());
+    if let Some(process) = state.service.as_mut() {
+        if process.try_wait().ok().flatten().is_none() {
+            return Ok(());
+        }
+        state.service = None;
     }
     if !state.service_path().is_file() {
-        return Err(format!(
-            "Core is not installed: {}",
-            state.service_path().display()
-        ));
+        return Err("core_not_installed".to_owned());
     }
     fs::create_dir_all(&state.data_root).map_err(|error| error.to_string())?;
     let config = state.data_root.join("core-config.json");
@@ -553,59 +674,52 @@ fn start_service(state: &mut AppState) -> Result<(), String> {
     fs::write(state.data_root.join(".core.pid"), process.id().to_string())
         .map_err(|error| error.to_string())?;
     state.service = Some(process);
+    if let Err(error) = wait_for_core_pipe(&state.data_root) {
+        stop_service(state)?;
+        return Err(error);
+    }
     Ok(())
+}
+
+fn wait_for_core_pipe(data_root: &Path) -> Result<(), String> {
+    if !cfg!(windows) {
+        return Ok(());
+    }
+    for _ in 0..40 {
+        if OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(pipe_name(data_root))
+            .is_ok()
+        {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(100));
+    }
+    Err("core_start_timeout".to_owned())
 }
 
 fn stop_service(state: &mut AppState) -> Result<(), String> {
     if let Some(mut process) = state.service.take() {
-        let _ = process.kill();
-        let _ = process.wait();
+        if process
+            .try_wait()
+            .map_err(|_| "core_stop_failed".to_owned())?
+            .is_none()
+        {
+            process.kill().map_err(|_| "core_stop_failed".to_owned())?;
+        }
+        process.wait().map_err(|_| "core_stop_failed".to_owned())?;
     }
     let _ = fs::remove_file(state.data_root.join(".core.pid"));
     Ok(())
 }
 
-fn core_call(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
-    let pipe = pipe_name(&state.data_root);
-    let mut stream = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(&pipe)
-        .map_err(|error| format!("connect Core pipe: {error}"))?;
-    let id = unique_id();
-    let hello = json!({"protocol": CORE_PROTOCOL, "id": format!("hello-{id}"), "method": "hello", "params": {"version": CORE_PROTOCOL}});
-    write_json_line(&mut stream, &hello)?;
-    let _ = read_response(&mut stream, &format!("hello-{id}"))?;
-    let request = json!({"protocol": CORE_PROTOCOL, "id": id, "method": method, "params": params});
-    write_json_line(&mut stream, &request)?;
-    read_response(&mut stream, &id)
-}
-
-fn write_json_line(stream: &mut File, value: &Value) -> Result<(), String> {
-    let mut bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
-    bytes.push(b'\n');
-    stream.write_all(&bytes).map_err(|error| error.to_string())
-}
-
-fn read_response(stream: &mut File, expected_id: &str) -> Result<Value, String> {
-    let mut reader = BufReader::new(stream.try_clone().map_err(|error| error.to_string())?);
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .map_err(|error| error.to_string())?;
-    let response: WireEnvelope = serde_json::from_str(&line).map_err(|error| error.to_string())?;
-    if response.protocol != CORE_PROTOCOL || response.id != expected_id {
-        return Err("invalid Core response".to_owned());
+fn ensure_core_ready(state: &AppState) -> Result<(), String> {
+    if state.service.is_none() {
+        Err("core_unavailable".to_owned())
+    } else {
+        Ok(())
     }
-    if response.kind.as_deref() == Some("error") {
-        let error = response
-            .error
-            .ok_or_else(|| "Core returned an unknown error".to_owned())?;
-        return Err(format!("{}: {}", error.code, error.message));
-    }
-    response
-        .result
-        .ok_or_else(|| "Core returned an empty result".to_owned())
 }
 
 fn request_action(
@@ -614,54 +728,232 @@ fn request_action(
     request: String,
     method: &'static str,
 ) {
-    run_background(ui, state, move |state| {
-        let params = if method == "cancel_request" {
-            json!({"request_id": request, "actor": "windows-ui"})
-        } else {
-            json!({"request_id": request})
-        };
-        let result = core_call(state, method, params)?;
-        let parsed: CoreRequest =
-            serde_json::from_value(result).map_err(|error| error.to_string())?;
-        Ok(format!(
-            "{} · account={} · state={} · attempt={} {}",
-            parsed.request_id, parsed.account, parsed.state, parsed.attempt, parsed.last_failure
-        ))
-    });
+    run_background_with(
+        ui,
+        state,
+        move |state| {
+            validate_text(&request, "request ID")?;
+            let params = if method == "cancel_request" {
+                json!({"request_id": request, "actor": "windows-ui"})
+            } else {
+                json!({"request_id": request})
+            };
+            let result = core_call(state, method, params)?;
+            let parsed: CoreRequest =
+                serde_json::from_value(result).map_err(|error| error.to_string())?;
+            Ok((
+                if method == "cancel_request" {
+                    "Cancellation requested.".to_owned()
+                } else {
+                    "Request status refreshed.".to_owned()
+                },
+                parsed,
+            ))
+        },
+        |window, request: CoreRequest| {
+            window.set_task_loaded(true);
+            window.set_task_status(
+                if request.state == "cancelled" {
+                    "Request cancelled"
+                } else {
+                    "Request loaded"
+                }
+                .into(),
+            );
+            window.set_task_request_id(request.request_id.clone().into());
+            window.set_request_input(request.request_id.into());
+            window.set_task_account(request.account.into());
+            window.set_task_state(request.state.into());
+            window.set_task_attempt(request.attempt.to_string().into());
+            window.set_task_failure(request.last_failure.into());
+        },
+    );
 }
 
-fn plugin_action(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>, command: &'static str) {
-    run_background(ui, state, move |state| {
-        state.run_launcher(command, &["-item", "default"])?;
-        Ok(format!("{command} completed."))
-    });
+fn refresh_plugins(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    run_background_with(
+        ui,
+        state,
+        |state| {
+            ensure_core_ready(state)?;
+            let output = state.run_launcher("plugin-list", &[])?;
+            let plugins = parse_plugins(&output)?;
+            Ok((format_plugin_summary(&plugins), plugins))
+        },
+        apply_plugins,
+    );
 }
 
-fn format_plugin_summary(output: &str) -> String {
-    match serde_json::from_str::<Value>(output) {
-        Ok(Value::Array(items)) if items.is_empty() => {
-            "No plugins are included in this Core release.".to_owned()
-        }
-        Ok(Value::Array(items)) => format!("{} plugin(s) reported by Core.", items.len()),
-        _ => "Plugin state refreshed.".to_owned(),
+fn plugin_action(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    command: &'static str,
+    plugin: String,
+) {
+    if let Err(error) = validate_text(&plugin, "plugin ID") {
+        set_feedback(ui, friendly_error(&error), "error");
+        return;
+    }
+    run_background_with(
+        ui,
+        state,
+        move |state| {
+            ensure_core_ready(state)?;
+            state.run_launcher(command, &["-item", plugin.as_str()])?;
+            let output = state.run_launcher("plugin-list", &[])?;
+            let plugins = parse_plugins(&output)?;
+            Ok((plugin_action_message(command), plugins))
+        },
+        apply_plugins,
+    );
+}
+
+fn parse_plugins(output: &str) -> Result<Vec<CorePlugin>, String> {
+    serde_json::from_str(output).map_err(|error| format!("plugin projection: {error}"))
+}
+
+fn format_plugin_summary(plugins: &[CorePlugin]) -> String {
+    if plugins.is_empty() {
+        "No plugins are included in this Core release.".to_owned()
+    } else {
+        format!("{} plugin(s) reported by the launcher.", plugins.len())
     }
 }
 
-fn unique_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .to_string()
+fn plugin_action_message(command: &str) -> String {
+    match command {
+        "plugin-install" => {
+            "Plugin installed; it remains untrusted until explicitly trusted.".to_owned()
+        }
+        "plugin-trust" => "Plugin trust updated. Review the signer before enabling it.".to_owned(),
+        "plugin-enable" => "Plugin enabled.".to_owned(),
+        "plugin-remove" => "Plugin removed.".to_owned(),
+        _ => "Plugin state updated.".to_owned(),
+    }
 }
 
-fn pipe_name(data_root: &Path) -> String {
-    let cleaned = data_root.to_string_lossy().replace('/', "\\");
-    let digest = Sha256::digest(cleaned.as_bytes());
-    format!(r"\\.\pipe\chuzi-core-{}", hex_encode(&digest[..8]))
+fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
+    window.set_plugin_summary(format_plugin_summary(&plugins).into());
+    let selected = window.get_plugin_input().to_string();
+    let plugin = plugins
+        .iter()
+        .find(|plugin| plugin.descriptor.id == selected)
+        .or_else(|| plugins.first());
+    let Some(plugin) = plugin else {
+        window.set_plugin_loaded(false);
+        window.set_plugin_id(SharedString::default());
+        window.set_plugin_installed(false);
+        window.set_plugin_trusted(false);
+        window.set_plugin_enabled(false);
+        window.set_plugin_health(SharedString::default());
+        return;
+    };
+    window.set_plugin_loaded(true);
+    window.set_plugin_input(plugin.descriptor.id.clone().into());
+    window.set_plugin_id(plugin.descriptor.id.clone().into());
+    window.set_plugin_version(plugin.descriptor.version.clone().into());
+    window.set_plugin_installed(plugin.installed);
+    window.set_plugin_trusted(plugin.trusted);
+    window.set_plugin_enabled(plugin.trusted && plugin.enabled);
+    window.set_plugin_health(plugin.health.clone().into());
 }
 
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+fn validate_text(value: &str, label: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("missing_{label}"));
+    }
+    Ok(())
+}
+
+fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static str) {
+    let weak = ui.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = weak.upgrade() {
+            window.set_message(message.into());
+            window.set_message_kind(kind.into());
+        }
+    });
+}
+
+fn friendly_error(error: &str) -> String {
+    let value = error.to_ascii_lowercase();
+    if value.contains("missing_account")
+        || value.contains("missing_request")
+        || value.contains("missing_plugin")
+    {
+        return "Enter an ID before trying this action.".to_owned();
+    }
+    if value.contains("not_found") || value.contains("not found") {
+        return "Core could not find that item. Check the ID and try again.".to_owned();
+    }
+    if value.contains("core_not_installed") || value.contains("launcher is missing") {
+        return "Core is not installed. Use Install Core, then try again.".to_owned();
+    }
+    if value.contains("core_start_timeout")
+        || value.contains("connect core")
+        || value.contains("unavailable")
+    {
+        return "Core is unavailable. Start Core and refresh its status.".to_owned();
+    }
+    if value.contains("not trusted") || value.contains("forbidden") || value.contains("not allowed")
+    {
+        return "Core did not allow this operation. Review plugin trust and permissions."
+            .to_owned();
+    }
+    if value.contains("conflict") || value.contains("already") {
+        return "The item changed while this was running. Refresh and try again.".to_owned();
+    }
+    if value.contains("settings") {
+        return "Settings could not be saved. Check the launcher and try again.".to_owned();
+    }
+    "The operation could not be completed. Refresh and try again.".to_owned()
+}
+
+fn is_core_unavailable(error: &str) -> bool {
+    let value = error.to_ascii_lowercase();
+    value.contains("core_unavailable")
+        || value.contains("connect core pipe")
+        || value.contains("core_start_timeout")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_values_fail_closed_to_system() {
+        assert_eq!(normalize_theme("dark"), "dark");
+        assert_eq!(normalize_theme(" LIGHT "), "light");
+        assert_eq!(normalize_theme("unknown"), "system");
+    }
+
+    #[test]
+    fn user_errors_are_classified_without_internal_details() {
+        assert_eq!(
+            friendly_error("not_found: account"),
+            "Core could not find that item. Check the ID and try again."
+        );
+        assert!(is_core_unavailable("core_unavailable"));
+        assert!(!is_core_unavailable("not_found: request"));
+        assert_eq!(
+            friendly_error("connect Core pipe: C:\\private\\data"),
+            "Core is unavailable. Start Core and refresh its status."
+        );
+        assert_eq!(
+            friendly_error("unexpected stack and profile path"),
+            "The operation could not be completed. Refresh and try again."
+        );
+    }
+
+    #[test]
+    fn plugin_projection_never_promotes_untrusted_state() {
+        let plugins: Vec<CorePlugin> = serde_json::from_str(
+            r#"[{"descriptor":{"id":"demo","version":"1"},"installed":true,"enabled":true,"trusted":false,"health":"untrusted"}]"#,
+        )
+        .expect("valid plugin projection");
+        let plugin = &plugins[0];
+        assert!(plugin.enabled);
+        assert!(!plugin.trusted);
+        assert!(!(plugin.trusted && plugin.enabled));
+    }
 }

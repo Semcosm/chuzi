@@ -8,7 +8,7 @@ use slint::{ComponentHandle, PhysicalSize, SharedString};
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (output, sizes) = parse_args()?;
+    let (output, sizes, page) = parse_args()?;
     fs::create_dir_all(&output)?;
 
     slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
@@ -19,9 +19,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     for (width, height) in sizes {
         let window = MainWindow::new()?;
+        window.set_page(page.clone().into());
+        window.set_core_installed(true);
+        window.set_core_ready(true);
         window.set_core_status("Core is running".into());
         window.set_core_details("Headless layout snapshot".into());
         window.set_data_directory("Data directory: snapshot".into());
+        window.set_plugin_summary("No plugins are available in this release.".into());
         window.window().set_size(PhysicalSize::new(width, height));
         let snapshot = window.window().take_snapshot()?;
         if snapshot.width() != width || snapshot.height() != height {
@@ -39,16 +43,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         {
             return Err(format!("snapshot is blank at {width}x{height}").into());
         }
-        let path = output.join(format!("{width}x{height}.png"));
+        let page_output = if page == "overview" {
+            output.clone()
+        } else {
+            output.join(&page)
+        };
+        fs::create_dir_all(&page_output)?;
+        let path = page_output.join(format!("{width}x{height}.png"));
         write_png(&path, &snapshot)?;
         window.window().hide()?;
     }
     Ok(())
 }
 
-fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>), Box<dyn std::error::Error>> {
+fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error::Error>> {
     let mut output = PathBuf::from("dist/windows-layout");
     let mut sizes = vec![(800, 600), (1120, 760), (1440, 900)];
+    let mut page = "overview".to_owned();
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
@@ -64,10 +75,14 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>), Box<dyn std::error::Error>
                     })
                     .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
             }
+            "--page" => page = args.next().ok_or("--page needs a page name")?,
             other => return Err(format!("unknown argument: {other}").into()),
         }
     }
-    Ok((output, sizes))
+    match page.as_str() {
+        "overview" | "plugins" | "accounts" | "tasks" | "settings" => Ok((output, sizes, page)),
+        other => Err(format!("unknown page: {other}").into()),
+    }
 }
 
 fn write_png(
