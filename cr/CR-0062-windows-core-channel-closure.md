@@ -5,12 +5,12 @@ Head or Range: feat/windows-core-release-loop
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): close Core channel and lifecycle loop
-Revision: 19
+Revision: 20
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 61c9ad70581eab60c8955d6ab616c7d29158f035
-Head OID: 88f4d7e3d51fd13c463d72101803288cc4c13c5e
+Head OID: 10ce468772a379894effd3316cba036a06a6e178
 Integrated Result: pending
 
 ## Summary
