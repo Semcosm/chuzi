@@ -157,7 +157,7 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
 
 ### Core API wire 与本地客户端边界
 
-状态：已完成首个 transport 增量和 Windows WinUI 3 客户端首个实现；macOS/Linux 客户端尚未开始。
+状态：已完成首个 transport 增量和 Windows Slint 客户端首个实现；macOS/Linux 客户端尚未开始。
 
 `chuzi.core/v1` 已冻结为独立 DTO、稳定错误码和 JSONL request/response envelope。
 `internal/coretransport` 提供 Unix domain socket 和 Windows named pipe；服务入口实例化
@@ -169,13 +169,13 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
 - 客户端只消费 `coreapi.API`，不能访问 Store、凭证或 Profile。
 - `hello` 版本协商和错误码在 wire 层稳定；底层错误文本不跨进程返回。
 - 服务重启时 endpoint 可清理 stale socket，但不会删除仍被占用的 endpoint。
-- Go Windows named-pipe 源码已通过 `GOOS=windows GOARCH=amd64` 交叉编译；WinUI 3
-  原生编译与打包由 `chuzi-build-windows-ui` Windows runner 提供证据，本机 Linux 不宣称
+- Go Windows named-pipe 源码已通过 `GOOS=windows GOARCH=amd64` 交叉编译；Slint
+  原生编译与打包由 `chuzi-build-windows-slint` Windows runner 提供证据，本机 Linux 不宣称
   已完成 Windows native build。
 
 Windows 客户端位于 `ui/windows`，只使用 owner-only named pipe 和 `chuzi.core/v1`，提供
-提交、查询和业务取消的最小界面。`scripts/build_windows_ui.ps1` 的 `InstallerExe` 模式与
-GitHub Actions `chuzi-build-windows-ui` 生成自包含 Windows App SDK 安装器
+提交、查询和业务取消的最小界面。`scripts/build_windows_slint.ps1` 的 `InstallerExe` 模式与
+GitHub Actions `chuzi-build-windows-slint` 生成自包含 Windows 安装器
 `chuzi-windows-installer-exe`；`UnpackagedZip` 仅用于本地诊断。该客户端不进入 Go
 服务/数据库包，也不复制 launcher、Store 或凭证逻辑。Windows 原生构建仍需 Windows
 runner，Linux 开发机只能执行仓库契约和静态边界检查。

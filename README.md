@@ -35,7 +35,7 @@ Core API 已有可调用的本地 IPC 形态。服务在数据目录派生固定
 `core.sock`（权限 `0600`），Windows 使用 owner-only named pipe。客户端先完成
 `chuzi.core/v1` `hello` 协商，再通过 JSONL envelope 调用提交、查询、取消、结果、事件和
 通知方法；请求按 ID 多路复用，取消会传播到服务端。原生客户端不得读取 bbolt、凭证或
-Profile。Windows 首个 WinUI 3 客户端位于 `ui/windows`，通过独立的 named-pipe 客户端只消费
+Profile。Windows 首个 Slint 客户端位于 `ui/windows`，通过独立的 named-pipe 客户端只消费
 这一边界；macOS SwiftUI/AppKit 与 Linux GTK 客户端仍待后续 CR。
 
 观测能力通过 `observability` 配置启用：服务写入结构化脱敏 JSONL 日志并有界轮转，

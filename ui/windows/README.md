@@ -1,112 +1,130 @@
-# Windows native client
+# Windows desktop client
 
-This is the native Windows client for the `chuzi.core/v1` boundary. The Windows
-surface follows the official WinUI 3 single-project template and provides three
-first-run workflows: Core installation/status, launcher settings, and plugin
-management. The UI remains a client of the launcher/Core boundaries; it never opens
-the bbolt store or reads credentials/Profile directories.
+The Windows client is a Rust + Slint desktop application. It is a client of
+the `chuzi.core/v1` and launcher boundaries; it does not open the bbolt store or
+read credentials or browser Profile directories.
 
-The primary implementation reference is Microsoft's WinUI Gallery:
+The UI is intentionally small and operational. It uses one window with a
+compact navigation rail, grouped content cards, and a palette that can follow
+the operating-system color scheme:
 
-- Repository: <https://github.com/microsoft/WinUI-Gallery>
-- Template source: `WinUIGallery/App.xaml`, `App.xaml.cs`, `MainWindow.xaml`,
-  `MainWindow.xaml.cs`, `Package.appxmanifest`, and `WinUIGallery.csproj`
-- Reference checkout used during development: WinUI Gallery commit
-  `abb8cb4cef04a5080f5c0396f67a7ec502b36179`
-
-When adding a control or page, copy the corresponding WinUI Gallery sample
-structure first, then adapt the namespace, assets, and Chuzi behavior. Do not
-invent a second startup path or a custom `Application.Start` entry point unless
-the deployment mode explicitly requires it. Keep window construction cheap and
-defer Core/network work until the window is loaded or the user invokes an
-action.
-
-The unpackaged self-contained build constructs `MainWindow` and its five pages
-in C# rather than loading their page XAML at runtime. The packaged XAML page
-resources reproducibly fail in `Microsoft.UI.Xaml` with
-`XamlParseException`/`0xC000027B` on the Windows CI runner, including the
-minimal Gallery-style navigation layout. The `.xaml` files remain as layout
-references; keep them aligned with their C# counterparts when changing a page.
-`App.xaml` remains the SDK-generated application entry point. The installed
-client smoke test in `chuzi-build.yml` guards this unpackaged startup path.
-
-The installer build follows the Gallery's working WinUI deployment model while
-using a conventional EXE installer instead of AppX/MSIX:
-
-- unpackaged WinUI 3 publish with `WindowsPackageType=None`;
-- `WindowsAppSDKSelfContained=true` and a self-contained .NET publish, so the
-  installer carries the Windows App SDK and .NET runtime files;
-- Inno Setup installs the published files under `Program Files\Chuzi`, creates
-  Start Menu and optional desktop shortcuts, and registers an uninstaller;
-- minimum Windows version `10.0.17763.0` (Windows 10 1809+);
-- SDK-generated WinUI entry point, not a hand-written `Program.Main`.
-
-The Core transport implementation remains in `CoreApiClient.cs`. It derives the
-endpoint from `CHUZI_DATA_DIR` when supplied by deployment, or from
-`%ProgramData%\chuzi` otherwise (and reuses an existing legacy
-`%ProgramData%\chuzi\data` installation). It derives the same owner-only pipe name as
-`internal/coretransport` and performs `hello` version negotiation before any
-business call. It never opens the bbolt database or reads credentials/Profile
-directories.
-
-For local unpackaged diagnostics on a Windows host:
-
-```powershell
-./scripts/build_windows_ui.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$PWD/dist/windows-ui" -CorePayloadDir "$PWD/dist/windows-amd64/stage"
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ Chuzi                                                                       │
+├───────────────┬─────────────────────────────────────────────────────────────┤
+│ Overview      │                                                             │
+│ Plugins       │                 selected Slint page                          │
+│ Accounts      │                                                             │
+│ Tasks         │                                                             │
+│               │                                                             │
+│               │                                                             │
+│ Settings      │                                                             │
+└───────────────┴─────────────────────────────────────────────────────────────┘
 ```
 
-`InstallerExe` requires Inno Setup 6 (`ISCC.exe`) on the build host. GitHub
-Actions uses the Windows runner's installed Inno Setup toolchain.
+## Pages
 
-The installer EXE includes a `CorePayload` directory containing the matching
-Windows service, launcher, worker files, and release manifest. On first launch,
-Overview > Install Core copies the verified service components into the per-machine
-data directory, starts the service, and confirms readiness over the Core named pipe.
-If the payload is absent (for example in a locally built diagnostics zip), the UI
-reports that Core must be supplied by deployment.
+### Overview
 
-For a lightweight local diagnostics bundle, use:
+The default page is the Core status center. It shows the current state, the
+resolved data directory, lifecycle actions, and the first-run checklist.
 
-```powershell
-./scripts/build_windows_ui.ps1 -Mode UnpackagedZip -Configuration Release -OutputDir "$PWD/dist/windows-ui"
+```text
+Welcome to Chuzi
+Install Core, configure plugins, and personalize the client from one place.
+
+┌ Core status ────────────────────────────────────────────────┐
+│ Core is running / Core is stopped / Core is not installed    │
+│ status details and data directory                            │
+└──────────────────────────────────────────────────────────────┘
+
+[Install Core] [Start Core] [Stop Core] [Refresh]
+
+┌ First-run checklist ────────────────────────────────────────┐
+│ 1. Install or start Core                                     │
+│ 2. Configure plugins after Core starts                       │
+│ 3. Personalize settings                                      │
+└──────────────────────────────────────────────────────────────┘
 ```
 
-The first-run sequence is:
+### Settings
 
-1. Run `ChuziSetup.exe` and launch Chuzi from the Start Menu or desktop shortcut.
-2. Use the Gallery-style navigation pane to stay on Overview while setup is in progress.
-3. Select **Install Core** on the Overview page and wait for the ready state.
-4. Configure plugins and explicitly trust their declared signer before enabling them.
-5. Adjust update and startup behavior under Settings.
-6. Use Accounts to look up an authorized account and submit a Core request.
-7. Use Tasks to refresh or cancel a request by its request ID.
+Settings is divided into Core, Updates, Appearance, and Startup groups. It
+exposes Core lifecycle actions, update preferences, login startup,
+close-to-tray behavior, and a save action. Appearance provides System default,
+Light, and Dark modes.
+The selected mode is applied through Slint 1.18's `Palette.color-scheme`, so
+native controls and the content surface update together. The UI-only choice is
+stored in `.chuzi-ui-settings.json` below the resolved Chuzi data directory;
+launcher behavior settings remain in the launcher's validated settings file.
 
-The Plugins page shows declared permissions and capabilities, requires Core to
-be ready before lifecycle operations, confirms trust changes and removals, and
-rejects enable requests for untrusted plugins before they reach the launcher.
+### Plugins
 
-The Accounts and Tasks pages use the existing `chuzi.core/v1` methods
-`get_account`, `submit_request`, `get_request`, and `cancel_request`. The first
-UI slice intentionally accepts an authorized account ID instead of inventing a
-client-side account inventory; Core v1 currently exposes account lookup rather
-than a list-accounts method. The UI never stores credentials.
+Plugins displays a security-oriented summary and lifecycle actions. Core must
+be running before refresh, install, trust, enable, or remove actions are
+enabled. The plugin boundary remains responsible for signer and permission
+validation.
 
-The Overview page is the first-run status center. It distinguishes missing,
-starting, running, stopped, and unavailable Core states, shows the resolved data
-directory, disables duplicate actions while a lifecycle operation is running,
-and keeps the next setup steps visible until Core is ready.
+### Accounts
 
-The service process is owned by the installation, not by the window. Closing the UI
-leaves Core running; the Stop Core action is explicit and can recover a Core process
-started by an earlier UI instance or by the same installation. A per-data-directory
-PID marker is used only to recover the managed process and is removed on stop or
-uninstall.
+Accounts accepts an authorized account ID, then sends `get_account` or
+`submit_request` through the Core named pipe. Only the redacted account state is
+shown; credentials are never stored by the client.
 
-UI-managed Core uses the owner-only named pipe as its readiness check and leaves
-the optional HTTP health listener disabled by default. This avoids a false startup
-failure when an older manually-started Core already occupies port 8080; the data
-directory and named pipe remain the single source of truth for the client.
+### Tasks
 
-The CI path uses the same script in `InstallerExe` mode and uploads the
-`chuzi-windows-installer-exe` artifact. The installer is self-contained and does
-not require a separate certificate or `Microsoft.WindowsAppRuntime.*.msix` file.
+Tasks accepts a request ID and sends `get_request` or `cancel_request`. The page
+shows the redacted request ID, account, state, attempt number, and failure text.
+
+## Runtime and packaging
+
+The Slint executable is built for `x86_64-pc-windows-msvc` and installed by the
+same conventional EXE installer used by the rest of the Windows distribution.
+The installer carries a matching `CorePayload` directory containing the Go
+service, launcher, browser worker, and release manifest. Core remains a
+separate process and continues running when the UI window closes.
+
+For local Windows builds, install Rust, Cargo, and Inno Setup 6, then run:
+
+```powershell
+./scripts/build_windows_slint.ps1 -Configuration Release -OutputDir "$PWD/dist/windows-ui" -CorePayloadDir "$PWD/dist/windows-amd64/stage"
+```
+
+The CI workflow uses the same script and publishes the
+`chuzi-windows-installer-exe` artifact. The package is self-contained and does
+not require Windows App Runtime MSIX packages or a signing certificate.
+
+## Layout diagnostics
+
+Install the Slint editor extension or `slint-lsp` for live syntax, type,
+property, binding, and compiler diagnostics while editing `.slint` files. Slint
+Live Preview can be used for interactive inspection; the repository also has a
+headless screenshot probe that renders the Overview page at several fixed
+viewports without opening a native window:
+
+```bash
+cargo run --manifest-path ui/windows/Cargo.toml --example layout_snapshot -- \
+  --output dist/windows-layout
+```
+
+The probe writes `800x600.png`, `1120x760.png`, and `1440x900.png`, checks their
+dimensions, and rejects a blank render. Keep layout expressed with Slint
+`VerticalBox`/`HorizontalBox` containers and explicit `min-*`, `preferred-*`,
+`max-*`, stretch, spacing, and padding constraints; avoid manual `x`/`y`
+position arithmetic for page structure. CI runs this probe on the Windows
+runner as part of the Slint build job.
+
+## Design constraints
+
+- Keep UI state separate from Core business state. Core owns account and request
+  state; the client only renders redacted projections.
+- Keep each Core operation asynchronous from the Slint event loop and display a
+  bounded status message when an operation fails.
+- Use the owner-only named pipe for Core API calls. The optional HTTP health
+  listener remains disabled by default.
+- Keep plugin trust and removal actions explicit; an untrusted plugin cannot be
+  enabled.
+- Keep theme state UI-local. Do not add presentation-only fields to the Core
+  launcher's strict behavior-settings contract.
+- Do not add credential fields, browser Profile paths, or arbitrary filesystem
+  paths to the UI.

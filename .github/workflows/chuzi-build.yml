@@ -166,8 +166,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  windows_ui:
-    name: chuzi-build-windows-ui
+  windows_slint:
+    name: chuzi-build-windows-slint
     runs-on: windows-2022
     timeout-minutes: 20
     needs: [go_build, node_checks]
@@ -182,9 +182,30 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9
-        with:
-          dotnet-version: 8.0.x
+      - name: Prepare Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          rustup default stable-x86_64-pc-windows-msvc
+          rustc --version
+          cargo --version
+      - name: Check Slint layout at multiple viewports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'chuzi-layout'
+          cargo run --manifest-path ui/windows/Cargo.toml --locked `
+            --example layout_snapshot -- `
+            --output $output
+          foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
+            $path = Join-Path $output $size
+            if (-not (Test-Path $path)) {
+              throw "Missing Slint layout snapshot: $path"
+            }
+            if ((Get-Item $path).Length -le 0) {
+              throw "Empty Slint layout snapshot: $path"
+            }
+          }
       - name: Resolve build version
         id: version
         shell: pwsh
@@ -202,7 +223,7 @@ jobs:
             $version = "dev-$($env:GITHUB_SHA.Substring(0, 12))"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
-      - name: Assemble Core payload for the UI package
+      - name: Assemble Core payload for the Slint package
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
           name: ci-go-windows-amd64
@@ -226,9 +247,9 @@ jobs:
             -WorkerArchive (Join-Path $env:RUNNER_TEMP 'chuzi-worker/browser-worker-dist.tar.gz') `
             -DistRoot (Join-Path $env:RUNNER_TEMP 'chuzi-core-dist')
           Copy-Item (Join-Path $env:RUNNER_TEMP 'chuzi-core-dist/windows-amd64/stage/*') $payload -Recurse -Force
-      - name: Build self-contained WinUI 3 installer EXE
+      - name: Build self-contained Slint installer EXE
         shell: pwsh
-        run: ./scripts/build_windows_ui.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload"
+        run: ./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload"
         env:
           CHUZI_BUILD_VERSION: ${{ steps.version.outputs.version }}
       - name: Test Windows Core named pipe
@@ -279,13 +300,11 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $healthy) { throw 'Core did not become healthy during lifecycle smoke test' }
-            $pipeSmokeProject = Join-Path $env:GITHUB_WORKSPACE 'ui/windows/CorePipeSmoke.csproj'
-            dotnet run --project $pipeSmokeProject --configuration Release -- "$root"
           } finally {
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
-      - name: Smoke test installed WinUI client
+      - name: Smoke test installed Slint client
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -293,21 +312,51 @@ jobs:
           $installDir = Join-Path ${env:ProgramFiles} 'Chuzi'
           Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait
           $exe = Join-Path $installDir 'Chuzi.Native.Windows.exe'
-          if (-not (Test-Path $exe)) { throw "Installed WinUI executable is missing: $exe" }
-          $process = Start-Process -FilePath $exe -WorkingDirectory $installDir -PassThru
+          if (-not (Test-Path $exe)) { throw "Installed Slint executable is missing: $exe" }
+          & $exe --smoke-test
+          if ($LASTEXITCODE -ne 0) { throw "Installed Slint smoke test failed with exit code $LASTEXITCODE" }
+      - name: Smoke test Core payload shipped inside installer
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installDir = Join-Path ${env:ProgramFiles} 'Chuzi'
+          $installedPayload = Join-Path $installDir 'CorePayload'
+          if (-not (Test-Path (Join-Path $installedPayload 'chuzi-launcher.exe'))) {
+            throw "Installed Slint package does not contain CorePayload launcher: $installedPayload"
+          }
+          $root = Join-Path $env:RUNNER_TEMP 'chuzi-installed-payload-core'
+          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
+          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $launcher = Join-Path $installedPayload 'chuzi-launcher.exe'
+          $manifest = Join-Path $installedPayload 'release-manifest.json'
+          $installOutput = & $launcher -root $root -source-root $installedPayload -manifest $manifest -command component-install -item service 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $installOutput | Out-String | Write-Error
+            throw "Installed Core payload installation failed with exit code $LASTEXITCODE"
+          }
+          $service = Join-Path $root 'chuzi.exe'
+          if (-not (Test-Path $service)) { throw "Installed Core service is missing: $service" }
+          $configPath = Join-Path $root 'core-installed-config.json'
+          @{
+            data_dir = $root
+            health = @{ listen = '127.0.0.1:18081' }
+            observability = @{ log_path = (Join-Path $root 'core-installed.log') }
+          } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 $configPath
+          $process = Start-Process -FilePath $service -ArgumentList @('-config', $configPath) -WorkingDirectory $root -PassThru
           try {
-            Start-Sleep -Seconds 5
-            $process.Refresh()
-            if ($process.HasExited) {
-              $startupLog = Join-Path $env:LOCALAPPDATA 'Chuzi\startup.log'
-              if (Test-Path $startupLog) { Get-Content $startupLog -Tail 80 }
-              Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-2) } -ErrorAction SilentlyContinue |
-                Where-Object { $_.ProviderName -in @('Application Error', 'Windows Error Reporting', '.NET Runtime') } |
-                Select-Object -First 10 TimeCreated, ProviderName, Id, Message |
-                Format-List
-              throw "Installed WinUI client exited during startup with code $($process.ExitCode)"
+            $healthy = $false
+            for ($attempt = 0; $attempt -lt 40; $attempt++) {
+              $process.Refresh()
+              if ($process.HasExited) { throw "Installed Core exited with code $($process.ExitCode)" }
+              try {
+                $response = Invoke-WebRequest -Uri 'http://127.0.0.1:18081/healthz' -UseBasicParsing -TimeoutSec 2
+                if ($response.StatusCode -eq 200) { $healthy = $true; break }
+              } catch { }
+              Start-Sleep -Milliseconds 250
             }
+            if (-not $healthy) { throw 'Installed Core did not become healthy' }
           } finally {
+            $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
       - name: Upload Windows installer EXE
@@ -462,7 +511,7 @@ jobs:
   chuzi_build:
     name: chuzi-build
     if: always()
-    needs: [contract_checks, go_checks, node_checks, go_build, windows_ui, assemble_target, artifact_integration]
+    needs: [contract_checks, go_checks, node_checks, go_build, windows_slint, assemble_target, artifact_integration]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every build stage
@@ -474,7 +523,7 @@ jobs:
             "${{ needs.go_checks.result }}" \
             "${{ needs.node_checks.result }}" \
             "${{ needs.go_build.result }}" \
-            "${{ needs.windows_ui.result }}" \
+            "${{ needs.windows_slint.result }}" \
             "${{ needs.assemble_target.result }}"; do
             test "$result" = success || { echo "build stage did not succeed: $result" >&2; exit 1; }
           done

@@ -45,7 +45,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ├── browser-worker/              # Node.js Worker 协议、deferred 与 headless-CDP 适配器
 ├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
 ├── ui/                          # 原生平台客户端
-│   ├── windows/                  # 已有 WinUI 3 首个客户端
+│   ├── windows/                  # 已有 Rust + Slint 首个客户端
 │   ├── macos/                    # SwiftUI/AppKit 客户端（后续 CR）
 │   └── linux/                    # GTK 客户端（后续 CR）
 ├── internal/
@@ -78,7 +78,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 ```
 
 平台 UI 通过 Stable API Boundary 使用 Core 和 `cmd/launcher` 提供的能力。Windows
-首阶段采用 WinUI 3，macOS 采用 SwiftUI（必要时使用 AppKit），Linux 采用 GTK；
+首阶段采用 Rust + Slint，macOS 采用 SwiftUI（必要时使用 AppKit），Linux 采用 GTK；
 三者分别遵循目标平台的默认控件、窗口行为、无障碍和主题机制。客户端只负责视图、
 交互和平台生命周期，不读取 bbolt、凭证或 Profile，也不复制下载、校验、锁、插件
 信任和回滚策略。Windows 首个客户端已落在 `ui/windows`；macOS/Linux 的实现 CR 仍需
