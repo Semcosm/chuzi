@@ -24,7 +24,7 @@ func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
 	verify := flag.Bool("verify", false, "verify declared resources under root")
-	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
+	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
 	sourceRoot := flag.String("source-root", "", "trusted local source root for repair/install")
 	updateManifest := flag.String("update-manifest", "", "candidate manifest for check-update")
 	releaseIndexURL := flag.String("release-index", "", "HTTPS release index URL for update and component downloads")
@@ -36,6 +36,8 @@ func main() {
 	trustedSigners := flag.String("trusted-signers", "", "comma-separated plugin signer allowlist")
 	settingsPath := flag.String("settings-path", "", "launcher settings path (default: <root>/.chuzi/launcher-settings.json)")
 	settingsInput := flag.String("settings-input", "", "JSON file for settings-save")
+	coreMethod := flag.String("core-method", "", "Core API method for core-call")
+	coreParamsJSON := flag.String("core-params-json", "{}", "JSON parameters for core-call")
 	lockPath := flag.String("lock-path", "", "launcher mutation lock path (default: <root>/.chuzi/launcher.lock)")
 	progress := flag.Bool("progress", false, "write operation progress to stderr")
 	allowRequiredRemoval := flag.Bool("allow-required-removal", false, "allow removal of required components (only for explicit Core uninstall)")
@@ -256,6 +258,13 @@ func main() {
 		}
 		writeJSON(settings)
 		return
+	case "core-status", "core-start", "core-stop", "core-call":
+		if handled, err := runCoreCommand(ctx, *command, root, *coreMethod, *coreParamsJSON); handled {
+			if err != nil {
+				fatal(err)
+			}
+			return
+		}
 	default:
 		source, err := resolveSourceRoot(root, *sourceRoot)
 		if err != nil {
@@ -294,6 +303,56 @@ func main() {
 	}
 	if err := json.NewEncoder(os.Stdout).Encode(manifest); err != nil {
 		fatal(err)
+	}
+}
+
+func runCoreCommand(ctx context.Context, command, root, method, paramsJSON string) (bool, error) {
+	manager, err := launcher.NewCoreManager(root)
+	if err != nil {
+		return true, err
+	}
+	switch command {
+	case "core-status":
+		status, err := manager.Status(ctx)
+		if err == nil {
+			writeJSON(status)
+		}
+		return true, err
+	case "core-start", "core-stop":
+		lock, err := acquireMutationLock(ctx, root, "")
+		if err != nil {
+			return true, err
+		}
+		defer lock.Release()
+		if command == "core-start" {
+			status, err := manager.Start(ctx)
+			if err == nil {
+				writeJSON(status)
+			}
+			return true, err
+		}
+		if err := manager.Stop(ctx); err != nil {
+			return true, err
+		}
+		status, err := manager.Status(ctx)
+		if err == nil {
+			writeJSON(status)
+		}
+		return true, err
+	case "core-call":
+		if strings.TrimSpace(method) == "" {
+			return true, fmt.Errorf("-core-method is required")
+		}
+		if !json.Valid([]byte(paramsJSON)) {
+			return true, fmt.Errorf("-core-params-json must be valid JSON")
+		}
+		result, err := manager.Call(ctx, method, json.RawMessage(paramsJSON))
+		if err == nil {
+			writeJSON(json.RawMessage(result))
+		}
+		return true, err
+	default:
+		return false, nil
 	}
 }
 

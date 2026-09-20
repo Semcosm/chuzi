@@ -77,10 +77,11 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 └── .ugs/                        # UGS 版本与策略清单
 ```
 
-平台 UI 通过 Stable API Boundary 使用 Core 和 `cmd/launcher` 提供的能力。Windows
+平台 UI 通过 Stable API Boundary 使用 `cmd/launcher` 提供的统一能力；launcher 再按需
+调用 Core API。Windows
 首阶段采用 Rust + Slint，macOS 采用 SwiftUI（必要时使用 AppKit），Linux 采用 GTK；
 三者分别遵循目标平台的默认控件、窗口行为、无障碍和主题机制。客户端只负责视图、
-交互和平台生命周期，不读取 bbolt、凭证或 Profile，也不复制下载、校验、锁、插件
+交互和平台生命周期，不读取 bbolt、凭证或 Profile，也不复制 Core IPC、下载、校验、锁、插件
 信任和回滚策略。Windows 首个客户端已落在 `ui/windows`；macOS/Linux 的实现 CR 仍需
 分别明确 API 版本、打包方式和运行时支持范围。
 
@@ -94,13 +95,13 @@ Sender 替身，供跨模块测试复用；这些替身不参与生产拼装。
 `tests/core` 使用临时 Store 验证请求提交、账号/请求查询、取消、脱敏结果、领域事件、
 完整假实现链路和通知状态；`internal/coretransport` 和原生客户端只能依赖这层契约。
 
-`internal/coretransport` 是原生客户端的进程边界。请求和响应使用 JSONL envelope，首个
+`internal/coretransport` 是 launcher 与 Core 之间的进程边界。请求和响应使用 JSONL envelope，首个
 请求必须是 `hello` 并协商 `chuzi.core/v1`；方法覆盖 `submit_request`、请求/账号查询、
 `cancel_request`、结果、事件和通知查询。服务端按连接隔离请求上下文，支持按请求 ID 的
 并发响应和传输取消，错误只返回稳定 `coreapi.Code`。Unix endpoint 从服务 `data_dir`
 派生并设为 `0600`，启动时不会覆盖仍在使用的 socket；Windows 使用 `go-winio` named
 pipe 和 owner-only SDDL。客户端不接受任意 endpoint 作为业务参数，UI 只能使用部署派生的
-本地地址。
+本地地址；原生 UI 只能调用 launcher 的稳定命令。
 
 ## 业务自动化适配器与插件
 

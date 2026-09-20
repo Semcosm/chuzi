@@ -1,8 +1,9 @@
 # Windows desktop client
 
 The Windows client is a Rust + Slint desktop application. It is a client of
-the `chuzi.core/v1` and launcher boundaries; it does not open the bbolt store or
-read credentials or browser Profile directories.
+the launcher boundary; the launcher owns Core lifecycle and `chuzi.core/v1`
+transport calls. The UI does not open the bbolt store, named pipe, credentials,
+or browser Profile directories.
 
 The UI is intentionally small and operational. It uses one window with a
 compact navigation rail, grouped content cards, and a palette that can follow
@@ -73,18 +74,21 @@ Core to be running.
 
 Plugins displays a security-oriented summary and lifecycle actions. Core must
 be running before refresh, install, trust, enable, or remove actions are
-enabled. The plugin boundary remains responsible for signer and permission
-validation.
+enabled. All actions are delegated to the launcher; the UI never opens the Core
+endpoint. The current release exposes launcher package/trust state. A separate
+Core adapter registry and runtime health projection still require the adapter
+manager increment described in the roadmap.
 
 ### Accounts
 
-Accounts accepts an authorized account ID, then sends `get_account` or
-`submit_request` through the Core named pipe. Only the redacted account state is
-shown; credentials are never stored by the client.
+Accounts accepts an authorized account ID, then asks the launcher to perform
+`get_account` or `submit_request` through Core. Only the redacted account state
+is shown; credentials are never stored by the client.
 
 ### Tasks
 
-Tasks accepts a request ID and sends `get_request` or `cancel_request`. The page
+Tasks accepts a request ID and asks the launcher to perform `get_request` or
+`cancel_request`. The page
 shows the redacted request ID, account, state, attempt number, and failure text. While the request has an
 active headless browser session, `View page` calls `get_browser_view` to fetch one bounded JPEG frame. The
 frame is read-only and on demand; the client cannot navigate, click, type, or access a browser endpoint.
@@ -133,8 +137,9 @@ runner as part of the Slint build job.
   state; the client only renders redacted projections.
 - Keep each Core operation asynchronous from the Slint event loop and display a
   bounded status message when an operation fails.
-- Use the owner-only named pipe for Core API calls. The optional HTTP health
-  listener remains disabled by default.
+- Route Core lifecycle and API operations through the launcher façade. The
+  launcher owns the owner-only named pipe; the optional HTTP health listener
+  remains disabled by default.
 - Keep plugin trust and removal actions explicit; an untrusted plugin cannot be
   enabled.
 - Keep theme state UI-local. Do not add presentation-only fields to the Core

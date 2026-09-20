@@ -20,6 +20,13 @@ pub(crate) struct CoreRequest {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct CoreStatus {
+    pub(crate) installed: bool,
+    pub(crate) ready: bool,
+    pub(crate) running: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct SubmitResult {
     pub(crate) request: CoreRequest,
     pub(crate) idempotent: bool,
@@ -59,22 +66,6 @@ pub(crate) struct CoreComponent {
     pub(crate) enabled: bool,
     pub(crate) required: bool,
     pub(crate) health: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct WireEnvelope {
-    pub(crate) protocol: String,
-    pub(crate) id: String,
-    #[serde(rename = "type")]
-    pub(crate) kind: Option<String>,
-    pub(crate) result: Option<serde_json::Value>,
-    pub(crate) error: Option<WireError>,
-}
-
-#[derive(Debug, Deserialize)]
-pub(crate) struct WireError {
-    pub(crate) code: String,
-    pub(crate) message: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

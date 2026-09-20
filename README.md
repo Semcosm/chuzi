@@ -37,8 +37,9 @@ Core API 已有可调用的本地 IPC 形态。服务在数据目录派生固定
 通知方法；请求按 ID 多路复用，取消会传播到服务端。活动 headless 请求还可通过
 `get_browser_view` 按需获取一次只读 JPEG，未查看时不产生持续截图或画面传输。该方法
 不接受 URL、CDP endpoint、Profile 路径或输入控制，原生客户端仍不得读取 bbolt、凭证或
-Profile。Windows 首个 Slint 客户端位于 `ui/windows`，通过独立的 named-pipe 客户端只消费
-这一边界；macOS SwiftUI/AppKit 与 Linux GTK 客户端仍待后续 CR。
+Profile。Windows 首个 Slint 客户端位于 `ui/windows`，只调用 launcher；由 launcher 统一
+负责 Core 启停、状态探测和本地 IPC 转发，UI 不再直接打开 named pipe。macOS SwiftUI/AppKit
+与 Linux GTK 客户端仍待后续 CR。
 
 观测能力通过 `observability` 配置启用：服务写入结构化脱敏 JSONL 日志并有界轮转，
 可选的本地 metrics 端点只暴露低基数分类指标；日志、指标、健康和审计输出都不会
@@ -56,7 +57,7 @@ artifact，不创建 Git tag 或 GitHub Release。版本格式为
 每个目标包含 UI-neutral CLI、服务和浏览器 Worker 以及
 `release-manifest.json`；同时提供按组件拆分的归档和带大小/SHA-256 的
 `release-index.json`，安装者不必安装全部运行资源。启动器后台契约位于
-`internal/launcher`，原生平台 UI 通过 Core API 调用 Go 服务，并按需使用 UI-neutral CLI，不复制下载、
+`internal/launcher`，原生平台 UI 通过 launcher façade 调用 Core 和 UI-neutral CLI，不复制下载、
 校验、锁和回滚策略。首次运行的 `initialize` 状态会驱动组件选择和安装进度页面，
 显式的 `-release-index` 才会通过 HTTPS 下载所选组件及依赖。组件启停、插件信任、
 原子行为设置、跨进程安装锁和可取消的操作进度继续由同一 CLI/后台接口提供；不会

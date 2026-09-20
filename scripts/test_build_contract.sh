@@ -187,8 +187,9 @@ grep -Fq 'submit_request' "$repo_root/ui/windows/src/main.rs" || fail "Windows S
 grep -Fq 'cancel_request' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses task cancellation"
 grep -Fq 'Smoke test installed Slint client' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Windows Slint workflow misses startup smoke test"
 grep -Fq 'Assemble Core payload for the Slint package' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Windows Slint workflow misses Core payload assembly"
-grep -Fq 'chuzi.core/v1' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses Core API version"
-grep -Fq 'pipe_name' "$repo_root/ui/windows/src/core_client.rs" || fail "Windows Slint client misses named-pipe derivation"
+grep -Fq 'core-call' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses launcher Core façade"
+grep -Fq 'chuzi.core/v1' "$repo_root/internal/coreapi/api.go" || fail "Core API misses API version"
+grep -Fq 'EndpointPath' "$repo_root/internal/launcher/core.go" || fail "launcher Core façade misses endpoint derivation"
 
 for obsolete in \
   "$repo_root/ui/windows/Chuzi.Native.Windows.csproj" \

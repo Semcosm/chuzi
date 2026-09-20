@@ -173,7 +173,8 @@ Notifier 通过可注入 Sender 进行 claim、重试和恢复。Matrix 层不�
   原生编译与打包由 `chuzi-build-windows-slint` Windows runner 提供证据，本机 Linux 不宣称
   已完成 Windows native build。
 
-Windows 客户端位于 `ui/windows`，只使用 owner-only named pipe 和 `chuzi.core/v1`，提供
+Windows 客户端位于 `ui/windows`，只调用 launcher façade；launcher 使用 owner-only named
+pipe 和 `chuzi.core/v1`，提供
 提交、查询和业务取消的最小界面。`scripts/build_windows_slint.ps1` 的 `InstallerExe` 模式与
 GitHub Actions `chuzi-build-windows-slint` 生成自包含 Windows 安装器
 `chuzi-windows-installer-exe`；`UnpackagedZip` 仅用于本地诊断。该客户端不进入 Go
