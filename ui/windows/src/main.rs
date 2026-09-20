@@ -1,31 +1,25 @@
-mod core_client;
 mod models;
 
 use base64::Engine;
-use core_client::{core_call, core_handshake, unique_id};
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
-    CoreRequest, SubmitResult, UiPreferences,
+    CoreRequest, CoreStatus, SubmitResult, UiPreferences,
 };
-use serde_json::json;
+use serde_json::{json, Value};
 use slint::language::ColorScheme;
 use slint::{ComponentHandle, Image, ModelRc, SharedString};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
 
 slint::include_modules!();
-
-pub(crate) const CORE_PROTOCOL: &str = "chuzi.core/v1";
 
 #[derive(Default)]
 struct AppState {
     data_root: PathBuf,
     payload_root: PathBuf,
-    service: Option<Child>,
     busy: bool,
 }
 
@@ -71,7 +65,6 @@ impl AppState {
         Ok(Self {
             data_root,
             payload_root: package_root.join("CorePayload"),
-            service: None,
             busy: false,
         })
     }
@@ -82,11 +75,6 @@ impl AppState {
         } else {
             "chuzi-launcher"
         })
-    }
-
-    fn service_path(&self) -> PathBuf {
-        self.data_root
-            .join(if cfg!(windows) { "chuzi.exe" } else { "chuzi" })
     }
 
     fn manifest_path(&self) -> PathBuf {
@@ -153,6 +141,34 @@ impl AppState {
     }
 }
 
+fn unique_id() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .to_string()
+}
+
+fn core_call(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
+    let params_json = serde_json::to_string(&params).map_err(|error| error.to_string())?;
+    let output = state.run_launcher(
+        "core-call",
+        &[
+            "-core-method",
+            method,
+            "-core-params-json",
+            params_json.as_str(),
+        ],
+    )?;
+    serde_json::from_str(output.trim()).map_err(|error| format!("Core projection: {error}"))
+}
+
+fn core_status(state: &AppState) -> Result<CoreStatus, String> {
+    let output = state.run_launcher("core-status", &[])?;
+    serde_json::from_str(output.trim()).map_err(|error| format!("Core status: {error}"))
+}
+
 fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let weak = ui.as_weak();
     let install_state = Arc::clone(&state);
@@ -162,7 +178,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             Arc::clone(&install_state),
             |state| {
                 state.run_launcher("component-install", &["-item", "service"])?;
-                start_service(state)?;
+                state.run_launcher("core-start", &[])?;
                 Ok("Core installed.".to_owned())
             },
             Some(true),
@@ -176,7 +192,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             &weak,
             Arc::clone(&start_state),
             |state| {
-                start_service(state)?;
+                state.run_launcher("core-start", &[])?;
                 Ok("Core started.".to_owned())
             },
             Some(true),
@@ -190,7 +206,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             &weak,
             Arc::clone(&stop_state),
             |state| {
-                stop_service(state)?;
+                state.run_launcher("core-stop", &[])?;
                 Ok("Core stopped.".to_owned())
             },
             Some(false),
@@ -540,35 +556,22 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
         ui,
         state,
         |state| {
-            let child_exited = state
-                .service
-                .as_mut()
-                .is_some_and(|process| process.try_wait().ok().flatten().is_some());
-            if child_exited {
-                state.service = None;
-                if core_handshake(&state.data_root).is_err() {
-                    let _ = fs::remove_file(state.data_root.join(".core.pid"));
-                }
-            }
-            let installed = state.service_path().is_file();
-            let ready = core_handshake(&state.data_root).is_ok();
-            let process_alive = read_service_pid(&state.data_root)
-                .is_some_and(|pid| is_service_process(pid, &state.service_path()));
-            let snapshot = if ready {
+            let status = core_status(state)?;
+            let snapshot = if status.ready {
                 CoreSnapshot {
                     ready: true,
                     installed: true,
                     status: "Core is running".to_owned(),
                     details: "Core is running and ready for requests.".to_owned(),
                 }
-            } else if installed && process_alive {
+            } else if status.installed && status.running {
                 CoreSnapshot {
                     ready: false,
                     installed: true,
                     status: "Core is unavailable".to_owned(),
                     details: "Core is installed and running, but its local API is not responding. Restart Core and refresh its status.".to_owned(),
                 }
-            } else if installed {
+            } else if status.installed {
                 CoreSnapshot {
                     ready: false,
                     installed: true,
@@ -750,175 +753,13 @@ fn run_background_with<T, F, A>(
     });
 }
 
-fn start_service(state: &mut AppState) -> Result<(), String> {
-    // A previous UI instance may have left Core running. Probe the endpoint
-    // before spawning another process so startup remains idempotent.
-    if core_handshake(&state.data_root).is_ok() {
-        return Ok(());
-    }
-    if let Some(process) = state.service.as_mut() {
-        if process.try_wait().ok().flatten().is_none() {
-            return wait_for_core_ready(&state.data_root);
-        }
-        state.service = None;
-    }
-    if !state.service_path().is_file() {
-        return Err("core_not_installed".to_owned());
-    }
-    fs::create_dir_all(&state.data_root).map_err(|error| error.to_string())?;
-    let config = state.data_root.join("core-config.json");
-    let content = json!({
-        "data_dir": state.data_root,
-        "credentials": {"key_env": "CHUZI_CREDENTIAL_KEY", "key_id_env": "CHUZI_CREDENTIAL_KEY_ID", "history_env": "CHUZI_CREDENTIAL_KEYS"},
-        "health": {"listen": ""},
-        "observability": {"metrics_listen": "", "log_path": state.data_root.join("core-service.log"), "log_max_bytes": 10485760, "log_max_files": 5}
-    });
-    fs::write(
-        &config,
-        serde_json::to_vec_pretty(&content).map_err(|error| error.to_string())?,
-    )
-    .map_err(|error| error.to_string())?;
-    let process = Command::new(state.service_path())
-        .arg("-config")
-        .arg(config)
-        .current_dir(&state.data_root)
-        .env("CHUZI_DATA_DIR", &state.data_root)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    fs::write(state.data_root.join(".core.pid"), process.id().to_string())
-        .map_err(|error| error.to_string())?;
-    state.service = Some(process);
-    if let Err(error) = wait_for_core_ready(&state.data_root) {
-        stop_service(state)?;
-        return Err(error);
-    }
-    Ok(())
-}
-
-fn wait_for_core_ready(data_root: &Path) -> Result<(), String> {
-    for _ in 0..40 {
-        if core_handshake(data_root).is_ok() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    Err("core_start_timeout".to_owned())
-}
-
-fn stop_service(state: &mut AppState) -> Result<(), String> {
-    if let Some(mut process) = state.service.take() {
-        if process
-            .try_wait()
-            .map_err(|_| "core_stop_failed".to_owned())?
-            .is_none()
-        {
-            process.kill().map_err(|_| "core_stop_failed".to_owned())?;
-        }
-        process.wait().map_err(|_| "core_stop_failed".to_owned())?;
-    } else if core_handshake(&state.data_root).is_ok() {
-        let pid = read_service_pid(&state.data_root).ok_or("core_stop_unavailable")?;
-        let service_path = state.service_path();
-        if !is_service_process(pid, &service_path) {
-            return Err("core_stop_unavailable".to_owned());
-        }
-        stop_pid(pid)?;
-        for _ in 0..20 {
-            if core_handshake(&state.data_root).is_err() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
-        if core_handshake(&state.data_root).is_ok() {
-            return Err("core_stop_timeout".to_owned());
-        }
-    }
-    let _ = fs::remove_file(state.data_root.join(".core.pid"));
-    Ok(())
-}
-
 fn ensure_core_ready(state: &AppState) -> Result<(), String> {
-    core_handshake(&state.data_root).map_err(|_| "core_unavailable".to_owned())
-}
-
-fn read_service_pid(data_root: &Path) -> Option<u32> {
-    let pid: u32 = fs::read_to_string(data_root.join(".core.pid"))
-        .ok()?
-        .trim()
-        .parse()
-        .ok()?;
-    (pid > 0).then_some(pid)
-}
-
-fn stop_pid(pid: u32) -> Result<(), String> {
-    let pid = pid.to_string();
-    #[cfg(windows)]
-    let status = Command::new("taskkill")
-        .args(["/PID", pid.as_str(), "/T", "/F"])
-        .status();
-    #[cfg(not(windows))]
-    let status = Command::new("kill").args(["-TERM", pid.as_str()]).status();
-    match status {
-        Ok(status) if status.success() => Ok(()),
-        Ok(_) => Err("core_stop_failed".to_owned()),
-        Err(_) => Err("core_stop_failed".to_owned()),
+    let status = core_status(state)?;
+    if status.ready {
+        Ok(())
+    } else {
+        Err("core_unavailable".to_owned())
     }
-}
-
-fn is_service_process(pid: u32, service_path: &Path) -> bool {
-    #[cfg(windows)]
-    let process_path = {
-        let command = format!(
-            "$p = Get-Process -Id {pid} -ErrorAction Stop; if ($null -eq $p.Path) {{ exit 1 }}; Write-Output $p.Path"
-        );
-        let output = Command::new("powershell.exe")
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                command.as_str(),
-            ])
-            .output();
-        output.ok().and_then(|output| {
-            output
-                .status
-                .success()
-                .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        })
-    };
-    #[cfg(target_os = "linux")]
-    let process_path = fs::read_link(format!("/proc/{pid}/exe"))
-        .ok()
-        .map(|path| path.to_string_lossy().into_owned());
-    #[cfg(not(any(windows, target_os = "linux")))]
-    let process_path: Option<String> = None;
-
-    let Some(process_path) = process_path else {
-        return false;
-    };
-    #[cfg(windows)]
-    let expected_path = fs::canonicalize(service_path)
-        .unwrap_or_else(|_| service_path.to_path_buf())
-        .to_string_lossy()
-        .into_owned();
-    #[cfg(windows)]
-    let matches = normalize_windows_path(&process_path) == normalize_windows_path(&expected_path);
-    #[cfg(not(windows))]
-    let matches = Path::new(&process_path) == service_path;
-    matches
-}
-
-#[cfg(windows)]
-fn normalize_windows_path(value: &str) -> String {
-    let mut path = value.trim().replace('/', "\\");
-    if let Some(stripped) = path.strip_prefix(r"\\?\UNC\") {
-        path = format!(r"\\{stripped}");
-    } else if let Some(stripped) = path.strip_prefix(r"\\?\") {
-        path = stripped.to_owned();
-    }
-    path.trim_end_matches('\\').to_ascii_lowercase()
 }
 
 fn request_action(
@@ -1214,6 +1055,7 @@ fn friendly_error(error: &str) -> String {
 fn is_core_unavailable(error: &str) -> bool {
     let value = error.to_ascii_lowercase();
     value.contains("core_unavailable")
+        || value.contains("core unavailable")
         || value.contains("connect core pipe")
         || value.contains("core_start_timeout")
 }
@@ -1273,41 +1115,6 @@ mod tests {
             format_component_summary(&components),
             "1 component(s): service (healthy)"
         );
-    }
-
-    #[test]
-    fn persisted_service_pid_requires_a_clean_integer() {
-        let root = std::env::temp_dir().join(format!("chuzi-ui-pid-{}", unique_id()));
-        fs::create_dir_all(&root).expect("create test directory");
-        fs::write(root.join(".core.pid"), " 42\n").expect("write pid");
-        assert_eq!(read_service_pid(&root), Some(42));
-        fs::write(root.join(".core.pid"), "42\nextra").expect("write invalid pid");
-        assert_eq!(read_service_pid(&root), None);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_process_paths_ignore_canonical_prefix_and_case() {
-        assert_eq!(
-            normalize_windows_path(r"\\?\C:\Chuzi\chuzi.exe\"),
-            r"c:\chuzi\chuzi.exe"
-        );
-        assert_eq!(
-            normalize_windows_path(r"C:/CHUZI/chuzi.exe"),
-            r"c:\chuzi\chuzi.exe"
-        );
-    }
-
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn persisted_pid_must_identify_the_core_executable() {
-        let executable = std::env::current_exe().expect("resolve current executable");
-        assert!(is_service_process(std::process::id(), &executable));
-        assert!(!is_service_process(
-            std::process::id(),
-            Path::new("/not/the/current/program")
-        ));
     }
 
     #[test]

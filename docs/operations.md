@@ -32,8 +32,9 @@ backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/sen
 服务普通启动会同时监听由 `data_dir` 派生的 Core endpoint。Unix 为
 `<data_dir>/core.sock`，目录权限为 `0700`、socket 权限为 `0600`；Windows 为带数据目录
 摘要的 owner-only named pipe。endpoint 不能由请求正文覆盖，活动 socket 也不会被第二个
-服务实例删除。原生客户端应使用 `internal/coretransport.Connect`，先执行
-`chuzi.core/v1` `hello`，再调用 JSONL Core API；不要直接打开 bbolt 或读取 Profile。
+服务实例删除。launcher 应使用 `internal/coretransport.Connect`，先执行 `chuzi.core/v1`
+`hello`，再调用 JSONL Core API；原生客户端应调用 launcher 的稳定命令，不直接打开 named
+pipe、bbolt 或读取 Profile。
 
 每个调用带唯一 request ID，客户端可并发发起调用，服务端按 ID 返回响应。取消 context
 会发送 transport-level `cancel`，业务上的 `cancel_request` 仍是独立的状态机命令。
@@ -44,9 +45,11 @@ backend 仍是 deferred/合成 Worker。配置 Matrix 后会启用 HTTP sync/sen
 首个 Windows Slint 客户端在 `ui/windows`，构建脚本为
 `scripts/build_windows_slint.ps1`，Actions 任务 `chuzi-build-windows-slint` 生成并上传
 `chuzi-windows-installer-exe`。安装器把自包含 Slint 发布目录安装到
-`Program Files\\Chuzi`，并将 Core payload 随安装包放在应用目录中。客户端通过
-`%ProgramData%\\chuzi`（或部署提供的 `CHUZI_DATA_DIR`）派生与 Go 相同的 named pipe 名称，
-执行 `hello` 后调用提交、查询和取消；客户端只显示稳定错误码。
+`Program Files\\Chuzi`，并将 Core payload 随安装包放在应用目录中。launcher 通过
+`%ProgramData%\\chuzi`（或部署提供的 `CHUZI_DATA_DIR`）派生与 Go 相同的
+named pipe 名称，执行 `hello` 后调用提交、查询和取消；Windows 客户端只调用 launcher
+并显示稳定错误码。launcher 的 `core-status`、`core-start`、`core-stop` 和 `core-call`
+命令是 UI 到 Core 的统一后台入口。
 
 ## 浏览器运行时前置条件
 

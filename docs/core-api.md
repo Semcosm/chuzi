@@ -1,8 +1,9 @@
 # Core API v1
 
 `chuzi.core/v1` is the local, transport-neutral control-plane contract used by
-native clients. It exposes redacted Core DTOs only; clients must not open the
-bbolt store, read credentials or Profile directories, or depend on UI types.
+the launcher façade. It exposes redacted Core DTOs only; native clients call the
+launcher and must not open the Core endpoint, bbolt store, credentials, or Profile
+directories, or depend on UI types.
 
 ## Wire Envelope
 
