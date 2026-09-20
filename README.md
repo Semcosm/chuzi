@@ -34,7 +34,9 @@ Client/同步网关和通知 outbox worker 可由配置启用，健康检查可�
 Core API 已有可调用的本地 IPC 形态。服务在数据目录派生固定 endpoint：Unix 使用
 `core.sock`（权限 `0600`），Windows 使用 owner-only named pipe。客户端先完成
 `chuzi.core/v1` `hello` 协商，再通过 JSONL envelope 调用提交、查询、取消、结果、事件和
-通知方法；请求按 ID 多路复用，取消会传播到服务端。原生客户端不得读取 bbolt、凭证或
+通知方法；请求按 ID 多路复用，取消会传播到服务端。活动 headless 请求还可通过
+`get_browser_view` 按需获取一次只读 JPEG，未查看时不产生持续截图或画面传输。该方法
+不接受 URL、CDP endpoint、Profile 路径或输入控制，原生客户端仍不得读取 bbolt、凭证或
 Profile。Windows 首个 Slint 客户端位于 `ui/windows`，通过独立的 named-pipe 客户端只消费
 这一边界；macOS SwiftUI/AppKit 与 Linux GTK 客户端仍待后续 CR。
 

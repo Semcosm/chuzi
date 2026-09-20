@@ -586,6 +586,98 @@ class CdpSocket {
   }
 }
 
+async function captureSnapshot(session, width, height, signal, lifecycle) {
+  if (session.runtime && session.runtime !== "headless-cdp") {
+    throw classified("configuration", "runtime_mismatch");
+  }
+  if (!session.handle) throw classified("runtime", "browser_view_unavailable", true);
+  const socket = new CdpSocket(lifecycle.websocketURL, signal);
+  let targetID = "";
+  let createdTarget = false;
+  let attachedSessionID = "";
+  try {
+    await socket.connect();
+    const targets = await socket.command("Target.getTargets", {}, "", signal);
+    const target = (targets.targetInfos || []).find((candidate) =>
+      candidate.type === "page" && typeof candidate.targetId === "string" &&
+      candidate.url && candidate.url !== "about:blank");
+    if (target) {
+      targetID = target.targetId;
+    } else {
+      const created = await socket.command("Target.createTarget", { url: genshinCloudGameURL }, "", signal);
+      targetID = typeof created.targetId === "string" ? created.targetId : "";
+      createdTarget = true;
+      if (!targetID) throw classified("runtime", "cdp_target_missing", true);
+      await wait(500, signal);
+    }
+    const attached = await socket.command("Target.attachToTarget", { targetId: targetID, flatten: true }, "", signal);
+    attachedSessionID = typeof attached.sessionId === "string" ? attached.sessionId : "";
+    if (!attachedSessionID) throw classified("runtime", "cdp_session_missing", true);
+    await socket.command("Page.enable", {}, attachedSessionID, signal);
+    await socket.command("Emulation.setDeviceMetricsOverride", {
+      width, height, deviceScaleFactor: 1, mobile: false,
+    }, attachedSessionID, signal);
+    const screenshot = await socket.command("Page.captureScreenshot", {
+      format: "jpeg", quality: 60, fromSurface: true,
+    }, attachedSessionID, signal);
+    const data = typeof screenshot.data === "string" ? screenshot.data : "";
+    if (!data || data.length > 900000) throw classified("runtime", "browser_view_frame_too_large", true);
+    return { contentType: "image/jpeg", width, height, data };
+  } finally {
+    if (attachedSessionID) {
+      try {
+        await socket.command("Emulation.clearDeviceMetricsOverride", {}, attachedSessionID, signal);
+      } catch {
+        // The browser may have closed while the view was being detached.
+      }
+    }
+    if (createdTarget && targetID) {
+      try {
+        await socket.command("Target.closeTarget", { targetId: targetID }, "", signal);
+      } catch {
+        // The browser may already be closing.
+      }
+    }
+    socket.close();
+  }
+}
+
+async function handleViewSnapshot(request) {
+  const session = {
+    sessionID: value(request, "session_id"),
+    accountID: value(request, "account_id"),
+    requestID: value(request, "request_id"),
+    profileDir: value(request, "profile_dir"),
+    runtime: value(request, "runtime"),
+    handle: value(request, "session_handle"),
+  };
+  const width = Number(value(request, "width"));
+  const height = Number(value(request, "height"));
+  if (!session.sessionID || !session.accountID || !session.requestID || !validProfileDir(session.profileDir) ||
+      !Number.isInteger(width) || width < 160 || width > 1280 || !Number.isInteger(height) || height < 90 || height > 720) {
+    protocolError(request, "view_snapshot_invalid");
+    return;
+  }
+  try {
+    const deadline = deadlineFor(request, new AbortController().signal);
+    const lifecycle = new ExternalLifecycle(session.handle, deadline.signal);
+    try {
+      await lifecycle.start();
+      const frame = await captureSnapshot(session, width, height, deadline.signal, lifecycle);
+      reply(request, "view_frame", {
+        content_type: frame.contentType,
+        width: String(frame.width),
+        height: String(frame.height),
+        data: frame.data,
+      });
+    } finally {
+      deadline.close();
+    }
+  } catch {
+    protocolError(request, "view_snapshot_failed");
+  }
+}
+
 async function createLocalPage(accountID) {
   const template = await readFile(localPageFile, "utf8");
   const escaped = accountID.replaceAll("&", "&amp;").replaceAll("\"", "&quot;")
@@ -868,11 +960,14 @@ input.on("line", (line) => {
         adapter_id: adapterID,
         version: adapterVersion,
         api: adapterProtocol,
-        capabilities: "headless-cdp@1,local.test-page@1,genshin-cloudgame@1",
+        capabilities: "headless-cdp@1,browser-view@1,local.test-page@1,genshin-cloudgame@1",
       });
       break;
     case "execute":
       handleExecute(request);
+      break;
+    case "view_snapshot":
+      void handleViewSnapshot(request);
       break;
     case "cancel":
       handleCancel(request);

@@ -28,13 +28,13 @@ var (
 type FailureClass string
 
 const (
-	FailureConfiguration FailureClass = "configuration"
-	FailureRuntime       FailureClass = "runtime"
-	FailurePermission    FailureClass = "permission"
+	FailureConfiguration  FailureClass = "configuration"
+	FailureRuntime        FailureClass = "runtime"
+	FailurePermission     FailureClass = "permission"
 	FailureAuthentication FailureClass = "authentication"
-	FailureBusiness      FailureClass = "business"
-	FailureTransient     FailureClass = "transient"
-	FailureCancelled     FailureClass = "cancelled"
+	FailureBusiness       FailureClass = "business"
+	FailureTransient      FailureClass = "transient"
+	FailureCancelled      FailureClass = "cancelled"
 )
 
 type Failure struct {
@@ -141,6 +141,23 @@ type Result struct {
 	Succeeded bool              `json:"succeeded"`
 	Failure   *Failure          `json:"failure,omitempty"`
 	Facts     map[string]string `json:"facts,omitempty"`
+}
+
+// ViewFrame is a bounded, read-only browser observation. It is intentionally
+// separate from Result so page pixels cannot be smuggled through business
+// facts or persisted state.
+type ViewFrame struct {
+	ContentType string
+	Width       int
+	Height      int
+	Data        []byte
+}
+
+// Viewer is an optional adapter capability for an active browser session.
+// Implementations must use the service-derived session handle and must not
+// accept arbitrary URLs or filesystem paths.
+type Viewer interface {
+	Snapshot(context.Context, Session, int, int) (ViewFrame, error)
 }
 
 // CredentialUse is a host-owned, least-privilege callback. An adapter may

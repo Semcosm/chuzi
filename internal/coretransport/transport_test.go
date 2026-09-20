@@ -23,6 +23,12 @@ type testAPI struct {
 	canceled chan struct{}
 }
 
+type viewTestAPI struct{ *testAPI }
+
+func (a *viewTestAPI) GetBrowserView(context.Context, coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
+	return coreapi.BrowserView{RequestID: "request-1", ContentType: "image/jpeg", Width: 320, Height: 180, Data: "amVwZw=="}, nil
+}
+
 func (a *testAPI) SubmitRequest(context.Context, coreapi.SubmitRequest) (coreapi.Request, bool, error) {
 	return coreapi.Request{RequestID: "req-1", Account: "id_account", State: "QUEUED", Attempt: 0, CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC()}, false, nil
 }
@@ -99,6 +105,21 @@ func TestUnixContractHandshakeAndCoreCall(t *testing.T) {
 	cancelled, err := client.CancelRequest(context.Background(), coreapi.CancelRequest{RequestID: "req-1", Reason: "test"})
 	if err != nil || cancelled.State != "CANCELLED" {
 		t.Fatalf("cancel = %#v, err=%v", cancelled, err)
+	}
+}
+
+func TestUnixContractBrowserViewMethod(t *testing.T) {
+	api := &viewTestAPI{testAPI: &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}}
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	view, err := client.GetBrowserView(context.Background(), coreapi.BrowserViewRequest{RequestID: "request-1"})
+	if err != nil || view.ContentType != "image/jpeg" || view.Data != "amVwZw==" {
+		t.Fatalf("view = %#v, err=%v", view, err)
 	}
 }
 

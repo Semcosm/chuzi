@@ -26,6 +26,16 @@ pub(crate) struct SubmitResult {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct BrowserView {
+    pub(crate) request_id: String,
+    pub(crate) content_type: String,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) data: String,
+    pub(crate) captured_at: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct PluginDescriptor {
     pub(crate) id: String,
     pub(crate) version: String,

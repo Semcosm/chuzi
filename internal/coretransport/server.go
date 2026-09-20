@@ -263,6 +263,16 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		items, err := s.api.ListNotifications(ctx, params)
 		return NotificationsResult{Notifications: items}, err
+	case methodGetBrowserView:
+		viewAPI, ok := s.api.(coreapi.BrowserViewAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "browser view is unavailable")
+		}
+		var params coreapi.BrowserViewRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		return viewAPI.GetBrowserView(ctx, params)
 	default:
 		return nil, invalidMethodError(method)
 	}

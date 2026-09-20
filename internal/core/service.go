@@ -5,12 +5,14 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/observability"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
@@ -43,14 +45,20 @@ type StoreReader interface {
 	QueryNotifications(store.NotificationQuery) ([]store.Notification, error)
 }
 
+type BrowserViewPort interface {
+	Snapshot(context.Context, string, int, int) (browser.ViewSnapshot, error)
+}
+
 type Dependencies struct {
 	Requests RequestPort
 	Store    StoreReader
+	Views    BrowserViewPort
 }
 
 type Service struct {
 	requests RequestPort
 	store    StoreReader
+	views    BrowserViewPort
 }
 
 var _ coreapi.API = (*Service)(nil)
@@ -59,7 +67,51 @@ func New(dependencies Dependencies) (*Service, error) {
 	if dependencies.Requests == nil || dependencies.Store == nil {
 		return nil, ErrInvalidService
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store}, nil
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views}, nil
+}
+
+func (s *Service) GetBrowserView(ctx context.Context, input coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.BrowserView{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.BrowserView{}, err
+	}
+	if !validToken(input.RequestID) {
+		return coreapi.BrowserView{}, classify(requestservice.ErrInvalidInput)
+	}
+	if s.views == nil {
+		return coreapi.BrowserView{}, classify(browser.ErrViewUnavailable)
+	}
+	width, height := input.Width, input.Height
+	if width == 0 {
+		width = 640
+	}
+	if height == 0 {
+		height = 360
+	}
+	if width < 160 || width > 1280 || height < 90 || height > 720 {
+		return coreapi.BrowserView{}, classify(requestservice.ErrInvalidInput)
+	}
+	frame, err := s.views.Snapshot(ctx, input.RequestID, width, height)
+	if err != nil {
+		// A view is an ephemeral observation. Adapter/CDP failures should not
+		// expose an internal error classification; only caller cancellation
+		// and deadlines retain their transport semantics.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return coreapi.BrowserView{}, classify(err)
+		}
+		return coreapi.BrowserView{}, classify(browser.ErrViewUnavailable)
+	}
+	if frame.ContentType != "image/jpeg" || frame.Width < 160 || frame.Width > 1280 ||
+		frame.Height < 90 || frame.Height > 720 || len(frame.Data) == 0 || len(frame.Data) > 700<<10 {
+		return coreapi.BrowserView{}, classify(browser.ErrViewUnavailable)
+	}
+	return coreapi.BrowserView{
+		RequestID: input.RequestID, ContentType: frame.ContentType,
+		Width: frame.Width, Height: frame.Height,
+		Data: base64.StdEncoding.EncodeToString(frame.Data), CapturedAt: time.Now().UTC(),
+	}, nil
 }
 
 func (s *Service) SubmitRequest(ctx context.Context, input coreapi.SubmitRequest) (coreapi.Request, bool, error) {
@@ -373,6 +425,8 @@ func classify(err error) error {
 		errors.Is(err, account.ErrInvalidTransition):
 		code = coreapi.CodeConflict
 	case errors.Is(err, store.ErrQueueCapacity):
+		code = coreapi.CodeUnavailable
+	case errors.Is(err, browser.ErrViewUnavailable):
 		code = coreapi.CodeUnavailable
 	}
 	return coreapi.NewError(code, stableMessage(code))

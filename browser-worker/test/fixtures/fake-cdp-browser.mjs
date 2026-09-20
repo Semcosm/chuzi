@@ -53,6 +53,8 @@ function cdpResult(message) {
       return { targetId: "fake-target-1" };
     case "Target.attachToTarget":
       return { sessionId: "fake-session-1" };
+    case "Target.getTargets":
+      return { targetInfos: [] };
     case "Runtime.evaluate":
       if (String(message.params?.expression || "").includes("querySelector('#app')")) {
         evaluationCount += 1;
@@ -76,6 +78,11 @@ function cdpResult(message) {
       return { success: true };
     case "Page.enable":
       return {};
+    case "Emulation.setDeviceMetricsOverride":
+    case "Emulation.clearDeviceMetricsOverride":
+      return {};
+    case "Page.captureScreenshot":
+      return { data: Buffer.from("fake-jpeg-frame").toString("base64") };
     default:
       return {};
   }

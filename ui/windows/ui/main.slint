@@ -83,6 +83,10 @@ export component MainWindow inherits Window {
     in-out property <string> task-attempt: "";
     in-out property <string> task-failure: "";
 
+    in-out property <image> browser-view;
+    in-out property <bool> browser-view-loaded: false;
+    in-out property <string> browser-view-status: "No browser view captured.";
+
     in-out property <string> plugin-input: "";
     in-out property <bool> plugin-loaded: false;
     in-out property <string> plugin-summary: "Core is not ready. Start Core to load plugins.";
@@ -115,6 +119,7 @@ export component MainWindow inherits Window {
     callback submit-task(string);
     callback refresh-task(string);
     callback cancel-task(string);
+    callback refresh-view(string);
 
     background: Palette.background;
 
@@ -328,6 +333,7 @@ export component MainWindow inherits Window {
                                 vertical-stretch: 0;
                                 Button { text: "Refresh status"; enabled: root.core-ready && !root.busy && root.request-input != ""; vertical-stretch: 0; clicked => { root.refresh-task(root.request-input); } }
                                 Button { text: "Cancel request"; enabled: root.core-ready && !root.busy && root.request-input != "" && root.task-loaded && root.request-input == root.task-request-id; vertical-stretch: 0; clicked => { root.cancel-task(root.request-input); } }
+                                Button { text: "View page"; enabled: root.core-ready && !root.busy && root.task-loaded && root.request-input == root.task-request-id; vertical-stretch: 0; clicked => { root.refresh-view(root.request-input); } }
                             }
                         }
                     }
@@ -343,6 +349,24 @@ export component MainWindow inherits Window {
                             Text { text: root.task-loaded ? "State: " + root.task-state : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
                             Text { text: root.task-loaded ? "Attempt: " + root.task-attempt : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
                             Text { text: root.task-loaded && root.task-failure != "" ? "Latest failure: " + root.task-failure : ""; color: #b04a3a; wrap: word-wrap; vertical-stretch: 0; }
+                        }
+                    }
+                    GroupBox {
+                        title: "Browser view";
+                        max-height: 430px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 8px;
+                            Text { text: root.browser-view-status; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Rectangle {
+                                width: 100%;
+                                height: 320px;
+                                background: Palette.alternate-background;
+                                border-color: Palette.border;
+                                border-width: 1px;
+                                Image { source: root.browser-view; image-fit: contain; width: parent.width; height: parent.height; }
+                            }
                         }
                     }
                     FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : #526c92; vertical-stretch: 0; }
