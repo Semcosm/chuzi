@@ -10,15 +10,15 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: e6dd9b88af5dc889e61976d783ed90d2a81a696d
+Head OID: 5fc7a2fc78453933cce02ce46497481593049bf9
 Integrated Result: pending
 
 ## Summary
 
-Add a Remote page to the Windows Slint client. The page asks for the Windows
-username and password, clears the password field after submission, and starts
-the local Windows Remote Desktop client. The Windows implementation stores the
-credential as a session-scoped `TERMSRV/localhost` Credential Manager entry,
+Add a Remote page to the Windows Slint client. The page asks for a host or IP,
+Windows username, and password, clears the password field after submission,
+and starts the Windows Remote Desktop client. The Windows implementation stores
+the credential as a session-scoped `TERMSRV/<host>` Credential Manager entry,
 starts `mstsc.exe`, and removes the temporary entry when the client exits.
 
 Non-Windows builds keep the page available for shared UI testing but fail the
@@ -54,11 +54,11 @@ build check.
 ## Risk
 
 The prototype depends on Windows Remote Desktop being enabled and the supplied
-user being permitted to log in. Credential Manager uses one target for the
-fixed local host, so simultaneous logins with different credentials should be
-serialized until the embedded/session-aware host is implemented. The UI does
-not enumerate users or persist passwords. `mstsc.exe` remains an external
-window; BetterGI process/session orchestration is a follow-up change.
+user being permitted to log in. Credential Manager uses one target per entered
+host, so simultaneous logins to the same host with different credentials
+should be serialized until the embedded/session-aware host is implemented. The
+UI does not enumerate users or persist passwords. `mstsc.exe` remains an
+external window; BetterGI process/session orchestration is a follow-up change.
 
 ## Rollback
 
