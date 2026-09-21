@@ -116,6 +116,7 @@ export component MainWindow inherits Window {
     in-out property <int> update-interval: 60;
     in-out property <string> remote-user: "";
     in-out property <string> remote-password: "";
+    in-out property <string> remote-host: "localhost";
     in-out property <string> remote-status: "No remote session started.";
 
     callback install-core();
@@ -139,7 +140,7 @@ export component MainWindow inherits Window {
     callback refresh-task(string);
     callback cancel-task(string);
     callback refresh-view(string);
-    callback connect-remote(string, string);
+    callback connect-remote(string, string, string);
 
     background: Palette.background;
 
@@ -404,12 +405,12 @@ export component MainWindow inherits Window {
                     PageHeader { title: "Remote session"; subtitle: "Sign in to a local RDP account and open its desktop."; }
                     GroupBox {
                         title: "Windows login";
-                        max-height: 238px;
+                        max-height: 286px;
                         vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
                             spacing: 10px;
-                            Text { text: "Host: localhost"; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            LineEdit { placeholder-text: "Host or IP address"; text <=> root.remote-host; }
                             LineEdit { placeholder-text: "Windows username"; text <=> root.remote-user; }
                             LineEdit { placeholder-text: "Windows password"; input-type: password; text <=> root.remote-password; }
                             HorizontalBox {
@@ -418,9 +419,9 @@ export component MainWindow inherits Window {
                                 vertical-stretch: 0;
                                 Button {
                                     text: "Connect";
-                                    enabled: !root.busy && root.remote-user != "" && root.remote-password != "";
+                                    enabled: !root.busy && root.remote-host != "" && root.remote-user != "" && root.remote-password != "";
                                     vertical-stretch: 0;
-                                    clicked => { root.connect-remote(root.remote-user, root.remote-password); }
+                                    clicked => { root.connect-remote(root.remote-host, root.remote-user, root.remote-password); }
                                 }
                                 Text { text: root.remote-status; color: Palette.alternate-foreground; vertical-alignment: center; wrap: word-wrap; }
                             }

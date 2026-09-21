@@ -544,18 +544,19 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
 
     let weak = ui.as_weak();
     let remote_state = Arc::clone(&state);
-    ui.on_connect_remote(move |username, password| {
+    ui.on_connect_remote(move |host, username, password| {
+        let host = host.to_string();
         let username = username.to_string();
         let mut password = password.to_string();
         if let Some(window) = weak.upgrade() {
-            window.set_remote_status("Connecting to the local RDP host...".into());
+            window.set_remote_status(format!("Connecting to {host}...").into());
             window.set_remote_password(SharedString::default());
         }
         run_background_with(
             &weak,
             Arc::clone(&remote_state),
             move |_state| {
-                let result = launch_remote_desktop(&username, &password, "localhost");
+                let result = launch_remote_desktop(&username, &password, &host);
                 password.clear();
                 result.map(|message| (message.clone(), message))
             },
