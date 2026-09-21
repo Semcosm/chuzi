@@ -39,6 +39,7 @@ for target in linux-amd64 windows-amd64; do
   if [ "$target" = "windows-amd64" ]; then
     printf '%s' launcher >"$stage/chuzi-launcher.exe"
     printf '%s' service >"$stage/chuzi.exe"
+    printf '%s' browser-launcher >"$stage/chuzi-browser-launcher.exe"
   else
     printf '%s' launcher >"$stage/chuzi-launcher"
     printf '%s' service >"$stage/chuzi"
@@ -59,7 +60,7 @@ stage, dist, version, target = map(Path, sys.argv[1:])
 groups = {
     "bundle": [path for path in stage.rglob("*") if path.is_file()],
     "launcher": [stage / "chuzi-launcher.exe", stage / "release-manifest.json"],
-    "service": [stage / "chuzi.exe"],
+    "service": [stage / "chuzi.exe", stage / "chuzi-browser-launcher.exe"],
     "browser-worker": [path for path in (stage / "browser-worker").rglob("*") if path.is_file()],
 }
 for component, files in groups.items():
