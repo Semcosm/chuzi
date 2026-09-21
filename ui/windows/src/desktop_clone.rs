@@ -157,8 +157,8 @@ mod native {
 
     pub fn parent_hwnd(window: &DesktopCloneWindow) -> Result<HWND, String> {
         let slint_window = window.window();
-        let handle = slint_window
-            .window_handle()
+        let slint_handle = slint_window.window_handle();
+        let handle = slint_handle
             .window_handle()
             .map_err(|error| format!("desktop_clone_window_handle: {error}"))?;
         match handle.as_raw() {
