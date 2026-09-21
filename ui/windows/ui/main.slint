@@ -546,19 +546,94 @@ export component MainWindow inherits Window {
     }
 }
 
+component CloneBarButton inherits Rectangle {
+    in property <string> icon;
+    in property <string> label;
+    in property <length> button-width: 80px;
+    in property <bool> enabled: true;
+    callback pressed();
+
+    width: root.button-width;
+    height: 32px;
+    background: transparent;
+    opacity: root.enabled ? 1.0 : 0.45;
+
+    HorizontalBox {
+        spacing: 6px;
+        padding-left: 8px;
+        padding-right: 8px;
+        Text {
+            text: root.icon;
+            color: #f4f4f4;
+            font-size: 16px;
+            horizontal-alignment: center;
+            vertical-alignment: center;
+            vertical-stretch: 1;
+        }
+        Text {
+            text: root.label;
+            color: #f4f4f4;
+            font-size: 12px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+        }
+    }
+
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { root.pressed(); }
+    }
+}
+
+component CloneIconButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> active: false;
+    callback pressed();
+
+    width: 40px;
+    height: 32px;
+    background: transparent;
+
+    Text {
+        text: root.icon;
+        color: root.active ? #60b9f4 : #f4f4f4;
+        font-size: 17px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    TouchArea { clicked => { root.pressed(); } }
+}
+
 export component DesktopCloneWindow inherits Window {
-    title: "Chuzi Desktop Clone";
-    min-width: 520px;
-    min-height: 260px;
+    title: "BetterGI 桌面分身";
+    min-width: 415px;
+    min-height: 90px;
     preferred-width: 1280px;
     preferred-height: 752px;
 
     in-out property <string> host: "localhost";
-    in-out property <string> status: "RDP 未连接";
-    in-out property <bool> connected: false;
+    in-out property <string> state: "not-started";
+    in-out property <string> status: "";
+    in-out property <bool> mouse-game-mode: false;
+    in-out property <bool> audio-enabled: true;
+    in-out property <bool> topmost: false;
+    in-out property <bool> show-control-menu: false;
+    in-out property <bool> notification-visible: false;
+    in-out property <bool> small-window: false;
+    in-out property <bool> keep-aspect-ratio: true;
+
+    property <bool> connected: root.state == "connected";
+    property <color> state-color: root.state == "connected" ? #32cd32 : root.state == "closing" ? #ffb900 : root.state == "connecting" ? #1e90ff : #e55353;
+    property <string> state-title: root.state == "connected" ? "桌面分身已连接" : root.state == "connecting" ? "正在连接桌面分身" : root.state == "started" ? "桌面分身已启动，等待连接" : root.state == "closing" ? "正在关闭桌面分身" : "桌面分身尚未启动";
+    property <string> state-description: root.state == "connected" ? "RDP 连接正常，可以直接在桌面分身中操作。" : root.state == "connecting" ? "正在创建或恢复 RDP 连接，请稍候。" : root.state == "started" ? "桌面分身会话仍在运行，点击“启动并连接”可重新建立 RDP 连接。" : root.state == "closing" ? "正在断开 RDP 并注销桌面分身会话，此过程可能需要一些时间。" : "点击“启动并连接”，BetterGI 将创建独立桌面并建立 RDP 连接。";
+    property <string> rdp-status: root.state == "connected" ? "RDP 已连接" : root.state == "connecting" ? "RDP 正在连接" : root.state == "closing" ? "正在断开 RDP" : "RDP 未连接";
+    property <string> session-status: root.state == "not-started" ? "桌面分身会话未创建" : root.state == "closing" ? "桌面分身会话正在注销" : "桌面分身会话已创建";
+    property <string> detail-status: root.status != "" ? root.status : root.state == "connected" ? "桌面画面区域已准备好，后续将在此处接入远程画面。" : "当前仅展示 UI 外壳，远程画面接入将在后续实现。";
 
     callback hide-window();
-    callback disconnect-window();
 
     background: #000000;
 
@@ -569,55 +644,87 @@ export component DesktopCloneWindow inherits Window {
             spacing: 0px;
 
             Rectangle {
-                height: 36px;
-                background: #171717;
-                border-color: #2f2f2f;
-                border-width: 1px;
+                height: 32px;
+                background: #1b1b1b;
                 vertical-stretch: 0;
 
-                HorizontalBox {
-                    spacing: 10px;
-                    padding-left: 14px;
-                    padding-right: 6px;
-
-                    Rectangle {
-                        width: 9px;
-                        height: 9px;
-                        background: root.connected ? #4fb47b : #bd7c35;
-                        border-radius: 5px;
-                        vertical-stretch: 0;
-                    }
-
+                Rectangle {
+                    x: 8px;
+                    y: 5px;
+                    width: 22px;
+                    height: 22px;
+                    border-radius: 5px;
+                    background: #2f6fed;
                     Text {
-                        text: "Chuzi 桌面分身";
-                        color: #f4f4f4;
-                        font-size: 13px;
+                        text: "B";
+                        color: white;
+                        font-size: 14px;
                         font-weight: 700;
+                        horizontal-alignment: center;
                         vertical-alignment: center;
-                        horizontal-stretch: 1;
+                        width: parent.width;
+                        height: parent.height;
                     }
+                }
+                Rectangle { x: 39px; y: 12px; width: 9px; height: 9px; border-radius: 5px; background: root.state-color; }
+                Text { x: 56px; y: 0px; width: root.width - 264px; height: 32px; text: "BetterGI 桌面分身"; color: #f4f4f4; font-size: 12px; vertical-alignment: center; overflow: elide; }
 
-                    Text {
-                        text: root.host;
-                        color: #9b9b9b;
-                        font-size: 11px;
-                        vertical-alignment: center;
-                        horizontal-stretch: 0;
-                    }
-
-                    Button {
-                        text: "隐藏";
-                        height: 30px;
-                        vertical-stretch: 0;
-                        clicked => { root.hide-window(); }
-                    }
-
-                    Button {
-                        text: "断开";
-                        height: 30px;
-                        vertical-stretch: 0;
-                        clicked => { root.disconnect-window(); }
-                    }
+                CloneBarButton {
+                    x: root.width - 620px;
+                    y: 0px;
+                    label: "启动";
+                    icon: "▶";
+                    button-width: 80px;
+                    visible: root.width >= 760px;
+                    pressed => { root.state = "connecting"; root.show-control-menu = false; }
+                }
+                CloneBarButton {
+                    x: root.width - 540px;
+                    y: 0px;
+                    label: "隐藏";
+                    icon: "◌";
+                    button-width: 80px;
+                    visible: root.width >= 680px;
+                    pressed => { root.hide-window(); }
+                }
+                CloneBarButton {
+                    x: root.width - 460px;
+                    y: 0px;
+                    label: "切换窗口";
+                    icon: "⇄";
+                    button-width: 110px;
+                    visible: root.width >= 570px;
+                    pressed => { root.state = root.state == "connected" ? "started" : "connected"; }
+                }
+                CloneBarButton {
+                    x: root.width - 350px;
+                    y: 0px;
+                    label: root.mouse-game-mode ? "游戏鼠标" : "普通鼠标";
+                    icon: root.mouse-game-mode ? "⌖" : "⌁";
+                    button-width: 110px;
+                    visible: root.width >= 470px;
+                    pressed => { root.mouse-game-mode = !root.mouse-game-mode; }
+                }
+                CloneBarButton {
+                    x: root.width - 240px;
+                    y: 0px;
+                    label: "控制中心";
+                    icon: "▦";
+                    button-width: 120px;
+                    pressed => { root.show-control-menu = !root.show-control-menu; }
+                }
+                CloneIconButton {
+                    x: root.width - 120px;
+                    y: 0px;
+                    icon: root.audio-enabled ? "◖" : "◗";
+                    pressed => { root.audio-enabled = !root.audio-enabled; }
+                }
+                CloneIconButton {
+                    x: root.width - 80px;
+                    y: 0px;
+                    icon: root.topmost ? "◆" : "◇";
+                    active: root.topmost;
+                    pressed => { root.topmost = !root.topmost; }
                 }
             }
 
@@ -625,9 +732,9 @@ export component DesktopCloneWindow inherits Window {
                 background: #000000;
                 vertical-stretch: 1;
 
-                if !root.connected: Rectangle {
-                    width: 560px;
-                    height: 190px;
+                if root.state != "connected": Rectangle {
+                    width: parent.width < 668px ? parent.width - 48px : 620px;
+                    height: parent.height < 520px ? parent.height - 48px : 448px;
                     x: (parent.width - self.width) / 2;
                     y: (parent.height - self.height) / 2;
                     background: #171717;
@@ -636,34 +743,183 @@ export component DesktopCloneWindow inherits Window {
                     border-radius: 12px;
 
                     VerticalBox {
-                        padding: 28px;
-                        spacing: 10px;
-                        Text {
-                            text: "桌面分身 RDP";
-                            color: #ffffff;
-                            font-size: 21px;
-                            font-weight: 700;
-                            horizontal-alignment: center;
+                        padding-left: 36px;
+                        padding-right: 36px;
+                        padding-top: 32px;
+                        padding-bottom: 32px;
+                        spacing: 0px;
+
+                        HorizontalBox {
+                            height: 72px;
                             vertical-stretch: 0;
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            Rectangle {
+                                width: 72px;
+                                height: 72px;
+                                border-radius: 36px;
+                                background: root.state == "closing" ? #26ffb900 : #262fa4e7;
+                                Text {
+                                    text: root.state == "closing" ? "◌" : "⌁";
+                                    color: root.state == "closing" ? #ffc83d : #60b9f4;
+                                    font-size: root.state == "closing" ? 33px : 34px;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: parent.width;
+                                    height: parent.height;
+                                }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
                         }
+
+                        Rectangle { height: 20px; background: transparent; vertical-stretch: 0; }
+                        HorizontalBox {
+                            height: 28px;
+                            vertical-stretch: 0;
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.state-color; vertical-stretch: 0; }
+                            Rectangle { width: 9px; background: transparent; vertical-stretch: 1; }
+                            Text {
+                                text: root.state-title;
+                                color: #ffffff;
+                                font-size: 21px;
+                                font-weight: 600;
+                                vertical-alignment: center;
+                                horizontal-stretch: 0;
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                        }
+
+                        Rectangle { height: 10px; background: transparent; vertical-stretch: 0; }
                         Text {
-                            text: root.status;
-                            color: #c5c5c5;
+                            text: root.state-description;
+                            color: #bfffffff;
+                            font-size: 13px;
                             horizontal-alignment: center;
                             wrap: word-wrap;
+                            max-width: 510px;
                             vertical-stretch: 0;
                         }
-                        Text {
-                            text: "登录窗口由 Windows Remote Desktop 提供。";
-                            color: #858585;
-                            font-size: 11px;
-                            horizontal-alignment: center;
-                            wrap: word-wrap;
+
+                        Rectangle { height: 22px; background: transparent; vertical-stretch: 0; }
+                        Rectangle {
+                            height: 92px;
+                            background: #10000000;
+                            border-color: #24ffffff;
+                            border-width: 1px;
+                            border-radius: 7px;
                             vertical-stretch: 0;
+                            VerticalBox {
+                                padding-left: 12px;
+                                padding-right: 12px;
+                                padding-top: 12px;
+                                padding-bottom: 12px;
+                                spacing: 5px;
+                                Text { text: root.rdp-status; color: #e6ffffff; font-size: 13px; vertical-stretch: 0; }
+                                Text { text: root.session-status; color: #99ffffff; font-size: 12px; vertical-stretch: 0; }
+                                Rectangle { height: 3px; background: transparent; vertical-stretch: 0; }
+                                Text { text: root.detail-status; color: #70ffffff; font-size: 11px; wrap: word-wrap; vertical-stretch: 1; }
+                            }
                         }
+
+                        if root.state != "closing": HorizontalBox {
+                            height: 38px;
+                            vertical-stretch: 0;
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                            Rectangle {
+                                width: 132px;
+                                height: 36px;
+                                background: #2fa4e7;
+                                border-radius: 6px;
+                                HorizontalBox {
+                                    spacing: 7px;
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    Text { text: "▶"; color: white; font-size: 15px; vertical-alignment: center; vertical-stretch: 1; }
+                                    Text { text: "启动并连接"; color: white; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; }
+                                }
+                                TouchArea { clicked => { root.state = "connecting"; } }
+                            }
+                            Rectangle { width: 16px; background: transparent; vertical-stretch: 1; }
+                            Rectangle {
+                                width: 110px;
+                                height: 34px;
+                                background: transparent;
+                                Text { text: "查看帮助文档"; color: #60b9f4; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; }
+                                TouchArea { clicked => { root.notification-visible = true; } }
+                            }
+                            Rectangle { horizontal-stretch: 1; background: transparent; }
+                        }
+
+                        if root.state != "closing": Rectangle { height: 18px; background: transparent; vertical-stretch: 0; }
+                        if root.state != "closing": Text { text: "连接成功后，此处会自动切换为桌面分身画面。"; color: #80ffffff; font-size: 11px; horizontal-alignment: center; vertical-stretch: 0; }
+                        if root.state != "closing": Text { text: "游戏鼠标模式下，按住 Alt 可临时释放并显示本地鼠标。"; color: #80ffffff; font-size: 11px; horizontal-alignment: center; vertical-stretch: 0; }
+                        if root.state == "closing": Rectangle { height: 18px; background: transparent; vertical-stretch: 0; }
+                        if root.state == "closing": Text { text: "请稍候，关闭完成后窗口会自动隐藏。"; color: #ccffffff; font-size: 11px; horizontal-alignment: center; vertical-stretch: 0; }
+                        if root.state == "closing": Text { text: "关闭期间已暂停所有桌面分身操作，以避免状态冲突。"; color: #80ffffff; font-size: 11px; horizontal-alignment: center; vertical-stretch: 0; }
                     }
                 }
             }
+        }
+    }
+
+    if root.show-control-menu: Rectangle {
+        x: root.width - 308px;
+        y: 34px;
+        width: 300px;
+        height: 360px;
+        background: #202020;
+        border-color: #40ffffff;
+        border-width: 1px;
+        border-radius: 8px;
+        z: 10;
+
+        VerticalBox {
+            padding: 8px;
+            spacing: 2px;
+            Text { text: "控制中心"; color: #ffffff; font-size: 13px; font-weight: 600; vertical-stretch: 0; }
+            Rectangle { height: 3px; background: transparent; vertical-stretch: 0; }
+            Rectangle { height: 28px; background: transparent; Text { text: "运行 BetterGI"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } TouchArea { clicked => { root.show-control-menu = false; } } }
+            Rectangle { height: 28px; background: transparent; Text { text: root.small-window ? "还原窗口" : "小窗模式"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } TouchArea { clicked => { root.small-window = !root.small-window; root.show-control-menu = false; } } }
+            Rectangle { height: 1px; background: #35ffffff; vertical-stretch: 0; }
+            Text { text: "桌面分辨率"; color: #90ffffff; font-size: 11px; vertical-stretch: 0; }
+            Rectangle { height: 26px; background: transparent; Text { text: "    1920 × 1080"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } }
+            Text { text: "窗口"; color: #90ffffff; font-size: 11px; vertical-stretch: 0; }
+            Rectangle { height: 26px; background: transparent; Text { text: "    自适应"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } }
+            Rectangle { height: 26px; background: transparent; Text { text: "    1 : 1"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } }
+            Rectangle { height: 1px; background: #35ffffff; vertical-stretch: 0; }
+            Rectangle { height: 26px; background: transparent; Text { text: root.keep-aspect-ratio ? "✓   保持宽高比" : "    保持宽高比"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } TouchArea { clicked => { root.keep-aspect-ratio = !root.keep-aspect-ratio; } } }
+            Text { text: "快捷键"; color: #90ffffff; font-size: 11px; vertical-stretch: 0; }
+            Rectangle { height: 26px; background: transparent; Text { text: "    系统组合键发送到桌面分身"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } }
+            Rectangle { height: 1px; background: #35ffffff; vertical-stretch: 0; }
+            Rectangle { height: 26px; background: transparent; Text { text: "    发送 Win+D 显示桌面"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } }
+            Rectangle { height: 26px; background: transparent; Text { text: "    发送 Win+Tab 切换窗口"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } }
+            Text { text: "更多"; color: #90ffffff; font-size: 11px; vertical-stretch: 0; }
+            Rectangle { height: 28px; background: transparent; Text { text: "    以管理员权限启动…"; color: #f4f4f4; vertical-alignment: center; width: parent.width; height: parent.height; } }
+        }
+    }
+
+    if root.notification-visible: Rectangle {
+        x: 8px;
+        y: 40px;
+        width: root.width - 16px;
+        height: 54px;
+        background: #252525;
+        border-color: #45ffffff;
+        border-width: 1px;
+        border-radius: 8px;
+        z: 20;
+        HorizontalBox {
+            padding-left: 16px;
+            padding-right: 10px;
+            spacing: 10px;
+            Text { text: "ⓘ"; color: #60b9f4; font-size: 18px; vertical-alignment: center; vertical-stretch: 1; }
+            VerticalBox {
+                spacing: 2px;
+                vertical-stretch: 1;
+                Text { text: "桌面分身 UI 预览"; color: #ffffff; font-size: 12px; font-weight: 600; vertical-stretch: 0; }
+                Text { text: "当前仅展示 BGI 风格窗体，远程画面接入将在后续实现。"; color: #bfffffff; font-size: 11px; wrap: word-wrap; vertical-stretch: 1; }
+            }
+            Rectangle { width: 24px; background: transparent; vertical-stretch: 1; Text { text: "×"; color: #d0d0d0; font-size: 18px; horizontal-alignment: center; vertical-alignment: center; width: parent.width; height: parent.height; } TouchArea { clicked => { root.notification-visible = false; } } }
         }
     }
 }

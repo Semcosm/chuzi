@@ -553,18 +553,15 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     ui.on_connect_remote(move |host| {
         let host = host.to_string();
         if let Some(window) = weak.upgrade() {
-            window.set_remote_status(format!("Opening desktop clone for {host}...").into());
+            window.set_remote_status(format!("正在打开桌面分身 UI（目标：{host}）…").into());
             match DesktopCloneController::new(host.clone()) {
                 Ok(controller) => {
                     *desktop_clone_slot.borrow_mut() = Some(controller);
-                    window.set_message(
-                        "Desktop clone window opened. Windows will show the native RDP sign-in dialog."
-                            .into(),
-                    );
+                    window.set_message("桌面分身 UI 窗体已打开，当前显示纯 UI 外壳。".into());
                     window.set_message_kind("success".into());
                 }
                 Err(error) => {
-                    window.set_remote_status("Desktop clone could not be opened.".into());
+                    window.set_remote_status("桌面分身 UI 无法打开。".into());
                     window.set_message(friendly_error(&error).into());
                     window.set_message_kind("error".into());
                 }
