@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 6999f3c8538d80ad8e3ce12cc3be70e722512c59
+Head OID: 31983e39cbbdacf26d08723b816fb5658378c841
 Integrated Result: pending
 
 ## Summary
@@ -42,6 +42,8 @@ window or the main application callback.
 `cargo test --manifest-path ui/windows/Cargo.toml --no-fail-fast`
 
 `cargo run --manifest-path ui/windows/Cargo.toml --example layout_snapshot -- --page desktop-clone --output /tmp/chuzi-desktop-clone-layout`
+
+`cargo run --manifest-path ui/windows/Cargo.toml --example layout_snapshot -- --output /tmp/chuzi-layout-check`
 
 `git diff --check`
 
