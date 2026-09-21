@@ -5,6 +5,15 @@
   "releases": [
     {
       "channel": "test",
+      "version": "test-460-3c1b7e5e9425",
+      "commit": "3c1b7e5e9425c6d0df63ca6d9b1f1f381e0461ea",
+      "target": "linux-arm64",
+      "index_url": "https://raw.githubusercontent.com/Semcosm/chuzi/release-catalog/test/linux-arm64/test-460-3c1b7e5e9425/chuzi-test-460-3c1b7e5e9425-linux-arm64.index.json",
+      "published_at": "2026-09-21T01:15:42Z",
+      "prerelease": true
+    },
+    {
+      "channel": "test",
       "version": "test-457-d6ec233f5260",
       "commit": "d6ec233f5260c951700458b799fe3d32e7e7b29a",
       "target": "linux-arm64",
