@@ -80,13 +80,15 @@ fn write_snapshot(
 
 fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error::Error>> {
     let mut output = PathBuf::from("dist/windows-layout");
-    let mut sizes = vec![(1280, 752), (800, 600), (500, 281)];
+    let mut sizes = vec![(800, 600), (1120, 760), (1440, 900)];
+    let mut sizes_explicit = false;
     let mut page = "overview".to_owned();
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--output" => output = PathBuf::from(args.next().ok_or("--output needs a path")?),
             "--sizes" => {
+                sizes_explicit = true;
                 sizes = args
                     .next()
                     .ok_or("--sizes needs a comma-separated list")?
@@ -103,6 +105,9 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error
     }
     match page.as_str() {
         "overview" | "plugins" | "accounts" | "tasks" | "remote" | "settings" | "desktop-clone" => {
+            if page == "desktop-clone" && !sizes_explicit {
+                sizes = vec![(1280, 752), (800, 600), (500, 281)];
+            }
             Ok((output, sizes, page))
         }
         other => Err(format!("unknown page: {other}").into()),
