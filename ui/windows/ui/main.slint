@@ -545,3 +545,125 @@ export component MainWindow inherits Window {
         }
     }
 }
+
+export component DesktopCloneWindow inherits Window {
+    title: "Chuzi Desktop Clone";
+    min-width: 520px;
+    min-height: 260px;
+    preferred-width: 1280px;
+    preferred-height: 752px;
+
+    in-out property <string> host: "localhost";
+    in-out property <string> status: "RDP 未连接";
+    in-out property <bool> connected: false;
+
+    callback hide-window();
+    callback disconnect-window();
+
+    background: #000000;
+
+    Rectangle {
+        background: #000000;
+
+        VerticalBox {
+            spacing: 0px;
+
+            Rectangle {
+                height: 36px;
+                background: #171717;
+                border-color: #2f2f2f;
+                border-width: 1px;
+                vertical-stretch: 0;
+
+                HorizontalBox {
+                    spacing: 10px;
+                    padding-left: 14px;
+                    padding-right: 6px;
+
+                    Rectangle {
+                        width: 9px;
+                        height: 9px;
+                        background: root.connected ? #4fb47b : #bd7c35;
+                        border-radius: 5px;
+                        vertical-stretch: 0;
+                    }
+
+                    Text {
+                        text: "Chuzi 桌面分身";
+                        color: #f4f4f4;
+                        font-size: 13px;
+                        font-weight: 700;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    Text {
+                        text: root.host;
+                        color: #9b9b9b;
+                        font-size: 11px;
+                        vertical-alignment: center;
+                        horizontal-stretch: 0;
+                    }
+
+                    Button {
+                        text: "隐藏";
+                        height: 30px;
+                        vertical-stretch: 0;
+                        clicked => { root.hide-window(); }
+                    }
+
+                    Button {
+                        text: "断开";
+                        height: 30px;
+                        vertical-stretch: 0;
+                        clicked => { root.disconnect-window(); }
+                    }
+                }
+            }
+
+            Rectangle {
+                background: #000000;
+                vertical-stretch: 1;
+
+                if !root.connected: Rectangle {
+                    width: 560px;
+                    height: 190px;
+                    x: (parent.width - self.width) / 2;
+                    y: (parent.height - self.height) / 2;
+                    background: #171717;
+                    border-color: #33ffffff;
+                    border-width: 1px;
+                    border-radius: 12px;
+
+                    VerticalBox {
+                        padding: 28px;
+                        spacing: 10px;
+                        Text {
+                            text: "桌面分身 RDP";
+                            color: #ffffff;
+                            font-size: 21px;
+                            font-weight: 700;
+                            horizontal-alignment: center;
+                            vertical-stretch: 0;
+                        }
+                        Text {
+                            text: root.status;
+                            color: #c5c5c5;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            vertical-stretch: 0;
+                        }
+                        Text {
+                            text: "登录窗口由 Windows Remote Desktop 提供。";
+                            color: #858585;
+                            font-size: 11px;
+                            horizontal-alignment: center;
+                            wrap: word-wrap;
+                            vertical-stretch: 0;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
