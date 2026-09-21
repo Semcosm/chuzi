@@ -1098,7 +1098,7 @@ fn is_core_unavailable(error: &str) -> bool {
 fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<String, String> {
     use std::process::Command;
     use windows_sys::Win32::Security::Credentials::{
-        CredDeleteW, CredWriteW, CREDENTIALW, CRED_PERSIST_SESSION, CRED_TYPE_DOMAIN_PASSWORD,
+        CredDeleteW, CredWriteW, CREDENTIALW, CRED_PERSIST_SESSION, CRED_TYPE_GENERIC,
     };
 
     validate_remote_field(username, "username")?;
@@ -1110,15 +1110,16 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
     let target = format!("TERMSRV/{host}");
     let target_w = wide_string(&target);
     let username_w = wide_string(&username);
-    // Domain-password credentials are UTF-16 bytes. Keep the blob only for the
-    // duration of the CredWrite call; Windows stores the session credential.
+    // RDP consumes a Generic TERMSRV credential (the same shape as
+    // `cmdkey /generic:TERMSRV/<host>`). Keep the blob only for the duration of
+    // the CredWrite call; Windows stores the session credential.
     let mut password_blob = password
         .encode_utf16()
         .flat_map(u16::to_le_bytes)
         .collect::<Vec<u8>>();
 
     let credential = CREDENTIALW {
-        Type: CRED_TYPE_DOMAIN_PASSWORD,
+        Type: CRED_TYPE_GENERIC,
         TargetName: target_w.as_ptr() as *mut u16,
         CredentialBlobSize: password_blob.len() as u32,
         CredentialBlob: password_blob.as_mut_ptr(),
@@ -1139,7 +1140,7 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
         Ok(process) => process,
         Err(error) => {
             unsafe {
-                let _ = CredDeleteW(target_w.as_ptr(), CRED_TYPE_DOMAIN_PASSWORD, 0);
+                let _ = CredDeleteW(target_w.as_ptr(), CRED_TYPE_GENERIC, 0);
             }
             return Err(format!("remote_client_start: {error}"));
         }
