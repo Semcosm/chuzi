@@ -411,7 +411,7 @@ export component MainWindow inherits Window {
                             padding: 14px;
                             spacing: 10px;
                             LineEdit { placeholder-text: "Host or IP address"; text <=> root.remote-host; }
-                            LineEdit { placeholder-text: "Windows username"; text <=> root.remote-user; }
+                            LineEdit { placeholder-text: "Windows username (e.g. .\\alice)"; text <=> root.remote-user; }
                             LineEdit { placeholder-text: "Windows password"; input-type: password; text <=> root.remote-password; }
                             HorizontalBox {
                                 spacing: 8px;

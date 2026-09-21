@@ -1105,9 +1105,11 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
     validate_remote_field(password, "password")?;
     validate_remote_field(host, "host")?;
 
+    let host = host.trim();
+    let username = normalize_remote_username(username);
     let target = format!("TERMSRV/{host}");
     let target_w = wide_string(&target);
-    let username_w = wide_string(username);
+    let username_w = wide_string(&username);
     // Domain-password credentials are UTF-16 bytes. Keep the blob only for the
     // duration of the CredWrite call; Windows stores the session credential.
     let mut password_blob = password
@@ -1133,7 +1135,7 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
     password_blob.fill(0);
 
     let endpoint = format!("/v:{host}");
-    let mut process = match Command::new("mstsc.exe").arg(endpoint).arg("/f").spawn() {
+    let process = match Command::new("mstsc.exe").arg(endpoint).arg("/f").spawn() {
         Ok(process) => process,
         Err(error) => {
             unsafe {
@@ -1143,14 +1145,18 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
         }
     };
 
-    thread::spawn(move || {
-        let _ = process.wait();
-        unsafe {
-            let _ = CredDeleteW(target_w.as_ptr(), CRED_TYPE_DOMAIN_PASSWORD, 0);
-        }
-    });
+    // mstsc.exe is a GUI launcher: it can return as soon as the RDP window is
+    // handed off to the existing client process.  Waiting for that process and
+    // deleting the credential here races the actual authentication and causes
+    // mstsc to fall back to the interactive user's credentials.  The credential
+    // is CRED_PERSIST_SESSION, so Windows removes it when this logon session
+    // ends.  Keep the child detached and retain the session credential until
+    // then; a later connection overwrites the same TERMSRV target.
+    drop(process);
 
-    Ok(format!("Remote desktop started for {username}."))
+    Ok(format!(
+        "Remote desktop started for {username}. The session credential will be removed when Windows signs out."
+    ))
 }
 
 #[cfg(not(windows))]
@@ -1170,6 +1176,16 @@ fn validate_remote_field(value: &str, label: &str) -> Result<(), String> {
         return Err(format!("invalid_remote_{label}"));
     }
     Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn normalize_remote_username(value: &str) -> String {
+    let username = value.trim();
+    if username.contains('\\') || username.contains('@') {
+        username.to_owned()
+    } else {
+        format!(".\\{username}")
+    }
 }
 
 #[cfg(windows)]
@@ -1219,6 +1235,16 @@ mod tests {
         assert_eq!(
             validate_remote_field("bad\nuser", "username"),
             Err("invalid_remote_username".into())
+        );
+        assert_eq!(normalize_remote_username(" alice "), r".\alice");
+        assert_eq!(normalize_remote_username(".\\alice"), ".\\alice");
+        assert_eq!(
+            normalize_remote_username("CONTOSO\\alice"),
+            "CONTOSO\\alice"
+        );
+        assert_eq!(
+            normalize_remote_username("alice@example.com"),
+            "alice@example.com"
         );
     }
 
