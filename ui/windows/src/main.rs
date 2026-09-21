@@ -1096,7 +1096,6 @@ fn is_core_unavailable(error: &str) -> bool {
 #[cfg(windows)]
 fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<String, String> {
     use std::process::Command;
-    use windows_sys::core::{PCWSTR, PWSTR};
     use windows_sys::Win32::Security::Credentials::{
         CredDeleteW, CredWriteW, CREDENTIALW, CRED_PERSIST_SESSION, CRED_TYPE_DOMAIN_PASSWORD,
     };
@@ -1117,11 +1116,11 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
 
     let credential = CREDENTIALW {
         Type: CRED_TYPE_DOMAIN_PASSWORD,
-        TargetName: PWSTR(target_w.as_ptr() as *mut u16),
+        TargetName: target_w.as_ptr() as *mut u16,
         CredentialBlobSize: password_blob.len() as u32,
         CredentialBlob: password_blob.as_mut_ptr(),
         Persist: CRED_PERSIST_SESSION,
-        UserName: PWSTR(username_w.as_ptr() as *mut u16),
+        UserName: username_w.as_ptr() as *mut u16,
         ..Default::default()
     };
 
@@ -1137,7 +1136,7 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
         Ok(process) => process,
         Err(error) => {
             unsafe {
-                let _ = CredDeleteW(PCWSTR(target_w.as_ptr()), CRED_TYPE_DOMAIN_PASSWORD, 0);
+                let _ = CredDeleteW(target_w.as_ptr(), CRED_TYPE_DOMAIN_PASSWORD, 0);
             }
             return Err(format!("remote_client_start: {error}"));
         }
@@ -1146,7 +1145,7 @@ fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<S
     thread::spawn(move || {
         let _ = process.wait();
         unsafe {
-            let _ = CredDeleteW(PCWSTR(target_w.as_ptr()), CRED_TYPE_DOMAIN_PASSWORD, 0);
+            let _ = CredDeleteW(target_w.as_ptr(), CRED_TYPE_DOMAIN_PASSWORD, 0);
         }
     });
 
