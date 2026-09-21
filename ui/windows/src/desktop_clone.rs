@@ -8,6 +8,7 @@ use std::time::Duration;
 mod native {
     use crate::DesktopCloneWindow;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use slint::ComponentHandle;
     use std::process::{Child, Command};
     use windows_sys::Win32::Foundation::{HWND, RECT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
