@@ -18,6 +18,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })))?;
 
     for (width, height) in sizes {
+        if page == "desktop-clone" {
+            let window = DesktopCloneWindow::new()?;
+            window.set_host("127.0.0.2".into());
+            window.set_status("正在等待 RDP 登录窗口…".into());
+            window.window().set_size(PhysicalSize::new(width, height));
+            let snapshot = window.window().take_snapshot()?;
+            write_snapshot(&output, &page, width, height, &snapshot)?;
+            window.window().hide()?;
+            continue;
+        }
+
         let window = MainWindow::new()?;
         window.set_page(page.clone().into());
         window.set_core_installed(true);
@@ -28,32 +39,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window.set_plugin_summary("No plugins are available in this release.".into());
         window.window().set_size(PhysicalSize::new(width, height));
         let snapshot = window.window().take_snapshot()?;
-        if snapshot.width() != width || snapshot.height() != height {
-            return Err(format!(
-                "snapshot size mismatch: expected {width}x{height}, got {}x{}",
-                snapshot.width(),
-                snapshot.height()
-            )
-            .into());
-        }
-        if snapshot
-            .as_bytes()
-            .chunks_exact(4)
-            .all(|pixel| pixel == [247, 247, 248, 255])
-        {
-            return Err(format!("snapshot is blank at {width}x{height}").into());
-        }
-        let page_output = if page == "overview" {
-            output.clone()
-        } else {
-            output.join(&page)
-        };
-        fs::create_dir_all(&page_output)?;
-        let path = page_output.join(format!("{width}x{height}.png"));
-        write_png(&path, &snapshot)?;
+        write_snapshot(&output, &page, width, height, &snapshot)?;
         window.window().hide()?;
     }
     Ok(())
+}
+
+fn write_snapshot(
+    output: &PathBuf,
+    page: &str,
+    width: u32,
+    height: u32,
+    snapshot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if snapshot.width() != width || snapshot.height() != height {
+        return Err(format!(
+            "snapshot size mismatch: expected {width}x{height}, got {}x{}",
+            snapshot.width(),
+            snapshot.height()
+        )
+        .into());
+    }
+    if snapshot
+        .as_bytes()
+        .chunks_exact(4)
+        .all(|pixel| pixel == [247, 247, 248, 255])
+    {
+        return Err(format!("snapshot is blank at {width}x{height}").into());
+    }
+    let page_output = if page == "overview" {
+        output.clone()
+    } else {
+        output.join(page)
+    };
+    fs::create_dir_all(&page_output)?;
+    let path = page_output.join(format!("{width}x{height}.png"));
+    write_png(&path, snapshot)
 }
 
 fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error::Error>> {
@@ -80,7 +101,7 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error
         }
     }
     match page.as_str() {
-        "overview" | "plugins" | "accounts" | "tasks" | "remote" | "settings" => {
+        "overview" | "plugins" | "accounts" | "tasks" | "remote" | "settings" | "desktop-clone" => {
             Ok((output, sizes, page))
         }
         other => Err(format!("unknown page: {other}").into()),

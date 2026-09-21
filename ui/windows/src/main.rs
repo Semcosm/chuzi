@@ -1,6 +1,8 @@
+mod desktop_clone;
 mod models;
 
 use base64::Engine;
+use desktop_clone::DesktopCloneController;
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
     CoreRequest, CoreStatus, SubmitResult, UiPreferences,
@@ -8,9 +10,11 @@ use models::{
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
 use slint::{ComponentHandle, Image, ModelRc, SharedString};
+use std::cell::RefCell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
@@ -543,21 +547,29 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let weak = ui.as_weak();
-    let remote_state = Arc::clone(&state);
+    let desktop_clone_state: Rc<RefCell<Option<DesktopCloneController>>> =
+        Rc::new(RefCell::new(None));
+    let desktop_clone_slot = desktop_clone_state.clone();
     ui.on_connect_remote(move |host| {
         let host = host.to_string();
         if let Some(window) = weak.upgrade() {
-            window.set_remote_status(format!("Connecting to {host}...").into());
+            window.set_remote_status(format!("Opening desktop clone for {host}...").into());
+            match DesktopCloneController::new(host.clone()) {
+                Ok(controller) => {
+                    *desktop_clone_slot.borrow_mut() = Some(controller);
+                    window.set_message(
+                        "Desktop clone window opened. Windows will show the native RDP sign-in dialog."
+                            .into(),
+                    );
+                    window.set_message_kind("success".into());
+                }
+                Err(error) => {
+                    window.set_remote_status("Desktop clone could not be opened.".into());
+                    window.set_message(friendly_error(&error).into());
+                    window.set_message_kind("error".into());
+                }
+            }
         }
-        run_background_with(
-            &weak,
-            Arc::clone(&remote_state),
-            move |_state| {
-                let result = launch_remote_desktop(&host);
-                result.map(|message| (message.clone(), message))
-            },
-            |window, status: String| window.set_remote_status(status.into()),
-        );
     });
 }
 
@@ -1033,12 +1045,6 @@ fn friendly_error(error: &str) -> String {
     if value.contains("remote_desktop_requires_windows") {
         return "Remote desktop is only available in the Windows client.".to_owned();
     }
-    if value.contains("missing_remote_") || value.contains("invalid_remote_") {
-        return "Enter a valid Windows username and password.".to_owned();
-    }
-    if value.contains("remote_credential_write") {
-        return "Windows rejected the temporary remote-login credential.".to_owned();
-    }
     if value.contains("remote_client_start") {
         return "Windows could not start the Remote Desktop client.".to_owned();
     }
@@ -1090,46 +1096,6 @@ fn is_core_unavailable(error: &str) -> bool {
         || value.contains("core_start_timeout")
 }
 
-#[cfg(windows)]
-fn launch_remote_desktop(host: &str) -> Result<String, String> {
-    use std::process::Command;
-
-    validate_remote_field(host, "host")?;
-
-    let host = host.trim();
-    let endpoint = format!("/v:{host}");
-    Command::new("mstsc.exe")
-        .arg(endpoint)
-        .arg("/f")
-        .arg("/prompt")
-        .spawn()
-        .map(drop)
-        .map_err(|error| format!("remote_client_start: {error}"))?;
-
-    Ok(format!(
-        "Windows Remote Desktop started for {host}. Chuzi remains open."
-    ))
-}
-
-#[cfg(not(windows))]
-fn launch_remote_desktop(_host: &str) -> Result<String, String> {
-    Err("remote_desktop_requires_windows".to_owned())
-}
-
-#[cfg(any(windows, test))]
-fn validate_remote_field(value: &str, label: &str) -> Result<(), String> {
-    if value.trim().is_empty() {
-        return Err(format!("missing_remote_{label}"));
-    }
-    if value
-        .chars()
-        .any(|character| character == '\0' || character == '\r' || character == '\n')
-    {
-        return Err(format!("invalid_remote_{label}"));
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1158,20 +1124,8 @@ mod tests {
             "The operation could not be completed. Refresh and try again."
         );
         assert_eq!(
-            friendly_error("missing_remote_username"),
-            "Enter a valid Windows username and password."
-        );
-        assert_eq!(
             friendly_error("remote_client_start: access denied"),
             "Windows could not start the Remote Desktop client."
-        );
-        assert_eq!(
-            validate_remote_field("", "username"),
-            Err("missing_remote_username".into())
-        );
-        assert_eq!(
-            validate_remote_field("bad\nuser", "username"),
-            Err("invalid_remote_username".into())
         );
     }
 
