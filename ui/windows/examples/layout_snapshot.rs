@@ -21,7 +21,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if page == "desktop-clone" {
             let window = DesktopCloneWindow::new()?;
             window.set_host("127.0.0.2".into());
-            window.set_status("正在等待 RDP 登录窗口…".into());
+            window.set_state("not-started".into());
+            window.set_status("UI 外壳预览：远程画面尚未接入。".into());
             window.window().set_size(PhysicalSize::new(width, height));
             let snapshot = window.window().take_snapshot()?;
             write_snapshot(&output, &page, width, height, &snapshot)?;
@@ -79,7 +80,7 @@ fn write_snapshot(
 
 fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error::Error>> {
     let mut output = PathBuf::from("dist/windows-layout");
-    let mut sizes = vec![(800, 600), (1120, 760), (1440, 900)];
+    let mut sizes = vec![(1280, 752), (800, 600), (500, 281)];
     let mut page = "overview".to_owned();
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
