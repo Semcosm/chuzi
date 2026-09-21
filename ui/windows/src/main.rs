@@ -544,20 +544,16 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
 
     let weak = ui.as_weak();
     let remote_state = Arc::clone(&state);
-    ui.on_connect_remote(move |host, username, password| {
+    ui.on_connect_remote(move |host| {
         let host = host.to_string();
-        let username = username.to_string();
-        let mut password = password.to_string();
         if let Some(window) = weak.upgrade() {
             window.set_remote_status(format!("Connecting to {host}...").into());
-            window.set_remote_password(SharedString::default());
         }
         run_background_with(
             &weak,
             Arc::clone(&remote_state),
             move |_state| {
-                let result = launch_remote_desktop(&username, &password, &host);
-                password.clear();
+                let result = launch_remote_desktop(&host);
                 result.map(|message| (message.clone(), message))
             },
             |window, status: String| window.set_remote_status(status.into()),
@@ -1095,73 +1091,28 @@ fn is_core_unavailable(error: &str) -> bool {
 }
 
 #[cfg(windows)]
-fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<String, String> {
+fn launch_remote_desktop(host: &str) -> Result<String, String> {
     use std::process::Command;
-    use windows_sys::Win32::Security::Credentials::{
-        CredDeleteW, CredWriteW, CREDENTIALW, CRED_PERSIST_SESSION, CRED_TYPE_GENERIC,
-    };
 
-    validate_remote_field(username, "username")?;
-    validate_remote_field(password, "password")?;
     validate_remote_field(host, "host")?;
 
     let host = host.trim();
-    let username = normalize_remote_username(username);
-    let target = format!("TERMSRV/{host}");
-    let target_w = wide_string(&target);
-    let username_w = wide_string(&username);
-    // RDP consumes a Generic TERMSRV credential (the same shape as
-    // `cmdkey /generic:TERMSRV/<host>`). Keep the blob only for the duration of
-    // the CredWrite call; Windows stores the session credential.
-    let mut password_blob = password
-        .encode_utf16()
-        .flat_map(u16::to_le_bytes)
-        .collect::<Vec<u8>>();
-
-    let credential = CREDENTIALW {
-        Type: CRED_TYPE_GENERIC,
-        TargetName: target_w.as_ptr() as *mut u16,
-        CredentialBlobSize: password_blob.len() as u32,
-        CredentialBlob: password_blob.as_mut_ptr(),
-        Persist: CRED_PERSIST_SESSION,
-        UserName: username_w.as_ptr() as *mut u16,
-        ..Default::default()
-    };
-
-    if unsafe { CredWriteW(&credential, 0) } == 0 {
-        let error = std::io::Error::last_os_error();
-        password_blob.fill(0);
-        return Err(format!("remote_credential_write: {error}"));
-    }
-    password_blob.fill(0);
-
     let endpoint = format!("/v:{host}");
-    let process = match Command::new("mstsc.exe").arg(endpoint).arg("/f").spawn() {
-        Ok(process) => process,
-        Err(error) => {
-            unsafe {
-                let _ = CredDeleteW(target_w.as_ptr(), CRED_TYPE_GENERIC, 0);
-            }
-            return Err(format!("remote_client_start: {error}"));
-        }
-    };
-
-    // mstsc.exe is a GUI launcher: it can return as soon as the RDP window is
-    // handed off to the existing client process.  Waiting for that process and
-    // deleting the credential here races the actual authentication and causes
-    // mstsc to fall back to the interactive user's credentials.  The credential
-    // is CRED_PERSIST_SESSION, so Windows removes it when this logon session
-    // ends.  Keep the child detached and retain the session credential until
-    // then; a later connection overwrites the same TERMSRV target.
-    drop(process);
+    Command::new("mstsc.exe")
+        .arg(endpoint)
+        .arg("/f")
+        .arg("/prompt")
+        .spawn()
+        .map(drop)
+        .map_err(|error| format!("remote_client_start: {error}"))?;
 
     Ok(format!(
-        "Remote desktop started for {username}. The session credential will be removed when Windows signs out."
+        "Windows Remote Desktop started for {host}. Chuzi remains open."
     ))
 }
 
 #[cfg(not(windows))]
-fn launch_remote_desktop(_username: &str, _password: &str, _host: &str) -> Result<String, String> {
+fn launch_remote_desktop(_host: &str) -> Result<String, String> {
     Err("remote_desktop_requires_windows".to_owned())
 }
 
@@ -1177,21 +1128,6 @@ fn validate_remote_field(value: &str, label: &str) -> Result<(), String> {
         return Err(format!("invalid_remote_{label}"));
     }
     Ok(())
-}
-
-#[cfg(any(windows, test))]
-fn normalize_remote_username(value: &str) -> String {
-    let username = value.trim();
-    if username.contains('\\') || username.contains('@') {
-        username.to_owned()
-    } else {
-        format!(".\\{username}")
-    }
-}
-
-#[cfg(windows)]
-fn wide_string(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
 #[cfg(test)]
@@ -1236,16 +1172,6 @@ mod tests {
         assert_eq!(
             validate_remote_field("bad\nuser", "username"),
             Err("invalid_remote_username".into())
-        );
-        assert_eq!(normalize_remote_username(" alice "), r".\alice");
-        assert_eq!(normalize_remote_username(".\\alice"), ".\\alice");
-        assert_eq!(
-            normalize_remote_username("CONTOSO\\alice"),
-            "CONTOSO\\alice"
-        );
-        assert_eq!(
-            normalize_remote_username("alice@example.com"),
-            "alice@example.com"
         );
     }
 
