@@ -6,6 +6,7 @@ use std::time::Duration;
 
 #[cfg(windows)]
 mod native {
+    use crate::DesktopCloneWindow;
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
     use std::process::{Child, Command};
     use windows_sys::Win32::Foundation::{HWND, RECT};
@@ -13,8 +14,8 @@ mod native {
         CreateWindowExW, DestroyWindow, EnumWindows, FindWindowW, GetClassNameW, GetClientRect,
         GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsWindow, IsWindowVisible,
         SendMessageW, SetParent, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
-        GWL_STYLE, GW_OWNER, HWND_TOP, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE,
-        SW_SHOW, WM_CLOSE, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_APPWINDOW,
+        GWL_STYLE, GW_OWNER, HWND_TOP, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_SHOW,
+        WM_CLOSE, WS_CAPTION, WS_CHILD, WS_CLIPCHILDREN, WS_CLIPSIBLINGS, WS_EX_APPWINDOW,
         WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
         WS_VISIBLE,
     };
@@ -53,7 +54,7 @@ mod native {
         }
 
         pub fn poll(&mut self) -> EmbedState {
-            if !self.remote_hwnd.is_null() && IsWindow(self.remote_hwnd) == 0 {
+            if !self.remote_hwnd.is_null() && unsafe { IsWindow(self.remote_hwnd) == 0 } {
                 self.remote_hwnd = std::ptr::null_mut();
                 return EmbedState::Closed;
             }
@@ -89,41 +90,49 @@ mod native {
                 right: 0,
                 bottom: 0,
             };
-            if GetClientRect(self.parent_hwnd, &mut rect) == 0 {
+            if unsafe { GetClientRect(self.parent_hwnd, &mut rect) == 0 } {
                 return;
             }
 
             let width = (rect.right - rect.left).max(1);
             let height = (rect.bottom - rect.top - self.content_top).max(1);
-            let _ = SetWindowPos(
-                self.host_hwnd,
-                HWND_TOP,
-                0,
-                self.content_top,
-                width,
-                height,
-                SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
-            );
-            if !self.remote_hwnd.is_null() {
+            unsafe {
                 let _ = SetWindowPos(
-                    self.remote_hwnd,
+                    self.host_hwnd,
                     HWND_TOP,
                     0,
-                    0,
+                    self.content_top,
                     width,
                     height,
                     SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
                 );
             }
+            if !self.remote_hwnd.is_null() {
+                unsafe {
+                    let _ = SetWindowPos(
+                        self.remote_hwnd,
+                        HWND_TOP,
+                        0,
+                        0,
+                        width,
+                        height,
+                        SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW,
+                    );
+                }
+            }
         }
 
         pub fn disconnect(&mut self) {
-            if !self.remote_hwnd.is_null() && IsWindow(self.remote_hwnd) != 0 {
-                let _ = SendMessageW(self.remote_hwnd, WM_CLOSE, 0, 0);
+            if !self.remote_hwnd.is_null() && unsafe { IsWindow(self.remote_hwnd) != 0 } {
+                unsafe {
+                    let _ = SendMessageW(self.remote_hwnd, WM_CLOSE, 0, 0);
+                }
                 self.remote_hwnd = std::ptr::null_mut();
             }
-            if !self.host_hwnd.is_null() && IsWindow(self.host_hwnd) != 0 {
-                let _ = DestroyWindow(self.host_hwnd);
+            if !self.host_hwnd.is_null() && unsafe { IsWindow(self.host_hwnd) != 0 } {
+                unsafe {
+                    let _ = DestroyWindow(self.host_hwnd);
+                }
                 self.host_hwnd = std::ptr::null_mut();
             }
             if self.process.try_wait().ok().flatten().is_none() {
