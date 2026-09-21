@@ -80,7 +80,9 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error
         }
     }
     match page.as_str() {
-        "overview" | "plugins" | "accounts" | "tasks" | "settings" => Ok((output, sizes, page)),
+        "overview" | "plugins" | "accounts" | "tasks" | "remote" | "settings" => {
+            Ok((output, sizes, page))
+        }
         other => Err(format!("unknown page: {other}").into()),
     }
 }

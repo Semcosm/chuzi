@@ -114,6 +114,9 @@ export component MainWindow inherits Window {
     in-out property <bool> launch-on-login: false;
     in-out property <bool> close-to-tray: false;
     in-out property <int> update-interval: 60;
+    in-out property <string> remote-user: "";
+    in-out property <string> remote-password: "";
+    in-out property <string> remote-status: "No remote session started.";
 
     callback install-core();
     callback start-core();
@@ -136,6 +139,7 @@ export component MainWindow inherits Window {
     callback refresh-task(string);
     callback cancel-task(string);
     callback refresh-view(string);
+    callback connect-remote(string, string);
 
     background: Palette.background;
 
@@ -179,6 +183,11 @@ export component MainWindow inherits Window {
                     spacing: 4px;
                     Rectangle { width: 3px; background: root.page == "tasks" ? #3d6f9f : transparent; border-radius: 2px; }
                     Button { text: "Tasks"; clicked => { root.page = "tasks"; } }
+                }
+                HorizontalBox {
+                    spacing: 4px;
+                    Rectangle { width: 3px; background: root.page == "remote" ? #3d6f9f : transparent; border-radius: 2px; }
+                    Button { text: "Remote"; clicked => { root.page = "remote"; } }
                 }
                 Rectangle { vertical-stretch: 1; background: transparent; }
                 HorizontalBox {
@@ -385,6 +394,40 @@ export component MainWindow inherits Window {
                         }
                     }
                     FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : #526c92; vertical-stretch: 0; }
+                }
+            }
+
+            if root.page == "remote": ScrollView {
+                VerticalBox {
+                    padding: 32px;
+                    spacing: 18px;
+                    PageHeader { title: "Remote session"; subtitle: "Sign in to a local RDP account and open its desktop."; }
+                    GroupBox {
+                        title: "Windows login";
+                        max-height: 238px;
+                        vertical-stretch: 0;
+                        VerticalBox {
+                            padding: 14px;
+                            spacing: 10px;
+                            Text { text: "Host: localhost"; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            LineEdit { placeholder-text: "Windows username"; text <=> root.remote-user; }
+                            LineEdit { placeholder-text: "Windows password"; input-type: password; text <=> root.remote-password; }
+                            HorizontalBox {
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                Button {
+                                    text: "Connect";
+                                    enabled: !root.busy && root.remote-user != "" && root.remote-password != "";
+                                    vertical-stretch: 0;
+                                    clicked => { root.connect-remote(root.remote-user, root.remote-password); }
+                                }
+                                Text { text: root.remote-status; color: Palette.alternate-foreground; vertical-alignment: center; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                    Text { text: "The password is kept in memory for the connection attempt and is not saved by Chuzi."; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                    FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : root.message-kind == "success" ? #4b8c6a : #526c92; vertical-stretch: 0; }
                 }
             }
 

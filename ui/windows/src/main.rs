@@ -541,6 +541,27 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             },
         );
     });
+
+    let weak = ui.as_weak();
+    let remote_state = Arc::clone(&state);
+    ui.on_connect_remote(move |username, password| {
+        let username = username.to_string();
+        let mut password = password.to_string();
+        if let Some(window) = weak.upgrade() {
+            window.set_remote_status("Connecting to the local RDP host...".into());
+            window.set_remote_password(SharedString::default());
+        }
+        run_background_with(
+            &weak,
+            Arc::clone(&remote_state),
+            move |_state| {
+                let result = launch_remote_desktop(&username, &password, "localhost");
+                password.clear();
+                result.map(|message| (message.clone(), message))
+            },
+            |window, status: String| window.set_remote_status(status.into()),
+        );
+    });
 }
 
 #[derive(Debug)]
@@ -1012,6 +1033,18 @@ fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static st
 
 fn friendly_error(error: &str) -> String {
     let value = error.to_ascii_lowercase();
+    if value.contains("remote_desktop_requires_windows") {
+        return "Remote desktop is only available in the Windows client.".to_owned();
+    }
+    if value.contains("missing_remote_") || value.contains("invalid_remote_") {
+        return "Enter a valid Windows username and password.".to_owned();
+    }
+    if value.contains("remote_credential_write") {
+        return "Windows rejected the temporary remote-login credential.".to_owned();
+    }
+    if value.contains("remote_client_start") {
+        return "Windows could not start the Remote Desktop client.".to_owned();
+    }
     if value.contains("missing_account")
         || value.contains("missing_request")
         || value.contains("missing_plugin")
@@ -1060,6 +1093,90 @@ fn is_core_unavailable(error: &str) -> bool {
         || value.contains("core_start_timeout")
 }
 
+#[cfg(windows)]
+fn launch_remote_desktop(username: &str, password: &str, host: &str) -> Result<String, String> {
+    use std::process::Command;
+    use windows_sys::core::{PCWSTR, PWSTR};
+    use windows_sys::Win32::Security::Credentials::{
+        CredDeleteW, CredWriteW, CREDENTIALW, CRED_PERSIST_SESSION, CRED_TYPE_DOMAIN_PASSWORD,
+    };
+
+    validate_remote_field(username, "username")?;
+    validate_remote_field(password, "password")?;
+    validate_remote_field(host, "host")?;
+
+    let target = format!("TERMSRV/{host}");
+    let target_w = wide_string(&target);
+    let username_w = wide_string(username);
+    // Domain-password credentials are UTF-16 bytes. Keep the blob only for the
+    // duration of the CredWrite call; Windows stores the session credential.
+    let mut password_blob = password
+        .encode_utf16()
+        .flat_map(u16::to_le_bytes)
+        .collect::<Vec<u8>>();
+
+    let credential = CREDENTIALW {
+        Type: CRED_TYPE_DOMAIN_PASSWORD,
+        TargetName: PWSTR(target_w.as_ptr() as *mut u16),
+        CredentialBlobSize: password_blob.len() as u32,
+        CredentialBlob: password_blob.as_mut_ptr(),
+        Persist: CRED_PERSIST_SESSION,
+        UserName: PWSTR(username_w.as_ptr() as *mut u16),
+        ..Default::default()
+    };
+
+    if unsafe { CredWriteW(&credential, 0) } == 0 {
+        let error = std::io::Error::last_os_error();
+        password_blob.fill(0);
+        return Err(format!("remote_credential_write: {error}"));
+    }
+    password_blob.fill(0);
+
+    let endpoint = format!("/v:{host}");
+    let mut process = match Command::new("mstsc.exe").arg(endpoint).arg("/f").spawn() {
+        Ok(process) => process,
+        Err(error) => {
+            unsafe {
+                let _ = CredDeleteW(PCWSTR(target_w.as_ptr()), CRED_TYPE_DOMAIN_PASSWORD, 0);
+            }
+            return Err(format!("remote_client_start: {error}"));
+        }
+    };
+
+    thread::spawn(move || {
+        let _ = process.wait();
+        unsafe {
+            let _ = CredDeleteW(PCWSTR(target_w.as_ptr()), CRED_TYPE_DOMAIN_PASSWORD, 0);
+        }
+    });
+
+    Ok(format!("Remote desktop started for {username}."))
+}
+
+#[cfg(not(windows))]
+fn launch_remote_desktop(_username: &str, _password: &str, _host: &str) -> Result<String, String> {
+    Err("remote_desktop_requires_windows".to_owned())
+}
+
+#[cfg(any(windows, test))]
+fn validate_remote_field(value: &str, label: &str) -> Result<(), String> {
+    if value.trim().is_empty() {
+        return Err(format!("missing_remote_{label}"));
+    }
+    if value
+        .chars()
+        .any(|character| character == '\0' || character == '\r' || character == '\n')
+    {
+        return Err(format!("invalid_remote_{label}"));
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn wide_string(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1086,6 +1203,22 @@ mod tests {
         assert_eq!(
             friendly_error("unexpected stack and profile path"),
             "The operation could not be completed. Refresh and try again."
+        );
+        assert_eq!(
+            friendly_error("missing_remote_username"),
+            "Enter a valid Windows username and password."
+        );
+        assert_eq!(
+            friendly_error("remote_client_start: access denied"),
+            "Windows could not start the Remote Desktop client."
+        );
+        assert_eq!(
+            validate_remote_field("", "username"),
+            Err("missing_remote_username".into())
+        );
+        assert_eq!(
+            validate_remote_field("bad\nuser", "username"),
+            Err("invalid_remote_username".into())
         );
     }
 
