@@ -723,10 +723,12 @@ dependencies = [
  "base64 0.22.1",
  "i-slint-backend-testing",
  "png 0.17.16",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "slint",
  "slint-build",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4267,6 +4269,7 @@ dependencies = [
  "num-traits",
  "once_cell",
  "pin-weak",
+ "raw-window-handle",
  "slint-macros",
  "unicode-segmentation",
  "vtable",

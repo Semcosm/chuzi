@@ -1,5 +1,7 @@
 use crate::DesktopCloneWindow;
 use slint::{CloseRequestResponse, ComponentHandle};
+#[cfg(windows)]
+use std::time::Duration;
 
 /// UI-only owner for the desktop-clone window.
 ///
@@ -19,6 +21,16 @@ impl DesktopCloneController {
             .show()
             .map_err(|error| format!("desktop_clone_window_show: {error}"))?;
 
+        #[cfg(windows)]
+        {
+            let weak = window.as_weak();
+            slint::Timer::single_shot(Duration::from_millis(1), move || {
+                if let Some(window) = weak.upgrade() {
+                    apply_windows_window_chrome(&window);
+                }
+            });
+        }
+
         let weak = window.as_weak();
         window.on_hide_window(move || {
             if let Some(window) = weak.upgrade() {
@@ -31,5 +43,48 @@ impl DesktopCloneController {
             .on_close_requested(move || CloseRequestResponse::HideWindow);
 
         Ok(Self { _window: window })
+    }
+}
+
+#[cfg(windows)]
+fn apply_windows_window_chrome(window: &DesktopCloneWindow) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use windows_sys::Win32::Graphics::Dwm::{
+        DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_USE_IMMERSIVE_DARK_MODE,
+        DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
+    };
+
+    let handle = window.window().window_handle();
+    let Ok(handle) = handle.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(win32) = handle.as_raw() else {
+        return;
+    };
+
+    let hwnd = win32.hwnd.get() as *mut core::ffi::c_void;
+    let corner_preference = DWMWCP_ROUND;
+    let dark_mode: u32 = 1;
+    let border_color: u32 = 0x00141414;
+
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&corner_preference as *const _).cast(),
+            std::mem::size_of_val(&corner_preference) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            (&dark_mode as *const _).cast(),
+            std::mem::size_of_val(&dark_mode) as u32,
+        );
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_BORDER_COLOR,
+            (&border_color as *const _).cast(),
+            std::mem::size_of_val(&border_color) as u32,
+        );
     }
 }
