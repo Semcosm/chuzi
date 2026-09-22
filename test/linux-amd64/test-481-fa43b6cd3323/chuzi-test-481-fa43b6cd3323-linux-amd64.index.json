@@ -1,0 +1,117 @@
+{
+  "format": "chuzi-release-index/v1",
+  "channel": "test",
+  "version": "test-481-fa43b6cd3323",
+  "commit": "fa43b6cd33235e3564c2fa8bfb763deb2671fc77",
+  "target": "linux-amd64",
+  "generated_at": "2026-09-22T12:03:52.373612Z",
+  "manifest": {
+    "format": "chuzi-release/v1",
+    "channel": "test",
+    "version": "test-481-fa43b6cd3323",
+    "commit": "fa43b6cd33235e3564c2fa8bfb763deb2671fc77",
+    "target": "linux-amd64",
+    "generated_at": "2026-09-22T12:03:52.373612Z",
+    "components": [
+      {
+        "id": "launcher",
+        "version": "test-481-fa43b6cd3323",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-test-481-fa43b6cd3323-linux-amd64-launcher.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi-launcher",
+            "sha256": "4297410be65d68097588e1f7a93df0086f2ff0150e6f54e72805cd9aa0b62fdd",
+            "size": 6549688
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "version": "test-481-fa43b6cd3323",
+        "required": false,
+        "dependencies": [
+          "browser-worker"
+        ],
+        "artifact": "chuzi-test-481-fa43b6cd3323-linux-amd64-service.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi",
+            "sha256": "61d5a192456d47bf0554f5f44eb1104789f6e5263b2af109f0828bf079405e72",
+            "size": 7643320
+          }
+        ]
+      },
+      {
+        "id": "browser-worker",
+        "version": "test-481-fa43b6cd3323",
+        "required": false,
+        "dependencies": [],
+        "artifact": "chuzi-test-481-fa43b6cd3323-linux-amd64-browser-worker.tar.gz",
+        "resources": [
+          {
+            "path": "browser-worker/src/headless-adapter.mjs",
+            "sha256": "f0c39ea05bbbbb8e3cb821a1644a227477e5b58c8ce9b4387f6ef3359af1a610",
+            "size": 38774
+          },
+          {
+            "path": "browser-worker/src/headless.mjs",
+            "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+            "size": 14202
+          },
+          {
+            "path": "browser-worker/src/local-test-page.html",
+            "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+            "size": 397
+          },
+          {
+            "path": "browser-worker/src/worker.mjs",
+            "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+            "size": 3421
+          },
+          {
+            "path": "browser-worker/worker-manifest.json",
+            "sha256": "a08c7c11d6ac000f6ea2817c1fab4d03caf80a192fd33db13028bea758632453",
+            "size": 465
+          }
+        ]
+      }
+    ],
+    "plugins": []
+  },
+  "artifacts": [
+    {
+      "component": "bundle",
+      "target": "linux-amd64",
+      "version": "test-481-fa43b6cd3323",
+      "path": "chuzi-test-481-fa43b6cd3323-linux-amd64.tar.gz",
+      "size": 5938290,
+      "sha256": "4d73d699d9196209b8a9d55f6993c729eb97e1a0351f1a0a3e7d61cb7a6a6057"
+    },
+    {
+      "component": "launcher",
+      "target": "linux-amd64",
+      "version": "test-481-fa43b6cd3323",
+      "path": "chuzi-test-481-fa43b6cd3323-linux-amd64-launcher.tar.gz",
+      "size": 2748511,
+      "sha256": "ad18b7e92da465125c7c3ce41ffd5c941d1964989435a83c6855f6ee06ac0064"
+    },
+    {
+      "component": "service",
+      "target": "linux-amd64",
+      "version": "test-481-fa43b6cd3323",
+      "path": "chuzi-test-481-fa43b6cd3323-linux-amd64-service.tar.gz",
+      "size": 3181538,
+      "sha256": "62896474920aa2b880591b72293b973795d8522d0552aeed04216c0cee5b7ed8"
+    },
+    {
+      "component": "browser-worker",
+      "target": "linux-amd64",
+      "version": "test-481-fa43b6cd3323",
+      "path": "chuzi-test-481-fa43b6cd3323-linux-amd64-browser-worker.tar.gz",
+      "size": 13252,
+      "sha256": "54e2eb755c4a5936c6a820532ea861498788542086d4b4a6e23be42ffeea7b09"
+    }
+  ]
+}
