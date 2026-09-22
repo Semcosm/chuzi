@@ -291,6 +291,7 @@ mod freerdp {
     use std::mem::{size_of, zeroed};
     use std::sync::Arc;
     use windows_sys::Win32::Foundation::{BOOL, HANDLE, WAIT_FAILED};
+    use windows_sys::Win32::Networking::WinSock::{WSACleanup, WSAStartup, WSADATA};
     use windows_sys::Win32::System::Threading::WaitForMultipleObjects;
 
     #[allow(
@@ -322,6 +323,11 @@ mod freerdp {
     }
 
     unsafe fn run_session(target: &RdpTarget, shared: &Arc<SharedState>) -> Result<(), String> {
+        // FreeRDP's standalone Windows clients initialize Winsock in their
+        // process-level startup hook. Embedded clients must do that
+        // explicitly before FreeRDP calls getaddrinfo or creates sockets.
+        let _winsock = WinsockGuard::initialize()?;
+
         let instance = ffi::freerdp_new();
         if instance.is_null() {
             return Err("FreeRDP instance allocation failed".to_owned());
@@ -471,6 +477,27 @@ mod freerdp {
         _instance: *mut ffi::freerdp,
         _context: *mut ffi::rdpContext,
     ) {
+    }
+
+    struct WinsockGuard;
+
+    impl WinsockGuard {
+        unsafe fn initialize() -> Result<Self, String> {
+            let mut data: WSADATA = zeroed();
+            let result = WSAStartup(0x0202, &mut data);
+            if result != 0 {
+                return Err(format!("Winsock initialization failed ({result})"));
+            }
+            Ok(Self)
+        }
+    }
+
+    impl Drop for WinsockGuard {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = WSACleanup();
+            }
+        }
     }
 
     unsafe extern "C" fn post_connect(instance: *mut ffi::freerdp) -> BOOL {
