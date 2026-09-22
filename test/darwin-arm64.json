@@ -5,6 +5,15 @@
   "releases": [
     {
       "channel": "test",
+      "version": "test-484-b888e2fa9154",
+      "commit": "b888e2fa91548dfcbba84aa89f8c6a5b54810d4d",
+      "target": "darwin-arm64",
+      "index_url": "https://raw.githubusercontent.com/Semcosm/chuzi/release-catalog/test/darwin-arm64/test-484-b888e2fa9154/chuzi-test-484-b888e2fa9154-darwin-arm64.index.json",
+      "published_at": "2026-09-22T23:08:49Z",
+      "prerelease": true
+    },
+    {
+      "channel": "test",
       "version": "test-483-63829c6917d3",
       "commit": "63829c6917d3e87202e7389226de01422f07f656",
       "target": "darwin-arm64",
