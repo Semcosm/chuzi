@@ -820,6 +820,21 @@ export component DesktopRdpWindow inherits Window {
                         height: parent.height;
                     }
 
+                    TouchArea {
+                        width: parent.width;
+                        height: parent.height;
+                        pointer-event(event) => {
+                            root.rdp-pointer-event(
+                                event.kind == PointerEventKind.move ? "move" :
+                                event.kind == PointerEventKind.down ? "down" :
+                                event.kind == PointerEventKind.up ? "up" : "cancel",
+                                event.button == PointerEventButton.left ? "left" :
+                                event.button == PointerEventButton.right ? "right" :
+                                event.button == PointerEventButton.middle ? "middle" : "other",
+                                self.mouse-x, self.mouse-y, parent.width, parent.height);
+                        }
+                    }
+
                     Rectangle {
                         x: 12px;
                         y: parent.height - 34px;
@@ -963,6 +978,8 @@ export component DesktopRdpWindow inherits Window {
             }
         }
     }
+
+    callback rdp-pointer-event(kind: string, button: string, x: length, y: length, viewport-width: length, viewport-height: length);
 
     if root.show-control-menu: Rectangle {
         x: root.width - 308px;
