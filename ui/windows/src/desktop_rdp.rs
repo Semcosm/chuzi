@@ -591,7 +591,7 @@ mod freerdp {
 
     unsafe fn app_context_from_instance(instance: *mut ffi::freerdp) -> Option<*const AppContext> {
         let context = instance.as_ref()?.context;
-        (!context.is_null()).then(|| context.cast::<AppContext>())
+        (!context.is_null()).then(|| context.cast::<AppContext>().cast_const())
     }
 
     unsafe fn c_string_or_unknown(value: *const c_char) -> String {
