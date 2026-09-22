@@ -607,12 +607,40 @@ component CloneIconButton inherits Rectangle {
     TouchArea { clicked => { root.pressed(); } }
 }
 
+component WindowChromeButton inherits Rectangle {
+    in property <string> icon;
+    in property <color> hover-color: #2d2d2d;
+    in property <color> pressed-color: #3a3a3a;
+    callback pressed();
+
+    width: 46px;
+    height: 32px;
+    background: touch-area.pressed ? root.pressed-color : touch-area.has-hover ? root.hover-color : transparent;
+
+    Text {
+        text: root.icon;
+        color: #f4f4f4;
+        font-size: 13px;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+    }
+
+    touch-area := TouchArea {
+        clicked => { root.pressed(); }
+    }
+}
+
 export component DesktopCloneWindow inherits Window {
     title: "BetterGI 桌面分身";
     min-width: 415px;
     min-height: 90px;
     preferred-width: 1280px;
     preferred-height: 752px;
+    no-frame: true;
+    resize-border-width: 7px;
+    always-on-top: root.topmost;
 
     in-out property <string> host: "localhost";
     in-out property <string> state: "not-started";
@@ -648,6 +676,11 @@ export component DesktopCloneWindow inherits Window {
                 background: #1b1b1b;
                 vertical-stretch: 0;
 
+                WindowMoveArea {
+                    width: parent.width;
+                    height: parent.height;
+                }
+
                 Rectangle {
                     x: 8px;
                     y: 5px;
@@ -667,10 +700,10 @@ export component DesktopCloneWindow inherits Window {
                     }
                 }
                 Rectangle { x: 39px; y: 12px; width: 9px; height: 9px; border-radius: 5px; background: root.state-color; }
-                Text { x: 56px; y: 0px; width: root.width - 264px; height: 32px; text: "BetterGI 桌面分身"; color: #f4f4f4; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                Text { x: 56px; y: 0px; width: root.width - 360px; height: 32px; text: "BetterGI 桌面分身"; color: #f4f4f4; font-size: 12px; vertical-alignment: center; overflow: elide; }
 
                 CloneBarButton {
-                    x: root.width - 620px;
+                    x: root.width - 718px;
                     y: 0px;
                     label: "启动";
                     icon: "▶";
@@ -679,7 +712,7 @@ export component DesktopCloneWindow inherits Window {
                     pressed => { root.state = "connecting"; root.show-control-menu = false; }
                 }
                 CloneBarButton {
-                    x: root.width - 540px;
+                    x: root.width - 638px;
                     y: 0px;
                     label: "隐藏";
                     icon: "◌";
@@ -688,7 +721,7 @@ export component DesktopCloneWindow inherits Window {
                     pressed => { root.hide-window(); }
                 }
                 CloneBarButton {
-                    x: root.width - 460px;
+                    x: root.width - 558px;
                     y: 0px;
                     label: "切换窗口";
                     icon: "⇄";
@@ -697,7 +730,7 @@ export component DesktopCloneWindow inherits Window {
                     pressed => { root.state = root.state == "connected" ? "started" : "connected"; }
                 }
                 CloneBarButton {
-                    x: root.width - 350px;
+                    x: root.width - 448px;
                     y: 0px;
                     label: root.mouse-game-mode ? "游戏鼠标" : "普通鼠标";
                     icon: root.mouse-game-mode ? "⌖" : "⌁";
@@ -706,7 +739,7 @@ export component DesktopCloneWindow inherits Window {
                     pressed => { root.mouse-game-mode = !root.mouse-game-mode; }
                 }
                 CloneBarButton {
-                    x: root.width - 240px;
+                    x: root.width - 338px;
                     y: 0px;
                     label: "控制中心";
                     icon: "▦";
@@ -714,17 +747,38 @@ export component DesktopCloneWindow inherits Window {
                     pressed => { root.show-control-menu = !root.show-control-menu; }
                 }
                 CloneIconButton {
-                    x: root.width - 120px;
+                    x: root.width - 218px;
                     y: 0px;
                     icon: root.audio-enabled ? "◖" : "◗";
                     pressed => { root.audio-enabled = !root.audio-enabled; }
                 }
                 CloneIconButton {
-                    x: root.width - 80px;
+                    x: root.width - 178px;
                     y: 0px;
                     icon: root.topmost ? "◆" : "◇";
                     active: root.topmost;
                     pressed => { root.topmost = !root.topmost; }
+                }
+
+                WindowChromeButton {
+                    x: root.width - 138px;
+                    y: 0px;
+                    icon: "—";
+                    pressed => { root.minimized = true; }
+                }
+                WindowChromeButton {
+                    x: root.width - 92px;
+                    y: 0px;
+                    icon: root.maximized ? "❐" : "□";
+                    pressed => { root.maximized = !root.maximized; }
+                }
+                WindowChromeButton {
+                    x: root.width - 46px;
+                    y: 0px;
+                    icon: "×";
+                    hover-color: #c42b1c;
+                    pressed-color: #a5261a;
+                    pressed => { root.close(); }
                 }
             }
 
