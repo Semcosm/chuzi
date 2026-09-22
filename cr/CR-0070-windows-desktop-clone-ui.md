@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 31983e39cbbdacf26d08723b816fb5658378c841
+Head OID: e185bac43b6e227c86b8ef31a26eeda4b21c51b3
 Integrated Result: pending
 
 ## Summary
@@ -22,8 +22,11 @@ connection card, control-center menu, notification layer, and a black content
 surface reserved for a future remote display.
 
 The controller now owns only window creation, display, hide, and close-request
-behavior. It does not start MSTSC, inspect native HWNDs, embed child windows,
-create sessions, or forward input.
+behavior. The desktop-clone window is a real frameless Slint window with a
+draggable custom title bar that combines the BGI controls with functional
+Windows 11-style minimize, maximize/restore, and close buttons. It does not
+start MSTSC, inspect native HWNDs, embed child windows, create sessions, or
+forward input.
 
 ## Motivation
 
@@ -53,7 +56,9 @@ This change intentionally removes the previous Windows RDP behavior from the
 desktop-clone window. The central black area is a placeholder and has no remote
 desktop transport yet. The BGI visual shell uses Slint-native glyphs and shapes
 instead of importing BGI's external icon/font assets, so exact glyph metrics can
-vary by platform font fallback.
+vary by platform font fallback. Frameless-window resize and system-button
+behavior also depend on the host window backend honoring Slint's native window
+properties.
 
 ## Rollback
 
