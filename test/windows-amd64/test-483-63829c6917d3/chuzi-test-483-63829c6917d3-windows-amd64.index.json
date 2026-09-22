@@ -1,0 +1,122 @@
+{
+  "format": "chuzi-release-index/v1",
+  "channel": "test",
+  "version": "test-483-63829c6917d3",
+  "commit": "63829c6917d3e87202e7389226de01422f07f656",
+  "target": "windows-amd64",
+  "generated_at": "2026-09-22T13:17:44.652304Z",
+  "manifest": {
+    "format": "chuzi-release/v1",
+    "channel": "test",
+    "version": "test-483-63829c6917d3",
+    "commit": "63829c6917d3e87202e7389226de01422f07f656",
+    "target": "windows-amd64",
+    "generated_at": "2026-09-22T13:17:44.652304Z",
+    "components": [
+      {
+        "id": "launcher",
+        "version": "test-483-63829c6917d3",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-test-483-63829c6917d3-windows-amd64-launcher.zip",
+        "resources": [
+          {
+            "path": "chuzi-launcher.exe",
+            "sha256": "01ead9f67b76e9ec4aafe4b130b9b46ec30fc6cdb80e2944defbf2af93848b54",
+            "size": 6839296
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "version": "test-483-63829c6917d3",
+        "required": false,
+        "dependencies": [
+          "browser-worker"
+        ],
+        "artifact": "chuzi-test-483-63829c6917d3-windows-amd64-service.zip",
+        "resources": [
+          {
+            "path": "chuzi.exe",
+            "sha256": "fe552fff35f024d6ddf4c1e2404d3dc5f72165c8960ac98494bbec7a8e297a0c",
+            "size": 7985664
+          },
+          {
+            "path": "chuzi-browser-launcher.exe",
+            "sha256": "a4852bd44ecd9d05d5eb56333499d560c5b60ce76a6ee6874108b5b475aa031b",
+            "size": 2721792
+          }
+        ]
+      },
+      {
+        "id": "browser-worker",
+        "version": "test-483-63829c6917d3",
+        "required": false,
+        "dependencies": [],
+        "artifact": "chuzi-test-483-63829c6917d3-windows-amd64-browser-worker.zip",
+        "resources": [
+          {
+            "path": "browser-worker/src/headless-adapter.mjs",
+            "sha256": "f0c39ea05bbbbb8e3cb821a1644a227477e5b58c8ce9b4387f6ef3359af1a610",
+            "size": 38774
+          },
+          {
+            "path": "browser-worker/src/headless.mjs",
+            "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+            "size": 14202
+          },
+          {
+            "path": "browser-worker/src/local-test-page.html",
+            "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+            "size": 397
+          },
+          {
+            "path": "browser-worker/src/worker.mjs",
+            "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+            "size": 3421
+          },
+          {
+            "path": "browser-worker/worker-manifest.json",
+            "sha256": "a08c7c11d6ac000f6ea2817c1fab4d03caf80a192fd33db13028bea758632453",
+            "size": 465
+          }
+        ]
+      }
+    ],
+    "plugins": []
+  },
+  "artifacts": [
+    {
+      "component": "bundle",
+      "target": "windows-amd64",
+      "version": "test-483-63829c6917d3",
+      "path": "chuzi-test-483-63829c6917d3-windows-amd64.zip",
+      "size": 7882344,
+      "sha256": "5c96594b5e935ebb638f6769a4cfcf11b6a78b2bc9f38fa21eedd319bd6edc48"
+    },
+    {
+      "component": "launcher",
+      "target": "windows-amd64",
+      "version": "test-483-63829c6917d3",
+      "path": "chuzi-test-483-63829c6917d3-windows-amd64-launcher.zip",
+      "size": 2882939,
+      "sha256": "4b41946b0e3c7e234dec56f59125889a23959a375eceec3ff8a714569456a343"
+    },
+    {
+      "component": "service",
+      "target": "windows-amd64",
+      "version": "test-483-63829c6917d3",
+      "path": "chuzi-test-483-63829c6917d3-windows-amd64-service.zip",
+      "size": 4983363,
+      "sha256": "6d2e694ebd1bf867493c9693dd266b40047abc00823f8c3ee33212c418bd7e9e"
+    },
+    {
+      "component": "browser-worker",
+      "target": "windows-amd64",
+      "version": "test-483-63829c6917d3",
+      "path": "chuzi-test-483-63829c6917d3-windows-amd64-browser-worker.zip",
+      "size": 15843,
+      "sha256": "7c57d8cebdfe16ceff1fd8ee626c208ab392357ef953a9ae7880a3aa5a8f7bb3"
+    }
+  ]
+}
