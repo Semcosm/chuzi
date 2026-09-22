@@ -169,7 +169,7 @@ jobs:
   windows_slint:
     name: chuzi-build-windows-slint
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 45
     needs: [go_build, node_checks]
     permissions:
       contents: read
@@ -189,6 +189,41 @@ jobs:
           rustup default stable-x86_64-pc-windows-msvc
           rustc --version
           cargo --version
+      - name: Prepare FreeRDP and bindgen dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
+            throw 'VCPKG_INSTALLATION_ROOT is not available on the Windows runner'
+          }
+          $vcpkg = Join-Path $vcpkgRoot 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) {
+            throw "vcpkg executable is missing: $vcpkg"
+          }
+          $llvmCandidates = @(
+            (Join-Path ${env:ProgramFiles} 'LLVM\bin'),
+            (Join-Path ${env:ProgramFiles(x86)} 'LLVM\bin')
+          )
+          $clang = Get-Command clang.exe -ErrorAction SilentlyContinue
+          if ($null -ne $clang) {
+            $llvmCandidates += Split-Path -Parent $clang.Source
+          }
+          $llvmBin = $llvmCandidates |
+            Where-Object { Test-Path (Join-Path $_ 'libclang.dll') } |
+            Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($llvmBin)) {
+            throw 'libclang.dll is missing from the Windows runner LLVM installation'
+          }
+          $env:VCPKG_ROOT = $vcpkgRoot
+          $env:VCPKGRS_TRIPLET = 'x64-windows-static'
+          $env:LIBCLANG_PATH = $llvmBin
+          $env:RUSTFLAGS = '-C target-feature=+crt-static'
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          'VCPKGRS_TRIPLET=x64-windows-static' >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
+          'RUSTFLAGS=-C target-feature=+crt-static' >> $env:GITHUB_ENV
+          & $vcpkg install 'freerdp[client]:x64-windows-static'
       - name: Check Slint layout at multiple viewports
         shell: pwsh
         run: |

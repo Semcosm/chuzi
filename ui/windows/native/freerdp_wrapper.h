@@ -1,0 +1,25 @@
+#ifndef CHUZI_FREERDP_WRAPPER_H
+#define CHUZI_FREERDP_WRAPPER_H
+
+/* Keep the native boundary in one header. The Rust side only uses the
+ * generated declarations below; it never reimplements an RDP packet or
+ * graphics codec. */
+#include <freerdp/freerdp.h>
+#include <freerdp/gdi/gdi.h>
+#include <freerdp/settings.h>
+
+enum
+{
+	CHUZI_PIXEL_FORMAT_BGRX32 = PIXEL_FORMAT_BGRX32,
+	CHUZI_FREERDP_SERVER_HOSTNAME = FreeRDP_ServerHostname,
+	CHUZI_FREERDP_SERVER_PORT = FreeRDP_ServerPort,
+	CHUZI_FREERDP_USERNAME = FreeRDP_Username,
+	CHUZI_FREERDP_PASSWORD = FreeRDP_Password,
+	CHUZI_FREERDP_DOMAIN = FreeRDP_Domain,
+	CHUZI_FREERDP_DESKTOP_WIDTH = FreeRDP_DesktopWidth,
+	CHUZI_FREERDP_DESKTOP_HEIGHT = FreeRDP_DesktopHeight,
+	CHUZI_FREERDP_DEACTIVATE_CLIENT_DECODING = FreeRDP_DeactivateClientDecoding,
+	CHUZI_FREERDP_TCP_CONNECT_TIMEOUT = FreeRDP_TcpConnectTimeout,
+};
+
+#endif

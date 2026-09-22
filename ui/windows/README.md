@@ -59,7 +59,7 @@ native controls and the content surface update together. The UI-only choice is
 stored in `.chuzi-ui-settings.json` below the resolved Chuzi data directory;
 launcher behavior settings remain in the launcher's validated settings file.
 
-The snapshot example also accepts `--page overview|plugins|accounts|tasks|settings`
+The snapshot example also accepts `--page overview|plugins|accounts|tasks|rdp|settings`
 so each page can be checked at the supported window sizes.
 
 ### Components
@@ -92,6 +92,16 @@ Tasks accepts a request ID and asks the launcher to perform `get_request` or
 shows the redacted request ID, account, state, attempt number, and failure text. While the request has an
 active headless browser session, `View page` calls `get_browser_view` to fetch one bounded JPEG frame. The
 frame is read-only and on demand; the client cannot navigate, click, type, or access a browser endpoint.
+
+### RDP
+
+RDP opens a Windows-only Rust/FreeRDP session. FreeRDP owns TLS/NLA negotiation
+and protocol decoding; the client copies its BGRX32 framebuffer into an owned
+Slint image for display. When credentials are not supplied by the caller,
+Windows' temporary credential prompt is used with persistence disabled. The UI
+does not save or send RDP passwords through Core.
+The current slice is display-only; keyboard and mouse forwarding remains a
+separate input-boundary change.
 
 ## Runtime and packaging
 

@@ -1,8 +1,8 @@
-mod desktop_clone;
+mod desktop_rdp;
 mod models;
 
 use base64::Engine;
-use desktop_clone::DesktopCloneController;
+use desktop_rdp::DesktopRdpController;
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
     CoreRequest, CoreStatus, SubmitResult, UiPreferences,
@@ -547,21 +547,22 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let weak = ui.as_weak();
-    let desktop_clone_state: Rc<RefCell<Option<DesktopCloneController>>> =
-        Rc::new(RefCell::new(None));
-    let desktop_clone_slot = desktop_clone_state.clone();
-    ui.on_connect_remote(move |host| {
+    let desktop_rdp_state: Rc<RefCell<Option<DesktopRdpController>>> = Rc::new(RefCell::new(None));
+    let desktop_rdp_slot = desktop_rdp_state.clone();
+    ui.on_connect_rdp(move |host| {
         let host = host.to_string();
         if let Some(window) = weak.upgrade() {
-            window.set_remote_status(format!("正在打开桌面分身 UI（目标：{host}）…").into());
-            match DesktopCloneController::new(host.clone()) {
+            window.set_rdp_status(format!("正在打开 RDP 窗体（目标：{host}）…").into());
+            match DesktopRdpController::new(host.clone()) {
                 Ok(controller) => {
-                    *desktop_clone_slot.borrow_mut() = Some(controller);
-                    window.set_message("桌面分身 UI 窗体已打开，当前显示纯 UI 外壳。".into());
+                    *desktop_rdp_slot.borrow_mut() = Some(controller);
+                    window.set_message(
+                        "RDP 窗体已打开，FreeRDP 正在连接；凭据提示只对本次连接有效。".into(),
+                    );
                     window.set_message_kind("success".into());
                 }
                 Err(error) => {
-                    window.set_remote_status("桌面分身 UI 无法打开。".into());
+                    window.set_rdp_status("RDP 窗体无法打开。".into());
                     window.set_message(friendly_error(&error).into());
                     window.set_message_kind("error".into());
                 }
@@ -1039,11 +1040,11 @@ fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static st
 
 fn friendly_error(error: &str) -> String {
     let value = error.to_ascii_lowercase();
-    if value.contains("remote_desktop_requires_windows") {
-        return "Remote desktop is only available in the Windows client.".to_owned();
+    if value.contains("rdp_requires_windows") || value.contains("remote_desktop_requires_windows") {
+        return "RDP is only available in the Windows client.".to_owned();
     }
-    if value.contains("remote_client_start") {
-        return "Windows could not start the Remote Desktop client.".to_owned();
+    if value.contains("rdp_client_start") || value.contains("remote_client_start") {
+        return "Windows could not start the RDP client.".to_owned();
     }
     if value.contains("missing_account")
         || value.contains("missing_request")
@@ -1121,8 +1122,8 @@ mod tests {
             "The operation could not be completed. Refresh and try again."
         );
         assert_eq!(
-            friendly_error("remote_client_start: access denied"),
-            "Windows could not start the Remote Desktop client."
+            friendly_error("rdp_client_start: access denied"),
+            "Windows could not start the RDP client."
         );
     }
 
