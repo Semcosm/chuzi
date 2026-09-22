@@ -12,9 +12,8 @@ use std::time::Duration;
 
 /// Parameters for one in-memory RDP connection.
 ///
-/// The UI currently supplies only `host`. Credentials can be injected by a
-/// caller that owns them, and otherwise the Windows credential dialog is used
-/// for this connection only. The target is never serialized or logged.
+/// The UI supplies all connection parameters for one in-memory session. The
+/// target is never serialized or logged.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub struct RdpTarget {
     pub host: String,
@@ -27,19 +26,6 @@ pub struct RdpTarget {
 }
 
 impl RdpTarget {
-    pub fn new(host: String) -> Self {
-        Self {
-            host,
-            port: 3389,
-            username: None,
-            password: None,
-            domain: None,
-            width: 1920,
-            height: 1080,
-        }
-    }
-
-    #[allow(dead_code)]
     pub fn with_credentials(
         host: String,
         username: String,
@@ -131,6 +117,13 @@ impl SharedState {
             frame: update.frame.take(),
         }
     }
+
+    fn status_snapshot(&self) -> (String, String) {
+        let Ok(update) = self.update.lock() else {
+            return ("failed".to_owned(), "RDP 状态不可用。".to_owned());
+        };
+        (update.state.clone(), update.status.clone())
+    }
 }
 
 pub struct DesktopRdpController {
@@ -141,10 +134,6 @@ pub struct DesktopRdpController {
 }
 
 impl DesktopRdpController {
-    pub fn new(host: String) -> Result<Self, String> {
-        Self::new_with_target(RdpTarget::new(host))
-    }
-
     pub fn new_with_target(mut target: RdpTarget) -> Result<Self, String> {
         target.host = target.host.trim().to_owned();
         if target.host.is_empty() {
@@ -152,6 +141,21 @@ impl DesktopRdpController {
         }
         if target.host.contains('\0') {
             return Err("RDP host contains an invalid NUL character".to_owned());
+        }
+        if target.port == 0 {
+            return Err("RDP port must be between 1 and 65535".to_owned());
+        }
+        if target
+            .username
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default()
+            .is_empty()
+        {
+            return Err("RDP username is required".to_owned());
+        }
+        if target.password.as_deref().unwrap_or_default().is_empty() {
+            return Err("RDP password is required".to_owned());
         }
 
         let window = DesktopRdpWindow::new().map_err(|error| error.to_string())?;
@@ -218,6 +222,10 @@ impl DesktopRdpController {
             frame_timer,
         })
     }
+
+    pub fn status_snapshot(&self) -> (String, String) {
+        self.shared.status_snapshot()
+    }
 }
 
 impl Drop for DesktopRdpController {
@@ -277,139 +285,8 @@ fn frame_to_image(frame: &RdpFrame) -> Option<Image> {
 }
 
 #[cfg(windows)]
-fn prompt_for_credentials(target: &RdpTarget) -> Result<RdpCredentials, String> {
-    use std::mem::size_of;
-    use std::ptr::{null, null_mut};
-    use windows_sys::Win32::Foundation::BOOL;
-    use windows_sys::Win32::Security::Credentials::{
-        CredUIParseUserNameW, CredUIPromptForCredentialsW, CREDUI_FLAGS_DO_NOT_PERSIST,
-        CREDUI_FLAGS_EXCLUDE_CERTIFICATES, CREDUI_FLAGS_USERNAME_TARGET_CREDENTIALS, CREDUI_INFOW,
-    };
-
-    if let (Some(username), Some(password)) = (&target.username, &target.password) {
-        if !username.is_empty() && !password.is_empty() {
-            return Ok(RdpCredentials {
-                username: username.clone(),
-                password: password.clone(),
-                domain: target.domain.clone().unwrap_or_default(),
-            });
-        }
-    }
-
-    let target_name = to_wide(&target.host);
-    let caption = to_wide("Chuzi RDP");
-    let message = to_wide("请输入此 RDP 连接的凭据。凭据只用于本次连接，不会保存。");
-    let mut username = [0u16; 512];
-    let mut password = [0u16; 512];
-    if let Some(initial_username) = &target.username {
-        copy_wide(initial_username, &mut username);
-    }
-    let mut save: BOOL = 0;
-    let info = CREDUI_INFOW {
-        cbSize: size_of::<CREDUI_INFOW>() as u32,
-        hwndParent: null_mut(),
-        pszMessageText: message.as_ptr(),
-        pszCaptionText: caption.as_ptr(),
-        hbmBanner: null_mut(),
-    };
-    let flags = CREDUI_FLAGS_DO_NOT_PERSIST
-        | CREDUI_FLAGS_EXCLUDE_CERTIFICATES
-        | CREDUI_FLAGS_USERNAME_TARGET_CREDENTIALS;
-    let result = unsafe {
-        CredUIPromptForCredentialsW(
-            &info,
-            target_name.as_ptr(),
-            null(),
-            0,
-            username.as_mut_ptr(),
-            username.len() as u32,
-            password.as_mut_ptr(),
-            password.len() as u32,
-            &mut save,
-            flags,
-        )
-    };
-    if result != 0 {
-        username.fill(0);
-        password.fill(0);
-        return Err("RDP credential dialog was cancelled or failed".to_owned());
-    }
-
-    let entered_username = wide_string(&username);
-    let entered_password = wide_string(&password);
-    username.fill(0);
-    password.fill(0);
-
-    if entered_username.is_empty() || entered_password.is_empty() {
-        return Err("RDP username and password are required".to_owned());
-    }
-
-    let mut parsed_user = [0u16; 512];
-    let mut parsed_domain = [0u16; 256];
-    let entered_username_wide = to_wide(&entered_username);
-    let parse_result = unsafe {
-        CredUIParseUserNameW(
-            entered_username_wide.as_ptr(),
-            parsed_user.as_mut_ptr(),
-            parsed_user.len() as u32,
-            parsed_domain.as_mut_ptr(),
-            parsed_domain.len() as u32,
-        )
-    };
-    let (username, domain) = if parse_result == 0 {
-        (wide_string(&parsed_user), wide_string(&parsed_domain))
-    } else {
-        (entered_username, target.domain.clone().unwrap_or_default())
-    };
-
-    Ok(RdpCredentials {
-        username,
-        password: entered_password,
-        domain,
-    })
-}
-
-#[cfg(windows)]
-struct RdpCredentials {
-    username: String,
-    password: String,
-    domain: String,
-}
-
-#[cfg(windows)]
-impl Drop for RdpCredentials {
-    fn drop(&mut self) {
-        wipe_string(&mut self.password);
-    }
-}
-
-#[cfg(windows)]
-fn to_wide(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-#[cfg(windows)]
-fn copy_wide(value: &str, destination: &mut [u16]) {
-    let encoded = value
-        .encode_utf16()
-        .take(destination.len().saturating_sub(1));
-    for (slot, value) in destination.iter_mut().zip(encoded) {
-        *slot = value;
-    }
-}
-
-#[cfg(windows)]
-fn wide_string(value: &[u16]) -> String {
-    let end = value
-        .iter()
-        .position(|character| *character == 0)
-        .unwrap_or(value.len());
-    String::from_utf16_lossy(&value[..end])
-}
-
-#[cfg(windows)]
 mod freerdp {
-    use super::{prompt_for_credentials, RdpFrame, RdpTarget, SharedState};
+    use super::{RdpFrame, RdpTarget, SharedState};
     use std::ffi::{CStr, CString};
     use std::mem::{size_of, zeroed};
     use std::sync::Arc;
@@ -445,7 +322,6 @@ mod freerdp {
     }
 
     unsafe fn run_session(target: &RdpTarget, shared: &Arc<SharedState>) -> Result<(), String> {
-        let credentials = prompt_for_credentials(target)?;
         let instance = ffi::freerdp_new();
         if instance.is_null() {
             return Err("FreeRDP instance allocation failed".to_owned());
@@ -470,7 +346,7 @@ mod freerdp {
         let app_context = context.cast::<AppContext>();
         (*app_context).shared = Arc::as_ptr(shared);
 
-        if let Err(error) = configure(instance, target, &credentials) {
+        if let Err(error) = configure(instance, target) {
             ffi::freerdp_context_free(instance);
             ffi::freerdp_free(instance);
             return Err(error);
@@ -490,11 +366,7 @@ mod freerdp {
         event_result
     }
 
-    unsafe fn configure(
-        instance: *mut ffi::freerdp,
-        target: &RdpTarget,
-        credentials: &super::RdpCredentials,
-    ) -> Result<(), String> {
+    unsafe fn configure(instance: *mut ffi::freerdp, target: &RdpTarget) -> Result<(), String> {
         let context = (*instance).context;
         if context.is_null() || (*context).settings.is_null() {
             return Err("FreeRDP settings are unavailable".to_owned());
@@ -502,11 +374,11 @@ mod freerdp {
         let settings = (*context).settings;
         let host =
             CString::new(target.host.as_str()).map_err(|_| "RDP host is invalid".to_owned())?;
-        let username = CString::new(credentials.username.as_str())
+        let username = CString::new(target.username.as_deref().unwrap_or_default())
             .map_err(|_| "RDP username is invalid".to_owned())?;
-        let password = CString::new(credentials.password.as_str())
+        let password = CString::new(target.password.as_deref().unwrap_or_default())
             .map_err(|_| "RDP password is invalid".to_owned())?;
-        let domain = CString::new(credentials.domain.as_str())
+        let domain = CString::new(target.domain.as_deref().unwrap_or_default())
             .map_err(|_| "RDP domain is invalid".to_owned())?;
 
         if ffi::freerdp_settings_set_string(

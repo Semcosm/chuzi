@@ -2,7 +2,7 @@ mod desktop_rdp;
 mod models;
 
 use base64::Engine;
-use desktop_rdp::DesktopRdpController;
+use desktop_rdp::{DesktopRdpController, RdpTarget};
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
     CoreRequest, CoreStatus, SubmitResult, UiPreferences,
@@ -17,6 +17,7 @@ use std::process::Command;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 slint::include_modules!();
 
@@ -548,26 +549,94 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
 
     let weak = ui.as_weak();
     let desktop_rdp_state: Rc<RefCell<Option<DesktopRdpController>>> = Rc::new(RefCell::new(None));
+    schedule_rdp_status_poll(ui.as_weak(), desktop_rdp_state.clone());
     let desktop_rdp_slot = desktop_rdp_state.clone();
-    ui.on_connect_rdp(move |host| {
-        let host = host.to_string();
+    ui.on_connect_rdp(move |host, port, domain, username, password| {
+        let host = host.to_string().trim().to_owned();
+        let port_text = port.to_string();
+        let domain = domain.to_string().trim().to_owned();
+        let username = username.to_string().trim().to_owned();
+        let password = password.to_string();
         if let Some(window) = weak.upgrade() {
-            window.set_rdp_status(format!("正在打开 RDP 窗体（目标：{host}）…").into());
-            match DesktopRdpController::new(host.clone()) {
+            if host.is_empty() {
+                set_rdp_error(&window, "请输入 RDP 服务器地址。".to_owned());
+                return;
+            }
+            let port = match port_text.trim().parse::<u16>() {
+                Ok(port) if port != 0 => port,
+                _ => {
+                    set_rdp_error(&window, "RDP 端口必须是 1 到 65535 之间的数字。".to_owned());
+                    return;
+                }
+            };
+            if username.is_empty() {
+                set_rdp_error(&window, "请输入 RDP 用户名。".to_owned());
+                return;
+            }
+            if password.is_empty() {
+                set_rdp_error(&window, "请输入 RDP 密码。".to_owned());
+                return;
+            }
+
+            let mut target = RdpTarget::with_credentials(
+                host.clone(),
+                username,
+                password,
+                (!domain.is_empty()).then_some(domain),
+            );
+            target.port = port;
+            window.set_rdp_password("".into());
+            window.set_rdp_status(format!("正在打开 RDP 窗体（目标：{host}:{port}）…").into());
+            match DesktopRdpController::new_with_target(target) {
                 Ok(controller) => {
                     *desktop_rdp_slot.borrow_mut() = Some(controller);
-                    window.set_message(
-                        "RDP 窗体已打开，FreeRDP 正在连接；凭据提示只对本次连接有效。".into(),
-                    );
+                    window.set_message("RDP 窗体已打开，FreeRDP 正在连接…".into());
                     window.set_message_kind("success".into());
                 }
                 Err(error) => {
-                    window.set_rdp_status("RDP 窗体无法打开。".into());
-                    window.set_message(friendly_error(&error).into());
-                    window.set_message_kind("error".into());
+                    set_rdp_error(&window, error);
                 }
             }
         }
+    });
+}
+
+fn set_rdp_error(window: &MainWindow, message: String) {
+    window.set_rdp_status(message.clone().into());
+    window.set_message(format!("RDP 连接失败：{message}").into());
+    window.set_message_kind("error".into());
+}
+
+fn schedule_rdp_status_poll(
+    weak: slint::Weak<MainWindow>,
+    slot: Rc<RefCell<Option<DesktopRdpController>>>,
+) {
+    slint::Timer::single_shot(Duration::from_millis(100), move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+
+        let snapshot = slot
+            .borrow()
+            .as_ref()
+            .map(DesktopRdpController::status_snapshot);
+        if let Some((state, status)) = snapshot {
+            window.set_rdp_status(status.clone().into());
+            match state.as_str() {
+                "connected" => {
+                    window.set_message("RDP 已连接，远程画面正在接收。".into());
+                    window.set_message_kind("success".into());
+                }
+                "failed" => set_rdp_error(&window, status),
+                "closed" => {
+                    window.set_message("RDP 连接已断开。".into());
+                    window.set_message_kind("info".into());
+                }
+                _ => {}
+            }
+        }
+
+        schedule_rdp_status_poll(weak, slot);
     });
 }
 
