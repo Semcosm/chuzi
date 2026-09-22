@@ -623,7 +623,7 @@ mod freerdp {
         update.BeginPaint = Some(begin_paint);
         update.EndPaint = Some(end_paint);
         update.DesktopResize = Some(desktop_resize);
-        if let Some(shared) = shared_from_context(context) {
+        if let Some(shared) = shared_from_context(&*context) {
             shared.set_state("connected", "RDP 已连接，正在接收远程桌面画面…");
         }
         1
@@ -700,12 +700,14 @@ mod freerdp {
         let Some(context) = context.as_ref() else {
             return 0;
         };
-        let Some(gdi) = context.gdi else {
+        let gdi = context.gdi;
+        if gdi.is_null() {
             return 0;
-        };
-        let Some(settings) = context.settings else {
+        }
+        let settings = context.settings;
+        if settings.is_null() {
             return 0;
-        };
+        }
         let width =
             ffi::freerdp_settings_get_uint32(settings, ffi::CHUZI_FREERDP_DESKTOP_WIDTH as _);
         let height =
