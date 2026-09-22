@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): replace desktop clone with Rust FreeRDP RDP client
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: f328cd4ae33d2458bb685217db1658a11bf4ca32
+Head OID: c530fbdb6285f825b2977d9a082db86cfda2c6d1
 Integrated Result: pending
 
 ## Summary
