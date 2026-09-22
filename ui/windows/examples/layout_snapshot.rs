@@ -18,11 +18,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })))?;
 
     for (width, height) in sizes {
-        if page == "desktop-clone" {
-            let window = DesktopCloneWindow::new()?;
+        if page == "rdp" {
+            let window = DesktopRdpWindow::new()?;
             window.set_host("127.0.0.2".into());
             window.set_state("not-started".into());
-            window.set_status("RDP 连接界面预览：远程桌面画面尚未接入。".into());
+            window.set_status("RDP 连接界面预览：FreeRDP 画面将在连接后显示。".into());
             window.window().set_size(PhysicalSize::new(width, height));
             let snapshot = window.window().take_snapshot()?;
             write_snapshot(&output, &page, width, height, &snapshot)?;
@@ -104,8 +104,8 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error
         }
     }
     match page.as_str() {
-        "overview" | "plugins" | "accounts" | "tasks" | "remote" | "settings" | "desktop-clone" => {
-            if page == "desktop-clone" && !sizes_explicit {
+        "overview" | "plugins" | "accounts" | "tasks" | "rdp" | "settings" => {
+            if page == "rdp" && !sizes_explicit {
                 sizes = vec![(1280, 752), (800, 600), (500, 281)];
             }
             Ok((output, sizes, page))
