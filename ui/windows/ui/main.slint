@@ -115,6 +115,10 @@ export component MainWindow inherits Window {
     in-out property <bool> close-to-tray: false;
     in-out property <int> update-interval: 60;
     in-out property <string> rdp-host: "localhost";
+    in-out property <string> rdp-port: "3389";
+    in-out property <string> rdp-domain: "";
+    in-out property <string> rdp-username: "";
+    in-out property <string> rdp-password: "";
     in-out property <string> rdp-status: "No RDP session started.";
 
     callback install-core();
@@ -138,7 +142,7 @@ export component MainWindow inherits Window {
     callback refresh-task(string);
     callback cancel-task(string);
     callback refresh-view(string);
-    callback connect-rdp(string);
+    callback connect-rdp(string, string, string, string, string);
 
     background: Palette.background;
 
@@ -403,12 +407,19 @@ export component MainWindow inherits Window {
                     PageHeader { title: "RDP session"; subtitle: "Sign in to a local RDP account and open its desktop."; }
                     GroupBox {
                         title: "RDP login";
-                        max-height: 220px;
+                        max-height: 360px;
                         vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
                             spacing: 10px;
                             LineEdit { placeholder-text: "Host or IP address"; text <=> root.rdp-host; }
+                            HorizontalBox {
+                                spacing: 8px;
+                                LineEdit { placeholder-text: "Port (default 3389)"; text <=> root.rdp-port; }
+                                LineEdit { placeholder-text: "Domain (optional)"; text <=> root.rdp-domain; }
+                            }
+                            LineEdit { placeholder-text: "Username"; text <=> root.rdp-username; }
+                            LineEdit { placeholder-text: "Password"; input-type: password; text <=> root.rdp-password; }
                             HorizontalBox {
                                 spacing: 8px;
                                 height: 40px;
@@ -417,13 +428,15 @@ export component MainWindow inherits Window {
                                     text: "Connect";
                                     enabled: !root.busy && root.rdp-host != "";
                                     vertical-stretch: 0;
-                                    clicked => { root.connect-rdp(root.rdp-host); }
+                                    clicked => {
+                                        root.connect-rdp(root.rdp-host, root.rdp-port, root.rdp-domain, root.rdp-username, root.rdp-password);
+                                    }
                                 }
                                 Text { text: root.rdp-status; color: Palette.alternate-foreground; vertical-alignment: center; wrap: word-wrap; }
                             }
                         }
                     }
-                    Text { text: "FreeRDP 将调用 Windows 凭据提示。密码只用于本次 RDP 连接，Chuzi 不会收集或保存。"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                    Text { text: "凭据只用于本次 RDP 连接。Chuzi 不会保存密码；连接错误会显示在此页面。"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                     FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : root.message-kind == "success" ? #4b8c6a : #526c92; vertical-stretch: 0; }
                 }
             }
