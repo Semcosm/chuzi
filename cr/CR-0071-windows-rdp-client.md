@@ -5,29 +5,31 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): replace desktop clone with Rust FreeRDP RDP client
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: c530fbdb6285f825b2977d9a082db86cfda2c6d1
+Head OID: c8fcef77ce663aaca0edb5f930a6e0b6b2dd387c
 Integrated Result: pending
 
 ## Summary
 
 Replace the Windows desktop-clone placeholder with a Rust-owned RDP client
 using FreeRDP for TLS/NLA negotiation, protocol handling, and graphics
-decoding. `desktop_rdp.rs` owns the background event loop, uses the Windows
-temporary credential prompt with persistence disabled when credentials are not
-provided, initializes FreeRDP GDI as BGRX32, copies `primary_buffer` during
-`EndPaint`, and publishes an owned framebuffer to the Slint
+decoding. `desktop_rdp.rs` owns the background event loop, receives connection
+parameters from the RDP page, initializes FreeRDP GDI as BGRX32, copies
+`primary_buffer` during `EndPaint`, and publishes an owned framebuffer to the Slint
 `DesktopRdpWindow`. The UI page, callbacks, snapshot selector, and build
 dependencies now use RDP terminology; no MSTSC, ActiveX, Win32 child-window
 embedding, or desktop capture is used.
 
 The current vertical slice displays the remote framebuffer and reports
-connection, resize, failure, and disconnect states. Keyboard and mouse input
-forwarding remains a separate input-boundary change.
+connection, resize, failure, and disconnect states. The RDP page collects the
+host, port, domain, username, and password directly; it does not open a
+Windows CredUI prompt, and asynchronous connection errors are mirrored back to
+that page. Keyboard and mouse input forwarding remains a separate
+input-boundary change.
 
 ## Motivation
 
@@ -68,9 +70,10 @@ on the runner's Visual Studio SDK, LLVM/libclang, and vcpkg installation. The
 wrapper limits the native surface to the FreeRDP session, settings, GDI, and
 event-loop functions, but a Windows runner build is still required to verify
 the exact 3.x ABI and static link closure. The RDP certificate behavior is not
-disabled or unconditionally trusted. Credentials are held only for the
-session, the prompt requests `DO_NOT_PERSIST`, and password strings are wiped
-when their Rust owners are dropped.
+disabled or unconditionally trusted. Credentials are copied into the in-memory
+session target, cleared from the UI password field after submission, and
+password strings are wiped when their Rust owner is dropped. FreeRDP errors
+are shown on the RDP page without displaying credential values.
 
 The display slice does not forward keyboard or mouse input, and the current
 frame is copied on each completed paint batch, so high-update-rate sessions
