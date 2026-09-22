@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let window = DesktopCloneWindow::new()?;
             window.set_host("127.0.0.2".into());
             window.set_state("not-started".into());
-            window.set_status("UI 外壳预览：远程画面尚未接入。".into());
+            window.set_status("RDP 连接界面预览：远程桌面画面尚未接入。".into());
             window.window().set_size(PhysicalSize::new(width, height));
             let snapshot = window.window().take_snapshot()?;
             write_snapshot(&output, &page, width, height, &snapshot)?;
