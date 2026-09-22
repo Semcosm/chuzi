@@ -2,6 +2,7 @@ use crate::DesktopRdpWindow;
 use slint::{CloseRequestResponse, ComponentHandle, Timer};
 #[cfg(windows)]
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
@@ -64,9 +65,39 @@ impl Drop for RdpTarget {
 struct RdpFrame {
     width: u32,
     height: u32,
-    stride: u32,
-    /// FreeRDP owns its primary buffer. This is a private copy in BGRX32.
+    /// A private copy in RGBA8, converted off the Slint UI thread.
     pixels: Vec<u8>,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy)]
+enum PointerAction {
+    Move,
+    Down,
+    Up,
+    Cancel,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy)]
+enum PointerButton {
+    Left,
+    Right,
+    Middle,
+    Other,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy)]
+enum RdpInput {
+    Pointer {
+        action: PointerAction,
+        button: PointerButton,
+        x: f32,
+        y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    },
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -121,8 +152,19 @@ impl SharedState {
     }
 
     #[cfg_attr(not(windows), allow(dead_code))]
+    fn frame_pending(&self) -> bool {
+        self.update
+            .lock()
+            .map(|update| update.frame.is_some())
+            .unwrap_or(true)
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
     fn set_frame(&self, frame: RdpFrame) {
         if let Ok(mut update) = self.update.lock() {
+            if update.frame.is_some() {
+                return;
+            }
             update.frame = Some(frame);
         }
     }
@@ -157,6 +199,8 @@ pub struct DesktopRdpController {
     shared: Arc<SharedState>,
     worker: Option<JoinHandle<()>>,
     frame_timer: Timer,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    input_tx: Sender<RdpInput>,
 }
 
 impl DesktopRdpController {
@@ -214,15 +258,42 @@ impl DesktopRdpController {
             .on_close_requested(move || CloseRequestResponse::HideWindow);
 
         let shared = Arc::new(SharedState::new());
+        let (input_tx, input_rx) = mpsc::channel();
+        let input_callback_tx = input_tx.clone();
+        window.on_rdp_pointer_event(move |kind, button, x, y, viewport_width, viewport_height| {
+            let action = match kind.as_str() {
+                "move" => PointerAction::Move,
+                "down" => PointerAction::Down,
+                "up" => PointerAction::Up,
+                _ => PointerAction::Cancel,
+            };
+            let button = match button.as_str() {
+                "left" => PointerButton::Left,
+                "right" => PointerButton::Right,
+                "middle" => PointerButton::Middle,
+                _ => PointerButton::Other,
+            };
+            let _ = input_callback_tx.send(RdpInput::Pointer {
+                action,
+                button,
+                x,
+                y,
+                viewport_width,
+                viewport_height,
+            });
+        });
 
         #[cfg(windows)]
         let worker = {
             let shared = Arc::clone(&shared);
-            Some(std::thread::spawn(move || freerdp::run(target, shared)))
+            Some(std::thread::spawn(move || {
+                freerdp::run(target, shared, input_rx)
+            }))
         };
 
         #[cfg(not(windows))]
         let worker = {
+            let _ = &input_rx;
             let _ = target;
             shared.set_state(
                 "failed",
@@ -246,6 +317,7 @@ impl DesktopRdpController {
             shared,
             worker,
             frame_timer,
+            input_tx,
         })
     }
 
@@ -288,35 +360,28 @@ fn apply_pending_update(window: &slint::Weak<DesktopRdpWindow>, shared: &SharedS
 fn frame_to_image(frame: &RdpFrame) -> Option<Image> {
     let width = usize::try_from(frame.width).ok()?;
     let height = usize::try_from(frame.height).ok()?;
-    let stride = usize::try_from(frame.stride).ok()?;
     let row_bytes = width.checked_mul(4)?;
-    let frame_bytes = stride.checked_mul(height)?;
-    if width == 0 || height == 0 || stride < row_bytes || frame.pixels.len() < frame_bytes {
+    let frame_bytes = row_bytes.checked_mul(height)?;
+    if width == 0 || height == 0 || frame.pixels.len() < frame_bytes {
         return None;
     }
 
-    let mut rgba = vec![0u8; row_bytes.checked_mul(height)?];
-    for row in 0..height {
-        let source = &frame.pixels[row * stride..row * stride + row_bytes];
-        let destination = &mut rgba[row * row_bytes..(row + 1) * row_bytes];
-        for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4)) {
-            // FreeRDP was initialized with PIXEL_FORMAT_BGRX32.
-            destination.copy_from_slice(&[source[2], source[1], source[0], 0xff]);
-        }
-    }
-
-    let buffer =
-        SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(&rgba, frame.width, frame.height);
+    let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
+        &frame.pixels[..frame_bytes],
+        frame.width,
+        frame.height,
+    );
     Some(Image::from_rgba8(buffer))
 }
 
 #[cfg(windows)]
 mod freerdp {
-    use super::{RdpFrame, RdpTarget, SharedState};
+    use super::{PointerAction, PointerButton, RdpFrame, RdpInput, RdpTarget, SharedState};
     use std::ffi::{c_char, CStr, CString};
     use std::mem::{size_of, zeroed};
+    use std::sync::mpsc::Receiver;
     use std::sync::Arc;
-    use windows_sys::Win32::Foundation::{BOOL, HANDLE, WAIT_FAILED};
+    use windows_sys::Win32::Foundation::{BOOL, HANDLE, WAIT_FAILED, WAIT_TIMEOUT};
     use windows_sys::Win32::Networking::WinSock::{WSACleanup, WSAStartup, WSADATA};
     use windows_sys::Win32::System::Threading::WaitForMultipleObjects;
 
@@ -337,9 +402,9 @@ mod freerdp {
         allow_untrusted_certificate: u8,
     }
 
-    pub fn run(target: RdpTarget, shared: Arc<SharedState>) {
+    pub fn run(target: RdpTarget, shared: Arc<SharedState>, input_rx: Receiver<RdpInput>) {
         shared.set_state("connecting", "正在准备 FreeRDP 连接…");
-        let result = unsafe { run_session(&target, &shared) };
+        let result = unsafe { run_session(&target, &shared, &input_rx) };
         if shared.stop.load(std::sync::atomic::Ordering::SeqCst) {
             shared.set_state("closed", "RDP 连接已关闭。\n");
         } else if let Err(error) = result {
@@ -353,7 +418,11 @@ mod freerdp {
         }
     }
 
-    unsafe fn run_session(target: &RdpTarget, shared: &Arc<SharedState>) -> Result<(), String> {
+    unsafe fn run_session(
+        target: &RdpTarget,
+        shared: &Arc<SharedState>,
+        input_rx: &Receiver<RdpInput>,
+    ) -> Result<(), String> {
         // FreeRDP's standalone Windows clients initialize Winsock in their
         // process-level startup hook. Embedded clients must do that
         // explicitly before FreeRDP calls getaddrinfo or creates sockets.
@@ -403,7 +472,7 @@ mod freerdp {
             return Err(error);
         }
 
-        let event_result = event_loop(instance, shared);
+        let event_result = event_loop(instance, shared, input_rx);
         ffi::freerdp_disconnect(instance);
         ffi::freerdp_context_free(instance);
         ffi::freerdp_free(instance);
@@ -471,13 +540,18 @@ mod freerdp {
         Ok(())
     }
 
-    unsafe fn event_loop(instance: *mut ffi::freerdp, shared: &SharedState) -> Result<(), String> {
+    unsafe fn event_loop(
+        instance: *mut ffi::freerdp,
+        shared: &SharedState,
+        input_rx: &Receiver<RdpInput>,
+    ) -> Result<(), String> {
         let context = (*instance).context;
         if context.is_null() {
             return Err("FreeRDP context disappeared".to_owned());
         }
 
         loop {
+            drain_input(instance, input_rx);
             if shared.stop.load(std::sync::atomic::Ordering::SeqCst)
                 || ffi::freerdp_shall_disconnect_context(context) != 0
             {
@@ -494,14 +568,122 @@ mod freerdp {
                 ));
             }
 
-            let wait_result = WaitForMultipleObjects(count, handles.as_ptr(), 0, 250);
+            let wait_result = WaitForMultipleObjects(count, handles.as_ptr(), 0, 16);
             if wait_result == WAIT_FAILED {
                 return Err("Windows event wait for the RDP connection failed".to_owned());
             }
-            if ffi::freerdp_check_event_handles(context) == 0 {
+            if wait_result != WAIT_TIMEOUT && ffi::freerdp_check_event_handles(context) == 0 {
                 return Err(last_error(instance, "FreeRDP event processing failed"));
             }
+            drain_input(instance, input_rx);
         }
+    }
+
+    unsafe fn drain_input(instance: *mut ffi::freerdp, input_rx: &Receiver<RdpInput>) {
+        let Some(context) = instance.as_ref().map(|instance| instance.context) else {
+            return;
+        };
+        let Some(context) = context.as_ref() else {
+            return;
+        };
+        let Some(input) = context.input.as_mut() else {
+            return;
+        };
+        let Some(gdi) = context.gdi.as_ref() else {
+            return;
+        };
+        let Some(width) = u32::try_from(gdi.width).ok().filter(|width| *width > 0) else {
+            return;
+        };
+        let Some(height) = u32::try_from(gdi.height).ok().filter(|height| *height > 0) else {
+            return;
+        };
+
+        while let Ok(RdpInput::Pointer {
+            action,
+            button,
+            x,
+            y,
+            viewport_width,
+            viewport_height,
+        }) = input_rx.try_recv()
+        {
+            let Some((x, y)) = map_pointer(x, y, viewport_width, viewport_height, width, height)
+            else {
+                continue;
+            };
+            let flags = match action {
+                PointerAction::Move => ffi::CHUZI_PTR_FLAGS_MOVE as u16,
+                PointerAction::Down => {
+                    let Some(button_flag) = pointer_button_flag(button) else {
+                        continue;
+                    };
+                    button_flag | ffi::CHUZI_PTR_FLAGS_DOWN as u16
+                }
+                PointerAction::Up => {
+                    let Some(button_flag) = pointer_button_flag(button) else {
+                        continue;
+                    };
+                    button_flag
+                }
+                PointerAction::Cancel => continue,
+            };
+            let _ = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
+        }
+    }
+
+    fn pointer_button_flag(button: PointerButton) -> Option<u16> {
+        match button {
+            PointerButton::Left => Some(ffi::CHUZI_PTR_FLAGS_BUTTON1 as u16),
+            PointerButton::Right => Some(ffi::CHUZI_PTR_FLAGS_BUTTON2 as u16),
+            PointerButton::Middle => Some(ffi::CHUZI_PTR_FLAGS_BUTTON3 as u16),
+            PointerButton::Other => None,
+        }
+    }
+
+    fn map_pointer(
+        x: f32,
+        y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+        frame_width: u32,
+        frame_height: u32,
+    ) -> Option<(u16, u16)> {
+        if !x.is_finite()
+            || !y.is_finite()
+            || !viewport_width.is_finite()
+            || !viewport_height.is_finite()
+            || viewport_width <= 0.0
+            || viewport_height <= 0.0
+            || frame_width == 0
+            || frame_height == 0
+        {
+            return None;
+        }
+        let frame_width = frame_width as f32;
+        let frame_height = frame_height as f32;
+        let scale = (viewport_width / frame_width).min(viewport_height / frame_height);
+        if !scale.is_finite() || scale <= 0.0 {
+            return None;
+        }
+        let rendered_width = frame_width * scale;
+        let rendered_height = frame_height * scale;
+        let offset_x = (viewport_width - rendered_width) / 2.0;
+        let offset_y = (viewport_height - rendered_height) / 2.0;
+        if x < offset_x
+            || y < offset_y
+            || x >= offset_x + rendered_width
+            || y >= offset_y + rendered_height
+        {
+            return None;
+        }
+        let mapped_x = ((x - offset_x) / scale)
+            .floor()
+            .clamp(0.0, frame_width - 1.0);
+        let mapped_y = ((y - offset_y) / scale)
+            .floor()
+            .clamp(0.0, frame_height - 1.0);
+        Some((mapped_x as u16, mapped_y as u16))
     }
 
     unsafe extern "C" fn context_new(
@@ -719,14 +901,30 @@ mod freerdp {
         let Some(bytes) = stride.checked_mul(height) else {
             return 0;
         };
+        if let Some(shared) = shared_from_context(context) {
+            if shared.frame_pending() {
+                return 1;
+            }
+        }
         let source = std::slice::from_raw_parts(gdi.primary_buffer, bytes);
-        let pixels = source.to_vec();
+        let Some(pixel_bytes) = row_bytes.checked_mul(height) else {
+            return 0;
+        };
+        let mut pixels = vec![0u8; pixel_bytes];
+        for row in 0..height {
+            let source = &source[row * stride..row * stride + row_bytes];
+            let destination = &mut pixels[row * row_bytes..(row + 1) * row_bytes];
+            for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4))
+            {
+                // FreeRDP was initialized with PIXEL_FORMAT_BGRX32.
+                destination.copy_from_slice(&[source[2], source[1], source[0], 0xff]);
+            }
+        }
 
         if let Some(shared) = shared_from_context(context) {
             shared.set_frame(RdpFrame {
                 width: width as u32,
                 height: height as u32,
-                stride: stride as u32,
                 pixels,
             });
         }

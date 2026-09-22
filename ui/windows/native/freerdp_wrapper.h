@@ -6,6 +6,7 @@
  * graphics codec. */
 #include <freerdp/freerdp.h>
 #include <freerdp/gdi/gdi.h>
+#include <freerdp/input.h>
 #include <freerdp/settings.h>
 
 enum
@@ -20,6 +21,11 @@ enum
 	CHUZI_FREERDP_DESKTOP_HEIGHT = FreeRDP_DesktopHeight,
 	CHUZI_FREERDP_DEACTIVATE_CLIENT_DECODING = FreeRDP_DeactivateClientDecoding,
 	CHUZI_FREERDP_TCP_CONNECT_TIMEOUT = FreeRDP_TcpConnectTimeout,
+	CHUZI_PTR_FLAGS_MOVE = PTR_FLAGS_MOVE,
+	CHUZI_PTR_FLAGS_DOWN = PTR_FLAGS_DOWN,
+	CHUZI_PTR_FLAGS_BUTTON1 = PTR_FLAGS_BUTTON1,
+	CHUZI_PTR_FLAGS_BUTTON2 = PTR_FLAGS_BUTTON2,
+	CHUZI_PTR_FLAGS_BUTTON3 = PTR_FLAGS_BUTTON3,
 };
 
 #endif
