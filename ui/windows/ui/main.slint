@@ -119,6 +119,7 @@ export component MainWindow inherits Window {
     in-out property <string> rdp-domain: "";
     in-out property <string> rdp-username: "";
     in-out property <string> rdp-password: "";
+    in-out property <bool> rdp-allow-untrusted-certificate: false;
     in-out property <string> rdp-status: "No RDP session started.";
 
     callback install-core();
@@ -142,7 +143,7 @@ export component MainWindow inherits Window {
     callback refresh-task(string);
     callback cancel-task(string);
     callback refresh-view(string);
-    callback connect-rdp(string, string, string, string, string);
+    callback connect-rdp(string, string, string, string, string, bool);
 
     background: Palette.background;
 
@@ -407,7 +408,7 @@ export component MainWindow inherits Window {
                     PageHeader { title: "RDP session"; subtitle: "Sign in to a local RDP account and open its desktop."; }
                     GroupBox {
                         title: "RDP login";
-                        max-height: 360px;
+                        max-height: 420px;
                         vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
@@ -420,6 +421,17 @@ export component MainWindow inherits Window {
                             }
                             LineEdit { placeholder-text: "Username"; text <=> root.rdp-username; }
                             LineEdit { placeholder-text: "Password"; input-type: password; text <=> root.rdp-password; }
+                            CheckBox {
+                                text: "仅本次接受自签名或名称不匹配的证书";
+                                checked: root.rdp-allow-untrusted-certificate;
+                                toggled => { root.rdp-allow-untrusted-certificate = self.checked; }
+                            }
+                            Text {
+                                text: "默认拒绝不受信任证书；启用前请核对页面中的证书指纹。此选项不会保存信任。";
+                                color: Palette.alternate-foreground;
+                                wrap: word-wrap;
+                                vertical-stretch: 0;
+                            }
                             HorizontalBox {
                                 spacing: 8px;
                                 height: 40px;
@@ -429,7 +441,7 @@ export component MainWindow inherits Window {
                                     enabled: !root.busy && root.rdp-host != "";
                                     vertical-stretch: 0;
                                     clicked => {
-                                        root.connect-rdp(root.rdp-host, root.rdp-port, root.rdp-domain, root.rdp-username, root.rdp-password);
+                                        root.connect-rdp(root.rdp-host, root.rdp-port, root.rdp-domain, root.rdp-username, root.rdp-password, root.rdp-allow-untrusted-certificate);
                                     }
                                 }
                                 Text { text: root.rdp-status; color: Palette.alternate-foreground; vertical-alignment: center; wrap: word-wrap; }

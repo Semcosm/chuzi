@@ -21,6 +21,12 @@ pub struct RdpTarget {
     pub username: Option<String>,
     pub password: Option<String>,
     pub domain: Option<String>,
+    /// Accept a certificate that FreeRDP cannot validate for this session only.
+    ///
+    /// This is deliberately not persisted and never maps to
+    /// `FreeRDP_IgnoreCertificate`, which would silently disable certificate
+    /// verification for every connection.
+    pub allow_untrusted_certificate: bool,
     pub width: u32,
     pub height: u32,
 }
@@ -38,6 +44,7 @@ impl RdpTarget {
             username: Some(username),
             password: Some(password),
             domain,
+            allow_untrusted_certificate: false,
             width: 1920,
             height: 1080,
         }
@@ -72,6 +79,7 @@ struct PendingUpdate {
 #[cfg_attr(not(windows), allow(dead_code))]
 struct SharedState {
     update: Mutex<PendingUpdate>,
+    certificate_failure: Mutex<Option<String>>,
     stop: std::sync::atomic::AtomicBool,
 }
 
@@ -83,6 +91,7 @@ impl SharedState {
                 status: "正在连接 RDP…".to_owned(),
                 frame: None,
             }),
+            certificate_failure: Mutex::new(None),
             stop: std::sync::atomic::AtomicBool::new(false),
         }
     }
@@ -92,6 +101,23 @@ impl SharedState {
             update.state = state.into();
             update.status = status.into();
         }
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn set_certificate_failure(&self, status: impl Into<String>) {
+        let status = status.into();
+        if let Ok(mut failure) = self.certificate_failure.lock() {
+            *failure = Some(status.clone());
+        }
+        self.set_state("connecting", status);
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn certificate_failure(&self) -> Option<String> {
+        self.certificate_failure
+            .lock()
+            .ok()
+            .and_then(|failure| failure.clone())
     }
 
     #[cfg_attr(not(windows), allow(dead_code))]
@@ -287,7 +313,7 @@ fn frame_to_image(frame: &RdpFrame) -> Option<Image> {
 #[cfg(windows)]
 mod freerdp {
     use super::{RdpFrame, RdpTarget, SharedState};
-    use std::ffi::{CStr, CString};
+    use std::ffi::{c_char, CStr, CString};
     use std::mem::{size_of, zeroed};
     use std::sync::Arc;
     use windows_sys::Win32::Foundation::{BOOL, HANDLE, WAIT_FAILED};
@@ -308,6 +334,7 @@ mod freerdp {
     struct AppContext {
         base: ffi::rdpContext,
         shared: *const SharedState,
+        allow_untrusted_certificate: u8,
     }
 
     pub fn run(target: RdpTarget, shared: Arc<SharedState>) {
@@ -316,6 +343,10 @@ mod freerdp {
         if shared.stop.load(std::sync::atomic::Ordering::SeqCst) {
             shared.set_state("closed", "RDP 连接已关闭。\n");
         } else if let Err(error) = result {
+            let error = match shared.certificate_failure() {
+                Some(certificate_failure) => format!("{certificate_failure}\n{error}"),
+                None => error,
+            };
             shared.set_state("failed", error);
         } else {
             shared.set_state("closed", "RDP 连接已断开。\n");
@@ -351,6 +382,13 @@ mod freerdp {
         }
         let app_context = context.cast::<AppContext>();
         (*app_context).shared = Arc::as_ptr(shared);
+        (*app_context).allow_untrusted_certificate = u8::from(target.allow_untrusted_certificate);
+
+        // FreeRDP invokes these callbacks when its normal certificate store
+        // cannot validate a certificate. Returning 2 from the callbacks means
+        // accept for this connection only; returning 1 would persist trust.
+        (*instance).VerifyCertificateEx = Some(verify_certificate);
+        (*instance).VerifyChangedCertificateEx = Some(verify_changed_certificate);
 
         if let Err(error) = configure(instance, target) {
             ffi::freerdp_context_free(instance);
@@ -477,6 +515,106 @@ mod freerdp {
         _instance: *mut ffi::freerdp,
         _context: *mut ffi::rdpContext,
     ) {
+    }
+
+    unsafe extern "C" fn verify_certificate(
+        instance: *mut ffi::freerdp,
+        host: *const c_char,
+        port: u16,
+        _common_name: *const c_char,
+        _subject: *const c_char,
+        _issuer: *const c_char,
+        fingerprint: *const c_char,
+        _flags: u32,
+    ) -> u32 {
+        handle_certificate_verification(instance, host, port, fingerprint, false)
+    }
+
+    unsafe extern "C" fn verify_changed_certificate(
+        instance: *mut ffi::freerdp,
+        host: *const c_char,
+        port: u16,
+        _common_name: *const c_char,
+        _subject: *const c_char,
+        _issuer: *const c_char,
+        fingerprint: *const c_char,
+        _old_subject: *const c_char,
+        _old_issuer: *const c_char,
+        _old_fingerprint: *const c_char,
+        _flags: u32,
+    ) -> u32 {
+        handle_certificate_verification(instance, host, port, fingerprint, true)
+    }
+
+    unsafe fn handle_certificate_verification(
+        instance: *mut ffi::freerdp,
+        host: *const c_char,
+        port: u16,
+        fingerprint: *const c_char,
+        changed: bool,
+    ) -> u32 {
+        let Some(app_context) = app_context_from_instance(instance) else {
+            return 0;
+        };
+        let app_context = &*app_context;
+        let Some(shared) = app_context.shared.as_ref() else {
+            return 0;
+        };
+
+        let host = c_string_or_unknown(host);
+        if app_context.allow_untrusted_certificate != 0 {
+            let certificate_kind = if changed {
+                "已变化或名称不匹配的"
+            } else {
+                "未受信任的"
+            };
+            shared.set_state(
+                "connecting",
+                format!("正在接受{certificate_kind} RDP 证书（仅本次连接）：{host}:{port}…"),
+            );
+            return 2;
+        }
+
+        let certificate_kind = if changed {
+            "服务器证书已变化或名称不匹配"
+        } else {
+            "服务器证书未受信任或名称不匹配"
+        };
+        let mut message = format!("RDP {certificate_kind}，已拒绝连接（目标：{host}:{port}）。");
+        if let Some(fingerprint) = certificate_value(fingerprint) {
+            message.push_str(&format!("\n证书指纹：{fingerprint}"));
+        }
+        message.push_str("\n请先核对指纹；确认目标可信后，勾选“仅本次接受不受信任证书”再重试。");
+        shared.set_certificate_failure(message);
+        0
+    }
+
+    unsafe fn app_context_from_instance(instance: *mut ffi::freerdp) -> Option<*const AppContext> {
+        let context = instance.as_ref()?.context;
+        (!context.is_null()).then(|| context.cast::<AppContext>())
+    }
+
+    unsafe fn c_string_or_unknown(value: *const c_char) -> String {
+        if value.is_null() {
+            return "<unknown>".to_owned();
+        }
+        CStr::from_ptr(value).to_string_lossy().into_owned()
+    }
+
+    unsafe fn certificate_value(value: *const c_char) -> Option<String> {
+        if value.is_null() {
+            return None;
+        }
+        let value = CStr::from_ptr(value).to_string_lossy();
+        let value = value.trim();
+        if value.is_empty() || value.contains("BEGIN CERTIFICATE") {
+            return None;
+        }
+        let mut value = value.chars().take(256).collect::<String>();
+        if value.chars().count() == 256 {
+            value.push('…');
+        }
+        Some(value)
     }
 
     struct WinsockGuard;
