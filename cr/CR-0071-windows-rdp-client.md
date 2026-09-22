@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): replace desktop clone with Rust FreeRDP RDP client
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: c8fcef77ce663aaca0edb5f930a6e0b6b2dd387c
+Head OID: a0ecf9e2d0108f99b3cc4bc4a52ae9930f90c096
 Integrated Result: pending
 
 ## Summary
@@ -22,7 +22,8 @@ parameters from the RDP page, initializes FreeRDP GDI as BGRX32, copies
 `primary_buffer` during `EndPaint`, and publishes an owned framebuffer to the Slint
 `DesktopRdpWindow`. The UI page, callbacks, snapshot selector, and build
 dependencies now use RDP terminology; no MSTSC, ActiveX, Win32 child-window
-embedding, or desktop capture is used.
+embedding, or desktop capture is used. The embedded Windows client initializes
+Winsock for the FreeRDP session before hostname resolution and socket creation.
 
 The current vertical slice displays the remote framebuffer and reports
 connection, resize, failure, and disconnect states. The RDP page collects the
@@ -57,6 +58,10 @@ and preserves the full current frame across partial RDP updates.
 `./scripts/validate_policy_manifest.sh && ./scripts/validate_quality_profile.sh && ./scripts/validate_supply_chain_profile.sh && ./scripts/validate_action_pinning.sh && ./scripts/validate_repository_shape.sh && ./scripts/test_build_contract.sh`
 
 `git diff --check`
+
+Windows runtime diagnosis confirmed that native `mstsc` and TCP connectivity
+were healthy while the embedded FreeRDP path failed at `getaddrinfo`; the
+session now owns the required Winsock startup and cleanup lifecycle.
 
 The repository Linux host cannot execute the Windows MSVC/vcpkg build. The
 Windows workflow installs `freerdp[client]` through vcpkg, generates bindgen
