@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): replace desktop clone with Rust FreeRDP RDP client
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: a0ecf9e2d0108f99b3cc4bc4a52ae9930f90c096
+Head OID: 9113137435b1e89661a1680fbd93a6a5c9026368
 Integrated Result: pending
 
 ## Summary
@@ -27,10 +27,14 @@ Winsock for the FreeRDP session before hostname resolution and socket creation.
 
 The current vertical slice displays the remote framebuffer and reports
 connection, resize, failure, and disconnect states. The RDP page collects the
-host, port, domain, username, and password directly; it does not open a
-Windows CredUI prompt, and asynchronous connection errors are mirrored back to
-that page. Keyboard and mouse input forwarding remains a separate
-input-boundary change.
+host, port, domain, and credentials directly; it does not open a Windows CredUI
+prompt, and asynchronous connection errors are mirrored back to that page.
+Certificate validation remains strict by default. The page can explicitly
+accept a self-signed, name-mismatched, or changed certificate for the current
+session only; the FreeRDP callbacks return session-only acceptance and never
+persist trust. Certificate failures include the server fingerprint in the page
+status so the operator can verify it before retrying. Keyboard and mouse input
+forwarding remains a separate input-boundary change.
 
 ## Motivation
 
@@ -49,7 +53,7 @@ and preserves the full current frame across partial RDP updates.
 
 `cargo test --manifest-path ui/windows/Cargo.toml --no-fail-fast`
 
-`cargo run --manifest-path ui/windows/Cargo.toml --example layout_snapshot -- --page rdp --output /tmp/chuzi-rdp-layout-final-2`
+`cargo run --manifest-path ui/windows/Cargo.toml --example layout_snapshot -- --page rdp --output /tmp/chuzi-rdp-layout-cert-trust`
 
 `go test ./...`
 
@@ -62,6 +66,11 @@ and preserves the full current frame across partial RDP updates.
 Windows runtime diagnosis confirmed that native `mstsc` and TCP connectivity
 were healthy while the embedded FreeRDP path failed at `getaddrinfo`; the
 session now owns the required Winsock startup and cleanup lifecycle.
+
+The certificate-handling implementation registers FreeRDP's
+`VerifyCertificateEx` and `VerifyChangedCertificateEx` callbacks. It reports
+the certificate fingerprint in the RDP page and uses return value `2` only
+when the operator explicitly enables the one-session trust option.
 
 The repository Linux host cannot execute the Windows MSVC/vcpkg build. The
 Windows workflow installs `freerdp[client]` through vcpkg, generates bindgen
