@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: e185bac43b6e227c86b8ef31a26eeda4b21c51b3
+Head OID: d4b883b6c139802a0b50b5045179941428447188
 Integrated Result: pending
 
 ## Summary
@@ -23,10 +23,11 @@ surface reserved for a future remote display.
 
 The controller now owns only window creation, display, hide, and close-request
 behavior. The desktop-clone window is a real frameless Slint window with a
-draggable custom title bar that combines the BGI controls with functional
-Windows 11-style minimize, maximize/restore, and close buttons. It does not
-start MSTSC, inspect native HWNDs, embed child windows, create sessions, or
-forward input.
+draggable custom title bar that combines neutral RDP controls with functional
+Windows 11-style minimize, maximize/restore, and close buttons. The connection
+card uses explicit responsive geometry and neutral RDP terminology instead of
+product-specific branding. It does not start MSTSC, inspect native HWNDs,
+embed child windows, create sessions, or forward input.
 
 ## Motivation
 
