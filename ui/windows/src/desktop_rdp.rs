@@ -825,7 +825,7 @@ mod freerdp {
             return 0;
         }
         let context = (*instance).context;
-        if ffi::gdi_init(instance, ffi::CHUZI_PIXEL_FORMAT_BGRX32 as u32) == 0 {
+        if ffi::gdi_init(instance, ffi::CHUZI_PIXEL_FORMAT_RGBA32 as u32) == 0 {
             return 0;
         }
         if ffi::freerdp_settings_set_bool(
@@ -914,11 +914,9 @@ mod freerdp {
         for row in 0..height {
             let source = &source[row * stride..row * stride + row_bytes];
             let destination = &mut pixels[row * row_bytes..(row + 1) * row_bytes];
-            for (source, destination) in source.chunks_exact(4).zip(destination.chunks_exact_mut(4))
-            {
-                // FreeRDP was initialized with PIXEL_FORMAT_BGRX32.
-                destination.copy_from_slice(&[source[2], source[1], source[0], 0xff]);
-            }
+            // FreeRDP was initialized with PIXEL_FORMAT_RGBA32, so the
+            // framebuffer is already in the byte order Slint expects.
+            destination.copy_from_slice(source);
         }
 
         if let Some(shared) = shared_from_context(context) {
