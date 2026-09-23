@@ -5,7 +5,7 @@
 - 普通配置：`data_dir`、Matrix homeserver/user/policy、同步时序、凭证 key 环境变量
   名称和健康监听地址。`configs/example.json` 不包含任何 Secret 值。
 - Secret 配置：Matrix access token、凭证加密主密钥（只由环境/Secret manager 注入）。
-- 运行数据：数据库、浏览器 Profile、审计日志和待发送事件。
+- 运行数据：数据库、浏览器 Profile、审计日志、待发送事件和用户同意后的诊断队列。
 
 普通配置示例位于 `configs/example.json`，包含数据目录、凭证环境变量名称和本地
 健康监听地址；Matrix 网络配置按需添加。数据库路径固定由存储层派生为
@@ -228,5 +228,9 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
 - `observability.metrics_listen` 提供本地 Prometheus 文本端点；`log_path` 启用
   0600 JSONL 日志并按 `log_max_bytes`/`log_max_files` 轮转。两个端点都必须限制在
   loopback 或受保护管理网络。
+- `diagnostics.enabled` 控制用户同意后的故障报告能力；`diagnostics.endpoint`
+  只能使用 HTTPS（本机测试允许 loopback HTTP），不配置 endpoint 时报告仍会以
+  0600 文件保存在 data_dir 派生的 `diagnostics/` 队列。服务每 30 秒尝试一次待发送
+  报告，网络失败按退避时间重试；队列内容仅包含分类事件、平台/版本和脱敏摘要。
 - 备份状态数据库前确认凭证密文与密钥分离保存；撤销后的凭据密文已擦除且不可恢复。
 - 发布遵循 UGS 的版本和变更记录规则。

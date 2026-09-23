@@ -248,6 +248,12 @@ func (c *Client) GetBrowserView(ctx context.Context, input coreapi.BrowserViewRe
 	return result, err
 }
 
+func (c *Client) SubmitDiagnosticReport(ctx context.Context, input coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
+	var result coreapi.DiagnosticStatus
+	err := c.Call(ctx, methodSubmitDiagnostic, input, &result)
+	return result, err
+}
+
 func formatUint(value uint64) string {
 	const digits = "0123456789"
 	if value == 0 {

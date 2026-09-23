@@ -175,6 +175,27 @@ type BrowserViewAPI interface {
 	GetBrowserView(context.Context, BrowserViewRequest) (BrowserView, error)
 }
 
+// DiagnosticReport is a user-consented, redaction-safe support submission.
+// The Core implementation collects only allow-listed local diagnostics.
+type DiagnosticReport struct {
+	Severity string `json:"severity"`
+	Category string `json:"category"`
+	Summary  string `json:"summary"`
+}
+
+type DiagnosticStatus struct {
+	ID        string    `json:"id"`
+	State     string    `json:"state"`
+	Attempts  int       `json:"attempts"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+// DiagnosticsAPI is optional so older in-process embedders remain compatible.
+type DiagnosticsAPI interface {
+	SubmitDiagnosticReport(context.Context, DiagnosticReport) (DiagnosticStatus, error)
+}
+
 // API is the stable Core contract. Implementations may use any local IPC or
 // in-process transport as long as these DTOs and error codes remain stable.
 type API interface {

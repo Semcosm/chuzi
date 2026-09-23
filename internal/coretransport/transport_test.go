@@ -25,6 +25,12 @@ type testAPI struct {
 
 type viewTestAPI struct{ *testAPI }
 
+type diagnosticTestAPI struct{ *testAPI }
+
+func (a *diagnosticTestAPI) SubmitDiagnosticReport(context.Context, coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
+	return coreapi.DiagnosticStatus{ID: "diag-1", State: "queued"}, nil
+}
+
 func (a *viewTestAPI) GetBrowserView(context.Context, coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
 	return coreapi.BrowserView{RequestID: "request-1", ContentType: "image/jpeg", Width: 320, Height: 180, Data: "amVwZw=="}, nil
 }
@@ -120,6 +126,21 @@ func TestUnixContractBrowserViewMethod(t *testing.T) {
 	view, err := client.GetBrowserView(context.Background(), coreapi.BrowserViewRequest{RequestID: "request-1"})
 	if err != nil || view.ContentType != "image/jpeg" || view.Data != "amVwZw==" {
 		t.Fatalf("view = %#v, err=%v", view, err)
+	}
+}
+
+func TestUnixContractDiagnosticReportMethod(t *testing.T) {
+	api := &diagnosticTestAPI{testAPI: &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}}
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	status, err := client.SubmitDiagnosticReport(context.Background(), coreapi.DiagnosticReport{Severity: "error", Category: "core", Summary: "Core unavailable"})
+	if err != nil || status.ID != "diag-1" || status.State != "queued" {
+		t.Fatalf("diagnostic status = %#v, err=%v", status, err)
 	}
 }
 

@@ -62,6 +62,11 @@ export component MainWindow inherits Window {
     in-out property <string> data-directory: "";
     in-out property <string> message: "";
     in-out property <string> message-kind: "info";
+    in-out property <bool> diagnostic-consent-visible: false;
+    in-out property <bool> diagnostic-submitting: false;
+    in-out property <string> diagnostic-consent-summary: "";
+    in-out property <string> diagnostic-consent-category: "ui";
+    in-out property <string> diagnostic-consent-severity: "error";
     in-out property <bool> busy: false;
     in-out property <string> busy-operation: "";
     in-out property <bool> core-ready: false;
@@ -144,6 +149,8 @@ export component MainWindow inherits Window {
     callback cancel-task(string);
     callback refresh-view(string);
     callback connect-rdp(string, string, string, string, string, bool);
+    callback diagnostic-submit();
+    callback diagnostic-dismiss();
 
     background: Palette.background;
 
@@ -565,6 +572,41 @@ export component MainWindow inherits Window {
                         Text { text: root.busy ? "Saving..." : ""; color: Palette.alternate-foreground; vertical-alignment: center; }
                     }
                     FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : root.message-kind == "success" ? #4b8c6a : #526c92; vertical-stretch: 0; }
+                }
+            }
+        }
+    }
+    if root.diagnostic-consent-visible: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        background: #00000099;
+        z: 100;
+
+        Rectangle {
+            width: root.width < 620px ? root.width - 48px : 560px;
+            height: 300px;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: Palette.background;
+            border-color: Palette.border;
+            border-width: 1px;
+            border-radius: 10px;
+
+            VerticalBox {
+                padding: 24px;
+                spacing: 12px;
+                Text { text: "是否发送诊断信息？"; color: Palette.foreground; font-size: 22px; font-weight: 700; vertical-stretch: 0; }
+                Text { text: root.diagnostic-consent-summary; color: Palette.foreground; wrap: word-wrap; vertical-stretch: 0; }
+                Text { text: "将只收集分类错误、最近的脱敏运行事件和必要的版本/平台信息。不会收集密码、Token、Cookie、页面内容、RDP 凭据或原始路径。"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 1; }
+                Text { text: root.diagnostic-submitting ? "正在保存并提交…" : "你可以拒绝；同意后若网络不可用会安全保存在本机并稍后重试。"; color: Palette.alternate-foreground; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                HorizontalBox {
+                    spacing: 10px;
+                    height: 40px;
+                    vertical-stretch: 0;
+                    Button { text: "暂不发送"; enabled: !root.diagnostic-submitting; clicked => { root.diagnostic-dismiss(); } }
+                    Button { text: "发送诊断信息"; enabled: !root.diagnostic-submitting; clicked => { root.diagnostic-submit(); } }
                 }
             }
         }

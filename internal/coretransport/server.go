@@ -273,6 +273,16 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return viewAPI.GetBrowserView(ctx, params)
+	case methodSubmitDiagnostic:
+		diagnosticsAPI, ok := s.api.(coreapi.DiagnosticsAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "diagnostics are unavailable")
+		}
+		var params coreapi.DiagnosticReport
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		return diagnosticsAPI.SubmitDiagnosticReport(ctx, params)
 	default:
 		return nil, invalidMethodError(method)
 	}

@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,6 +42,87 @@ func (f FuncSink) Record(event Event) {
 type NopSink struct{}
 
 func (NopSink) Record(Event) {}
+
+// SanitizeEvent returns the only representation permitted to leave the
+// in-process observability boundary. Identifiers are hashed and free-form
+// fields are restricted to bounded classification tokens.
+func SanitizeEvent(event Event, fallback time.Time) Event {
+	if event.At.IsZero() {
+		event.At = fallback
+	}
+	if event.At.IsZero() {
+		event.At = time.Unix(0, 0).UTC()
+	}
+	event.At = event.At.UTC()
+	event.Component = safeField(event.Component)
+	event.Operation = safeField(event.Operation)
+	event.Outcome = safeField(event.Outcome)
+	if event.RequestID != "" {
+		event.RequestID = RedactIdentifier(event.RequestID)
+	}
+	if event.Resource != "" {
+		event.Resource = RedactIdentifier(event.Resource)
+	}
+	event.ErrorClass = safeField(event.ErrorClass)
+	if event.Duration < 0 {
+		event.Duration = 0
+	}
+	if event.Duration > 24*time.Hour {
+		event.Duration = 24 * time.Hour
+	}
+	return event
+}
+
+// EventBuffer keeps a bounded, redacted window for explicit user-consented
+// diagnostics. It never stores raw log lines, stack traces, credentials, or
+// page content.
+type EventBuffer struct {
+	mu     sync.Mutex
+	limit  int
+	events []Event
+}
+
+func NewEventBuffer(limit int) *EventBuffer {
+	if limit < 1 {
+		limit = 128
+	}
+	if limit > 2048 {
+		limit = 2048
+	}
+	return &EventBuffer{limit: limit}
+}
+
+func (b *EventBuffer) Record(event Event) {
+	if b == nil {
+		return
+	}
+	event = SanitizeEvent(event, time.Now().UTC())
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.events = append(b.events, event)
+	if excess := len(b.events) - b.limit; excess > 0 {
+		copy(b.events, b.events[excess:])
+		b.events = b.events[:b.limit]
+	}
+}
+
+func (b *EventBuffer) Snapshot(limit int) []Event {
+	if b == nil {
+		return nil
+	}
+	if limit <= 0 || limit > b.limit {
+		limit = b.limit
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	start := len(b.events) - limit
+	if start < 0 {
+		start = 0
+	}
+	result := make([]Event, len(b.events)-start)
+	copy(result, b.events[start:])
+	return result
+}
 
 // MultiSink fans one redacted event out to a set of sinks. A nil sink is
 // ignored, which makes optional log/metric wiring safe in tests and in a

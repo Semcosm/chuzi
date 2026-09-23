@@ -31,6 +31,7 @@ type Config struct {
 	Credentials   CredentialConfig    `json:"credentials,omitempty"`
 	Health        HealthConfig        `json:"health,omitempty"`
 	Observability ObservabilityConfig `json:"observability,omitempty"`
+	Diagnostics   DiagnosticsConfig   `json:"diagnostics,omitempty"`
 }
 
 // MatrixConfig contains non-secret Matrix deployment settings. The access
@@ -109,6 +110,7 @@ func Load(path string) (Config, error) {
 	normalized.Credentials = raw.Credentials
 	normalized.Health = raw.Health
 	normalized.Observability = raw.Observability
+	normalized.Diagnostics = raw.Diagnostics
 	if err := normalized.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -134,6 +136,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Observability.Validate(); err != nil {
+		return err
+	}
+	if err := c.Diagnostics.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -200,6 +205,40 @@ type ObservabilityConfig struct {
 	LogPath       string `json:"log_path,omitempty"`
 	LogMaxBytes   int64  `json:"log_max_bytes,omitempty"`
 	LogMaxFiles   int    `json:"log_max_files,omitempty"`
+}
+
+// DiagnosticsConfig controls the optional, explicit support-report queue.
+// Endpoint is ordinary configuration; reports never carry credentials.
+type DiagnosticsConfig struct {
+	Enabled          bool   `json:"enabled,omitempty"`
+	Endpoint         string `json:"endpoint,omitempty"`
+	QueueDir         string `json:"queue_dir,omitempty"`
+	MaxReportBytes   int64  `json:"max_report_bytes,omitempty"`
+	MaxQueueFiles    int    `json:"max_queue_files,omitempty"`
+	RetryBaseSeconds int    `json:"retry_base_seconds,omitempty"`
+	RetryMaxSeconds  int    `json:"retry_max_seconds,omitempty"`
+}
+
+func (d DiagnosticsConfig) Validate() error {
+	if strings.TrimSpace(d.Endpoint) != "" {
+		u, err := url.Parse(strings.TrimSpace(d.Endpoint))
+		if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
+			return fmt.Errorf("%w: diagnostics endpoint is invalid", ErrInvalidConfig)
+		}
+		if u.Scheme != "https" {
+			host := strings.ToLower(u.Hostname())
+			if u.Scheme != "http" || (host != "localhost" && host != "127.0.0.1" && host != "::1") {
+				return fmt.Errorf("%w: diagnostics endpoint must use HTTPS", ErrInvalidConfig)
+			}
+		}
+	}
+	if strings.TrimSpace(d.QueueDir) != d.QueueDir || strings.ContainsAny(d.QueueDir, "\r\n") || len(d.QueueDir) > 1024 {
+		return fmt.Errorf("%w: diagnostics queue_dir is invalid", ErrInvalidConfig)
+	}
+	if d.MaxReportBytes < 0 || d.MaxReportBytes > 1<<20 || d.MaxQueueFiles < 0 || d.MaxQueueFiles > 1000 || d.RetryBaseSeconds < 0 || d.RetryBaseSeconds > 86400 || d.RetryMaxSeconds < 0 || d.RetryMaxSeconds > 604800 {
+		return fmt.Errorf("%w: diagnostics limits are out of range", ErrInvalidConfig)
+	}
+	return nil
 }
 
 func (o ObservabilityConfig) Validate() error {
