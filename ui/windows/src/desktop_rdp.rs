@@ -1047,7 +1047,7 @@ mod freerdp {
         let source = std::slice::from_raw_parts(gdi.primary_buffer, bytes);
         let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(width as u32, height as u32);
         let destination = pixels.make_mut_bytes();
-        let copy_started = Instant::now();
+        let copy_started = std::time::Instant::now();
         if stride == row_bytes {
             // FreeRDP was initialized with PIXEL_FORMAT_RGBA32, so the
             // framebuffer is already in the byte order Slint expects.
