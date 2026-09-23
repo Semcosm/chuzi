@@ -2,6 +2,7 @@ use crate::DesktopRdpWindow;
 use slint::{CloseRequestResponse, ComponentHandle, Timer};
 #[cfg(windows)]
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -114,7 +115,8 @@ struct PendingUpdate {
 struct SharedState {
     update: Mutex<PendingUpdate>,
     certificate_failure: Mutex<Option<String>>,
-    stop: std::sync::atomic::AtomicBool,
+    pending: AtomicBool,
+    stop: AtomicBool,
 }
 
 impl SharedState {
@@ -126,14 +128,24 @@ impl SharedState {
                 frame: None,
             }),
             certificate_failure: Mutex::new(None),
-            stop: std::sync::atomic::AtomicBool::new(false),
+            pending: AtomicBool::new(false),
+            stop: AtomicBool::new(false),
         }
     }
 
     fn set_state(&self, state: impl Into<String>, status: impl Into<String>) {
+        let state = state.into();
+        let status = status.into();
+        let mut changed = false;
         if let Ok(mut update) = self.update.lock() {
-            update.state = state.into();
-            update.status = status.into();
+            if update.state != state || update.status != status {
+                update.state = state;
+                update.status = status;
+                changed = true;
+            }
+        }
+        if changed {
+            self.pending.store(true, Ordering::Release);
         }
     }
 
@@ -160,24 +172,34 @@ impl SharedState {
             // Keep the newest complete framebuffer. A stale frame must not
             // block a newer RDP update from reaching the UI.
             update.frame = Some(frame);
+            self.pending.store(true, Ordering::Release);
         }
     }
 
     #[cfg_attr(not(windows), allow(dead_code))]
-    fn poll(&self) -> PendingUpdate {
+    fn poll(&self) -> Option<PendingUpdate> {
+        if !self.pending.swap(false, Ordering::AcqRel) {
+            return None;
+        }
+
         let Ok(mut update) = self.update.lock() else {
-            return PendingUpdate {
+            return Some(PendingUpdate {
                 state: "failed".to_owned(),
                 status: "RDP 状态不可用。".to_owned(),
                 frame: None,
-            };
+            });
         };
 
-        PendingUpdate {
+        Some(PendingUpdate {
             state: update.state.clone(),
             status: update.status.clone(),
             frame: update.frame.take(),
-        }
+        })
+    }
+
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn has_pending(&self) -> bool {
+        self.pending.load(Ordering::Acquire)
     }
 
     fn status_snapshot(&self) -> (String, String) {
@@ -302,7 +324,9 @@ impl DesktopRdpController {
             let timer_shared = Arc::clone(&shared);
             let timer_window = window.as_weak();
             frame_timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
-                apply_pending_update(&timer_window, &timer_shared);
+                if timer_shared.has_pending() {
+                    apply_pending_update(&timer_window, &timer_shared);
+                }
             });
         }
 
@@ -322,9 +346,7 @@ impl DesktopRdpController {
 
 impl Drop for DesktopRdpController {
     fn drop(&mut self) {
-        self.shared
-            .stop
-            .store(true, std::sync::atomic::Ordering::SeqCst);
+        self.shared.stop.store(true, Ordering::SeqCst);
         self.frame_timer.stop();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
@@ -338,7 +360,9 @@ fn apply_pending_update(window: &slint::Weak<DesktopRdpWindow>, shared: &SharedS
         return;
     };
 
-    let update = shared.poll();
+    let Some(update) = shared.poll() else {
+        return;
+    };
     window.set_state(update.state.into());
     window.set_status(update.status.into());
 
@@ -903,12 +927,16 @@ mod freerdp {
         let source = std::slice::from_raw_parts(gdi.primary_buffer, bytes);
         let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(width as u32, height as u32);
         let destination = pixels.make_mut_bytes();
-        for row in 0..height {
-            let source = &source[row * stride..row * stride + row_bytes];
-            let destination = &mut destination[row * row_bytes..(row + 1) * row_bytes];
+        if stride == row_bytes {
             // FreeRDP was initialized with PIXEL_FORMAT_RGBA32, so the
             // framebuffer is already in the byte order Slint expects.
             destination.copy_from_slice(source);
+        } else {
+            for row in 0..height {
+                let source = &source[row * stride..row * stride + row_bytes];
+                let destination = &mut destination[row * row_bytes..(row + 1) * row_bytes];
+                destination.copy_from_slice(source);
+            }
         }
 
         if let Some(shared) = shared_from_context(context) {
@@ -1055,9 +1083,26 @@ mod tests {
             pixels: vec![5, 6, 7, 8],
         });
 
-        let update = shared.poll();
+        let update = shared.poll().expect("latest update should be available");
         let frame = update.frame.expect("latest frame should be available");
         assert_eq!(frame.pixels, vec![5, 6, 7, 8]);
-        assert!(shared.poll().frame.is_none());
+        assert!(shared.poll().is_none());
+    }
+
+    #[test]
+    fn shared_state_only_marks_changed_state_as_pending() {
+        let shared = SharedState::new();
+        assert!(!shared.has_pending());
+        assert!(shared.poll().is_none());
+
+        shared.set_state("connecting", "正在连接 RDP…");
+        assert!(!shared.has_pending());
+
+        shared.set_state("connected", "RDP 已连接");
+        assert!(shared.has_pending());
+        let update = shared.poll().expect("changed state should be available");
+        assert_eq!(update.state, "connected");
+        assert_eq!(update.status, "RDP 已连接");
+        assert!(!shared.has_pending());
     }
 }
