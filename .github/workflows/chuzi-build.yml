@@ -43,6 +43,7 @@ jobs:
           scripts/validate_action_pinning.sh
           scripts/validate_repository_shape.sh
           scripts/test_build_contract.sh
+          scripts/test_rdp_perf_analysis.sh
           scripts/test_nightly_package.sh
           scripts/test_nightly_artifact_validator.sh
           scripts/test_release_catalog.sh

@@ -96,12 +96,33 @@ frame is read-only and on demand; the client cannot navigate, click, type, or ac
 ### RDP
 
 RDP opens a Windows-only Rust/FreeRDP session. FreeRDP owns TLS/NLA negotiation
-and protocol decoding; the client copies its BGRX32 framebuffer into an owned
+and protocol decoding; the client copies its RGBA32 framebuffer into an owned
 Slint image for display. When credentials are not supplied by the caller,
 Windows' temporary credential prompt is used with persistence disabled. The UI
 does not save or send RDP passwords through Core.
 The current slice is display-only; keyboard and mouse forwarding remains a
 separate input-boundary change.
+
+#### RDP performance capture
+
+The client keeps FreeRDP CPU decoding and uses the normal Slint/WGPU presentation
+path. For a local performance capture, set CHUZI_RDP_PERF=1 before launching
+the Windows client and redirect stderr to a log file. The client emits periodic
+rdp_perf JSON records containing framebuffer copy time, frame intervals, frame
+coalescing, copied bytes, and UI handoff time; records contain no host, account,
+credential, certificate, or pixel data.
+
+From the repository root, summarize the internal RDP path with:
+
+    python scripts/analyze_rdp_perf.py --json .\\rdp-client.stderr.log
+    python scripts/analyze_rdp_perf.py .\\rdp-client.stderr.log
+
+For end-to-end presentation evidence, run PresentMon on the same Windows host
+against chuzi.exe (or the installed client process) and save its CSV output
+alongside the stderr log. PresentMon measures the final desktop-present path;
+rdp_perf measures the client-side copy and UI handoff path. The two data
+sources should be reviewed together. The repository CI test uses deterministic
+synthetic rdp_perf records and does not claim real RDP FPS or GPU timing.
 
 ## Runtime and packaging
 

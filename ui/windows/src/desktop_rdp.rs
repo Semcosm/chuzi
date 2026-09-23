@@ -2,10 +2,11 @@ use crate::DesktopRdpWindow;
 use slint::{CloseRequestResponse, ComponentHandle, Timer};
 #[cfg(windows)]
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Instant;
 
 #[cfg(windows)]
 use slint::TimerMode;
@@ -112,9 +113,116 @@ struct PendingUpdate {
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
+struct RdpPerfStats {
+    enabled: bool,
+    started: Instant,
+    last_report: Mutex<Instant>,
+    last_frame: Mutex<Option<Instant>>,
+    paint_batches: AtomicU64,
+    frame_intervals: AtomicU64,
+    frame_interval_us: AtomicU64,
+    coalesced_frames: AtomicU64,
+    copied_bytes: AtomicU64,
+    copy_time_us: AtomicU64,
+    ui_handoffs: AtomicU64,
+    ui_handoff_time_us: AtomicU64,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+impl RdpPerfStats {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            enabled: std::env::var("CHUZI_RDP_PERF")
+                .map(|value| {
+                    matches!(
+                        value.trim().to_ascii_lowercase().as_str(),
+                        "1" | "true" | "yes"
+                    )
+                })
+                .unwrap_or(false),
+            started: now,
+            last_report: Mutex::new(now),
+            last_frame: Mutex::new(None),
+            paint_batches: AtomicU64::new(0),
+            frame_intervals: AtomicU64::new(0),
+            frame_interval_us: AtomicU64::new(0),
+            coalesced_frames: AtomicU64::new(0),
+            copied_bytes: AtomicU64::new(0),
+            copy_time_us: AtomicU64::new(0),
+            ui_handoffs: AtomicU64::new(0),
+            ui_handoff_time_us: AtomicU64::new(0),
+        }
+    }
+
+    fn record_copy(&self, bytes: usize, elapsed: std::time::Duration) {
+        if !self.enabled {
+            return;
+        }
+        if let Ok(mut last_frame) = self.last_frame.lock() {
+            let now = Instant::now();
+            if let Some(previous) = *last_frame {
+                self.frame_intervals.fetch_add(1, Ordering::Relaxed);
+                self.frame_interval_us
+                    .fetch_add(previous.elapsed().as_micros() as u64, Ordering::Relaxed);
+            }
+            *last_frame = Some(now);
+        }
+        self.paint_batches.fetch_add(1, Ordering::Relaxed);
+        self.copied_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+        self.copy_time_us
+            .fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+        self.report_if_due(false);
+    }
+
+    fn record_coalesced(&self) {
+        if !self.enabled {
+            return;
+        }
+        self.coalesced_frames.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn record_ui_handoff(&self, elapsed: std::time::Duration) {
+        if !self.enabled {
+            return;
+        }
+        self.ui_handoffs.fetch_add(1, Ordering::Relaxed);
+        self.ui_handoff_time_us
+            .fetch_add(elapsed.as_micros() as u64, Ordering::Relaxed);
+        self.report_if_due(false);
+    }
+
+    fn report_if_due(&self, force: bool) {
+        if !self.enabled {
+            return;
+        }
+        let Ok(mut last_report) = self.last_report.lock() else {
+            return;
+        };
+        if !force && last_report.elapsed() < std::time::Duration::from_secs(1) {
+            return;
+        }
+        *last_report = Instant::now();
+        eprintln!(
+            "rdp_perf {{\"elapsed_ms\":{},\"paint_batches\":{},\"frame_intervals\":{},\"frame_interval_us\":{},\"coalesced_frames\":{},\"copied_bytes\":{},\"copy_time_us\":{},\"ui_handoffs\":{},\"ui_handoff_time_us\":{}}}",
+            self.started.elapsed().as_millis(),
+            self.paint_batches.load(Ordering::Relaxed),
+            self.frame_intervals.load(Ordering::Relaxed),
+            self.frame_interval_us.load(Ordering::Relaxed),
+            self.coalesced_frames.load(Ordering::Relaxed),
+            self.copied_bytes.load(Ordering::Relaxed),
+            self.copy_time_us.load(Ordering::Relaxed),
+            self.ui_handoffs.load(Ordering::Relaxed),
+            self.ui_handoff_time_us.load(Ordering::Relaxed),
+        );
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
 struct SharedState {
     update: Mutex<PendingUpdate>,
     certificate_failure: Mutex<Option<String>>,
+    perf: RdpPerfStats,
     pending: AtomicBool,
     stop: AtomicBool,
 }
@@ -128,6 +236,7 @@ impl SharedState {
                 frame: None,
             }),
             certificate_failure: Mutex::new(None),
+            perf: RdpPerfStats::new(),
             pending: AtomicBool::new(false),
             stop: AtomicBool::new(false),
         }
@@ -171,6 +280,9 @@ impl SharedState {
         if let Ok(mut update) = self.update.lock() {
             // Keep the newest complete framebuffer. A stale frame must not
             // block a newer RDP update from reaching the UI.
+            if update.frame.is_some() {
+                self.perf.record_coalesced();
+            }
             update.frame = Some(frame);
             self.pending.store(true, Ordering::Release);
         }
@@ -367,7 +479,10 @@ fn apply_pending_update(window: &slint::Weak<DesktopRdpWindow>, shared: &SharedS
     window.set_status(update.status.into());
 
     if let Some(frame) = update.frame {
-        match frame_to_image(frame) {
+        let started = Instant::now();
+        let image = frame_to_image(frame);
+        shared.perf.record_ui_handoff(started.elapsed());
+        match image {
             Some(image) => window.set_frame(image),
             None => shared.set_state("failed", "收到的 RDP framebuffer 尺寸无效。"),
         }
@@ -429,6 +544,7 @@ mod freerdp {
         } else {
             shared.set_state("closed", "RDP 连接已断开。\n");
         }
+        shared.perf.report_if_due(true);
     }
 
     unsafe fn run_session(
@@ -924,9 +1040,14 @@ mod freerdp {
             reset_dirty_region(gdi);
             return 0;
         };
+        let Some(pixel_bytes) = row_bytes.checked_mul(height) else {
+            reset_dirty_region(gdi);
+            return 0;
+        };
         let source = std::slice::from_raw_parts(gdi.primary_buffer, bytes);
         let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(width as u32, height as u32);
         let destination = pixels.make_mut_bytes();
+        let copy_started = Instant::now();
         if stride == row_bytes {
             // FreeRDP was initialized with PIXEL_FORMAT_RGBA32, so the
             // framebuffer is already in the byte order Slint expects.
@@ -940,6 +1061,7 @@ mod freerdp {
         }
 
         if let Some(shared) = shared_from_context(context) {
+            shared.perf.record_copy(pixel_bytes, copy_started.elapsed());
             shared.set_frame(RdpFrame {
                 width: width as u32,
                 height: height as u32,

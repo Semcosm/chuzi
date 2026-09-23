@@ -23,6 +23,8 @@ done
 [ -f "$repo_root/ui/windows/build.rs" ] || fail "Windows Slint build script is missing"
 [ -f "$repo_root/ui/windows/src/main.rs" ] || fail "Windows Slint UI entry point is missing"
 [ -f "$repo_root/ui/windows/ui/main.slint" ] || fail "Windows Slint markup is missing"
+[ -x "$repo_root/scripts/analyze_rdp_perf.py" ] || fail "RDP performance analyzer is missing or not executable"
+[ -x "$repo_root/scripts/test_rdp_perf_analysis.sh" ] || fail "RDP performance analyzer test is missing or not executable"
 [ -f "$repo_root/scripts/build_windows_slint.ps1" ] || fail "Windows Slint build script is missing"
 [ -f "$repo_root/internal/coretransport/listener_windows_test.go" ] || fail "Windows Core transport test is missing"
 [ -f "$repo_root/internal/automation/contract.go" ] || fail "automation contract is missing"
@@ -70,12 +72,14 @@ done
 grep -Fq 'TestLauncherConsumerFlow' "$repo_root/cmd/launcher/consumer_test.go" || fail "launcher consumer flow test is missing"
 
 grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build check is missing"
+grep -Fq 'scripts/test_rdp_perf_analysis.sh' "$repo_root/.github/workflows/chuzi-build.yml" || fail "build workflow misses RDP performance analyzer test"
 grep -Eq 'actions/checkout@[0-9a-f]{40}' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow action is not pinned"
 grep -Fq 'branches: [main]' "$repo_root/.github/workflows/chuzi-build.yml" || fail "main integration build trigger is missing"
 if grep -Eq '^[[:space:]]*pull_request:' "$repo_root/.github/workflows/chuzi-build.yml"; then
   fail "full build workflow must not run on pull requests"
 fi
 grep -Fq 'pull_request:' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request workflow trigger is missing"
+grep -Fq 'scripts/test_rdp_perf_analysis.sh' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request workflow misses RDP performance analyzer test"
 grep -Fq 'name: chuzi-build' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request required check is missing"
 grep -Fq 'cancel-in-progress: true' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request cancellation is missing"
 grep -Eq 'actions/checkout@[0-9a-f]{40}' "$repo_root/.github/workflows/chuzi-pr.yml" || fail "pull request action is not pinned"
