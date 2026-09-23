@@ -66,6 +66,9 @@ struct RdpFrame {
     width: u32,
     height: u32,
     /// A private copy in RGBA8, converted off the Slint UI thread.
+    #[cfg(windows)]
+    pixels: SharedPixelBuffer<Rgba8Pixel>,
+    #[cfg(not(windows))]
     pixels: Vec<u8>,
 }
 
@@ -152,19 +155,10 @@ impl SharedState {
     }
 
     #[cfg_attr(not(windows), allow(dead_code))]
-    fn frame_pending(&self) -> bool {
-        self.update
-            .lock()
-            .map(|update| update.frame.is_some())
-            .unwrap_or(true)
-    }
-
-    #[cfg_attr(not(windows), allow(dead_code))]
     fn set_frame(&self, frame: RdpFrame) {
         if let Ok(mut update) = self.update.lock() {
-            if update.frame.is_some() {
-                return;
-            }
+            // Keep the newest complete framebuffer. A stale frame must not
+            // block a newer RDP update from reaching the UI.
             update.frame = Some(frame);
         }
     }
@@ -307,7 +301,7 @@ impl DesktopRdpController {
         {
             let timer_shared = Arc::clone(&shared);
             let timer_window = window.as_weak();
-            frame_timer.start(TimerMode::Repeated, Duration::from_millis(33), move || {
+            frame_timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
                 apply_pending_update(&timer_window, &timer_shared);
             });
         }
@@ -349,7 +343,7 @@ fn apply_pending_update(window: &slint::Weak<DesktopRdpWindow>, shared: &SharedS
     window.set_status(update.status.into());
 
     if let Some(frame) = update.frame {
-        match frame_to_image(&frame) {
+        match frame_to_image(frame) {
             Some(image) => window.set_frame(image),
             None => shared.set_state("failed", "收到的 RDP framebuffer 尺寸无效。"),
         }
@@ -357,26 +351,21 @@ fn apply_pending_update(window: &slint::Weak<DesktopRdpWindow>, shared: &SharedS
 }
 
 #[cfg(windows)]
-fn frame_to_image(frame: &RdpFrame) -> Option<Image> {
-    let width = usize::try_from(frame.width).ok()?;
-    let height = usize::try_from(frame.height).ok()?;
-    let row_bytes = width.checked_mul(4)?;
-    let frame_bytes = row_bytes.checked_mul(height)?;
-    if width == 0 || height == 0 || frame.pixels.len() < frame_bytes {
+fn frame_to_image(frame: RdpFrame) -> Option<Image> {
+    if frame.width == 0
+        || frame.height == 0
+        || frame.pixels.width() != frame.width
+        || frame.pixels.height() != frame.height
+    {
         return None;
     }
-
-    let buffer = SharedPixelBuffer::<Rgba8Pixel>::clone_from_slice(
-        &frame.pixels[..frame_bytes],
-        frame.width,
-        frame.height,
-    );
-    Some(Image::from_rgba8(buffer))
+    Some(Image::from_rgba8(frame.pixels))
 }
 
 #[cfg(windows)]
 mod freerdp {
     use super::{PointerAction, PointerButton, RdpFrame, RdpInput, RdpTarget, SharedState};
+    use slint::{Rgba8Pixel, SharedPixelBuffer};
     use std::ffi::{c_char, CStr, CString};
     use std::mem::{size_of, zeroed};
     use std::sync::mpsc::Receiver;
@@ -856,18 +845,9 @@ mod freerdp {
 
     unsafe extern "C" fn begin_paint(context: *mut ffi::rdpContext) -> BOOL {
         if let Some(gdi) = context.as_ref().and_then(|context| context.gdi.as_ref()) {
-            if let Some(primary) = gdi.primary.as_ref() {
-                if let Some(hdc) = primary.hdc.as_ref() {
-                    if let Some(hwnd) = hdc.hwnd.as_ref() {
-                        if let Some(invalid) = hwnd.invalid.as_mut() {
-                            // FreeRDP's GDI renderer uses this flag to
-                            // accumulate a complete update before EndPaint
-                            // copies the current primary buffer.
-                            invalid.null = 1;
-                        }
-                    }
-                }
-            }
+            // Start a fresh invalidation batch. FreeRDP accumulates dirty
+            // rectangles between BeginPaint and EndPaint.
+            reset_dirty_region(gdi);
         }
         1
     }
@@ -879,41 +859,53 @@ mod freerdp {
         let Some(gdi) = context.gdi.as_ref() else {
             return 0;
         };
+        let has_dirty_region = gdi
+            .primary
+            .as_ref()
+            .and_then(|primary| primary.hdc.as_ref())
+            .and_then(|hdc| hdc.hwnd.as_ref())
+            .and_then(|hwnd| hwnd.invalid.as_ref())
+            .map(|invalid| invalid.null == 0)
+            .unwrap_or(false);
+        if !has_dirty_region {
+            reset_dirty_region(gdi);
+            return 1;
+        }
         if gdi.width <= 0 || gdi.height <= 0 || gdi.stride == 0 || gdi.primary_buffer.is_null() {
+            reset_dirty_region(gdi);
             return 0;
         }
 
         let Ok(width) = usize::try_from(gdi.width) else {
+            reset_dirty_region(gdi);
             return 0;
         };
         let Ok(height) = usize::try_from(gdi.height) else {
+            reset_dirty_region(gdi);
             return 0;
         };
         let Ok(stride) = usize::try_from(gdi.stride) else {
+            reset_dirty_region(gdi);
             return 0;
         };
         let Some(row_bytes) = width.checked_mul(4) else {
+            reset_dirty_region(gdi);
             return 0;
         };
         if stride < row_bytes {
+            reset_dirty_region(gdi);
             return 0;
         }
         let Some(bytes) = stride.checked_mul(height) else {
+            reset_dirty_region(gdi);
             return 0;
         };
-        if let Some(shared) = shared_from_context(context) {
-            if shared.frame_pending() {
-                return 1;
-            }
-        }
         let source = std::slice::from_raw_parts(gdi.primary_buffer, bytes);
-        let Some(pixel_bytes) = row_bytes.checked_mul(height) else {
-            return 0;
-        };
-        let mut pixels = vec![0u8; pixel_bytes];
+        let mut pixels = SharedPixelBuffer::<Rgba8Pixel>::new(width as u32, height as u32);
+        let destination = pixels.make_mut_bytes();
         for row in 0..height {
             let source = &source[row * stride..row * stride + row_bytes];
-            let destination = &mut pixels[row * row_bytes..(row + 1) * row_bytes];
+            let destination = &mut destination[row * row_bytes..(row + 1) * row_bytes];
             // FreeRDP was initialized with PIXEL_FORMAT_RGBA32, so the
             // framebuffer is already in the byte order Slint expects.
             destination.copy_from_slice(source);
@@ -926,7 +918,24 @@ mod freerdp {
                 pixels,
             });
         }
+        reset_dirty_region(gdi);
         1
+    }
+
+    unsafe fn reset_dirty_region(gdi: &ffi::rdpGdi) {
+        let Some(primary) = gdi.primary.as_ref() else {
+            return;
+        };
+        let Some(hdc) = primary.hdc.as_ref() else {
+            return;
+        };
+        let Some(hwnd) = hdc.hwnd.as_mut() else {
+            return;
+        };
+        if let Some(invalid) = hwnd.invalid.as_mut() {
+            invalid.null = 1;
+        }
+        hwnd.ninvalid = 0;
     }
 
     unsafe extern "C" fn desktop_resize(context: *mut ffi::rdpContext) -> BOOL {
@@ -1026,4 +1035,29 @@ fn wipe_string(value: &mut String) {
         }
     }
     value.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RdpFrame, SharedState};
+
+    #[test]
+    fn shared_state_replaces_stale_frame_with_latest_frame() {
+        let shared = SharedState::new();
+        shared.set_frame(RdpFrame {
+            width: 1,
+            height: 1,
+            pixels: vec![1, 2, 3, 4],
+        });
+        shared.set_frame(RdpFrame {
+            width: 1,
+            height: 1,
+            pixels: vec![5, 6, 7, 8],
+        });
+
+        let update = shared.poll();
+        let frame = update.frame.expect("latest frame should be available");
+        assert_eq!(frame.pixels, vec![5, 6, 7, 8]);
+        assert!(shared.poll().frame.is_none());
+    }
 }
