@@ -5,7 +5,7 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ui): reduce Windows RDP frame presentation overhead
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -18,7 +18,10 @@ Integrated Result: pending
 Compile the Windows Slint client with its WGPU FemtoVG renderer and WGPU 30
 support. Configure FreeRDP GDI to produce RGBA32 pixels so the RDP worker can
 copy complete rows directly into the Slint image buffer without a scalar
-BGRX-to-RGBA conversion for every pixel.
+BGRX-to-RGBA conversion for every pixel. Add opt-in, redacted RDP performance
+counters and a deterministic analyzer/test so local Windows measurements can
+be compared with PresentMon without changing the CPU decode path or adding
+VSync.
 
 ## Motivation
 
@@ -46,6 +49,11 @@ git diff --check
 
 Windows GitHub Actions must additionally verify FreeRDP 3.x binding generation,
 the installer, and the installed Slint smoke test.
+
+The CI contract also runs scripts/test_rdp_perf_analysis.sh, which validates
+the analyzer against synthetic rdp_perf records. Real RDP FPS and final
+desktop presentation timing still require a Windows host capture with
+CHUZI_RDP_PERF=1 plus PresentMon.
 
 ## Risk
 
