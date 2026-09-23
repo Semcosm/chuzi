@@ -23,6 +23,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/coretransport"
 	"github.com/Semcosm/chuzi/internal/credential"
+	"github.com/Semcosm/chuzi/internal/diagnostics"
 	"github.com/Semcosm/chuzi/internal/health"
 	"github.com/Semcosm/chuzi/internal/matrix"
 	"github.com/Semcosm/chuzi/internal/observability"
@@ -87,6 +88,8 @@ type serviceRuntime struct {
 	healthListen  string
 	metrics       *observability.Metrics
 	logger        *observability.JSONLogger
+	diagnostics   *diagnostics.Service
+	eventBuffer   *observability.EventBuffer
 	metricsListen string
 	coreAPI       coreapi.API
 	coreServer    *coretransport.Server
@@ -310,7 +313,29 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if loggerErr != nil {
 		return closeOnError(loggerErr)
 	}
-	sink := observability.MultiSink{metrics, logger}
+	eventBuffer := observability.NewEventBuffer(256)
+	sink := observability.MultiSink{metrics, logger, eventBuffer}
+	queueDir := cfg.Diagnostics.QueueDir
+	if strings.TrimSpace(queueDir) == "" {
+		queueDir = filepath.Join(cfg.DataDir, "diagnostics")
+	} else if !filepath.IsAbs(queueDir) {
+		queueDir = filepath.Join(cfg.DataDir, queueDir)
+	}
+	diagnosticService, diagnosticsErr := diagnostics.New(diagnostics.Config{
+		Enabled:        cfg.Diagnostics.Enabled,
+		Endpoint:       cfg.Diagnostics.Endpoint,
+		QueueDir:       queueDir,
+		MaxReportBytes: cfg.Diagnostics.MaxReportBytes,
+		MaxQueueFiles:  cfg.Diagnostics.MaxQueueFiles,
+		RetryBase:      time.Duration(cfg.Diagnostics.RetryBaseSeconds) * time.Second,
+		RetryMax:       time.Duration(cfg.Diagnostics.RetryMaxSeconds) * time.Second,
+		Version:        version,
+		Events:         func() []observability.Event { return eventBuffer.Snapshot(64) },
+		Clock:          now,
+	})
+	if diagnosticsErr != nil {
+		return closeOnError(diagnosticsErr)
+	}
 
 	profiles, err := browser.NewProfiles(cfg)
 	if err != nil {
@@ -397,13 +422,13 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry})
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, Diagnostics: diagnosticService})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}
 	runtime := &serviceRuntime{
 		store: database, requests: requestService, credentials: credentials,
-		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, coreAPI: coreAPI,
+		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, diagnostics: diagnosticService, eventBuffer: eventBuffer, coreAPI: coreAPI,
 	}
 	runtime.metricsListen = cfg.Observability.MetricsListen
 	if strings.TrimSpace(options.metricsListen) != "" {

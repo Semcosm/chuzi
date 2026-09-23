@@ -93,6 +93,17 @@ shows the redacted request ID, account, state, attempt number, and failure text.
 active headless browser session, `View page` calls `get_browser_view` to fetch one bounded JPEG frame. The
 frame is read-only and on demand; the client cannot navigate, click, type, or access a browser endpoint.
 
+### Diagnostics and support reports
+
+When Core, RDP, or another client operation reports an error or warning, the
+client asks whether to send diagnostics. The consent dialog describes the
+collection scope before any report is created. Accepting sends only a bounded
+classification, a redacted user-visible summary, recent redacted operational
+events, and platform/version metadata. Passwords, tokens, cookies, page content,
+screenshots, RDP credentials, and raw paths are excluded. Refusing or cancelling
+does not make a network request. If the developer HTTPS endpoint is unavailable,
+Core stores the report in its owner-only local queue and retries later.
+
 ### RDP
 
 RDP opens a Windows-only Rust/FreeRDP session. FreeRDP owns TLS/NLA negotiation

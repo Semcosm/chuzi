@@ -29,6 +29,7 @@ const (
 	methodListEvents        = "list_events"
 	methodListNotifications = "list_notifications"
 	methodGetBrowserView    = "get_browser_view"
+	methodSubmitDiagnostic  = "submit_diagnostic_report"
 )
 
 const (
@@ -42,6 +43,7 @@ const (
 	MethodListEvents        = methodListEvents
 	MethodListNotifications = methodListNotifications
 	MethodGetBrowserView    = methodGetBrowserView
+	MethodSubmitDiagnostic  = methodSubmitDiagnostic
 )
 
 var (
@@ -102,7 +104,7 @@ type NotificationsResult struct {
 
 func methodList() []string {
 	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView}
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodSubmitDiagnostic}
 }
 
 func marshalRequest(id, method string, params any) ([]byte, error) {

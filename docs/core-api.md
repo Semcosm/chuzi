@@ -45,7 +45,7 @@ The first request on a connection must be:
 The result contains the negotiated version and supported method names:
 
 ```json
-{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view"]}
+{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","submit_diagnostic_report"]}
 ```
 
 An unsupported protocol or version is reported as `unavailable`. Calls before
@@ -63,6 +63,7 @@ successful negotiation are rejected as `invalid_argument`.
 | `list_events` | `coreapi.EventQuery` | `{events}` |
 | `list_notifications` | `coreapi.NotificationQuery` | `{notifications}` |
 | `get_browser_view` | `{request_id, width?, height?}` | `coreapi.BrowserView` |
+| `submit_diagnostic_report` | `coreapi.DiagnosticReport` | `coreapi.DiagnosticStatus` |
 
 `list_notifications` accepts optional `account_id`, `request_id`, `since`,
 `until`, `offset`, and `limit` filters. Filtering, stable creation-time
@@ -76,6 +77,15 @@ accepts only the request ID; it never accepts a URL, CDP endpoint, Profile path,
 mouse input, or keyboard input. If the request has no active browser session,
 the method returns `unavailable`. Frames are not persisted, logged, audited, or
 sent through Matrix.
+
+`submit_diagnostic_report` is available only after an explicit user consent
+action in the native client. The request contains a bounded severity, category,
+and user-visible summary. Core adds only allow-listed platform and version
+metadata plus a bounded window of already-redacted operational events. It never
+reads credentials, browser Profiles, screenshots, page content, raw paths, or
+unstructured log text. If the configured HTTPS endpoint is unavailable, the
+service stores the bounded report in an owner-only local queue and retries with
+backoff.
 
 `cancel` is a transport operation, not a business-state command. Its
 parameters are `{id}` and its result is `{cancelled}`. A client context

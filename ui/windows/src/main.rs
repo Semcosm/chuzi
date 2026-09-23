@@ -5,7 +5,7 @@ use base64::Engine;
 use desktop_rdp::{DesktopRdpController, RdpTarget};
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
-    CoreRequest, CoreStatus, SubmitResult, UiPreferences,
+    CoreRequest, CoreStatus, DiagnosticStatus, SubmitResult, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
@@ -602,12 +602,72 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             }
         },
     );
+
+    let diagnostic_weak = ui.as_weak();
+    let diagnostic_state = Arc::clone(&state);
+    ui.on_diagnostic_submit(move || {
+        let Some(window) = diagnostic_weak.upgrade() else {
+            return;
+        };
+        let summary = window.get_diagnostic_consent_summary().to_string();
+        let category = window.get_diagnostic_consent_category().to_string();
+        let severity = window.get_diagnostic_consent_severity().to_string();
+        window.set_diagnostic_submitting(true);
+        let weak = diagnostic_weak.clone();
+        run_background_with(
+            &weak,
+            Arc::clone(&diagnostic_state),
+            move |state| {
+                ensure_core_ready(state)?;
+                let result = core_call(
+                    state,
+                    "submit_diagnostic_report",
+                    json!({"severity": severity, "category": category, "summary": summary}),
+                )?;
+                let status: DiagnosticStatus =
+                    serde_json::from_value(result).map_err(|error| error.to_string())?;
+                let message = if status.state == "queued" {
+                    "诊断信息已保存，将在网络可用时自动重试。".to_owned()
+                } else {
+                    "诊断信息已提交，感谢你的帮助。".to_owned()
+                };
+                Ok((message, status))
+            },
+            |window, _status: DiagnosticStatus| {
+                window.set_diagnostic_submitting(false);
+                window.set_diagnostic_consent_visible(false);
+            },
+        );
+    });
+
+    let diagnostic_dismiss_weak = ui.as_weak();
+    ui.on_diagnostic_dismiss(move || {
+        if let Some(window) = diagnostic_dismiss_weak.upgrade() {
+            window.set_diagnostic_submitting(false);
+            window.set_diagnostic_consent_visible(false);
+        }
+    });
 }
 
 fn set_rdp_error(window: &MainWindow, message: String) {
     window.set_rdp_status(message.clone().into());
     window.set_message(format!("RDP 连接失败：{message}").into());
     window.set_message_kind("error".into());
+    show_diagnostic_consent(window, "rdp", "error");
+}
+
+fn show_diagnostic_consent(window: &MainWindow, category: &str, severity: &str) {
+    window.set_diagnostic_consent_category(category.into());
+    window.set_diagnostic_consent_severity(severity.into());
+    window.set_diagnostic_consent_summary(
+        match category {
+            "rdp" => "RDP 连接出现问题，是否发送脱敏诊断信息？",
+            "core" => "Core 操作出现问题，是否发送脱敏诊断信息？",
+            _ => "应用操作出现问题，是否发送脱敏诊断信息？",
+        }
+        .into(),
+    );
+    window.set_diagnostic_consent_visible(true);
 }
 
 fn schedule_rdp_status_poll(
@@ -836,6 +896,7 @@ fn run_background_with<T, F, A>(
                         apply(&window, value);
                     }
                     Err(error) => {
+                        window.set_diagnostic_submitting(false);
                         if is_core_unavailable(&error) {
                             window.set_core_ready(false);
                             window.set_core_status("Core unavailable".into());
@@ -846,6 +907,7 @@ fn run_background_with<T, F, A>(
                         }
                         window.set_message(friendly_error(&error).into());
                         window.set_message_kind("error".into());
+                        show_diagnostic_consent(&window, "core", "error");
                     }
                 }
             }
@@ -1106,6 +1168,17 @@ fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static st
         if let Some(window) = weak.upgrade() {
             window.set_message(message.into());
             window.set_message_kind(kind.into());
+            if kind == "error" || kind == "warning" {
+                show_diagnostic_consent(
+                    &window,
+                    "ui",
+                    if kind == "warning" {
+                        "warning"
+                    } else {
+                        "error"
+                    },
+                );
+            }
         }
     });
 }

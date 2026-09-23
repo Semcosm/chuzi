@@ -13,5 +13,14 @@
     "log_path": "",
     "log_max_bytes": 10485760,
     "log_max_files": 5
+  },
+  "diagnostics": {
+    "enabled": true,
+    "endpoint": "",
+    "queue_dir": "",
+    "max_report_bytes": 262144,
+    "max_queue_files": 32,
+    "retry_base_seconds": 5,
+    "retry_max_seconds": 600
   }
 }

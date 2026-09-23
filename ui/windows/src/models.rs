@@ -43,6 +43,11 @@ pub(crate) struct BrowserView {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct DiagnosticStatus {
+    pub(crate) state: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct PluginDescriptor {
     pub(crate) id: String,
     pub(crate) version: String,

@@ -14,6 +14,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/account"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/coreapi"
+	"github.com/Semcosm/chuzi/internal/diagnostics"
 	"github.com/Semcosm/chuzi/internal/observability"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
 	"github.com/Semcosm/chuzi/internal/store"
@@ -49,16 +50,22 @@ type BrowserViewPort interface {
 	Snapshot(context.Context, string, int, int) (browser.ViewSnapshot, error)
 }
 
+type DiagnosticsPort interface {
+	Submit(context.Context, diagnostics.ReportInput) (diagnostics.Status, error)
+}
+
 type Dependencies struct {
-	Requests RequestPort
-	Store    StoreReader
-	Views    BrowserViewPort
+	Requests    RequestPort
+	Store       StoreReader
+	Views       BrowserViewPort
+	Diagnostics DiagnosticsPort
 }
 
 type Service struct {
-	requests RequestPort
-	store    StoreReader
-	views    BrowserViewPort
+	requests    RequestPort
+	store       StoreReader
+	views       BrowserViewPort
+	diagnostics DiagnosticsPort
 }
 
 var _ coreapi.API = (*Service)(nil)
@@ -67,7 +74,30 @@ func New(dependencies Dependencies) (*Service, error) {
 	if dependencies.Requests == nil || dependencies.Store == nil {
 		return nil, ErrInvalidService
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views}, nil
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, diagnostics: dependencies.Diagnostics}, nil
+}
+
+func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.DiagnosticStatus{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.DiagnosticStatus{}, err
+	}
+	if s.diagnostics == nil {
+		return coreapi.DiagnosticStatus{}, coreapi.NewError(coreapi.CodeUnavailable, "diagnostics are unavailable")
+	}
+	status, err := s.diagnostics.Submit(ctx, diagnostics.ReportInput{Severity: input.Severity, Category: input.Category, Summary: input.Summary})
+	if err != nil {
+		if errors.Is(err, diagnostics.ErrDisabled) {
+			return coreapi.DiagnosticStatus{}, coreapi.NewError(coreapi.CodeUnavailable, "diagnostics are unavailable")
+		}
+		if errors.Is(err, diagnostics.ErrInvalidReport) {
+			return coreapi.DiagnosticStatus{}, classify(requestservice.ErrInvalidInput)
+		}
+		return coreapi.DiagnosticStatus{}, coreapi.NewError(coreapi.CodeInternal, "diagnostic report failed")
+	}
+	return coreapi.DiagnosticStatus{ID: status.ID, State: status.State, Attempts: status.Attempts, CreatedAt: status.CreatedAt, UpdatedAt: status.UpdatedAt}, nil
 }
 
 func (s *Service) GetBrowserView(ctx context.Context, input coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {

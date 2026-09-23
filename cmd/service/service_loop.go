@@ -74,6 +74,21 @@ func run(ctx context.Context, options serviceOptions) error {
 	if runtime.gateway != nil {
 		startBackground("matrix sync", runtime.gateway.Run)
 	}
+	if runtime.diagnostics != nil {
+		startBackground("diagnostics uploader", func(workerCtx context.Context) error {
+			_ = runtime.diagnostics.Flush(workerCtx)
+			ticker := time.NewTicker(30 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return nil
+				case <-ticker.C:
+					_ = runtime.diagnostics.Flush(workerCtx)
+				}
+			}
+		})
+	}
 	defer func() {
 		cancelBackground()
 		background.Wait()
