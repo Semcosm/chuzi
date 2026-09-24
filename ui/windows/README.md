@@ -121,19 +121,31 @@ path. For a local performance capture, set CHUZI_RDP_PERF=1 before launching
 the Windows client and redirect stderr to a log file. The client emits periodic
 rdp_perf JSON records containing framebuffer copy time, frame intervals, frame
 coalescing, copied bytes, and UI handoff time; records contain no host, account,
-credential, certificate, or pixel data.
+credential, certificate, or pixel data. The analyzer accepts PowerShell-wrapped
+stderr records, so long JSON lines remain parseable when native stderr is
+redirected on Windows.
 
 From the repository root, summarize the internal RDP path with:
 
     python scripts/analyze_rdp_perf.py --json .\\rdp-client.stderr.log
     python scripts/analyze_rdp_perf.py .\\rdp-client.stderr.log
 
-For end-to-end presentation evidence, run PresentMon on the same Windows host
-against chuzi.exe (or the installed client process) and save its CSV output
-alongside the stderr log. PresentMon measures the final desktop-present path;
-rdp_perf measures the client-side copy and UI handoff path. The two data
-sources should be reviewed together. The repository CI test uses deterministic
-synthetic rdp_perf records and does not claim real RDP FPS or GPU timing.
+For end-to-end GPU/presentation evidence, run PresentMon on the same Windows
+host against Chuzi.Native.Windows.exe (or the installed client process) and
+export its CSV output alongside the stderr log. PresentMon measures the final
+desktop-present path, including present interval, display-change interval,
+display latency, GPU/CPU duration, dropped presents, PresentMode, tearing flags,
+and sync interval. rdp_perf measures the client-side copy and UI handoff path.
+Review both sources together with:
+
+    python scripts/analyze_rdp_perf.py .\\rdp-client.stderr.log \\
+      --presentmon .\\presentmon.csv \\
+      --process Chuzi.Native.Windows.exe
+
+The analyzer reports GPU duration and PresentMon presentation metrics but does
+not claim that GPU duration equals total GPU utilization. The repository CI test
+uses deterministic synthetic records and does not claim real RDP FPS or GPU
+timing.
 
 ## Runtime and packaging
 
