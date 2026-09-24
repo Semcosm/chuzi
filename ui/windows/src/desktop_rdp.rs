@@ -481,9 +481,11 @@ fn apply_pending_update(window: &slint::Weak<DesktopRdpWindow>, shared: &SharedS
     if let Some(frame) = update.frame {
         let started = Instant::now();
         let image = frame_to_image(frame);
-        shared.perf.record_ui_handoff(started.elapsed());
         match image {
-            Some(image) => window.set_frame(image),
+            Some(image) => {
+                window.set_frame(image);
+                shared.perf.record_ui_handoff(started.elapsed());
+            }
             None => shared.set_state("failed", "收到的 RDP framebuffer 尺寸无效。"),
         }
     }
