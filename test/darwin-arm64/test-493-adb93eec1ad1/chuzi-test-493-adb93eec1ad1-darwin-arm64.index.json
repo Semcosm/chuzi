@@ -1,0 +1,117 @@
+{
+  "format": "chuzi-release-index/v1",
+  "channel": "test",
+  "version": "test-493-adb93eec1ad1",
+  "commit": "adb93eec1ad1496e73d8c3287aed033802106f7d",
+  "target": "darwin-arm64",
+  "generated_at": "2026-09-24T04:59:24.212218Z",
+  "manifest": {
+    "format": "chuzi-release/v1",
+    "channel": "test",
+    "version": "test-493-adb93eec1ad1",
+    "commit": "adb93eec1ad1496e73d8c3287aed033802106f7d",
+    "target": "darwin-arm64",
+    "generated_at": "2026-09-24T04:59:24.212218Z",
+    "components": [
+      {
+        "id": "launcher",
+        "version": "test-493-adb93eec1ad1",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-test-493-adb93eec1ad1-darwin-arm64-launcher.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi-launcher",
+            "sha256": "b8ff0dbf62128d48b7288c8e133a43f7649a5cd773fa9c0b18a9818fdab6ba4b",
+            "size": 6285826
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "version": "test-493-adb93eec1ad1",
+        "required": false,
+        "dependencies": [
+          "browser-worker"
+        ],
+        "artifact": "chuzi-test-493-adb93eec1ad1-darwin-arm64-service.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi",
+            "sha256": "9935f2a4d6156e5a8e15e0efce8497a57e465fe723d5d93f81b3f4c3da22c192",
+            "size": 7407650
+          }
+        ]
+      },
+      {
+        "id": "browser-worker",
+        "version": "test-493-adb93eec1ad1",
+        "required": false,
+        "dependencies": [],
+        "artifact": "chuzi-test-493-adb93eec1ad1-darwin-arm64-browser-worker.tar.gz",
+        "resources": [
+          {
+            "path": "browser-worker/src/headless-adapter.mjs",
+            "sha256": "f0c39ea05bbbbb8e3cb821a1644a227477e5b58c8ce9b4387f6ef3359af1a610",
+            "size": 38774
+          },
+          {
+            "path": "browser-worker/src/headless.mjs",
+            "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+            "size": 14202
+          },
+          {
+            "path": "browser-worker/src/local-test-page.html",
+            "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+            "size": 397
+          },
+          {
+            "path": "browser-worker/src/worker.mjs",
+            "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+            "size": 3421
+          },
+          {
+            "path": "browser-worker/worker-manifest.json",
+            "sha256": "a08c7c11d6ac000f6ea2817c1fab4d03caf80a192fd33db13028bea758632453",
+            "size": 465
+          }
+        ]
+      }
+    ],
+    "plugins": []
+  },
+  "artifacts": [
+    {
+      "component": "bundle",
+      "target": "darwin-arm64",
+      "version": "test-493-adb93eec1ad1",
+      "path": "chuzi-test-493-adb93eec1ad1-darwin-arm64.tar.gz",
+      "size": 5619542,
+      "sha256": "3c75dc68befe88c138cce96e9594378d45af357ad6626d7b78d15f447884167a"
+    },
+    {
+      "component": "launcher",
+      "target": "darwin-arm64",
+      "version": "test-493-adb93eec1ad1",
+      "path": "chuzi-test-493-adb93eec1ad1-darwin-arm64-launcher.tar.gz",
+      "size": 2584744,
+      "sha256": "ff6108a0bcd366c71eec149d6b625d658b1e08bcc7b181cadf9f83c669f0b8bf"
+    },
+    {
+      "component": "service",
+      "target": "darwin-arm64",
+      "version": "test-493-adb93eec1ad1",
+      "path": "chuzi-test-493-adb93eec1ad1-darwin-arm64-service.tar.gz",
+      "size": 3021783,
+      "sha256": "33208eb8399f105667dc046a4dc638990c92a0caf5817bd34d4ff4383e70bffd"
+    },
+    {
+      "component": "browser-worker",
+      "target": "darwin-arm64",
+      "version": "test-493-adb93eec1ad1",
+      "path": "chuzi-test-493-adb93eec1ad1-darwin-arm64-browser-worker.tar.gz",
+      "size": 13143,
+      "sha256": "a379c00f5903ff83a6b891916be49b24f595d9e102635b5ff3a6df72bc0d93e8"
+    }
+  ]
+}
