@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ui): reduce Windows RDP frame presentation overhead
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 054c34d499b8bb61746bbd76d37396d287d3456c
+Head OID: fce9cc72c54bdee7f7b0cf00097982dc0a3dd81a
 Integrated Result: pending
 
 ## Summary
