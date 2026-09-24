@@ -7,9 +7,8 @@ trap 'rm -rf "$tmp_dir"' EXIT
 
 cat > "$tmp_dir/rdp.log" <<'EOF'
 noise before
-rdp_perf {"elapsed_ms":1000,"paint_batches":10,"frame_intervals":9,"frame_interval_us":450000,"coalesced_frames":2,"copied_bytes":10485760,"copy_time_us":20000,"ui_handoffs":10,"ui_handoff_time_us":5000}
-rdp_perf {"elapsed_ms":2000,"paint_batches":30,"frame_intervals":29,"frame_interval_us":1450000,"coalesced_frames":6,
-"copied_bytes":31457280,"copy_time_us":60000,"ui_handoffs":30,"ui_handoff_time_us":15000}
+rdp_perf {"elapsed_ms":1000,"dirty_frame_mode":"optimized","frame_width":1920,"frame_height":1080,"rdp_update_batches":10,"dirty_rect_count":20,"dirty_area_pixels":100000,"dirty_union_area_pixels":80000,"dirty_area_ratio":0.0385802469,"full_frame_copy_bytes":82944000,"actual_copy_bytes":10485760,"framebuffer_copy_us":20000,"frame_to_image_us":8000,"ui_handoffs":10,"ui_handoff_interval_us":144000,"ui_handoff_interval_samples_us":[15000,16000,17000],"ui_handoff_time_us":5000,"coalesced_frames":2,"queue_overwrites":2,"ui_ticks":60,"ui_tick_commits":10,"ui_tick_interval_us":944000,"ui_tick_processing_us":12000}
+rdp_perf {"elapsed_ms":2000,"dirty_frame_mode":"optimized","frame_width":1920,"frame_height":1080,"rdp_update_batches":30,"dirty_rect_count":60,"dirty_area_pixels":300000,"dirty_union_area_pixels":240000,"dirty_area_ratio":0.0385802469,"full_frame_copy_bytes":248832000,"actual_copy_bytes":31457280,"framebuffer_copy_us":60000,"frame_to_image_us":24000,"ui_handoffs":30,"ui_handoff_interval_us":464000,"ui_handoff_interval_samples_us":[15000,16000,17000],"ui_handoff_time_us":15000,"coalesced_frames":6,"queue_overwrites":6,"ui_ticks":120,"ui_tick_commits":30,"ui_tick_interval_us":1894000,"ui_tick_processing_us":36000}
 EOF
 
 summary="$(python3 "$repo_root/scripts/analyze_rdp_perf.py" --json "$tmp_dir/rdp.log")"
@@ -19,16 +18,21 @@ import os
 
 summary = json.loads(os.environ["SUMMARY"])
 assert summary["samples"] == 2
-assert summary["paint_batches"] == 30
-assert summary["frame_intervals"] == 29
+assert summary["dirty_frame_mode"] == "optimized"
+assert summary["rdp_update_batches"] == 30
+assert summary["rdp_updates"] == 30
+assert summary["dirty_rect_count"] == 60
 assert summary["coalesced_frames"] == 6
-assert abs(summary["paint_fps"] - 15.0) < 1e-9
-assert abs(summary["average_frame_interval_ms"] - 50.0) < 1e-9
+assert abs(summary["rdp_update_fps"] - 15.0) < 1e-9
+assert abs(summary["ui_commit_fps"] - 15.0) < 1e-9
 assert abs(summary["average_copy_time_us"] - 2000.0) < 1e-9
 assert abs(summary["average_ui_handoff_us"] - 500.0) < 1e-9
 assert abs(summary["coalescing_ratio"] - 6 / 30) < 1e-9
 assert abs(summary["ui_delivery_ratio"] - 1.0) < 1e-9
-assert abs(summary["copied_bandwidth_mib_s"] - 15.0) < 1e-9
+assert abs(summary["actual_copied_bandwidth_mib_s"] - 15.0) < 1e-9
+assert abs(summary["full_frame_equivalent_bandwidth_mib_s"] - 118.65234375) < 1e-9
+assert abs(summary["ui_handoff_interval_p50_ms"] - 16.0) < 1e-9
+assert abs(summary["ui_handoff_interval_p95_ms"] - 17.0) < 1e-9
 PY
 
 python3 "$repo_root/scripts/analyze_rdp_perf.py" "$tmp_dir/rdp.log" >/dev/null
