@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ui): reduce Windows RDP frame presentation overhead
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: e919c0fe6dac5415fe674185950854ead011ca85
+Head OID: 054c34d499b8bb61746bbd76d37396d287d3456c
 Integrated Result: pending
 
 ## Summary
@@ -51,9 +51,12 @@ Windows GitHub Actions must additionally verify FreeRDP 3.x binding generation,
 the installer, and the installed Slint smoke test.
 
 The CI contract also runs scripts/test_rdp_perf_analysis.sh, which validates
-the analyzer against synthetic rdp_perf records. Real RDP FPS and final
-desktop presentation timing still require a Windows host capture with
-CHUZI_RDP_PERF=1 plus PresentMon.
+the analyzer against synthetic rdp_perf records, including PowerShell-wrapped
+multi-line JSON, corrected coalescing/UI-delivery ratios, and PresentMon CSV
+metrics filtered to the client process. The UI handoff timer now covers the
+frame-to-image conversion and Slint frame handoff instead of measuring only
+the conversion call. Real RDP FPS and final desktop presentation timing still
+require a Windows host capture with CHUZI_RDP_PERF=1 plus PresentMon.
 
 ## Risk
 
@@ -61,7 +64,9 @@ FreeRDP's RGBA32 GDI format and the generated Windows bindings must remain
 compatible with the pinned FreeRDP 3.x package. WGPU renderer initialization
 can fail on systems without a usable adapter, so the existing Slint fallback
 must remain available. RDP decoding itself remains FreeRDP's existing path and
-is not claimed to be hardware-decoded by this change.
+is not claimed to be hardware-decoded by this change. PresentMon GPUDuration
+is a per-present GPU duration signal, not total adapter utilization; conclusions
+about GPU utilization require a separate GPU telemetry source.
 
 ## Rollback
 
