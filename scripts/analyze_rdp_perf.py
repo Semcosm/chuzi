@@ -14,15 +14,45 @@ from typing import Any
 
 RECORD_MARKER_RE = re.compile(r"rdp_perf\s+")
 COUNTER_FIELDS = (
-    "paint_batches",
-    "frame_intervals",
-    "frame_interval_us",
-    "coalesced_frames",
-    "copied_bytes",
-    "copy_time_us",
+    "frame_width",
+    "frame_height",
+    "rdp_update_batches",
+    "dirty_rect_count",
+    "dirty_area_pixels",
+    "dirty_union_area_pixels",
+    "full_frame_copy_bytes",
+    "actual_copy_bytes",
+    "framebuffer_copy_us",
+    "frame_to_image_us",
     "ui_handoffs",
     "ui_handoff_time_us",
+    "ui_handoff_interval_us",
+    "coalesced_frames",
+    "queue_overwrites",
+    "ui_ticks",
+    "ui_tick_commits",
+    "ui_tick_interval_us",
+    "ui_tick_processing_us",
 )
+
+
+def _counter(record: dict[str, Any], name: str, *fallbacks: str) -> int:
+    for field in (name, *fallbacks):
+        if field in record:
+            try:
+                return int(record[field])
+            except (TypeError, ValueError):
+                return 0
+    return 0
+
+
+def _interval_samples(records: list[dict[str, Any]], name: str) -> list[float]:
+    samples: list[float] = []
+    for record in records:
+        value = record.get(name, [])
+        if isinstance(value, list):
+            samples.extend(float(item) for item in value if isinstance(item, (int, float)))
+    return samples
 
 
 def _extract_json_object(text: str, start: int) -> tuple[str | None, int]:
@@ -89,21 +119,49 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "samples": len(records),
         "elapsed_ms": elapsed_ms,
+        "dirty_frame_mode": str(latest.get("dirty_frame_mode", "unknown")),
     }
     for field in COUNTER_FIELDS:
-        summary[field] = int(latest.get(field, 0))
-
-    summary["paint_fps"] = (
-        summary["paint_batches"] / elapsed_seconds if elapsed_seconds > 0 else 0.0
+        summary[field] = _counter(latest, field)
+    # Keep aliases for logs emitted by clients before the staged telemetry
+    # schema, while making the new rates unambiguous.
+    summary["rdp_updates"] = _counter(latest, "rdp_update_batches", "paint_batches")
+    summary["actual_copy_bytes"] = _counter(latest, "actual_copy_bytes", "copied_bytes")
+    summary["framebuffer_copy_us"] = _counter(
+        latest, "framebuffer_copy_us", "copy_time_us"
     )
+    summary["full_frame_copy_bytes"] = _counter(latest, "full_frame_copy_bytes")
+    summary["paint_batches"] = _counter(latest, "paint_batches", "rdp_update_batches")
+    summary["copied_bytes"] = summary["actual_copy_bytes"]
+    summary["frame_intervals"] = _counter(
+        latest, "frame_intervals", "rdp_update_batches"
+    )
+    if "frame_intervals" not in latest:
+        summary["frame_intervals"] = max(summary["rdp_updates"] - 1, 0)
+    summary["frame_interval_us"] = _counter(
+        latest, "frame_interval_us", "ui_handoff_interval_us"
+    )
+    summary["copy_time_us"] = summary["framebuffer_copy_us"]
+    summary["rdp_update_fps"] = (
+        summary["rdp_updates"] / elapsed_seconds if elapsed_seconds > 0 else 0.0
+    )
+    summary["ui_commit_fps"] = (
+        summary["ui_handoffs"] / elapsed_seconds if elapsed_seconds > 0 else 0.0
+    )
+    summary["paint_fps"] = summary["rdp_update_fps"]
     summary["average_frame_interval_ms"] = (
         summary["frame_interval_us"] / summary["frame_intervals"] / 1000.0
         if summary["frame_intervals"] > 0
         else 0.0
     )
     summary["average_copy_time_us"] = (
-        summary["copy_time_us"] / summary["paint_batches"]
-        if summary["paint_batches"] > 0
+        summary["framebuffer_copy_us"] / summary["rdp_updates"]
+        if summary["rdp_updates"] > 0
+        else 0.0
+    )
+    summary["average_frame_to_image_us"] = (
+        summary["frame_to_image_us"] / summary["ui_handoffs"]
+        if summary["ui_handoffs"] > 0
         else 0.0
     )
     summary["average_ui_handoff_us"] = (
@@ -111,21 +169,44 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         if summary["ui_handoffs"] > 0
         else 0.0
     )
+    handoff_samples = _interval_samples(records, "ui_handoff_interval_samples_us")
+    if not handoff_samples and summary["ui_handoffs"] > 1:
+        average_interval = summary["ui_handoff_interval_us"] / (summary["ui_handoffs"] - 1)
+        handoff_samples = [average_interval]
+    summary["ui_handoff_interval_p50_us"] = _percentile(handoff_samples, 0.50)
+    summary["ui_handoff_interval_p95_us"] = _percentile(handoff_samples, 0.95)
+    summary["ui_handoff_interval_p50_ms"] = summary["ui_handoff_interval_p50_us"] / 1000.0
+    summary["ui_handoff_interval_p95_ms"] = summary["ui_handoff_interval_p95_us"] / 1000.0
+    summary["dirty_area_ratio"] = float(
+        latest.get("dirty_area_ratio", 0.0)
+        or (
+            summary["dirty_union_area_pixels"]
+            / (summary["frame_width"] * summary["frame_height"] * max(summary["rdp_updates"], 1))
+            if summary["frame_width"] and summary["frame_height"]
+            else 0.0
+        )
+    )
     summary["coalescing_ratio"] = (
-        summary["coalesced_frames"] / summary["paint_batches"]
-        if summary["paint_batches"] > 0
+        summary["queue_overwrites"] / summary["rdp_updates"]
+        if summary["rdp_updates"] > 0
         else 0.0
     )
     summary["ui_delivery_ratio"] = (
-        summary["ui_handoffs"] / summary["paint_batches"]
-        if summary["paint_batches"] > 0
+        summary["ui_handoffs"] / summary["rdp_updates"]
+        if summary["rdp_updates"] > 0
         else 0.0
     )
-    summary["copied_bandwidth_mib_s"] = (
-        summary["copied_bytes"] / 1024.0 / 1024.0 / elapsed_seconds
+    summary["actual_copied_bandwidth_mib_s"] = (
+        summary["actual_copy_bytes"] / 1024.0 / 1024.0 / elapsed_seconds
         if elapsed_seconds > 0
         else 0.0
     )
+    summary["full_frame_equivalent_bandwidth_mib_s"] = (
+        summary["full_frame_copy_bytes"] / 1024.0 / 1024.0 / elapsed_seconds
+        if elapsed_seconds > 0
+        else 0.0
+    )
+    summary["copied_bandwidth_mib_s"] = summary["actual_copied_bandwidth_mib_s"]
     return summary
 
 
@@ -257,6 +338,7 @@ def summarize_presentmon(rows: list[dict[str, str]], process: str | None = None)
         "dropped_ratio": dropped_frames / len(rows) if rows else 0.0,
         "allows_tearing_ratio": allows_tearing / len(rows) if rows else 0.0,
         "sync_interval_zero_ratio": sync_interval_zero / len(rows) if rows else 0.0,
+        "tearing_indicators": bool(allows_tearing or sync_interval_zero),
         "present_modes": present_modes,
     }
 
@@ -264,13 +346,23 @@ def summarize_presentmon(rows: list[dict[str, str]], process: str | None = None)
 def print_text(summary: dict[str, Any]) -> None:
     print(f"RDP performance samples: {summary['samples']}")
     print(f"Elapsed: {summary['elapsed_ms'] / 1000.0:.3f} s")
-    print(f"Paint FPS: {summary['paint_fps']:.2f}")
-    print(f"Average frame interval: {summary['average_frame_interval_ms']:.2f} ms")
+    print(f"Frame mode: {summary['dirty_frame_mode']}")
+    print(f"RDP updates: {summary['rdp_update_fps']:.2f} /s")
+    print(f"UI image commits: {summary['ui_commit_fps']:.2f} /s")
+    print(f"Dirty rectangles: {summary['dirty_rect_count']} total")
+    print(f"Dirty area ratio: {summary['dirty_area_ratio']:.2%}")
+    print(f"CPU copied data: {summary['actual_copied_bandwidth_mib_s']:.2f} MiB/s")
+    print(f"Full-frame traffic: {summary['full_frame_equivalent_bandwidth_mib_s']:.2f} MiB/s")
     print(f"Average framebuffer copy: {summary['average_copy_time_us']:.2f} us")
+    print(f"Average frame-to-image snapshot: {summary['average_frame_to_image_us']:.2f} us")
     print(f"Average UI handoff: {summary['average_ui_handoff_us']:.2f} us")
+    print(
+        "UI handoff interval p50/p95: "
+        f"{summary['ui_handoff_interval_p50_ms']:.2f} / "
+        f"{summary['ui_handoff_interval_p95_ms']:.2f} ms"
+    )
     print(f"Coalescing ratio: {summary['coalescing_ratio']:.2%}")
     print(f"UI delivery ratio: {summary['ui_delivery_ratio']:.2%}")
-    print(f"Copied bandwidth: {summary['copied_bandwidth_mib_s']:.2f} MiB/s")
     presentmon = summary.get("presentmon")
     if presentmon:
         print("PresentMon / GPU presentation:")
@@ -288,6 +380,10 @@ def print_text(summary: dict[str, Any]) -> None:
         print(f"  Dropped presents: {presentmon['dropped_frames']} ({presentmon['dropped_ratio']:.2%})")
         print(f"  Allows tearing: {presentmon['allows_tearing_ratio']:.2%}")
         print(f"  Sync interval zero: {presentmon['sync_interval_zero_ratio']:.2%}")
+        print(
+            "  Tearing indicators: "
+            f"{'detected' if presentmon['tearing_indicators'] else 'not detected'}"
+        )
         print(f"  Present modes: {json.dumps(presentmon['present_modes'], sort_keys=True)}")
 
 

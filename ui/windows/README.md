@@ -119,11 +119,20 @@ separate input-boundary change.
 The client keeps FreeRDP CPU decoding and uses the normal Slint/WGPU presentation
 path. For a local performance capture, set CHUZI_RDP_PERF=1 before launching
 the Windows client and redirect stderr to a log file. The client emits periodic
-rdp_perf JSON records containing framebuffer copy time, frame intervals, frame
-coalescing, copied bytes, and UI handoff time; records contain no host, account,
-credential, certificate, or pixel data. The analyzer accepts PowerShell-wrapped
-stderr records, so long JSON lines remain parseable when native stderr is
-redirected on Windows.
+rdp_perf JSON records containing the selected frame mode, RDP update rate, dirty
+rectangle area, actual and full-frame-equivalent copy traffic, framebuffer copy
+time, snapshot time, queue overwrites, UI tick timing, and UI handoff intervals;
+records contain no host, account, credential, certificate, or pixel data. The
+analyzer accepts PowerShell-wrapped stderr records, so long JSON lines remain
+parseable when native stderr is redirected on Windows.
+
+The default `CHUZI_RDP_DIRTY_FRAME_MODE=optimized` path keeps one complete CPU
+framebuffer, copies only the clipped union of FreeRDP's dirty rectangles during
+EndPaint, and lets the 16 ms Slint timer publish the newest complete snapshot.
+This bounds UI-thread work and drops stale snapshots when RDP updates arrive
+faster than the UI. Set `CHUZI_RDP_DIRTY_FRAME_MODE=legacy` for an A/B capture
+of the previous full-frame copy and queue behavior. Keep the mode fixed for both
+runs in a comparison.
 
 From the repository root, summarize the internal RDP path with:
 
@@ -146,6 +155,29 @@ The analyzer reports GPU duration and PresentMon presentation metrics but does
 not claim that GPU duration equals total GPU utilization. The repository CI test
 uses deterministic synthetic records and does not claim real RDP FPS or GPU
 timing.
+
+#### Capture matrix
+
+Run each scenario for 60-90 seconds after the initial desktop has settled. Use
+the same host, client build, network path, power mode, window size, and frame
+mode for the optimized and legacy runs. Repeat at 1280x720 and 1920x1080; add
+2560x1440 when the host supports it.
+
+| Scenario | Remote activity | What to compare |
+| --- | --- | --- |
+| Static desktop | Idle desktop with no animation | Dirty area, copy bandwidth, UI tick stability |
+| Moving text/windows | Scroll a document and drag overlapping windows | RDP update rate, dirty union ratio, queue overwrites, handoff p50/p95 |
+| Animation/video | Play a bounded 30-60 fps clip in a window | Present FPS, dropped presents, present interval p95, copy time |
+| Resolution change | Repeat after resizing the session to each target resolution | First-frame full copy, steady-state dirty copy, snapshot latency |
+
+PresentMon exports must be CSV from the same run and retain these columns (or
+their current PresentMon equivalents): `Application`, `TimeInSeconds`,
+`MsBetweenPresents`, `MsBetweenDisplayChange`, `MsUntilDisplayed`,
+`GPUDuration`, `CPUDuration`, `PresentMode`, `Dropped`, `AllowsTearing`, and
+`SyncInterval`. Keep the process name in the export and pass
+`--process Chuzi.Native.Windows.exe` so unrelated desktop presents do not skew
+the result. Preserve the raw stderr and CSV files with the summarized JSON for
+each 60-90 second scenario.
 
 ## Runtime and packaging
 

@@ -5,7 +5,7 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ui): reduce Windows RDP frame presentation overhead
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -16,20 +16,22 @@ Integrated Result: pending
 ## Summary
 
 Compile the Windows Slint client with its WGPU FemtoVG renderer and WGPU 30
-support. Configure FreeRDP GDI to produce RGBA32 pixels so the RDP worker can
-copy complete rows directly into the Slint image buffer without a scalar
-BGRX-to-RGBA conversion for every pixel. Add opt-in, redacted RDP performance
-counters and a deterministic analyzer/test so local Windows measurements can
-be compared with PresentMon without changing the CPU decode path or adding
-VSync.
+support. Configure FreeRDP GDI to produce RGBA32 pixels and add a persistent
+CPU framebuffer so the RDP worker copies only the clipped, non-overlapping dirty
+union reported by FreeRDP. Publish the newest complete snapshot on the Slint
+timer, retain a legacy full-frame mode for A/B comparison, and add opt-in,
+redacted RDP performance counters plus a deterministic analyzer/test so local
+Windows measurements can be compared with PresentMon without changing the CPU
+decode path or adding VSync.
 
 ## Motivation
 
-The RDP session was receiving frames, but presenting a full desktop frame
-required a CPU channel conversion before Slint could display it. This change
-removes that avoidable per-pixel work and makes the normal Windows renderer
-path GPU-backed when a suitable adapter is available, while retaining the
-existing software renderer fallback.
+The RDP session was receiving frames, but every update copied a complete desktop
+image and handed each intermediate frame to the UI. This change keeps the
+RGBA32 fast path, bounds worker copy traffic to dirty regions, coalesces pending
+updates to the newest complete image, and makes the normal Windows renderer path
+GPU-backed when a suitable adapter is available while retaining the existing
+software renderer fallback.
 
 ## Test Evidence
 
@@ -55,8 +57,12 @@ the analyzer against synthetic rdp_perf records, including PowerShell-wrapped
 multi-line JSON, corrected coalescing/UI-delivery ratios, and PresentMon CSV
 metrics filtered to the client process. The UI handoff timer now covers the
 frame-to-image conversion and Slint frame handoff instead of measuring only
-the conversion call. Real RDP FPS and final desktop presentation timing still
-require a Windows host capture with CHUZI_RDP_PERF=1 plus PresentMon.
+the conversion call. Unit tests cover dirty rectangle clipping and union
+partitioning, bounded partial copies, generation tracking, latest-snapshot
+delivery, and unchanged-state suppression. The README records the 60-90 second
+static, moving-window, animation/video, and resolution-change capture matrix plus
+the required PresentMon CSV fields. Real RDP FPS and final desktop presentation
+timing still require a Windows host capture with CHUZI_RDP_PERF=1 plus PresentMon.
 
 ## Risk
 
