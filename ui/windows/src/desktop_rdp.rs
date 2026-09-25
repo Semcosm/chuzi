@@ -7,6 +7,7 @@ use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
+use std::{cell::RefCell, collections::HashMap, rc::Rc};
 
 #[cfg(windows)]
 use slint::TimerMode;
@@ -410,7 +411,21 @@ enum PointerButton {
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RemoteKey {
+    ScanCode { code: u8, extended: bool },
+    Unicode(u16),
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
 #[derive(Debug, Clone, Copy)]
+enum KeyAction {
+    Down { repeat: bool },
+    Up,
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+#[derive(Debug, Clone)]
 enum RdpInput {
     Pointer {
         action: PointerAction,
@@ -420,6 +435,137 @@ enum RdpInput {
         viewport_width: f32,
         viewport_height: f32,
     },
+    Wheel {
+        delta_x: f32,
+        delta_y: f32,
+        x: f32,
+        y: f32,
+        viewport_width: f32,
+        viewport_height: f32,
+    },
+    Key {
+        action: KeyAction,
+        keys: Vec<RemoteKey>,
+    },
+    ReleaseAllKeys,
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn wheel_delta_to_rdp(delta: f32) -> Option<(bool, u16)> {
+    if !delta.is_finite() || delta == 0.0 {
+        return None;
+    }
+
+    let units = (delta.abs() * 2.0).round().clamp(1.0, 255.0) as u16;
+    Some((delta.is_sign_negative(), units))
+}
+
+#[cfg_attr(not(any(windows, test)), allow(dead_code))]
+fn special_key_virtual_code(key: char) -> Option<u16> {
+    let code = match key {
+        '\u{0008}' => 0x08, // Backspace
+        '\u{0009}' => 0x09, // Tab
+        '\u{000a}' => 0x0d, // Return
+        '\u{0010}' => 0x10, // Left Shift
+        '\u{0011}' => 0x11, // Left Control
+        '\u{0012}' => 0x12, // Left Alt
+        '\u{0013}' => 0xa5, // Right Alt
+        '\u{0014}' => 0x14, // Caps Lock
+        '\u{0015}' => 0xa1, // Right Shift
+        '\u{0016}' => 0xa3, // Right Control
+        '\u{0017}' => 0x5b, // Left Windows
+        '\u{0018}' => 0x5c, // Right Windows
+        '\u{001b}' => 0x1b, // Escape
+        '\u{007f}' => 0x2e, // Delete
+        ' ' => 0x20,
+        '\u{f700}' => 0x26,                                      // Up
+        '\u{f701}' => 0x28,                                      // Down
+        '\u{f702}' => 0x25,                                      // Left
+        '\u{f703}' => 0x27,                                      // Right
+        '\u{f704}'..='\u{f71b}' => 0x70 + (key as u16 - 0xf704), // F1-F24
+        '\u{f727}' => 0x2d,                                      // Insert
+        '\u{f729}' => 0x24,                                      // Home
+        '\u{f72b}' => 0x23,                                      // End
+        '\u{f72c}' => 0x21,                                      // Page Up
+        '\u{f72d}' => 0x22,                                      // Page Down
+        '\u{f72f}' => 0x91,                                      // Scroll Lock
+        '\u{f730}' => 0x13,                                      // Pause
+        '\u{f731}' => 0x2c,                                      // Print Screen
+        '\u{f735}' => 0x5d,                                      // Context Menu
+        _ => return None,
+    };
+    Some(code)
+}
+
+fn take_pressed_key(
+    pressed: &mut HashMap<String, Vec<RemoteKey>>,
+    key: &str,
+    encoded: &[RemoteKey],
+) -> Option<Vec<RemoteKey>> {
+    pressed.remove(key).or_else(|| {
+        let matching_key = pressed
+            .iter()
+            .find_map(|(pressed_text, keys)| (keys == encoded).then(|| pressed_text.clone()))?;
+        pressed.remove(&matching_key)
+    })
+}
+
+#[cfg(windows)]
+fn encode_remote_key(text: &str) -> Vec<RemoteKey> {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        MapVirtualKeyW, VkKeyScanW, MAPVK_VK_TO_VSC_EX,
+    };
+
+    fn scan_code(virtual_code: u16) -> Option<RemoteKey> {
+        let mapped = unsafe { MapVirtualKeyW(u32::from(virtual_code), MAPVK_VK_TO_VSC_EX) };
+        if mapped == 0 {
+            return None;
+        }
+        let prefix = (mapped >> 8) as u8;
+        Some(RemoteKey::ScanCode {
+            code: mapped as u8,
+            extended: prefix == 0xe0,
+        })
+    }
+
+    let mut keys = Vec::new();
+    for character in text.chars() {
+        let virtual_code = special_key_virtual_code(character).or_else(|| {
+            if character.is_control() || ('\u{e000}'..='\u{f8ff}').contains(&character) {
+                return None;
+            }
+            if character as u32 <= u16::MAX as u32 {
+                let mapped = unsafe { VkKeyScanW(character as u16) };
+                (mapped != -1).then_some(mapped as u16 & 0x00ff)
+            } else {
+                None
+            }
+        });
+
+        if let Some(virtual_code) = virtual_code {
+            if let Some(key) = scan_code(virtual_code) {
+                keys.push(key);
+                continue;
+            }
+        }
+
+        if !character.is_control() && !('\u{e000}'..='\u{f8ff}').contains(&character) {
+            let mut utf16 = [0; 2];
+            keys.extend(
+                character
+                    .encode_utf16(&mut utf16)
+                    .iter()
+                    .copied()
+                    .map(RemoteKey::Unicode),
+            );
+        }
+    }
+    keys
+}
+
+#[cfg(not(windows))]
+fn encode_remote_key(_text: &str) -> Vec<RemoteKey> {
+    Vec::new()
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -912,6 +1058,64 @@ impl DesktopRdpController {
                 viewport_height,
             });
         });
+        let input_scroll_tx = input_tx.clone();
+        window.on_rdp_scroll_event(
+            move |delta_x, delta_y, x, y, viewport_width, viewport_height| {
+                let _ = input_scroll_tx.send(RdpInput::Wheel {
+                    delta_x,
+                    delta_y,
+                    x,
+                    y,
+                    viewport_width,
+                    viewport_height,
+                });
+            },
+        );
+
+        let input_key_tx = input_tx.clone();
+        let pressed_keys: Rc<RefCell<HashMap<String, Vec<RemoteKey>>>> = Default::default();
+        let callback_pressed_keys = Rc::clone(&pressed_keys);
+        window.on_rdp_key_event(move |kind, key, repeat| match kind.as_str() {
+            "down" => {
+                let mut pressed = callback_pressed_keys.borrow_mut();
+                if let Some(keys) = pressed.get(key.as_str()) {
+                    if repeat {
+                        let _ = input_key_tx.send(RdpInput::Key {
+                            action: KeyAction::Down { repeat: true },
+                            keys: keys.clone(),
+                        });
+                    }
+                    return;
+                }
+                let keys = encode_remote_key(key.as_str());
+                if keys.is_empty() {
+                    return;
+                }
+                pressed.insert(key.to_string(), keys.clone());
+                let _ = input_key_tx.send(RdpInput::Key {
+                    action: KeyAction::Down { repeat: false },
+                    keys,
+                });
+            }
+            "up" => {
+                let encoded = encode_remote_key(key.as_str());
+                if let Some(keys) = take_pressed_key(
+                    &mut callback_pressed_keys.borrow_mut(),
+                    key.as_str(),
+                    &encoded,
+                ) {
+                    let _ = input_key_tx.send(RdpInput::Key {
+                        action: KeyAction::Up,
+                        keys,
+                    });
+                }
+            }
+            "release-all" => {
+                callback_pressed_keys.borrow_mut().clear();
+                let _ = input_key_tx.send(RdpInput::ReleaseAllKeys);
+            }
+            _ => {}
+        });
 
         #[cfg(windows)]
         let worker = {
@@ -925,6 +1129,7 @@ impl DesktopRdpController {
         let worker = {
             let _ = &input_rx;
             let _ = target;
+            let _ = pressed_keys;
             shared.set_state(
                 "failed",
                 "FreeRDP 仅随 Windows 构建提供；当前平台没有 RDP backend。",
@@ -1015,10 +1220,12 @@ fn frame_to_image(frame: RdpFrame) -> Option<Image> {
 #[cfg(windows)]
 mod freerdp {
     use super::{
-        coalesce_dirty_rects, copy_dirty_rects, DirtyRect, PointerAction, PointerButton, RdpFrame,
-        RdpInput, RdpTarget, SharedState, BYTES_PER_PIXEL,
+        coalesce_dirty_rects, copy_dirty_rects, wheel_delta_to_rdp, DirtyRect, KeyAction,
+        PointerAction, PointerButton, RdpFrame, RdpInput, RdpTarget, RemoteKey, SharedState,
+        BYTES_PER_PIXEL,
     };
     use slint::{Rgba8Pixel, SharedPixelBuffer};
+    use std::collections::HashSet;
     use std::ffi::{c_char, CStr, CString};
     use std::mem::{size_of, zeroed};
     use std::sync::mpsc::Receiver;
@@ -1193,8 +1400,9 @@ mod freerdp {
             return Err("FreeRDP context disappeared".to_owned());
         }
 
+        let mut pressed_scancodes = HashSet::new();
         loop {
-            drain_input(instance, input_rx);
+            drain_input(instance, input_rx, &mut pressed_scancodes);
             if shared.stop.load(std::sync::atomic::Ordering::SeqCst)
                 || ffi::freerdp_shall_disconnect_context(context) != 0
             {
@@ -1218,11 +1426,15 @@ mod freerdp {
             if wait_result != WAIT_TIMEOUT && ffi::freerdp_check_event_handles(context) == 0 {
                 return Err(last_error(instance, "FreeRDP event processing failed"));
             }
-            drain_input(instance, input_rx);
+            drain_input(instance, input_rx, &mut pressed_scancodes);
         }
     }
 
-    unsafe fn drain_input(instance: *mut ffi::freerdp, input_rx: &Receiver<RdpInput>) {
+    unsafe fn drain_input(
+        instance: *mut ffi::freerdp,
+        input_rx: &Receiver<RdpInput>,
+        pressed_scancodes: &mut HashSet<(u8, bool)>,
+    ) {
         let Some(context) = instance.as_ref().map(|instance| instance.context) else {
             return;
         };
@@ -1242,36 +1454,127 @@ mod freerdp {
             return;
         };
 
-        while let Ok(RdpInput::Pointer {
-            action,
-            button,
-            x,
-            y,
-            viewport_width,
-            viewport_height,
-        }) = input_rx.try_recv()
-        {
-            let Some((x, y)) = map_pointer(x, y, viewport_width, viewport_height, width, height)
-            else {
-                continue;
-            };
-            let flags = match action {
-                PointerAction::Move => ffi::CHUZI_PTR_FLAGS_MOVE as u16,
-                PointerAction::Down => {
-                    let Some(button_flag) = pointer_button_flag(button) else {
+        while let Ok(event) = input_rx.try_recv() {
+            match event {
+                RdpInput::Pointer {
+                    action,
+                    button,
+                    x,
+                    y,
+                    viewport_width,
+                    viewport_height,
+                } => {
+                    let Some((x, y)) =
+                        map_pointer(x, y, viewport_width, viewport_height, width, height)
+                    else {
                         continue;
                     };
-                    button_flag | ffi::CHUZI_PTR_FLAGS_DOWN as u16
+                    let flags = match action {
+                        PointerAction::Move => ffi::CHUZI_PTR_FLAGS_MOVE as u16,
+                        PointerAction::Down => {
+                            let Some(button_flag) = pointer_button_flag(button) else {
+                                continue;
+                            };
+                            button_flag | ffi::CHUZI_PTR_FLAGS_DOWN as u16
+                        }
+                        PointerAction::Up => {
+                            let Some(button_flag) = pointer_button_flag(button) else {
+                                continue;
+                            };
+                            button_flag
+                        }
+                        PointerAction::Cancel => continue,
+                    };
+                    let _ = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
                 }
-                PointerAction::Up => {
-                    let Some(button_flag) = pointer_button_flag(button) else {
+                RdpInput::Wheel {
+                    delta_x,
+                    delta_y,
+                    x,
+                    y,
+                    viewport_width,
+                    viewport_height,
+                } => {
+                    let Some((x, y)) =
+                        map_pointer(x, y, viewport_width, viewport_height, width, height)
+                    else {
                         continue;
                     };
-                    button_flag
+                    send_wheel(input, delta_y, false, x, y);
+                    send_wheel(input, delta_x, true, x, y);
                 }
-                PointerAction::Cancel => continue,
-            };
-            let _ = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
+                RdpInput::Key { action, keys } => {
+                    for key in keys {
+                        send_key(input, action, key, pressed_scancodes);
+                    }
+                }
+                RdpInput::ReleaseAllKeys => release_pressed_keys(input, pressed_scancodes),
+            }
+        }
+    }
+
+    unsafe fn send_wheel(input: *mut ffi::rdpInput, delta: f32, horizontal: bool, x: u16, y: u16) {
+        let Some((negative, units)) = wheel_delta_to_rdp(delta) else {
+            return;
+        };
+        let mut flags = if horizontal {
+            ffi::CHUZI_PTR_FLAGS_HWHEEL as u16
+        } else {
+            ffi::CHUZI_PTR_FLAGS_WHEEL as u16
+        } | units;
+        if negative {
+            flags |= ffi::CHUZI_PTR_FLAGS_WHEEL_NEGATIVE as u16;
+        }
+        let _ = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
+    }
+
+    unsafe fn send_key(
+        input: *mut ffi::rdpInput,
+        action: KeyAction,
+        key: RemoteKey,
+        pressed_scancodes: &mut HashSet<(u8, bool)>,
+    ) {
+        match key {
+            RemoteKey::ScanCode { code, extended } => {
+                let identity = (code, extended);
+                let flags = match action {
+                    KeyAction::Down { repeat } if repeat => ffi::CHUZI_KBD_FLAGS_DOWN as u16,
+                    KeyAction::Down { .. } if pressed_scancodes.insert(identity) => 0,
+                    KeyAction::Up if pressed_scancodes.remove(&identity) => {
+                        ffi::CHUZI_KBD_FLAGS_RELEASE as u16
+                    }
+                    _ => return,
+                } | if extended {
+                    ffi::CHUZI_KBD_FLAGS_EXTENDED as u16
+                } else {
+                    0
+                };
+                let _ = ffi::freerdp_input_send_keyboard_event(input, flags, code);
+            }
+            RemoteKey::Unicode(unit) if matches!(action, KeyAction::Down { .. }) => {
+                let _ = ffi::freerdp_input_send_unicode_keyboard_event(input, 0, unit);
+                let _ = ffi::freerdp_input_send_unicode_keyboard_event(
+                    input,
+                    ffi::CHUZI_KBD_FLAGS_RELEASE as u16,
+                    unit,
+                );
+            }
+            RemoteKey::Unicode(_) => {}
+        }
+    }
+
+    unsafe fn release_pressed_keys(
+        input: *mut ffi::rdpInput,
+        pressed_scancodes: &mut HashSet<(u8, bool)>,
+    ) {
+        for (code, extended) in pressed_scancodes.drain() {
+            let flags = ffi::CHUZI_KBD_FLAGS_RELEASE as u16
+                | if extended {
+                    ffi::CHUZI_KBD_FLAGS_EXTENDED as u16
+                } else {
+                    0
+                };
+            let _ = ffi::freerdp_input_send_keyboard_event(input, flags, code);
         }
     }
 
@@ -1776,8 +2079,10 @@ fn wipe_string(value: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        coalesce_dirty_rects, DirtyFrameMode, DirtyRect, Framebuffers, RdpFrame, SharedState,
+        coalesce_dirty_rects, special_key_virtual_code, take_pressed_key, wheel_delta_to_rdp,
+        DirtyFrameMode, DirtyRect, Framebuffers, RdpFrame, RemoteKey, SharedState,
     };
+    use std::collections::HashMap;
 
     #[cfg(windows)]
     use slint::{Rgba8Pixel, SharedPixelBuffer};
@@ -1809,6 +2114,41 @@ mod tests {
         (0..width * height * super::BYTES_PER_PIXEL)
             .map(|index| seed.wrapping_add(index as u8))
             .collect()
+    }
+
+    #[test]
+    fn wheel_delta_preserves_direction_and_bounds_rdp_rotation() {
+        assert_eq!(wheel_delta_to_rdp(60.0), Some((false, 120)));
+        assert_eq!(wheel_delta_to_rdp(-30.0), Some((true, 60)));
+        assert_eq!(wheel_delta_to_rdp(0.1), Some((false, 1)));
+        assert_eq!(wheel_delta_to_rdp(-10_000.0), Some((true, 255)));
+        assert_eq!(wheel_delta_to_rdp(0.0), None);
+        assert_eq!(wheel_delta_to_rdp(f32::NAN), None);
+    }
+
+    #[test]
+    fn slint_special_keys_map_to_windows_virtual_keys() {
+        assert_eq!(special_key_virtual_code('\u{0008}'), Some(0x08));
+        assert_eq!(special_key_virtual_code('\u{0016}'), Some(0xa3));
+        assert_eq!(special_key_virtual_code('\u{f700}'), Some(0x26));
+        assert_eq!(special_key_virtual_code('\u{f71b}'), Some(0x87));
+        assert_eq!(special_key_virtual_code('\u{f72c}'), Some(0x21));
+        assert_eq!(special_key_virtual_code('a'), None);
+    }
+
+    #[test]
+    fn pressed_key_release_matches_same_physical_key_after_modifier_changes() {
+        let scan_code = RemoteKey::ScanCode {
+            code: 0x02,
+            extended: false,
+        };
+        let mut pressed = HashMap::from([("!".to_owned(), vec![scan_code])]);
+
+        assert_eq!(
+            take_pressed_key(&mut pressed, "1", &[scan_code]),
+            Some(vec![scan_code])
+        );
+        assert!(pressed.is_empty());
     }
 
     #[test]
