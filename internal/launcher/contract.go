@@ -99,6 +99,26 @@ func (i ReleaseIndex) Validate() error {
 	}
 	seen := make(map[string]struct{}, len(i.Artifacts))
 	seenPaths := make(map[string]struct{}, len(i.Artifacts))
+	declaredArtifacts := map[string]struct{}{"bundle": {}}
+	declaredIDs := map[string]struct{}{}
+	for _, component := range i.Manifest.Components {
+		if _, exists := declaredIDs[component.ID]; exists {
+			return fmt.Errorf("%w: manifest id %q collides with release artifact namespace", ErrInvalidManifest, component.ID)
+		}
+		declaredIDs[component.ID] = struct{}{}
+		if component.Artifact != "" {
+			declaredArtifacts[component.ID] = struct{}{}
+		}
+	}
+	for _, plugin := range i.Manifest.Plugins {
+		if _, exists := declaredIDs[plugin.ID]; exists {
+			return fmt.Errorf("%w: manifest id %q collides with release artifact namespace", ErrInvalidManifest, plugin.ID)
+		}
+		declaredIDs[plugin.ID] = struct{}{}
+		if plugin.Installable {
+			declaredArtifacts[plugin.ID] = struct{}{}
+		}
+	}
 	for _, artifact := range i.Artifacts {
 		if strings.TrimSpace(artifact.Component) == "" || strings.TrimSpace(artifact.Target) == "" ||
 			strings.TrimSpace(artifact.Version) == "" {
@@ -122,6 +142,9 @@ func (i ReleaseIndex) Validate() error {
 		if _, ok := seenPaths[artifact.Path]; ok {
 			return fmt.Errorf("%w: duplicate release artifact path %q", ErrInvalidManifest, artifact.Path)
 		}
+		if _, ok := declaredArtifacts[artifact.Component]; !ok {
+			return fmt.Errorf("%w: release artifact %q is not declared by the manifest", ErrInvalidManifest, artifact.Component)
+		}
 		seen[artifact.Component] = struct{}{}
 		seenPaths[artifact.Path] = struct{}{}
 	}
@@ -135,6 +158,21 @@ func (i ReleaseIndex) Validate() error {
 		}
 		if artifact.Path != component.Artifact {
 			return fmt.Errorf("%w: component %s artifact path does not match manifest", ErrInvalidManifest, component.ID)
+		}
+	}
+	for _, plugin := range i.Manifest.Plugins {
+		if !plugin.Installable {
+			continue
+		}
+		artifact, ok := i.Artifact(plugin.ID)
+		if !ok {
+			return fmt.Errorf("%w: plugin %s has no release artifact", ErrInvalidManifest, plugin.ID)
+		}
+		if artifact.Path != plugin.Archive {
+			return fmt.Errorf("%w: plugin %s artifact path does not match manifest", ErrInvalidManifest, plugin.ID)
+		}
+		if !strings.EqualFold(artifact.SHA256, plugin.SHA256) {
+			return fmt.Errorf("%w: plugin %s artifact digest does not match manifest", ErrInvalidManifest, plugin.ID)
 		}
 	}
 	return nil
@@ -253,6 +291,9 @@ func (m ReleaseManifest) Validate() error {
 		}
 		if _, ok := seenPlugins[plugin.ID]; ok {
 			return fmt.Errorf("%w: duplicate plugin %q", ErrInvalidManifest, plugin.ID)
+		}
+		if _, ok := seenComponents[plugin.ID]; ok {
+			return fmt.Errorf("%w: plugin %q collides with component id", ErrInvalidManifest, plugin.ID)
 		}
 		seenPlugins[plugin.ID] = struct{}{}
 		seenCapabilities := make(map[string]struct{}, len(plugin.Capabilities))

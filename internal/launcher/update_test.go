@@ -71,3 +71,23 @@ func TestReleaseIndexRequiresArtifactMetadataToMatchManifest(t *testing.T) {
 		t.Fatal("duplicate artifact path was accepted")
 	}
 }
+
+func TestReleaseIndexRequiresDeclaredPluginArtifact(t *testing.T) {
+	commit := strings.Repeat("d", 40)
+	manifest := ReleaseManifest{
+		Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-3", Commit: commit, Target: "linux-amd64",
+		Plugins: []PluginDescriptor{{ID: "demo", Version: "1", API: PluginAPIV1, Installable: true, Archive: "demo.zip", SHA256: strings.Repeat("a", 64)}},
+	}
+	index := ReleaseIndex{Format: ReleaseIndexFormat, Channel: manifest.Channel, Version: manifest.Version, Commit: commit, Target: manifest.Target, Manifest: manifest}
+	if err := index.Validate(); err == nil {
+		t.Fatal("installable plugin without release artifact was accepted")
+	}
+	index.Artifacts = []ReleaseArtifact{{Component: "demo", Target: manifest.Target, Version: manifest.Version, Path: "demo.zip", Size: 1, SHA256: strings.Repeat("a", 64)}}
+	if err := index.Validate(); err != nil {
+		t.Fatalf("declared plugin artifact rejected: %v", err)
+	}
+	index.Artifacts = append(index.Artifacts, ReleaseArtifact{Component: "unknown", Target: manifest.Target, Version: manifest.Version, Path: "unknown.zip", Size: 1, SHA256: strings.Repeat("b", 64)})
+	if err := index.Validate(); err == nil {
+		t.Fatal("unknown release artifact was accepted")
+	}
+}

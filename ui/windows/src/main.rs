@@ -25,6 +25,7 @@ slint::include_modules!();
 struct AppState {
     data_root: PathBuf,
     payload_root: PathBuf,
+    release_index_url: Option<String>,
     busy: bool,
 }
 
@@ -70,6 +71,10 @@ impl AppState {
         Ok(Self {
             data_root,
             payload_root: package_root.join("CorePayload"),
+            release_index_url: std::env::var("CHUZI_RELEASE_INDEX_URL")
+                .ok()
+                .map(|value| value.trim().to_owned())
+                .filter(|value| !value.is_empty()),
             busy: false,
         })
     }
@@ -127,13 +132,25 @@ impl AppState {
             ));
         }
         fs::create_dir_all(&self.data_root).map_err(|error| error.to_string())?;
-        let output = Command::new(self.launcher_path())
+        let mut launcher = Command::new(self.launcher_path());
+        launcher
             .arg("-root")
             .arg(&self.data_root)
             .arg("-source-root")
             .arg(&self.payload_root)
             .arg("-manifest")
-            .arg(self.manifest_path())
+            .arg(self.manifest_path());
+        if (command.starts_with("component-") || command.starts_with("plugin-"))
+            && self.release_index_url.is_some()
+        {
+            launcher.args(
+                self.release_index_url
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|url| ["-release-index", url.as_str()]),
+            );
+        }
+        let output = launcher
             .arg("-command")
             .arg(command)
             .args(args)
@@ -331,6 +348,26 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             &weak,
             Arc::clone(&plugin_state),
             "plugin-enable",
+            plugin.to_string(),
+        )
+    });
+    let weak = ui.as_weak();
+    let plugin_state = Arc::clone(&state);
+    ui.on_disable_plugin(move |plugin| {
+        plugin_action(
+            &weak,
+            Arc::clone(&plugin_state),
+            "plugin-disable",
+            plugin.to_string(),
+        )
+    });
+    let weak = ui.as_weak();
+    let plugin_state = Arc::clone(&state);
+    ui.on_untrust_plugin(move |plugin| {
+        plugin_action(
+            &weak,
+            Arc::clone(&plugin_state),
+            "plugin-untrust",
             plugin.to_string(),
         )
     });
@@ -1096,7 +1133,22 @@ fn plugin_action(
         state,
         move |state| {
             ensure_core_ready(state)?;
-            state.run_launcher(command, &["-item", plugin.as_str()])?;
+            if command == "plugin-trust" {
+                let output = state.run_launcher("plugin-list", &[])?;
+                let plugins = parse_plugins(&output)?;
+                let signer = plugin_signer_for(&plugins, &plugin)?;
+                state.run_launcher(
+                    command,
+                    &[
+                        "-item",
+                        plugin.as_str(),
+                        "-trusted-signers",
+                        signer.as_str(),
+                    ],
+                )?;
+            } else {
+                state.run_launcher(command, &["-item", plugin.as_str()])?;
+            }
             let output = state.run_launcher("plugin-list", &[])?;
             let plugins = parse_plugins(&output)?;
             Ok((plugin_action_message(command), plugins))
@@ -1111,10 +1163,22 @@ fn parse_plugins(output: &str) -> Result<Vec<CorePlugin>, String> {
 
 fn format_plugin_summary(plugins: &[CorePlugin]) -> String {
     if plugins.is_empty() {
-        "No plugins are included in this Core release.".to_owned()
+        "This release declares no adapter packages.".to_owned()
     } else {
-        format!("{} plugin(s) reported by the launcher.", plugins.len())
+        format!(
+            "{} adapter package(s) declared by this release.",
+            plugins.len()
+        )
     }
+}
+
+fn plugin_signer_for(plugins: &[CorePlugin], id: &str) -> Result<String, String> {
+    plugins
+        .iter()
+        .find(|plugin| plugin.descriptor.id == id)
+        .map(|plugin| plugin.descriptor.signed_by.trim().to_owned())
+        .filter(|signer| !signer.is_empty())
+        .ok_or_else(|| "plugin_signer_missing".to_owned())
 }
 
 fn plugin_action_message(command: &str) -> String {
@@ -1124,6 +1188,8 @@ fn plugin_action_message(command: &str) -> String {
         }
         "plugin-trust" => "Plugin trust updated. Review the signer before enabling it.".to_owned(),
         "plugin-enable" => "Plugin enabled.".to_owned(),
+        "plugin-disable" => "Plugin disabled.".to_owned(),
+        "plugin-untrust" => "Plugin trust revoked and the package disabled.".to_owned(),
         "plugin-remove" => "Plugin removed.".to_owned(),
         _ => "Plugin state updated.".to_owned(),
     }
@@ -1131,6 +1197,11 @@ fn plugin_action_message(command: &str) -> String {
 
 fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
     window.set_plugin_summary(format_plugin_summary(&plugins).into());
+    let options = plugins
+        .iter()
+        .map(|plugin| SharedString::from(plugin.descriptor.id.clone()))
+        .collect::<Vec<_>>();
+    window.set_plugin_options(ModelRc::from(options.as_slice()));
     let selected = window.get_plugin_input().to_string();
     let plugin = plugins
         .iter()
@@ -1139,7 +1210,14 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
     let Some(plugin) = plugin else {
         window.set_plugin_loaded(false);
         window.set_plugin_id(SharedString::default());
+        window.set_plugin_version(SharedString::default());
+        window.set_plugin_api(SharedString::default());
+        window.set_plugin_target(SharedString::default());
+        window.set_plugin_capabilities(SharedString::default());
+        window.set_plugin_permissions(SharedString::default());
+        window.set_plugin_signer(SharedString::default());
         window.set_plugin_installed(false);
+        window.set_plugin_installable(false);
         window.set_plugin_trusted(false);
         window.set_plugin_enabled(false);
         window.set_plugin_health(SharedString::default());
@@ -1149,7 +1227,13 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
     window.set_plugin_input(plugin.descriptor.id.clone().into());
     window.set_plugin_id(plugin.descriptor.id.clone().into());
     window.set_plugin_version(plugin.descriptor.version.clone().into());
+    window.set_plugin_api(plugin.descriptor.api.clone().into());
+    window.set_plugin_target(plugin.descriptor.target.clone().into());
+    window.set_plugin_capabilities(plugin.descriptor.capabilities.join(", ").into());
+    window.set_plugin_permissions(plugin.descriptor.permissions.join(", ").into());
+    window.set_plugin_signer(plugin.descriptor.signed_by.clone().into());
     window.set_plugin_installed(plugin.installed);
+    window.set_plugin_installable(plugin.descriptor.installable);
     window.set_plugin_trusted(plugin.trusted);
     window.set_plugin_enabled(plugin.trusted && plugin.enabled);
     window.set_plugin_health(plugin.health.clone().into());

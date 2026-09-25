@@ -157,3 +157,154 @@ func (m *NetworkComponentManager) CompleteInitialization(ctx context.Context) er
 
 var _ ComponentManager = (*NetworkComponentManager)(nil)
 var _ InitializationManager = (*NetworkComponentManager)(nil)
+
+// NetworkPluginManager downloads the selected plugin archive through the
+// validated release index, stages it in a temporary source root, and then
+// delegates extraction/state changes to the filesystem manager. Trust and
+// enablement remain explicit local operations after installation.
+type NetworkPluginManager struct {
+	mu          sync.Mutex
+	manager     *FilesystemPluginManager
+	manifest    ReleaseManifest
+	index       ReleaseIndex
+	indexURL    string
+	downloader  ArtifactDownloader
+	downloadDir string
+}
+
+func NewNetworkPluginManager(options ManagerOptions, index ReleaseIndex, indexURL, downloadDir string, downloader ArtifactDownloader) (*NetworkPluginManager, error) {
+	if err := index.Validate(); err != nil {
+		return nil, err
+	}
+	if options.Manifest.Format != "" {
+		if err := options.Manifest.Validate(); err != nil {
+			return nil, err
+		}
+		if options.Manifest.Target != index.Target {
+			return nil, fmt.Errorf("%w: plugin index target differs from installed manifest", ErrInvalidManifest)
+		}
+	}
+	options.Manifest = index.Manifest
+	if strings.TrimSpace(indexURL) == "" {
+		return nil, fmt.Errorf("%w: release index URL is required", ErrInvalidPath)
+	}
+	if options.InstallRoot == "" || !filepath.IsAbs(options.InstallRoot) {
+		return nil, fmt.Errorf("%w: install root must be absolute", ErrInvalidPath)
+	}
+	if strings.TrimSpace(downloadDir) == "" {
+		downloadDir = filepath.Join(options.InstallRoot, defaultDownloadDirectory)
+	}
+	downloadDir, err := filepath.Abs(downloadDir)
+	if err != nil {
+		return nil, err
+	}
+	if relative, err := filepath.Rel(options.InstallRoot, downloadDir); err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("%w: download directory must stay under install root", ErrInvalidPath)
+	}
+	local, err := NewFilesystemPluginManager(options)
+	if err != nil {
+		return nil, err
+	}
+	return &NetworkPluginManager{manager: local, manifest: options.Manifest, index: index, indexURL: indexURL, downloader: downloader, downloadDir: downloadDir}, nil
+}
+
+func (m *NetworkPluginManager) List(ctx context.Context) ([]PluginState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.manager.List(ctx)
+}
+
+func (m *NetworkPluginManager) Remove(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.manager.Remove(ctx, id)
+}
+
+func (m *NetworkPluginManager) SetEnabled(ctx context.Context, id string, enabled bool) (PluginState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.manager.SetEnabled(ctx, id, enabled)
+}
+
+func (m *NetworkPluginManager) SetTrusted(ctx context.Context, id string, trusted bool) (PluginState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.manager.SetTrusted(ctx, id, trusted)
+}
+
+func (m *NetworkPluginManager) Install(ctx context.Context, id string) (PluginState, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := contextErr(ctx); err != nil {
+		return PluginState{}, err
+	}
+	descriptor, ok := m.manager.plugin(id)
+	if !ok {
+		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotFound, id)
+	}
+	if !descriptor.Installable || descriptor.Archive == "" {
+		return PluginState{}, fmt.Errorf("%w: plugin %q is not installable", ErrUnsupported, id)
+	}
+	artifact, ok := m.index.Artifact(id)
+	if !ok {
+		return PluginState{}, fmt.Errorf("%w: plugin %s has no release artifact", ErrInvalidManifest, id)
+	}
+	if artifact.Path != descriptor.Archive {
+		return PluginState{}, fmt.Errorf("%w: plugin %s artifact path does not match manifest", ErrInvalidManifest, id)
+	}
+	source, err := os.MkdirTemp("", ".chuzi-plugin-source-")
+	if err != nil {
+		return PluginState{}, fmt.Errorf("create plugin source: %w", err)
+	}
+	defer os.RemoveAll(source)
+	archive, err := m.downloader.Download(ctx, m.indexURL, artifact, m.downloadDir)
+	if err != nil {
+		return PluginState{}, fmt.Errorf("download plugin %s: %w", id, err)
+	}
+	staged, err := safeJoin(source, descriptor.Archive)
+	if err != nil {
+		return PluginState{}, err
+	}
+	if err := os.MkdirAll(filepath.Dir(staged), 0o700); err != nil {
+		return PluginState{}, fmt.Errorf("create plugin staging directory: %w", err)
+	}
+	if err := copyFileWithContext(ctx, archive, staged); err != nil {
+		return PluginState{}, fmt.Errorf("stage plugin %s: %w", id, err)
+	}
+	previousSource := m.manager.source
+	m.manager.source = source
+	defer func() { m.manager.source = previousSource }()
+	return m.manager.Install(ctx, id)
+}
+
+func copyFileWithContext(ctx context.Context, sourcePath, destinationPath string) error {
+	input, err := os.Open(sourcePath)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destinationPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	ok := false
+	defer func() {
+		_ = output.Close()
+		if !ok {
+			_ = os.Remove(destinationPath)
+		}
+	}()
+	if _, err := copyWithContextLimit(ctx, output, input, defaultArtifactMaxBytes); err != nil {
+		return err
+	}
+	if err := output.Sync(); err != nil {
+		return err
+	}
+	if err := output.Close(); err != nil {
+		return err
+	}
+	ok = true
+	return nil
+}
+
+var _ PluginManager = (*NetworkPluginManager)(nil)

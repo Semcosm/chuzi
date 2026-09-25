@@ -93,12 +93,19 @@ export component MainWindow inherits Window {
     in-out property <string> browser-view-status: "No browser view captured.";
 
     in-out property <string> plugin-input: "";
+    in-out property <[string]> plugin-options: [];
     in-out property <bool> plugin-loaded: false;
     in-out property <string> plugin-summary: "Core is not ready. Start Core to load plugins.";
     in-out property <string> plugin-id: "";
     in-out property <string> plugin-version: "";
     in-out property <string> plugin-health: "";
+    in-out property <string> plugin-api: "";
+    in-out property <string> plugin-target: "";
+    in-out property <string> plugin-capabilities: "";
+    in-out property <string> plugin-permissions: "";
+    in-out property <string> plugin-signer: "";
     in-out property <bool> plugin-installed: false;
+    in-out property <bool> plugin-installable: false;
     in-out property <bool> plugin-trusted: false;
     in-out property <bool> plugin-enabled: false;
 
@@ -137,6 +144,8 @@ export component MainWindow inherits Window {
     callback install-plugin(string);
     callback trust-plugin(string);
     callback enable-plugin(string);
+    callback disable-plugin(string);
+    callback untrust-plugin(string);
     callback remove-plugin(string);
     callback refresh-components();
     callback install-component(string);
@@ -266,42 +275,52 @@ export component MainWindow inherits Window {
                 VerticalBox {
                     padding: 32px;
                     spacing: 18px;
-                    PageHeader { title: "Plugins"; subtitle: "Review installation, signer trust, and enablement independently."; }
+                    PageHeader { title: "Adapter packages"; subtitle: "Review package metadata, grant signer trust, and manage installation state."; }
                     Text { text: root.plugin-summary; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                     if !root.core-ready: FeedbackBar { text: "Core is not running. Start Core before changing plugins."; accent: #c18a35; vertical-stretch: 0; }
                     GroupBox {
-                        title: "Plugin actions";
-                        max-height: 132px;
+                        title: "Adapter package";
+                        max-height: 176px;
                         vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
-                            spacing: 10px;
-                            LineEdit { placeholder-text: "Enter a plugin ID"; text <=> root.plugin-input; }
+                            spacing: 8px;
                             HorizontalBox {
                                 spacing: 8px;
                                 height: 40px;
                                 vertical-stretch: 0;
+                                ComboBox { model: root.plugin-options; current-value <=> root.plugin-input; enabled: root.plugin-options.length > 0 && !root.busy; }
                                 Button { text: "Refresh"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.refresh-plugins(); } }
-                                Button { text: "Install"; enabled: root.core-ready && !root.busy && root.plugin-input != ""; vertical-stretch: 0; clicked => { root.install-plugin(root.plugin-input); } }
-                                Button { text: "Trust"; enabled: root.core-ready && !root.busy && root.plugin-input == root.plugin-id && root.plugin-installed && !root.plugin-trusted; vertical-stretch: 0; clicked => { root.trust-plugin(root.plugin-input); } }
-                                Button { text: "Enable"; enabled: root.core-ready && !root.busy && root.plugin-input == root.plugin-id && root.plugin-installed && root.plugin-trusted && !root.plugin-enabled; vertical-stretch: 0; clicked => { root.enable-plugin(root.plugin-input); } }
-                                Button { text: "Remove"; enabled: root.core-ready && !root.busy && root.plugin-input == root.plugin-id && root.plugin-installed; vertical-stretch: 0; clicked => { root.remove-plugin(root.plugin-input); } }
+                            }
+                            HorizontalBox {
+                                spacing: 8px;
+                                height: 40px;
+                                vertical-stretch: 0;
+                                Button { text: "Install"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installable && !root.plugin-installed; vertical-stretch: 0; clicked => { root.install-plugin(root.plugin-input); } }
+                                Button { text: "Trust signer"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-signer != "" && !root.plugin-trusted; vertical-stretch: 0; clicked => { root.trust-plugin(root.plugin-input); } }
+                                Button { text: "Enable"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-trusted && !root.plugin-enabled; vertical-stretch: 0; clicked => { root.enable-plugin(root.plugin-input); } }
+                                Button { text: "Disable"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-enabled; vertical-stretch: 0; clicked => { root.disable-plugin(root.plugin-input); } }
+                                Button { text: "Revoke trust"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-trusted; vertical-stretch: 0; clicked => { root.untrust-plugin(root.plugin-input); }
+                                }
+                                Button { text: "Remove"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed; vertical-stretch: 0; clicked => { root.remove-plugin(root.plugin-input); }
                             }
                         }
                     }
                     GroupBox {
-                        title: "Current plugin";
-                        max-height: 190px;
+                        title: "Selected adapter";
+                        max-height: 300px;
                         vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
-                            spacing: 7px;
-                            Text { text: root.plugin-loaded ? root.plugin-id : "No plugin loaded."; font-size: 17px; font-weight: 700; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Version: " + root.plugin-version : "Refresh to read the manifest."; color: Palette.alternate-foreground; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Installed: " + (root.plugin-installed ? "Yes" : "No") : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Trusted: " + (root.plugin-trusted ? "Yes" : "No") : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Enabled: " + (root.plugin-trusted && root.plugin-enabled ? "Yes" : "No") : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Health: " + root.plugin-health : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            spacing: 8px;
+                            Text { text: root.plugin-loaded ? root.plugin-id : (root.plugin-options.length == 0 ? "No adapter packages are declared in this release." : "Select an adapter package."); font-size: 17px; font-weight: 700; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Version: " + root.plugin-version + "    API: " + root.plugin-api : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Target: " + (root.plugin-target == "" ? "Any" : root.plugin-target) : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Installable: " + (root.plugin-installable ? "Yes" : "No") + "    Installed: " + (root.plugin-installed ? "Yes" : "No") : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Signer: " + (root.plugin-signer == "" ? "Not declared" : root.plugin-signer) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Permissions: " + (root.plugin-permissions == "" ? "None declared" : root.plugin-permissions) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Capabilities: " + (root.plugin-capabilities == "" ? "None declared" : root.plugin-capabilities) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.plugin-loaded ? "Package state: " + root.plugin-health + "; runtime status is not checked here." : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                         }
                     }
                     FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : #526c92; vertical-stretch: 0; }

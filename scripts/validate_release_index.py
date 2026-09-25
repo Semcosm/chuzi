@@ -82,7 +82,12 @@ def main() -> int:
     manifest_components = manifest.get("components")
     if not isinstance(manifest_components, list):
         raise SystemExit("release manifest has no components")
+    manifest_plugins = manifest.get("plugins")
+    if not isinstance(manifest_plugins, list):
+        raise SystemExit("release manifest plugins are invalid")
     artifacts_by_component = {artifact["component"]: artifact["path"] for artifact in artifacts}
+    declared_ids = {"bundle"}
+    artifact_ids = {"bundle"}
     for component in manifest_components:
         if not isinstance(component, dict):
             raise SystemExit("release manifest component is not an object")
@@ -90,8 +95,34 @@ def main() -> int:
         artifact_path = component.get("artifact")
         if not isinstance(component_id, str) or not component_id:
             raise SystemExit(f"release manifest component id is invalid: {component_id}")
+        if component_id in declared_ids:
+            raise SystemExit(f"duplicate release manifest item id: {component_id}")
+        declared_ids.add(component_id)
+        if artifact_path:
+            artifact_ids.add(component_id)
         if artifact_path and artifacts_by_component.get(component_id) != artifact_path:
             raise SystemExit(f"manifest component artifact mismatch: {component_id}")
+    for plugin in manifest_plugins:
+        if not isinstance(plugin, dict) or not isinstance(plugin.get("id"), str) or not plugin["id"]:
+            raise SystemExit("release manifest plugin id is invalid")
+        plugin_id = plugin["id"]
+        if plugin_id in declared_ids:
+            raise SystemExit(f"duplicate release manifest item id: {plugin_id}")
+        declared_ids.add(plugin_id)
+        if not plugin.get("installable"):
+            continue
+        artifact_ids.add(plugin_id)
+        archive = plugin.get("archive")
+        if not safe_relative_path(archive):
+            raise SystemExit(f"release manifest plugin archive path is unsafe: {plugin_id}")
+        artifact = next((item for item in artifacts if item["component"] == plugin_id), None)
+        if artifact is None or artifact["path"] != archive:
+            raise SystemExit(f"manifest plugin artifact mismatch: {plugin_id}")
+        if not valid_digest(plugin.get("sha256")) or plugin["sha256"].lower() != next(item for item in artifacts if item["component"] == plugin_id)["sha256"].lower():
+            raise SystemExit(f"manifest plugin digest mismatch: {plugin_id}")
+    unknown = set(artifacts_by_component) - artifact_ids
+    if unknown:
+        raise SystemExit(f"release index contains artifacts for non-installable items: {sorted(unknown)}")
     print(f"validated {index_path}")
     return 0
 

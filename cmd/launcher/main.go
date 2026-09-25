@@ -288,7 +288,7 @@ func main() {
 			}
 			return
 		}
-		if handled, err := runPluginCommand(ctx, *command, *item, managerOptions); handled {
+		if handled, err := runPluginCommand(ctx, *command, *item, managerOptions, releaseIndex, *releaseIndexURL, *downloadDir, *allowHTTPForLoopback); handled {
 			if err != nil {
 				_ = lock.Release()
 				fatal(err)
@@ -485,10 +485,18 @@ func runComponentCommand(ctx context.Context, command, id string, options launch
 	}
 }
 
-func runPluginCommand(ctx context.Context, command, id string, options launcher.ManagerOptions) (bool, error) {
-	manager, err := launcher.NewFilesystemPluginManager(options)
+func runPluginCommand(ctx context.Context, command, id string, options launcher.ManagerOptions, index *launcher.ReleaseIndex, indexURL, downloadDir string, allowHTTPForLoopback bool) (bool, error) {
+	local, err := launcher.NewFilesystemPluginManager(options)
 	if err != nil {
 		return true, err
+	}
+	var manager launcher.PluginManager = local
+	if index != nil {
+		network, networkErr := launcher.NewNetworkPluginManager(options, *index, indexURL, downloadDir, launcher.ArtifactDownloader{AllowHTTPForLoopback: allowHTTPForLoopback})
+		if networkErr != nil {
+			return true, networkErr
+		}
+		manager = network
 	}
 	switch command {
 	case "plugin-list":

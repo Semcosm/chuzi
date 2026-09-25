@@ -51,6 +51,18 @@ pub(crate) struct DiagnosticStatus {
 pub(crate) struct PluginDescriptor {
     pub(crate) id: String,
     pub(crate) version: String,
+    #[serde(default)]
+    pub(crate) api: String,
+    #[serde(default)]
+    pub(crate) target: String,
+    #[serde(default)]
+    pub(crate) capabilities: Vec<String>,
+    #[serde(default)]
+    pub(crate) permissions: Vec<String>,
+    #[serde(default)]
+    pub(crate) signed_by: String,
+    #[serde(default)]
+    pub(crate) installable: bool,
 }
 
 #[derive(Debug, Deserialize)]

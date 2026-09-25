@@ -187,22 +187,43 @@ def validate(args) -> dict:
             raise ValueError(f"index and manifest differ in {field}")
     if sidecar_manifest != manifest:
         raise ValueError("release manifest sidecar differs from index manifest")
+    component_descriptors = manifest["components"]
+    if {item.get("id") for item in component_descriptors if isinstance(item, dict)} != set(COMPONENTS) or len(component_descriptors) != len(COMPONENTS):
+        raise ValueError("release manifest component set is incomplete or contains duplicates")
+    components = COMPONENTS
+    plugin_descriptors = manifest["plugins"]
+    plugin_by_id = {}
+    for plugin in plugin_descriptors:
+        if not isinstance(plugin, dict) or not isinstance(plugin.get("id"), str) or not plugin["id"]:
+            raise ValueError("release manifest plugin id is invalid")
+        plugin_id = plugin["id"]
+        if plugin_id in plugin_by_id or plugin_id in COMPONENTS or plugin_id == "bundle":
+            raise ValueError(f"release manifest plugin id collides: {plugin_id}")
+        plugin_by_id[plugin_id] = plugin
     artifacts = index.get("artifacts")
-    if not isinstance(artifacts, list) or len(artifacts) != len(COMPONENTS) + 1:
-        raise ValueError("release index does not contain bundle plus three components")
+    installable_plugins = {plugin_id: plugin for plugin_id, plugin in plugin_by_id.items() if plugin.get("installable")}
+    declared_component_artifacts = {item.get("id") for item in component_descriptors if item.get("artifact")}
+    if not isinstance(artifacts, list) or len(artifacts) != len(declared_component_artifacts) + len(installable_plugins) + 1:
+        raise ValueError("release index does not contain the bundle and every declared artifact")
     artifact_by_component = {}
     expected_names = {"bundle": f"chuzi-{index['version']}-{args.target}.{extension}"}
-    expected_names.update({component: f"chuzi-{index['version']}-{args.target}-{component}.{extension}" for component in COMPONENTS})
+    expected_names.update({component: f"chuzi-{index['version']}-{args.target}-{component}.{extension}" for component in declared_component_artifacts})
+    for plugin_id, plugin in installable_plugins.items():
+        archive = plugin.get("archive")
+        if (not isinstance(archive, str) or not archive or "\\" in archive or archive.startswith("/")
+                or any(part in ("", ".", "..") for part in archive.split("/"))):
+            raise ValueError(f"release manifest plugin archive path is invalid: {plugin_id}")
+        expected_names[plugin_id] = archive
     for artifact in artifacts:
         if not isinstance(artifact, dict):
             raise ValueError("release artifact is not an object")
         component = artifact.get("component")
-        if not isinstance(component, str) or component in artifact_by_component or component not in {"bundle", *COMPONENTS}:
+        if not isinstance(component, str) or component in artifact_by_component or component not in set(expected_names):
             raise ValueError(f"invalid or duplicate artifact component: {component}")
         artifact_by_component[component] = artifact
         filename = artifact.get("path")
-        if not isinstance(filename, str) or Path(filename).name != filename:
-            raise ValueError(f"artifact path is not a filename: {filename}")
+        if not isinstance(filename, str) or not filename or "\\" in filename or filename.startswith("/") or any(part in ("", ".", "..") for part in filename.split("/")):
+            raise ValueError(f"artifact path is unsafe: {filename}")
         if filename != expected_names[component]:
             raise ValueError(f"artifact filename mismatch for {component}: {filename}")
         path = root / filename
@@ -216,7 +237,7 @@ def validate(args) -> dict:
             raise ValueError(f"artifact SHA-256 is invalid: {filename}")
         if digest(path).lower() != artifact["sha256"].lower():
             raise ValueError(f"artifact digest mismatch: {filename}")
-    if set(artifact_by_component) != {"bundle", *COMPONENTS}:
+    if set(artifact_by_component) != set(expected_names):
         raise ValueError("release index artifact set is incomplete")
     component_by_id = {item.get("id"): item for item in manifest["components"] if isinstance(item, dict)}
     if set(component_by_id) != set(COMPONENTS) or len(component_by_id) != len(manifest["components"]):
@@ -226,7 +247,7 @@ def validate(args) -> dict:
     for filename in [*expected_names.values(), index_path.name]:
         if not (root / f"{filename}.sha256").is_file():
             raise ValueError(f"checksum sidecar is missing: {filename}.sha256")
-    for component in COMPONENTS:
+    for component in declared_component_artifacts:
         descriptor = component_by_id.get(component)
         if not isinstance(descriptor, dict):
             raise ValueError(f"release manifest is missing component: {component}")
@@ -236,6 +257,14 @@ def validate(args) -> dict:
             raise ValueError(f"component artifact metadata mismatch: {component}")
         artifact = artifact_by_component[component]
         validate_archive(root / artifact["path"], extension, manifest, component)
+    for plugin_id, plugin in installable_plugins.items():
+        artifact = artifact_by_component[plugin_id]
+        if not valid_digest(plugin.get("sha256")) or plugin["sha256"].lower() != artifact["sha256"].lower():
+            raise ValueError(f"plugin digest metadata mismatch: {plugin_id}")
+        plugin_extension = "zip" if artifact["path"].lower().endswith(".zip") else "tar.gz" if artifact["path"].lower().endswith(".tar.gz") else ""
+        if not plugin_extension:
+            raise ValueError(f"plugin archive extension is unsupported: {plugin_id}")
+        list(archive_members(root / artifact["path"], plugin_extension))
     bundle = artifact_by_component["bundle"]
     validate_bundle(root / bundle["path"], extension, manifest, args.target, index["version"], index["commit"])
     return {
