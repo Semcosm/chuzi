@@ -120,15 +120,30 @@ dispatch 使用的完整构建 DAG。它不监听普通开发分支的 push；�
   named-pipe 契约测试；它不需要 MSIX 测试证书或单独的 Runtime MSIX。
 
 每个 `assemble_target` job 从 `ci-go-*`、`ci-worker` 和 `ci-runtime-*` artifact 组装一个
-目标包，job 的显示名称仍为 `chuzi-build-<target>`，以保持 nightly acceptance 和
-release retry 的审计契约。nightly/tag 产物再由 `artifact_integration` 在单独 runner
+目标包，job 的显示名称仍为 `chuzi-build-<target>`，以保持验收和 release retry 的
+审计契约。test/nightly/stable 产物再由 `artifact_integration` 在单独 runner
 汇聚，验证 commit、版本、release index、归档内容和 SHA-256，最后才允许
 `chuzi-build` 聚合 job 通过。Runner 之间不共享本地文件系统，只通过 Actions artifact
 传递构建结果。
 
-### Nightly release（当前首个 release 流程）
+### 三条发布通道
 
-`.github/workflows/chuzi-build.yml` 每天 `02:17 UTC` 自动运行，也支持手动
+三条通道由同一 workflow 构建，但 channel 和 version 由 `release_context` 一次解析，
+后续 job 不再自行推导。Actions artifact、catalog 目录和 prerelease 标记按通道隔离：
+
+| Channel | Entry point | Version | Artifact | Catalog |
+| --- | --- | --- | --- | --- |
+| `test` | 手动 dispatch，任意分支 | `test-<run>-<sha12>` | `chuzi-test-<target>` | `test/`，`prerelease: true` |
+| `nightly` | `main` 的计划任务或手动 dispatch | `nightly-<run>-<sha12>` | `chuzi-nightly-<target>` | `nightly/`，`prerelease: true` |
+| `stable` | 人工确认后创建签名 annotated `vX.Y.Z` tag | `vX.Y.Z` | `chuzi-stable-<target>` | `stable/`，`prerelease: false` |
+
+Test 允许新代码带有未知问题，只能发布 test catalog。Nightly 只接受 `main`，必须通过
+完整测试和构建后才发布 nightly catalog。Stable 不从 test/nightly 自动晋级；人工确认后创建
+签名 annotated tag，tag workflow 才会生成 GitHub Release、attestation 和 stable catalog。
+
+### Nightly release
+
+`.github/workflows/chuzi-build.yml` 每天 `02:17 UTC` 自动运行，也支持在 `main` 手动
 触发。Nightly 不创建 Git tag 或 GitHub Release，而是为四个平台上传保留 14 天
 的 Actions artifact，并使用 `nightly-<run-number>-<commit-short-hash>` 版本号。每个平台
 同时生成完整包、按 `launcher`、`service`、`browser-worker` 拆分的
@@ -177,7 +192,7 @@ Windows runner 使用对应的 `*.ps1` 脚本。`build.sh`/`build.ps1` 保留为
 和 `build-manifest.json`，并生成 SHA256 校验文件。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 
-稳定版由带签名的 annotated semver tag 触发。tag 构建会复用四平台构建矩阵，
+稳定版只能由人工确认后创建的带签名 annotated semver tag 触发。tag 构建会复用四平台构建矩阵，
 为每个归档生成并签署 UGS attestation，校验签名者、tag/commit 绑定和归档
 SHA-256 后才创建 GitHub Release。发布需要仓库 Secret
 `CHUZI_RELEASE_SIGNING_KEY` 与变量 `CHUZI_RELEASE_SIGNER`，私钥只存在于

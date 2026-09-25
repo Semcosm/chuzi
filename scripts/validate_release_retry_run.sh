@@ -26,8 +26,10 @@ run = json.loads(sys.argv[1])
 commit = sys.argv[2]
 if run.get("name") != "chuzi-build":
     raise SystemExit(f"run workflow must be chuzi-build, got {run.get('name')}")
-if run.get("event") not in {"push", "workflow_dispatch"}:
+if run.get("event") != "push":
     raise SystemExit(f"run event is not a build event: {run.get('event')}")
+if not str(run.get("ref", "")).startswith("refs/tags/v"):
+    raise SystemExit(f"run ref is not a stable release tag: {run.get('ref')}")
 if run.get("status") != "completed" or run.get("conclusion") not in {"success", "failure"}:
     raise SystemExit(f"run is not a completed build: {run.get('status')}/{run.get('conclusion')}")
 if str(run.get("head_sha", "")).lower() != commit:
@@ -65,7 +67,7 @@ import json
 import re
 import sys
 artifacts = json.loads(sys.argv[1]).get("artifacts", [])
-expected = {f"chuzi-nightly-{target}" for target in ("windows-amd64", "linux-amd64", "linux-arm64", "darwin-arm64")}
+expected = {f"chuzi-stable-{target}" for target in ("windows-amd64", "linux-amd64", "linux-arm64", "darwin-arm64")}
 selected = {item.get("name"): item for item in artifacts if item.get("name") in expected}
 if set(selected) != expected:
     raise SystemExit(f"missing target artifacts: {sorted(expected - set(selected))}")

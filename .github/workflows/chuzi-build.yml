@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       channel:
-        description: Release channel for a manual build
+        description: Experimental test or validated nightly build
         required: true
         type: choice
         options:
@@ -25,6 +25,32 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release_context:
+    name: chuzi-build-release-context
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      channel: ${{ steps.resolve.outputs.channel }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 1
+      - name: Resolve release channel and version
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--event "${GITHUB_EVENT_NAME}" --ref "${GITHUB_REF}" --input-channel "${{ inputs.channel }}" --run-number "${GITHUB_RUN_NUMBER}" --sha "${GITHUB_SHA}")
+          metadata="$(python3 scripts/resolve_release_channel.py "${args[@]}")"
+          python3 - "$metadata" >> "${GITHUB_OUTPUT}" <<'PY'
+          import json
+          import sys
+          data = json.loads(sys.argv[1])
+          for key in ("channel", "version"):
+              print(f"{key}={data[key]}")
+          PY
+
   contract_checks:
     name: chuzi-build-contracts
     runs-on: ubuntu-24.04
@@ -47,6 +73,7 @@ jobs:
           scripts/test_nightly_package.sh
           scripts/test_nightly_artifact_validator.sh
           scripts/test_release_catalog.sh
+          scripts/test_release_channels.sh
           git diff --check
 
   go_checks:
@@ -112,6 +139,7 @@ jobs:
     name: chuzi-build-go-${{ matrix.target }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    needs: [release_context]
     permissions:
       contents: read
       actions: write
@@ -139,26 +167,9 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Resolve build version
-        id: version
-        shell: bash
-        run: |
-          dispatch_channel="${{ inputs.channel }}"
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            version="$GITHUB_REF_NAME"
-          elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
-            version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
-          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$dispatch_channel" = "test" ]; then
-            version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
-          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
-          else
-            version="dev-${GITHUB_SHA:0:12}"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Build Go components
         shell: bash
-        run: scripts/build_go_target.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" "$RUNNER_TEMP/chuzi-go"
+        run: scripts/build_go_target.sh "${{ matrix.target }}" "${{ needs.release_context.outputs.version }}" "$RUNNER_TEMP/chuzi-go"
       - name: Upload Go components
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -171,7 +182,7 @@ jobs:
     name: chuzi-build-windows-slint
     runs-on: windows-2022
     timeout-minutes: 45
-    needs: [go_build, node_checks]
+    needs: [release_context, go_build, node_checks]
     permissions:
       contents: read
       actions: write
@@ -242,23 +253,6 @@ jobs:
               throw "Empty Slint layout snapshot: $path"
             }
           }
-      - name: Resolve build version
-        id: version
-        shell: pwsh
-        run: |
-          $dispatchChannel = "${{ inputs.channel }}"
-          if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') {
-            $version = $env:GITHUB_REF_NAME
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'schedule') {
-            $version = "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch' -and $dispatchChannel -eq 'test') {
-            $version = "test-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
-          } elseif ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
-            $version = "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0, 12))"
-          } else {
-            $version = "dev-$($env:GITHUB_SHA.Substring(0, 12))"
-          }
-          "version=$version" >> $env:GITHUB_OUTPUT
       - name: Assemble Core payload for the Slint package
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
@@ -278,7 +272,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $payload | Out-Null
           & ./scripts/assemble_target.ps1 `
             -Target windows-amd64 `
-            -Version "${{ steps.version.outputs.version }}" `
+            -Version "${{ needs.release_context.outputs.version }}" `
             -GoDir (Join-Path $env:RUNNER_TEMP 'chuzi-go') `
             -WorkerArchive (Join-Path $env:RUNNER_TEMP 'chuzi-worker/browser-worker-dist.tar.gz') `
             -DistRoot (Join-Path $env:RUNNER_TEMP 'chuzi-core-dist')
@@ -287,7 +281,7 @@ jobs:
         shell: pwsh
         run: ./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload"
         env:
-          CHUZI_BUILD_VERSION: ${{ steps.version.outputs.version }}
+          CHUZI_BUILD_VERSION: ${{ needs.release_context.outputs.version }}
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
@@ -407,7 +401,7 @@ jobs:
 
   assemble_target:
     name: chuzi-build-${{ matrix.target }}
-    needs: [go_build, node_checks]
+    needs: [release_context, go_build, node_checks]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
     permissions:
@@ -437,20 +431,9 @@ jobs:
         with:
           name: ci-worker
           path: ${{ runner.temp }}/chuzi-worker
-      - name: Resolve build version on Windows
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $dispatchChannel = "${{ inputs.channel }}"
-          $version = if ($env:GITHUB_REF -match '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$') { $env:GITHUB_REF_NAME } elseif ($env:GITHUB_EVENT_NAME -eq "schedule") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch" -and $dispatchChannel -eq "test") { "test-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } elseif ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") { "nightly-$($env:GITHUB_RUN_NUMBER)-$($env:GITHUB_SHA.Substring(0,12))" } else { "dev-$($env:GITHUB_SHA.Substring(0,12))" }
-          "CHUZI_BUILD_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-      - name: Resolve build version on Unix
-        if: runner.os != 'Windows'
+      - name: Set resolved build version
         shell: bash
-        run: |
-          dispatch_channel="${{ inputs.channel }}"
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then version="$GITHUB_REF_NAME"; elif [ "$GITHUB_EVENT_NAME" = "schedule" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$dispatch_channel" = "test" ]; then version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"; else version="dev-${GITHUB_SHA:0:12}"; fi
-          echo "CHUZI_BUILD_VERSION=$version" >> "$GITHUB_ENV"
+        run: echo "CHUZI_BUILD_VERSION=${{ needs.release_context.outputs.version }}" >> "$GITHUB_ENV"
       - name: Assemble target on Windows
         if: runner.os == 'Windows'
         shell: pwsh
@@ -484,11 +467,11 @@ jobs:
             test-*) python3 scripts/validate_nightly_artifact.py --artifact dist --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "$CHUZI_BUILD_VERSION" --channel test ;;
             v[0-9]*.[0-9]*.[0-9]*) python3 scripts/validate_nightly_artifact.py --artifact dist --target "${{ matrix.target }}" --commit "$GITHUB_SHA" --version "$CHUZI_BUILD_VERSION" --channel stable ;;
           esac
-      - name: Upload nightly target bundle
-        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+      - name: Upload channel target bundle
+        if: needs.release_context.outputs.channel != 'ci'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: chuzi-nightly-${{ matrix.target }}
+          name: chuzi-${{ needs.release_context.outputs.channel }}-${{ matrix.target }}
           path: |
             dist/chuzi-*.tar.gz
             dist/chuzi-*.zip
@@ -504,8 +487,8 @@ jobs:
 
   artifact_integration:
     name: chuzi-build-artifact-integration
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: assemble_target
+    if: needs.release_context.outputs.channel != 'ci'
+    needs: [release_context, assemble_target]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -517,26 +500,17 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
-          pattern: chuzi-nightly-*
+          pattern: chuzi-${{ needs.release_context.outputs.channel }}-*
           path: dist
           merge-multiple: false
       - name: Validate all target artifacts together
         shell: bash
         run: |
           set -euo pipefail
-          dispatch_channel="${{ inputs.channel }}"
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            version="$GITHUB_REF_NAME"
-            channel=stable
-          elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] && [ "$dispatch_channel" = "test" ]; then
-            version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
-            channel=test
-          else
-            version="nightly-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
-            channel=nightly
-          fi
+          channel="${{ needs.release_context.outputs.channel }}"
+          version="${{ needs.release_context.outputs.version }}"
           for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
-            artifact_dir="dist/chuzi-nightly-$target"
+            artifact_dir="dist/chuzi-$channel-$target"
             index="$artifact_dir/chuzi-${version}-${target}.index.json"
             test -f "$index"
             python3 scripts/validate_release_index.py --index "$index" --dist "$artifact_dir"
@@ -547,7 +521,7 @@ jobs:
   chuzi_build:
     name: chuzi-build
     if: always()
-    needs: [contract_checks, go_checks, node_checks, go_build, windows_slint, assemble_target, artifact_integration]
+    needs: [release_context, contract_checks, go_checks, node_checks, go_build, windows_slint, assemble_target, artifact_integration]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every build stage
@@ -563,20 +537,18 @@ jobs:
             "${{ needs.assemble_target.result }}"; do
             test "$result" = success || { echo "build stage did not succeed: $result" >&2; exit 1; }
           done
-          case "$GITHUB_EVENT_NAME:$GITHUB_REF" in
-            schedule:*|workflow_dispatch:*|push:refs/tags/v*)
-              test "${{ needs.artifact_integration.result }}" = success || { echo "artifact integration did not succeed" >&2; exit 1; }
-              ;;
-            *)
-              test "${{ needs.artifact_integration.result }}" = skipped || { echo "unexpected artifact integration result" >&2; exit 1; }
-              ;;
-          esac
+          channel="${{ needs.release_context.outputs.channel }}"
+          if [ "$channel" = ci ]; then
+            test "${{ needs.artifact_integration.result }}" = skipped || { echo "unexpected artifact integration result" >&2; exit 1; }
+          else
+            test "${{ needs.artifact_integration.result }}" = success || { echo "artifact integration did not succeed" >&2; exit 1; }
+          fi
           echo "all chuzi build stages passed"
 
   stable-release:
     name: stable-release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [assemble_target, artifact_integration, chuzi_build]
+    needs: [release_context, assemble_target, artifact_integration, chuzi_build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -599,9 +571,14 @@ jobs:
       - name: Download target build artifacts
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
-          pattern: chuzi-*
+          pattern: chuzi-stable-*
           path: dist
           merge-multiple: true
+      - name: Download Windows installer artifact
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: chuzi-windows-installer-exe
+          path: dist
       - name: Require release signing inputs
         shell: bash
         env:
@@ -646,46 +623,30 @@ jobs:
 
   publish-release-catalog:
     name: publish-release-catalog
-    if: (github.event_name == 'workflow_dispatch' && inputs.channel == 'test') || startsWith(github.ref, 'refs/tags/v')
-    needs: [assemble_target, artifact_integration, chuzi_build]
+    if: needs.release_context.outputs.channel != 'ci'
+    needs: [release_context, assemble_target, artifact_integration, chuzi_build]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
       actions: read
+    env:
+      CHUZI_CATALOG_CHANNEL: ${{ needs.release_context.outputs.channel }}
+      CHUZI_CATALOG_VERSION: ${{ needs.release_context.outputs.version }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           fetch-depth: 0
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
-          pattern: chuzi-nightly-*
+          pattern: chuzi-${{ needs.release_context.outputs.channel }}-*
           path: dist
           merge-multiple: false
-      - name: Resolve catalog release metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          dispatch_channel="${{ inputs.channel }}"
-          if [[ "$GITHUB_REF" =~ ^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            version="$GITHUB_REF_NAME"
-            channel=stable
-          elif [ "$dispatch_channel" = "test" ]; then
-            version="test-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:12}"
-            channel=test
-          else
-            echo 'catalog publishing requires a test dispatch or stable tag' >&2
-            exit 1
-          fi
-          {
-            echo "CHUZI_CATALOG_VERSION=$version"
-            echo "CHUZI_CATALOG_CHANNEL=$channel"
-          } >> "$GITHUB_ENV"
       - name: Validate target artifacts for catalog
         shell: bash
         run: |
           set -euo pipefail
           for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
-            artifact_dir="dist/chuzi-nightly-$target"
+            artifact_dir="dist/chuzi-${CHUZI_CATALOG_CHANNEL}-$target"
             index="$artifact_dir/chuzi-${CHUZI_CATALOG_VERSION}-${target}.index.json"
             test -f "$index"
             python3 scripts/validate_release_index.py --index "$index" --dist "$artifact_dir"
