@@ -19,6 +19,13 @@ def digest(path: Path) -> str:
     return hasher.hexdigest()
 
 
+def safe_relative_path(value: object) -> bool:
+    if not isinstance(value, str) or not value or "\\" in value or value.startswith("/"):
+        return False
+    parts = value.split("/")
+    return all(part not in ("", ".", "..") for part in parts)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--manifest", required=True, type=Path)
@@ -56,11 +63,40 @@ def main() -> int:
     names.update({component: f"chuzi-{args.version}-{args.target}-{component}.{extension}"
                   for component in COMPONENTS})
 
+    plugins = manifest.get("plugins", [])
+    if not isinstance(plugins, list):
+        raise SystemExit("manifest plugins must be a list")
+    plugin_descriptors = {}
+    for plugin in plugins:
+        if not isinstance(plugin, dict) or not isinstance(plugin.get("id"), str) or not plugin["id"]:
+            raise SystemExit("manifest plugin IDs must be non-empty")
+        plugin_id = plugin["id"]
+        if plugin_id in names or plugin_id in plugin_descriptors:
+            raise SystemExit(f"manifest plugin ID collides with another release item: {plugin_id}")
+        plugin_descriptors[plugin_id] = plugin
+        if not plugin.get("installable"):
+            continue
+        archive = plugin.get("archive")
+        if not safe_relative_path(archive):
+            raise SystemExit(f"installable plugin archive path is unsafe: {plugin_id}")
+        names[plugin_id] = archive
+
     artifacts = []
+    artifact_paths = set()
     for component, filename in names.items():
-        path = dist / filename
+        if filename in artifact_paths:
+            raise SystemExit(f"release artifact path is used more than once: {filename}")
+        artifact_paths.add(filename)
+        path = (dist / filename).resolve()
+        if dist not in path.parents:
+            raise SystemExit(f"release artifact escapes dist: {filename}")
         if not path.is_file():
             raise SystemExit(f"release artifact is missing: {path}")
+        if component in plugin_descriptors:
+            expected_digest = plugin_descriptors[component].get("sha256")
+            actual_digest = digest(path)
+            if not isinstance(expected_digest, str) or expected_digest.lower() != actual_digest.lower():
+                raise SystemExit(f"manifest plugin sha256 mismatch: {component}")
         artifacts.append({
             "component": component,
             "target": args.target,
