@@ -110,9 +110,11 @@ RDP opens a Windows-only Rust/FreeRDP session. FreeRDP owns TLS/NLA negotiation
 and protocol decoding; the client copies its RGBA32 framebuffer into an owned
 Slint image for display. When credentials are not supplied by the caller,
 Windows' temporary credential prompt is used with persistence disabled. The UI
-does not save or send RDP passwords through Core.
-The current slice is display-only; keyboard and mouse forwarding remains a
-separate input-boundary change.
+does not save or send RDP passwords through Core. Click the remote framebuffer
+to give it keyboard focus. Mouse movement, left, right, and middle buttons,
+vertical and horizontal wheel input, and keyboard press/release events are
+forwarded through the FreeRDP worker. Keys held during focus loss are released
+on the remote session.
 
 #### RDP performance capture
 
