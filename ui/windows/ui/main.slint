@@ -302,7 +302,7 @@ export component MainWindow inherits Window {
                                 Button { text: "Disable"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-enabled; vertical-stretch: 0; clicked => { root.disable-plugin(root.plugin-input); } }
                                 Button { text: "Revoke trust"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-trusted; vertical-stretch: 0; clicked => { root.untrust-plugin(root.plugin-input); }
                                 }
-                                Button { text: "Remove"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed; vertical-stretch: 0; clicked => { root.remove-plugin(root.plugin-input); }
+                                Button { text: "Remove"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed; vertical-stretch: 0; clicked => { root.remove-plugin(root.plugin-input); } }
                             }
                         }
                     }
