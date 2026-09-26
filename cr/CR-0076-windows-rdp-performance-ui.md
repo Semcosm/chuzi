@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add integrated RDP performance capture
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: b6ad4f3dfc4ea7cdb23770c77983679159c0205d
+Head OID: 05bc13205f47490bfa3025f2858f011337222a50
 Integrated Result: pending
 
 ## Summary
