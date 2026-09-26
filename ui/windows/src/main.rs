@@ -270,11 +270,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             let settings = BehaviorSettings {
                 auto_check_updates: auto_check,
                 auto_repair,
-                update_channel: if channel == "stable" {
-                    "stable".to_owned()
-                } else {
-                    "nightly".to_owned()
-                },
+                update_channel: normalize_update_channel(&channel).to_owned(),
                 launch_on_login: launch,
                 close_to_tray: tray,
                 check_interval: i64::from(interval.max(5)) * 60_000_000_000,
@@ -825,6 +821,14 @@ fn normalize_theme(theme: &str) -> &'static str {
     }
 }
 
+fn normalize_update_channel(channel: &str) -> &'static str {
+    match channel.trim().to_ascii_lowercase().as_str() {
+        "test" => "test",
+        "stable" => "stable",
+        _ => "nightly",
+    }
+}
+
 fn load_settings(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let weak = ui.as_weak();
     thread::spawn(move || {
@@ -837,7 +841,9 @@ fn load_settings(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                         if let Some(window) = settings_weak.upgrade() {
                             window.set_auto_check_updates(settings.auto_check_updates);
                             window.set_auto_repair(settings.auto_repair);
-                            window.set_update_channel(settings.update_channel.into());
+                            window.set_update_channel(
+                                normalize_update_channel(&settings.update_channel).into(),
+                            );
                             window.set_launch_on_login(settings.launch_on_login);
                             window.set_close_to_tray(settings.close_to_tray);
                             window.set_update_interval(
@@ -1345,6 +1351,14 @@ mod tests {
         assert_eq!(normalize_theme("dark"), "dark");
         assert_eq!(normalize_theme(" LIGHT "), "light");
         assert_eq!(normalize_theme("unknown"), "system");
+    }
+
+    #[test]
+    fn update_channel_preserves_all_supported_release_channels() {
+        assert_eq!(normalize_update_channel("test"), "test");
+        assert_eq!(normalize_update_channel(" NIGHTLY "), "nightly");
+        assert_eq!(normalize_update_channel("stable"), "stable");
+        assert_eq!(normalize_update_channel("unknown"), "nightly");
     }
 
     #[test]

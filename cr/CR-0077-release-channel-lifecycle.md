@@ -1,15 +1,15 @@
-# CR-0076: unify test, nightly, and stable release channels
+# CR-0077: unify test, nightly, and stable release channels
 
 Base: main
-Head or Range: feat/release-channel-lifecycle
+Head or Range: fix/launcher-test-channel
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: ci: unify release channel lifecycle
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: f7e34c98269e175431c61ae15e0e74c9df2b03de
+Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
 Head OID: pending
 Integrated Result: pending
 
@@ -17,7 +17,9 @@ Integrated Result: pending
 
 Define separate test, nightly, and stable release channels across the build
 workflow, artifact names, release catalogs, acceptance scripts, and operator
-documentation. Resolve channel and version once per Actions run.
+documentation. Resolve channel and version once per Actions run. Expose all
+three channels in the Windows launcher's update settings without collapsing a
+saved Test selection to Nightly.
 
 ## Motivation
 
@@ -45,6 +47,16 @@ to diverge from the actual workflow.
 `scripts/test_nightly_package.sh`
 
 `scripts/test_nightly_artifact_validator.sh`
+
+`cargo test --manifest-path ui/windows/Cargo.toml --locked`
+
+`cargo run --manifest-path ui/windows/Cargo.toml --locked --example layout_snapshot -- --page settings --sizes 1280x800,500x800 --output <temporary-directory>`
+
+`go test ./...`
+
+`go vet ./...`
+
+`npm --prefix browser-worker test`
 
 `git diff --check`
 

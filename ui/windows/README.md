@@ -54,6 +54,8 @@ Settings is divided into Core, Components, Updates, Appearance, and Startup grou
 exposes Core lifecycle actions, update preferences, login startup,
 close-to-tray behavior, and a save action. Appearance provides System default,
 Light, and Dark modes.
+The update selector exposes the independent Test, Nightly, and Stable channels
+and persists the selected channel through the launcher's validated settings.
 The selected mode is applied through Slint 1.18's `Palette.color-scheme`, so
 native controls and the content surface update together. The UI-only choice is
 stored in `.chuzi-ui-settings.json` below the resolved Chuzi data directory;

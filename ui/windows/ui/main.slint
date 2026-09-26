@@ -558,9 +558,11 @@ export component MainWindow inherits Window {
                             CheckBox { text: "Check for updates automatically"; checked: root.auto-check-updates; toggled => { root.auto-check-updates = self.checked; } }
                             CheckBox { text: "Repair missing files automatically"; checked: root.auto-repair; toggled => { root.auto-repair = self.checked; } }
                             ComboBox {
-                                model: ["Nightly", "Stable"];
-                                current-index: root.update-channel == "stable" ? 1 : 0;
-                                selected => { root.update-channel = self.current-index == 1 ? "stable" : "nightly"; }
+                                model: ["Test", "Nightly", "Stable"];
+                                current-index: root.update-channel == "test" ? 0 : root.update-channel == "stable" ? 2 : 1;
+                                selected => {
+                                    root.update-channel = self.current-index == 0 ? "test" : self.current-index == 2 ? "stable" : "nightly";
+                                }
                             }
                             SpinBox { value <=> root.update-interval; minimum: 5; maximum: 10080; }
                             Text { text: "Update check interval (minutes)"; color: Palette.alternate-foreground; font-size: 12px; vertical-stretch: 0; }
