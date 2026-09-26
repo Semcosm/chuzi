@@ -27,12 +27,11 @@ def write_json(path: Path, value: dict) -> None:
     path.write_text(json.dumps(value, indent=2, sort_keys=False) + "\n", encoding="utf-8")
 
 
-def source_dir(root: Path, target: str) -> Path:
-    candidates = (root / f"chuzi-nightly-{target}", root / target)
-    for candidate in candidates:
-        if candidate.is_dir():
-            return candidate
-    raise SystemExit(f"artifact directory is missing for {target}")
+def source_dir(root: Path, channel: str, target: str) -> Path:
+    candidate = root / f"chuzi-{channel}-{target}"
+    if not candidate.is_dir():
+        raise SystemExit(f"{channel} artifact directory is missing for {target}: {candidate}")
+    return candidate
 
 
 def load_catalog(path: Path, channel: str, target: str) -> dict:
@@ -61,15 +60,14 @@ def main() -> int:
     output_root = args.output_root.resolve()
     if len(args.commit) != 40 or any(c not in "0123456789abcdefABCDEF" for c in args.commit):
         raise SystemExit("commit must be a full 40-character SHA-1")
-    if args.channel == "test" and not args.version.startswith("test-"):
-        raise SystemExit("test catalog versions must start with test-")
-    if args.channel == "stable" and not args.version.startswith("v"):
-        raise SystemExit("stable catalog versions must start with v")
+    version_prefix = {"test": "test-", "nightly": "nightly-", "stable": "v"}[args.channel]
+    if not args.version.startswith(version_prefix):
+        raise SystemExit(f"{args.channel} catalog versions must start with {version_prefix}")
 
     published_at = args.published_at.strip() or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     base_url = args.base_url.rstrip("/")
     for target in TARGETS:
-        source = source_dir(artifact_root, target)
+        source = source_dir(artifact_root, args.channel, target)
         index_name = f"chuzi-{args.version}-{target}.index.json"
         index_path = source / index_name
         if not index_path.is_file():

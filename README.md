@@ -51,8 +51,13 @@ headed-CDP/headless-CDP Worker。Windows headed 模式可通过 `-windows-deskto
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
-当前首个 release 流程是 nightly：GitHub Actions 每日自动构建并上传四个平台的限期
-artifact，不创建 Git tag 或 GitHub Release。版本格式为
+发布统一分为三条通道：`test` 由任意分支手动触发，允许刚写代码存在未知问题；
+`nightly` 只从 `main` 的计划任务或手动触发，并在完整测试通过后发布；`stable` 只在
+人工确认后创建签名 annotated `vX.Y.Z` tag 才会发布。三条通道分别使用
+`chuzi-test-*`、`chuzi-nightly-*`、`chuzi-stable-*` artifact 和 `test/`、`nightly/`、
+`stable/` catalog 路径，互不自动晋级。
+
+Test 版本格式为 `test-<run-number>-<commit-short-hash>`，nightly 版本格式为
 `nightly-<run-number>-<commit-short-hash>`，完整 commit hash 写入 manifest/index。
 每个目标包含 UI-neutral CLI、服务和浏览器 Worker 以及
 `release-manifest.json`；同时提供按组件拆分的归档和带大小/SHA-256 的
