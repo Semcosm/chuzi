@@ -890,10 +890,15 @@ export component DesktopRdpWindow inherits Window {
                 if root.state == "connected": Rectangle {
                     background: #000000;
 
-                    FocusScope {
+                    rdp-focus := FocusScope {
                         width: parent.width;
                         height: parent.height;
                         focus-on-click: true;
+                        focus-gained => { root.rdp-focus-event("gained"); }
+                        focus-lost => {
+                            root.rdp-focus-event("lost");
+                            root.rdp-key-event("release-all", "", false);
+                        }
                         key-pressed(event) => {
                             root.rdp-key-event("down", event.text, event.repeat);
                             accept
@@ -902,7 +907,6 @@ export component DesktopRdpWindow inherits Window {
                             root.rdp-key-event("up", event.text, false);
                             accept
                         }
-                        focus-lost => { root.rdp-key-event("release-all", "", false); }
 
                         Image {
                             source: root.frame;
@@ -915,6 +919,9 @@ export component DesktopRdpWindow inherits Window {
                             width: parent.width;
                             height: parent.height;
                             pointer-event(event) => {
+                                if event.kind == PointerEventKind.down {
+                                    rdp-focus.focus();
+                                }
                                 root.rdp-pointer-event(
                                     event.kind == PointerEventKind.move ? "move" :
                                     event.kind == PointerEventKind.down ? "down" :
@@ -1102,6 +1109,7 @@ export component DesktopRdpWindow inherits Window {
     callback rdp-pointer-event(kind: string, button: string, x: length, y: length, viewport-width: length, viewport-height: length);
     callback rdp-scroll-event(delta-x: length, delta-y: length, x: length, y: length, viewport-width: length, viewport-height: length);
     callback rdp-key-event(kind: string, key: string, repeat: bool);
+    callback rdp-focus-event(kind: string);
 
     if root.show-control-menu: Rectangle {
         x: root.width - 308px;

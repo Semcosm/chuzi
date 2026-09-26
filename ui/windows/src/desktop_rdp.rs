@@ -8,7 +8,12 @@ use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
-use std::{fs::File, io::BufWriter, io::Write, path::PathBuf};
+use std::{
+    fs::File,
+    io::BufWriter,
+    io::Write,
+    path::{Path, PathBuf},
+};
 
 #[cfg(windows)]
 use slint::TimerMode;
@@ -77,6 +82,85 @@ impl Drop for RdpTarget {
         if let Some(password) = &mut self.password {
             wipe_string(password);
         }
+    }
+}
+
+#[derive(Clone)]
+struct RdpInputDebug {
+    inner: Arc<RdpInputDebugInner>,
+}
+
+struct RdpInputDebugInner {
+    enabled: bool,
+    started: Instant,
+    writer: Option<Mutex<BufWriter<File>>>,
+}
+
+impl RdpInputDebug {
+    fn disabled() -> Self {
+        Self {
+            inner: Arc::new(RdpInputDebugInner {
+                enabled: false,
+                started: Instant::now(),
+                writer: None,
+            }),
+        }
+    }
+
+    fn from_data_dir(data_dir: &Path) -> Self {
+        let enabled = std::env::var("CHUZI_RDP_INPUT_DEBUG")
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false);
+        if !enabled {
+            return Self::disabled();
+        }
+
+        let debug_dir = data_dir.join("rdp-debug");
+        let writer = std::fs::create_dir_all(&debug_dir)
+            .ok()
+            .and_then(|_| {
+                File::create(debug_dir.join(format!("rdp-input-{}.log", performance_session_id())))
+                    .ok()
+            })
+            .map(|file| Mutex::new(BufWriter::new(file)));
+        let debug = Self {
+            inner: Arc::new(RdpInputDebugInner {
+                enabled,
+                started: Instant::now(),
+                writer,
+            }),
+        };
+        debug.log("debug-start", "enabled=1");
+        debug
+    }
+
+    fn log(&self, event: &str, details: &str) {
+        if !self.inner.enabled {
+            return;
+        }
+        let line = format!(
+            "rdp_input t_ms={} event={}{}",
+            self.inner.started.elapsed().as_millis(),
+            event,
+            if details.is_empty() {
+                String::new()
+            } else {
+                format!(" {details}")
+            }
+        );
+        if let Some(writer) = &self.inner.writer {
+            if let Ok(mut writer) = writer.lock() {
+                let _ = writeln!(writer, "{line}");
+                let _ = writer.flush();
+                return;
+            }
+        }
+        eprintln!("{line}");
     }
 }
 
@@ -432,6 +516,33 @@ enum PointerButton {
 enum RemoteKey {
     ScanCode { code: u8, extended: bool },
     Unicode(u16),
+}
+
+fn key_text_summary(text: &str) -> String {
+    let codepoints = text
+        .chars()
+        .map(|character| format!("U+{:04X}", character as u32))
+        .collect::<Vec<_>>();
+    if codepoints.is_empty() {
+        "empty".to_owned()
+    } else {
+        codepoints.join(",")
+    }
+}
+
+fn remote_key_summary(keys: &[RemoteKey]) -> String {
+    if keys.is_empty() {
+        return "empty".to_owned();
+    }
+    keys.iter()
+        .map(|key| match key {
+            RemoteKey::ScanCode { code, extended } => {
+                format!("scan=0x{code:02x},extended={}", u8::from(*extended))
+            }
+            RemoteKey::Unicode(unit) => format!("unicode=U+{unit:04X}"),
+        })
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
@@ -1229,6 +1340,7 @@ impl DesktopRdpController {
             perf_log,
             emit_perf_stderr,
         ));
+        let input_debug = RdpInputDebug::from_data_dir(&options.data_dir);
         #[cfg(windows)]
         let presentmon = {
             presentmon_path.map(|csv_path| {
@@ -1245,8 +1357,16 @@ impl DesktopRdpController {
             })
         };
         let (input_tx, input_rx) = mpsc::channel();
+        let focus_debug = input_debug.clone();
+        window.on_rdp_focus_event(move |kind| {
+            focus_debug.log("focus", &format!("kind={kind}"));
+        });
         let input_callback_tx = input_tx.clone();
+        let pointer_debug = input_debug.clone();
         window.on_rdp_pointer_event(move |kind, button, x, y, viewport_width, viewport_height| {
+            if kind == "down" || kind == "up" {
+                pointer_debug.log("ui-pointer", &format!("kind={kind} button={button}"));
+            }
             let action = match kind.as_str() {
                 "move" => PointerAction::Move,
                 "down" => PointerAction::Down,
@@ -1269,8 +1389,13 @@ impl DesktopRdpController {
             });
         });
         let input_scroll_tx = input_tx.clone();
+        let scroll_debug = input_debug.clone();
         window.on_rdp_scroll_event(
             move |delta_x, delta_y, x, y, viewport_width, viewport_height| {
+                scroll_debug.log(
+                    "ui-scroll",
+                    &format!("delta_x={delta_x:.2} delta_y={delta_y:.2}"),
+                );
                 let _ = input_scroll_tx.send(RdpInput::Wheel {
                     delta_x,
                     delta_y,
@@ -1283,55 +1408,100 @@ impl DesktopRdpController {
         );
 
         let input_key_tx = input_tx.clone();
+        let key_debug = input_debug.clone();
         let pressed_keys: Rc<RefCell<HashMap<String, Vec<RemoteKey>>>> = Default::default();
         let callback_pressed_keys = Rc::clone(&pressed_keys);
-        window.on_rdp_key_event(move |kind, key, repeat| match kind.as_str() {
-            "down" => {
-                let mut pressed = callback_pressed_keys.borrow_mut();
-                if let Some(keys) = pressed.get(key.as_str()) {
-                    if repeat {
-                        let _ = input_key_tx.send(RdpInput::Key {
-                            action: KeyAction::Down { repeat: true },
-                            keys: keys.clone(),
-                        });
+        window.on_rdp_key_event(move |kind, key, repeat| {
+            key_debug.log(
+                "ui-key-event",
+                &format!(
+                    "kind={kind} repeat={} text={}",
+                    u8::from(repeat),
+                    key_text_summary(key.as_str())
+                ),
+            );
+            match kind.as_str() {
+                "down" => {
+                    let mut pressed = callback_pressed_keys.borrow_mut();
+                    if let Some(keys) = pressed.get(key.as_str()) {
+                        if repeat {
+                            let queued = input_key_tx
+                                .send(RdpInput::Key {
+                                    action: KeyAction::Down { repeat: true },
+                                    keys: keys.clone(),
+                                })
+                                .is_ok();
+                            key_debug.log(
+                                "ui-key-repeat",
+                                &format!(
+                                    "encoded={} queued={}",
+                                    remote_key_summary(keys),
+                                    u8::from(queued)
+                                ),
+                            );
+                        } else {
+                            key_debug.log("ui-key-duplicate", "queued=0");
+                        }
+                        return;
                     }
-                    return;
+                    let keys = encode_remote_key(key.as_str());
+                    if keys.is_empty() {
+                        key_debug.log("ui-key-encode-empty", "queued=0");
+                        return;
+                    }
+                    pressed.insert(key.to_string(), keys.clone());
+                    let summary = remote_key_summary(&keys);
+                    let queued = input_key_tx
+                        .send(RdpInput::Key {
+                            action: KeyAction::Down { repeat: false },
+                            keys,
+                        })
+                        .is_ok();
+                    key_debug.log(
+                        "ui-key-down",
+                        &format!("encoded={summary} queued={}", u8::from(queued)),
+                    );
                 }
-                let keys = encode_remote_key(key.as_str());
-                if keys.is_empty() {
-                    return;
+                "up" => {
+                    let encoded = encode_remote_key(key.as_str());
+                    if let Some(keys) = take_pressed_key(
+                        &mut callback_pressed_keys.borrow_mut(),
+                        key.as_str(),
+                        &encoded,
+                    ) {
+                        let summary = remote_key_summary(&keys);
+                        let queued = input_key_tx
+                            .send(RdpInput::Key {
+                                action: KeyAction::Up,
+                                keys,
+                            })
+                            .is_ok();
+                        key_debug.log(
+                            "ui-key-up",
+                            &format!("encoded={summary} queued={}", u8::from(queued)),
+                        );
+                    } else {
+                        key_debug.log("ui-key-up-missing", "queued=0");
+                    }
                 }
-                pressed.insert(key.to_string(), keys.clone());
-                let _ = input_key_tx.send(RdpInput::Key {
-                    action: KeyAction::Down { repeat: false },
-                    keys,
-                });
-            }
-            "up" => {
-                let encoded = encode_remote_key(key.as_str());
-                if let Some(keys) = take_pressed_key(
-                    &mut callback_pressed_keys.borrow_mut(),
-                    key.as_str(),
-                    &encoded,
-                ) {
-                    let _ = input_key_tx.send(RdpInput::Key {
-                        action: KeyAction::Up,
-                        keys,
-                    });
+                "release-all" => {
+                    callback_pressed_keys.borrow_mut().clear();
+                    let queued = input_key_tx.send(RdpInput::ReleaseAllKeys).is_ok();
+                    key_debug.log(
+                        "ui-key-release-all",
+                        &format!("queued={}", u8::from(queued)),
+                    );
                 }
+                _ => {}
             }
-            "release-all" => {
-                callback_pressed_keys.borrow_mut().clear();
-                let _ = input_key_tx.send(RdpInput::ReleaseAllKeys);
-            }
-            _ => {}
         });
 
         #[cfg(windows)]
         let worker = {
             let shared = Arc::clone(&shared);
+            let input_debug = input_debug.clone();
             Some(std::thread::spawn(move || {
-                freerdp::run(target, shared, input_rx)
+                freerdp::run(target, shared, input_rx, input_debug)
             }))
         };
 
@@ -1340,6 +1510,7 @@ impl DesktopRdpController {
             let _ = &input_rx;
             let _ = target;
             let _ = pressed_keys;
+            let _ = input_debug;
             shared.set_state(
                 "failed",
                 "FreeRDP 仅随 Windows 构建提供；当前平台没有 RDP backend。",
@@ -1652,8 +1823,8 @@ fn frame_to_image(frame: RdpFrame) -> Option<Image> {
 mod freerdp {
     use super::{
         coalesce_dirty_rects, copy_dirty_rects, wheel_delta_to_rdp, DirtyRect, KeyAction,
-        PointerAction, PointerButton, RdpFrame, RdpInput, RdpTarget, RemoteKey, SharedState,
-        BYTES_PER_PIXEL,
+        PointerAction, PointerButton, RdpFrame, RdpInput, RdpInputDebug, RdpTarget, RemoteKey,
+        SharedState, BYTES_PER_PIXEL,
     };
     use slint::{Rgba8Pixel, SharedPixelBuffer};
     use std::collections::HashSet;
@@ -1682,9 +1853,15 @@ mod freerdp {
         allow_untrusted_certificate: u8,
     }
 
-    pub fn run(target: RdpTarget, shared: Arc<SharedState>, input_rx: Receiver<RdpInput>) {
+    pub fn run(
+        target: RdpTarget,
+        shared: Arc<SharedState>,
+        input_rx: Receiver<RdpInput>,
+        input_debug: RdpInputDebug,
+    ) {
+        input_debug.log("worker-start", "");
         shared.set_state("connecting", "正在准备 FreeRDP 连接…");
-        let result = unsafe { run_session(&target, &shared, &input_rx) };
+        let result = unsafe { run_session(&target, &shared, &input_rx, &input_debug) };
         if shared.stop.load(std::sync::atomic::Ordering::SeqCst) {
             shared.set_state("closed", "RDP 连接已关闭。\n");
         } else if let Err(error) = result {
@@ -1696,6 +1873,7 @@ mod freerdp {
         } else {
             shared.set_state("closed", "RDP 连接已断开。\n");
         }
+        input_debug.log("worker-stop", "");
         shared.perf.report_if_due(true);
     }
 
@@ -1703,6 +1881,7 @@ mod freerdp {
         target: &RdpTarget,
         shared: &Arc<SharedState>,
         input_rx: &Receiver<RdpInput>,
+        input_debug: &RdpInputDebug,
     ) -> Result<(), String> {
         // FreeRDP's standalone Windows clients initialize Winsock in their
         // process-level startup hook. Embedded clients must do that
@@ -1753,7 +1932,7 @@ mod freerdp {
             return Err(error);
         }
 
-        let event_result = event_loop(instance, shared, input_rx);
+        let event_result = event_loop(instance, shared, input_rx, input_debug);
         ffi::freerdp_disconnect(instance);
         ffi::freerdp_context_free(instance);
         ffi::freerdp_free(instance);
@@ -1825,6 +2004,7 @@ mod freerdp {
         instance: *mut ffi::freerdp,
         shared: &SharedState,
         input_rx: &Receiver<RdpInput>,
+        input_debug: &RdpInputDebug,
     ) -> Result<(), String> {
         let context = (*instance).context;
         if context.is_null() {
@@ -1833,7 +2013,7 @@ mod freerdp {
 
         let mut pressed_scancodes = HashSet::new();
         loop {
-            drain_input(instance, input_rx, &mut pressed_scancodes);
+            drain_input(instance, input_rx, &mut pressed_scancodes, input_debug);
             if shared.stop.load(std::sync::atomic::Ordering::SeqCst)
                 || ffi::freerdp_shall_disconnect_context(context) != 0
             {
@@ -1857,7 +2037,7 @@ mod freerdp {
             if wait_result != WAIT_TIMEOUT && ffi::freerdp_check_event_handles(context) == 0 {
                 return Err(last_error(instance, "FreeRDP event processing failed"));
             }
-            drain_input(instance, input_rx, &mut pressed_scancodes);
+            drain_input(instance, input_rx, &mut pressed_scancodes, input_debug);
         }
     }
 
@@ -1865,6 +2045,7 @@ mod freerdp {
         instance: *mut ffi::freerdp,
         input_rx: &Receiver<RdpInput>,
         pressed_scancodes: &mut HashSet<(u8, bool)>,
+        input_debug: &RdpInputDebug,
     ) {
         let Some(context) = instance.as_ref().map(|instance| instance.context) else {
             return;
@@ -1885,7 +2066,9 @@ mod freerdp {
             return;
         };
 
+        let mut drained = 0usize;
         while let Ok(event) = input_rx.try_recv() {
+            drained += 1;
             match event {
                 RdpInput::Pointer {
                     action,
@@ -1916,7 +2099,11 @@ mod freerdp {
                         }
                         PointerAction::Cancel => continue,
                     };
-                    let _ = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
+                    let result = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
+                    input_debug.log(
+                        "worker-pointer",
+                        &format!("flags=0x{flags:04x} x={x} y={y} result={result}"),
+                    );
                 }
                 RdpInput::Wheel {
                     delta_x,
@@ -1931,20 +2118,32 @@ mod freerdp {
                     else {
                         continue;
                     };
-                    send_wheel(input, delta_y, false, x, y);
-                    send_wheel(input, delta_x, true, x, y);
+                    send_wheel(input, delta_y, false, x, y, input_debug);
+                    send_wheel(input, delta_x, true, x, y, input_debug);
                 }
                 RdpInput::Key { action, keys } => {
                     for key in keys {
-                        send_key(input, action, key, pressed_scancodes);
+                        send_key(input, action, key, pressed_scancodes, input_debug);
                     }
                 }
-                RdpInput::ReleaseAllKeys => release_pressed_keys(input, pressed_scancodes),
+                RdpInput::ReleaseAllKeys => {
+                    release_pressed_keys(input, pressed_scancodes, input_debug)
+                }
             }
+        }
+        if drained > 0 {
+            input_debug.log("worker-dequeue", &format!("count={drained}"));
         }
     }
 
-    unsafe fn send_wheel(input: *mut ffi::rdpInput, delta: f32, horizontal: bool, x: u16, y: u16) {
+    unsafe fn send_wheel(
+        input: *mut ffi::rdpInput,
+        delta: f32,
+        horizontal: bool,
+        x: u16,
+        y: u16,
+        input_debug: &RdpInputDebug,
+    ) {
         let Some((negative, units)) = wheel_delta_to_rdp(delta) else {
             return;
         };
@@ -1956,7 +2155,11 @@ mod freerdp {
         if negative {
             flags |= ffi::CHUZI_PTR_FLAGS_WHEEL_NEGATIVE as u16;
         }
-        let _ = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
+        let result = ffi::freerdp_input_send_mouse_event(input, flags, x, y);
+        input_debug.log(
+            "worker-wheel",
+            &format!("flags=0x{flags:04x} x={x} y={y} result={result}"),
+        );
     }
 
     unsafe fn send_key(
@@ -1964,6 +2167,7 @@ mod freerdp {
         action: KeyAction,
         key: RemoteKey,
         pressed_scancodes: &mut HashSet<(u8, bool)>,
+        input_debug: &RdpInputDebug,
     ) {
         match key {
             RemoteKey::ScanCode { code, extended } => {
@@ -1980,14 +2184,22 @@ mod freerdp {
                 } else {
                     0
                 };
-                let _ = ffi::freerdp_input_send_keyboard_event(input, flags, code);
+                let result = ffi::freerdp_input_send_keyboard_event(input, flags, code);
+                input_debug.log(
+                    "worker-key-scancode",
+                    &format!("code=0x{code:02x} flags=0x{flags:04x} result={result}"),
+                );
             }
             RemoteKey::Unicode(unit) if matches!(action, KeyAction::Down { .. }) => {
-                let _ = ffi::freerdp_input_send_unicode_keyboard_event(input, 0, unit);
-                let _ = ffi::freerdp_input_send_unicode_keyboard_event(
+                let down_result = ffi::freerdp_input_send_unicode_keyboard_event(input, 0, unit);
+                let up_result = ffi::freerdp_input_send_unicode_keyboard_event(
                     input,
                     ffi::CHUZI_KBD_FLAGS_RELEASE as u16,
                     unit,
+                );
+                input_debug.log(
+                    "worker-key-unicode",
+                    &format!("unit=U+{unit:04X} down_result={down_result} up_result={up_result}"),
                 );
             }
             RemoteKey::Unicode(_) => {}
@@ -1997,6 +2209,7 @@ mod freerdp {
     unsafe fn release_pressed_keys(
         input: *mut ffi::rdpInput,
         pressed_scancodes: &mut HashSet<(u8, bool)>,
+        input_debug: &RdpInputDebug,
     ) {
         for (code, extended) in pressed_scancodes.drain() {
             let flags = ffi::CHUZI_KBD_FLAGS_RELEASE as u16
@@ -2005,7 +2218,11 @@ mod freerdp {
                 } else {
                     0
                 };
-            let _ = ffi::freerdp_input_send_keyboard_event(input, flags, code);
+            let result = ffi::freerdp_input_send_keyboard_event(input, flags, code);
+            input_debug.log(
+                "worker-key-release-all",
+                &format!("code=0x{code:02x} flags=0x{flags:04x} result={result}"),
+            );
         }
     }
 
