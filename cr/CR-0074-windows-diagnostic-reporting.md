@@ -5,13 +5,13 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(support): add consented diagnostics and fault reporting
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
-Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
-Integrated Result: pending
+Base OID: c5558e3fac0531e6253aea730263840411f53f88
+Head OID: c5558e3fac0531e6253aea730263840411f53f88
+Integrated Result: main@c5558e3fac0531e6253aea730263840411f53f88
 
 ## Summary
 
