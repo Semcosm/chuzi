@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add integrated RDP performance capture
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 1e8706fac458042b37c4617b89f7227497c4d2ed
+Head OID: b6ad4f3dfc4ea7cdb23770c77983679159c0205d
 Integrated Result: pending
 
 ## Summary
@@ -34,8 +34,9 @@ data so uninstall cleanup has one well-defined scope.
 `cargo fmt --manifest-path ui/windows/Cargo.toml -- --check`, `go test ./...`,
 and the browser-worker test suite (20 tests) passed. Overview, Settings, and RDP
 login snapshots passed at 1280x800; Settings and RDP login also rendered at
-500x800. Policy, quality, supply-chain, action-pinning, repository-shape, and
-build-contract validators passed, as did `git diff --check`. PresentMon 2.6.0's
+500x800. Policy, quality, supply-chain, action-pinning, repository-shape,
+build-contract, RDP analyzer, nightly package, nightly artifact validator, and
+release catalog checks passed, as did `git diff --check`. PresentMon 2.6.0's
 upstream troubleshooting documentation confirms its ETW access requirement.
 Windows Rust target and Inno Setup are unavailable on this host, so the Windows
 binary and installer still require the Windows Actions build for compile-time
