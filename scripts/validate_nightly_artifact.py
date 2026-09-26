@@ -21,7 +21,7 @@ TARGETS = {
     "linux-arm64": ("tar.gz", ""),
     "darwin-arm64": ("tar.gz", ""),
 }
-COMPONENTS = ("launcher", "service", "browser-worker")
+BASE_COMPONENTS = ("launcher", "service", "browser-worker")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 TEST_VERSION_RE = re.compile(r"^test-[0-9]+-[0-9a-fA-F]{12}$")
@@ -143,6 +143,7 @@ def validate(args) -> dict:
     if args.target not in TARGETS:
         raise ValueError(f"unsupported target: {args.target}")
     extension, _ = TARGETS[args.target]
+    components = BASE_COMPONENTS + (("presentmon",) if args.target == "windows-amd64" else ())
     root = args.artifact.resolve()
     if not root.is_dir():
         raise ValueError(f"artifact directory does not exist: {root}")
@@ -188,16 +189,15 @@ def validate(args) -> dict:
     if sidecar_manifest != manifest:
         raise ValueError("release manifest sidecar differs from index manifest")
     component_descriptors = manifest["components"]
-    if {item.get("id") for item in component_descriptors if isinstance(item, dict)} != set(COMPONENTS) or len(component_descriptors) != len(COMPONENTS):
+    if {item.get("id") for item in component_descriptors if isinstance(item, dict)} != set(components) or len(component_descriptors) != len(components):
         raise ValueError("release manifest component set is incomplete or contains duplicates")
-    components = COMPONENTS
     plugin_descriptors = manifest["plugins"]
     plugin_by_id = {}
     for plugin in plugin_descriptors:
         if not isinstance(plugin, dict) or not isinstance(plugin.get("id"), str) or not plugin["id"]:
             raise ValueError("release manifest plugin id is invalid")
         plugin_id = plugin["id"]
-        if plugin_id in plugin_by_id or plugin_id in COMPONENTS or plugin_id == "bundle":
+        if plugin_id in plugin_by_id or plugin_id in components or plugin_id == "bundle":
             raise ValueError(f"release manifest plugin id collides: {plugin_id}")
         plugin_by_id[plugin_id] = plugin
     artifacts = index.get("artifacts")
@@ -240,7 +240,7 @@ def validate(args) -> dict:
     if set(artifact_by_component) != set(expected_names):
         raise ValueError("release index artifact set is incomplete")
     component_by_id = {item.get("id"): item for item in manifest["components"] if isinstance(item, dict)}
-    if set(component_by_id) != set(COMPONENTS) or len(component_by_id) != len(manifest["components"]):
+    if set(component_by_id) != set(components) or len(component_by_id) != len(manifest["components"]):
         raise ValueError("release manifest component set is incomplete or contains duplicates")
     for sidecar in sorted(root.glob("*.sha256")):
         validate_sidecar(sidecar)
