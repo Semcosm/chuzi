@@ -178,6 +178,78 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  windows_slint_layout:
+    name: chuzi-build-windows-slint-layout
+    runs-on: windows-2022
+    timeout-minutes: 20
+    needs: [contract_checks]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Prepare Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          rustup default stable-x86_64-pc-windows-msvc
+          rustc --version
+          cargo --version
+      - name: Prepare FreeRDP and bindgen dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
+          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
+            throw 'VCPKG_INSTALLATION_ROOT is not available on the Windows runner'
+          }
+          $vcpkg = Join-Path $vcpkgRoot 'vcpkg.exe'
+          if (-not (Test-Path $vcpkg)) {
+            throw "vcpkg executable is missing: $vcpkg"
+          }
+          $llvmCandidates = @(
+            (Join-Path $env:ProgramFiles 'LLVM\bin'),
+            (Join-Path ([Environment]::GetFolderPath('ProgramFilesX86')) 'LLVM\bin')
+          )
+          $clang = Get-Command clang.exe -ErrorAction SilentlyContinue
+          if ($null -ne $clang) {
+            $llvmCandidates += Split-Path -Parent $clang.Source
+          }
+          $llvmBin = $llvmCandidates |
+            Where-Object { Test-Path (Join-Path $_ 'libclang.dll') } |
+            Select-Object -First 1
+          if ([string]::IsNullOrWhiteSpace($llvmBin)) {
+            throw 'libclang.dll is missing from the Windows runner LLVM installation'
+          }
+          $env:VCPKG_ROOT = $vcpkgRoot
+          $env:VCPKGRS_TRIPLET = 'x64-windows-static'
+          $env:LIBCLANG_PATH = $llvmBin
+          $env:RUSTFLAGS = '-C target-feature=+crt-static'
+          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
+          'VCPKGRS_TRIPLET=x64-windows-static' >> $env:GITHUB_ENV
+          "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
+          'RUSTFLAGS=-C target-feature=+crt-static' >> $env:GITHUB_ENV
+          & $vcpkg install 'freerdp[client]:x64-windows-static'
+
+
+      - name: Check Slint layout at multiple viewports
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $output = Join-Path $env:RUNNER_TEMP 'chuzi-layout'
+          cargo run --manifest-path ui/windows/Cargo.toml --locked `
+            --example layout_snapshot -- `
+            --output $output
+          foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
+            $path = Join-Path $output $size
+            if (-not (Test-Path $path)) {
+              throw "Missing Slint layout snapshot: $path"
+            }
+            if ((Get-Item $path).Length -le 0) {
+              throw "Empty Slint layout snapshot: $path"
+            }
+          }
   windows_slint:
     name: chuzi-build-windows-slint
     runs-on: windows-2022
@@ -236,23 +308,6 @@ jobs:
           "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
           'RUSTFLAGS=-C target-feature=+crt-static' >> $env:GITHUB_ENV
           & $vcpkg install 'freerdp[client]:x64-windows-static'
-      - name: Check Slint layout at multiple viewports
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $output = Join-Path $env:RUNNER_TEMP 'chuzi-layout'
-          cargo run --manifest-path ui/windows/Cargo.toml --locked `
-            --example layout_snapshot -- `
-            --output $output
-          foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
-            $path = Join-Path $output $size
-            if (-not (Test-Path $path)) {
-              throw "Missing Slint layout snapshot: $path"
-            }
-            if ((Get-Item $path).Length -le 0) {
-              throw "Empty Slint layout snapshot: $path"
-            }
-          }
       - name: Assemble Core payload for the Slint package
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
@@ -343,8 +398,12 @@ jobs:
           Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait
           $exe = Join-Path $installDir 'Chuzi.Native.Windows.exe'
           if (-not (Test-Path $exe)) { throw "Installed Slint executable is missing: $exe" }
-          & $exe --smoke-test
-          if ($LASTEXITCODE -ne 0) { throw "Installed Slint smoke test failed with exit code $LASTEXITCODE" }
+          $smoke = Start-Process -FilePath $exe -ArgumentList @('--smoke-test') -PassThru -NoNewWindow
+          if (-not $smoke.WaitForExit(60000)) {
+            Stop-Process -Id $smoke.Id -Force -ErrorAction SilentlyContinue
+            throw 'Installed Slint smoke test timed out after 60 seconds'
+          }
+          if ($smoke.ExitCode -ne 0) { throw "Installed Slint smoke test failed with exit code $($smoke.ExitCode)" }
       - name: Smoke test Core payload shipped inside installer
         shell: pwsh
         run: |
@@ -521,7 +580,7 @@ jobs:
   chuzi_build:
     name: chuzi-build
     if: always()
-    needs: [release_context, contract_checks, go_checks, node_checks, go_build, windows_slint, assemble_target, artifact_integration]
+    needs: [release_context, contract_checks, go_checks, node_checks, go_build, windows_slint_layout, windows_slint, assemble_target, artifact_integration]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every build stage
@@ -533,6 +592,7 @@ jobs:
             "${{ needs.go_checks.result }}" \
             "${{ needs.node_checks.result }}" \
             "${{ needs.go_build.result }}" \
+            "${{ needs.windows_slint_layout.result }}" \
             "${{ needs.windows_slint.result }}" \
             "${{ needs.assemble_target.result }}"; do
             test "$result" = success || { echo "build stage did not succeed: $result" >&2; exit 1; }
