@@ -5,12 +5,12 @@ Head or Range: fix/launcher-test-channel
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(ui): restore Windows RDP keyboard focus and diagnostics
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 8cd09cd7ef91be37069fb85c97525a324c759bae
+Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
+Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
 Integrated Result: pending
 
 ## Summary

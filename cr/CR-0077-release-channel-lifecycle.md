@@ -5,12 +5,12 @@ Head or Range: fix/launcher-test-channel
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: ci: unify release channel lifecycle
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 04f6dfba7018b28d7fa7f032fd41e0524528a396
+Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
+Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
 Integrated Result: pending
 
 ## Summary
