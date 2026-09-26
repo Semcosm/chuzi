@@ -53,5 +53,21 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
+[UninstallRun]
+Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonappdata}\chuzi\data"" -source-root ""{app}\CorePayload"" -manifest ""{app}\CorePayload\release-manifest.json"" -command core-stop"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: StopChuziCore
+
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
+Type: filesandordirs; Name: "{commonappdata}\chuzi"; Check: not KeepUserData
+
+[Code]
+var
+  KeepUserData: Boolean;
+
+function InitializeUninstall(): Boolean;
+begin
+  KeepUserData := MsgBox(
+    '是否保留 Chuzi 用户数据？选择“否”将删除 %ProgramData%\chuzi。',
+    mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDYES;
+  Result := True;
+end;

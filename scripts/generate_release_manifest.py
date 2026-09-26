@@ -49,6 +49,8 @@ def main() -> int:
             for path in (stage / "browser-worker").rglob("*") if path.is_file()
         ), False),
     }
+    if args.target == "windows-amd64":
+        groups["presentmon"] = (["PresentMon.exe", "PresentMon-LICENSE.txt"], True)
     components = []
     for component_id, (files, required) in groups.items():
         files = files if isinstance(files, list) else list(files)

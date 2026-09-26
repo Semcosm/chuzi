@@ -21,7 +21,9 @@ $index = Join-Path $repoRoot "dist/chuzi-$Version-$Target.index.json"
 if (Test-Path $index) { Remove-Item -Force $index }
 if (Test-Path "$index.sha256") { Remove-Item -Force "$index.sha256" }
 Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $artifact
-foreach ($component in @("launcher", "service", "browser-worker")) {
+$components = @("launcher", "service", "browser-worker")
+if ($Target -eq "windows-amd64") { $components += "presentmon" }
+foreach ($component in $components) {
     $componentRoot = Join-Path $repoRoot "dist/component-$component"
     if (Test-Path $componentRoot) { Remove-Item -Recurse -Force $componentRoot }
     New-Item -ItemType Directory -Force -Path $componentRoot | Out-Null
@@ -32,6 +34,7 @@ foreach ($component in @("launcher", "service", "browser-worker")) {
             Copy-Item -Force (Join-Path $stageDir "chuzi-browser-launcher.exe") $componentRoot
         }
         "browser-worker" { Copy-Item -Recurse -Force (Join-Path $stageDir "browser-worker") $componentRoot }
+        "presentmon" { Copy-Item -Force (Join-Path $stageDir "PresentMon.exe") $componentRoot; Copy-Item -Force (Join-Path $stageDir "PresentMon-LICENSE.txt") $componentRoot }
     }
     $componentArtifact = Join-Path $repoRoot "dist/chuzi-$Version-$Target-$component.zip"
     if (Test-Path $componentArtifact) { Remove-Item -Force $componentArtifact }

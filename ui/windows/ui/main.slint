@@ -132,6 +132,8 @@ export component MainWindow inherits Window {
     in-out property <string> rdp-username: "";
     in-out property <string> rdp-password: "";
     in-out property <bool> rdp-allow-untrusted-certificate: false;
+    in-out property <bool> rdp-perf-hud: false;
+    in-out property <bool> rdp-record-performance: false;
     in-out property <string> rdp-status: "No RDP session started.";
 
     callback install-core();
@@ -157,7 +159,7 @@ export component MainWindow inherits Window {
     callback refresh-task(string);
     callback cancel-task(string);
     callback refresh-view(string);
-    callback connect-rdp(string, string, string, string, string, bool);
+    callback connect-rdp(string, string, string, string, string, bool, bool, bool);
     callback diagnostic-submit();
     callback diagnostic-dismiss();
 
@@ -434,7 +436,7 @@ export component MainWindow inherits Window {
                     PageHeader { title: "RDP session"; subtitle: "Sign in to a local RDP account and open its desktop."; }
                     GroupBox {
                         title: "RDP login";
-                        max-height: 420px;
+                        max-height: 480px;
                         vertical-stretch: 0;
                         VerticalBox {
                             padding: 14px;
@@ -448,9 +450,19 @@ export component MainWindow inherits Window {
                             LineEdit { placeholder-text: "Username"; text <=> root.rdp-username; }
                             LineEdit { placeholder-text: "Password"; input-type: password; text <=> root.rdp-password; }
                             CheckBox {
-                                text: "仅本次接受自签名或名称不匹配的证书";
+                                text: "Accept untrusted certificate for this session only (仅本次接受不受信任证书)";
                                 checked: root.rdp-allow-untrusted-certificate;
                                 toggled => { root.rdp-allow-untrusted-certificate = self.checked; }
+                            }
+                            CheckBox {
+                                text: "Show performance HUD (显示性能分析 HUD)";
+                                checked: root.rdp-perf-hud;
+                                toggled => { root.rdp-perf-hud = self.checked; }
+                            }
+                            CheckBox {
+                                text: "Record performance data (记录性能分析数据)";
+                                checked: root.rdp-record-performance;
+                                toggled => { root.rdp-record-performance = self.checked; }
                             }
                             Text {
                                 text: "默认拒绝不受信任证书；启用前请核对页面中的证书指纹。此选项不会保存信任。";
@@ -467,7 +479,7 @@ export component MainWindow inherits Window {
                                     enabled: !root.busy && root.rdp-host != "";
                                     vertical-stretch: 0;
                                     clicked => {
-                                        root.connect-rdp(root.rdp-host, root.rdp-port, root.rdp-domain, root.rdp-username, root.rdp-password, root.rdp-allow-untrusted-certificate);
+                                        root.connect-rdp(root.rdp-host, root.rdp-port, root.rdp-domain, root.rdp-username, root.rdp-password, root.rdp-allow-untrusted-certificate, root.rdp-perf-hud, root.rdp-record-performance);
                                     }
                                 }
                                 Text { text: root.rdp-status; color: Palette.alternate-foreground; vertical-alignment: center; wrap: word-wrap; }
@@ -735,6 +747,8 @@ export component DesktopRdpWindow inherits Window {
     in-out property <string> state: "not-started";
     in-out property <string> status: "";
     in-out property <image> frame;
+    in-out property <bool> perf-hud-visible: false;
+    in-out property <string> perf-hud-text: "";
     in-out property <bool> mouse-game-mode: false;
     in-out property <bool> audio-enabled: true;
     in-out property <bool> topmost: false;
@@ -913,6 +927,28 @@ export component DesktopRdpWindow inherits Window {
                                     event.delta-x, event.delta-y,
                                     self.mouse-x, self.mouse-y, parent.width, parent.height);
                                 accept
+                            }
+                        }
+
+                        if root.perf-hud-visible: Rectangle {
+                            x: parent.width - 382px;
+                            y: 12px;
+                            width: parent.width < 410px ? parent.width - 24px : 370px;
+                            height: 82px;
+                            background: #101820dd;
+                            border-color: #5eb6e633;
+                            border-width: 1px;
+                            border-radius: 4px;
+                            Text {
+                                x: 8px;
+                                y: 6px;
+                                width: parent.width - 16px;
+                                height: parent.height - 12px;
+                                text: root.perf-hud-text;
+                                color: #e8f4ff;
+                                font-size: 10px;
+                                wrap: word-wrap;
+                                overflow: elide;
                             }
                         }
 

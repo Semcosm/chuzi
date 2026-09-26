@@ -40,6 +40,8 @@ for target in linux-amd64 windows-amd64; do
     printf '%s' launcher >"$stage/chuzi-launcher.exe"
     printf '%s' service >"$stage/chuzi.exe"
     printf '%s' browser-launcher >"$stage/chuzi-browser-launcher.exe"
+    printf '%s' presentmon >"$stage/PresentMon.exe"
+    printf '%s' presentmon-license >"$stage/PresentMon-LICENSE.txt"
   else
     printf '%s' launcher >"$stage/chuzi-launcher"
     printf '%s' service >"$stage/chuzi"
@@ -62,6 +64,7 @@ groups = {
     "launcher": [stage / "chuzi-launcher.exe", stage / "release-manifest.json"],
     "service": [stage / "chuzi.exe", stage / "chuzi-browser-launcher.exe"],
     "browser-worker": [path for path in (stage / "browser-worker").rglob("*") if path.is_file()],
+    "presentmon": [stage / "PresentMon.exe", stage / "PresentMon-LICENSE.txt"],
 }
 for component, files in groups.items():
     suffix = "" if component == "bundle" else f"-{component}"

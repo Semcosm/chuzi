@@ -31,7 +31,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         let window = MainWindow::new()?;
-        window.set_page(page.clone().into());
         window.set_core_installed(true);
         window.set_core_ready(true);
         window.set_core_status("Core is running".into());
@@ -39,6 +38,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         window.set_data_directory("Data directory: snapshot".into());
         window.set_plugin_summary("No plugins are available in this release.".into());
         window.window().set_size(PhysicalSize::new(width, height));
+        window.show()?;
+        window.set_page("overview".into());
+        slint::platform::update_timers_and_animations();
+        let _ = window.window().take_snapshot()?;
+        window.set_page(if page == "rdp-login" { "rdp" } else { &page }.into());
+        window.window().set_size(PhysicalSize::new(width, height));
+        slint::platform::update_timers_and_animations();
         let snapshot = window.window().take_snapshot()?;
         write_snapshot(&output, &page, width, height, &snapshot)?;
         window.window().hide()?;
@@ -104,7 +110,7 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String), Box<dyn std::error
         }
     }
     match page.as_str() {
-        "overview" | "plugins" | "accounts" | "tasks" | "rdp" | "settings" => {
+        "overview" | "plugins" | "accounts" | "tasks" | "rdp" | "rdp-login" | "settings" => {
             if page == "rdp" && !sizes_explicit {
                 sizes = vec![(1280, 752), (800, 600), (500, 281)];
             }

@@ -8,6 +8,7 @@ param(
     [string]$GoDir,
     [Parameter(Mandatory = $true)]
     [string]$WorkerArchive,
+    [string]$PresentMonPath = "",
     [Parameter(Mandatory = $true)]
     [string]$DistRoot
 )
@@ -23,6 +24,17 @@ Copy-Item -Force (Join-Path $GoDir "chuzi-launcher.exe") (Join-Path $stageDir "c
 Copy-Item -Force (Join-Path $GoDir "chuzi-browser-launcher.exe") (Join-Path $stageDir "chuzi-browser-launcher.exe")
 tar -xzf $WorkerArchive -C (Join-Path $stageDir "browser-worker")
 if ($LASTEXITCODE -ne 0) { throw "browser worker archive extraction failed" }
+if ([string]::IsNullOrWhiteSpace($PresentMonPath)) {
+    $PresentMonPath = Join-Path ([System.IO.Path]::GetTempPath()) "chuzi-presentmon/PresentMon.exe"
+    & (Join-Path $repoRoot "scripts/prepare_presentmon.ps1") -OutputPath $PresentMonPath
+    if ($LASTEXITCODE -ne 0) { throw "PresentMon preparation failed" }
+}
+$presentMonHash = (Get-FileHash -Path $PresentMonPath -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($presentMonHash -ne "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af") {
+    throw "PresentMon SHA256 mismatch"
+}
+Copy-Item -Force $PresentMonPath (Join-Path $stageDir "PresentMon.exe")
+Copy-Item -Force (Join-Path $repoRoot "third_party/licenses/PresentMon-2.6.0-LICENSE.txt") (Join-Path $stageDir "PresentMon-LICENSE.txt")
 
 $commit = $env:GITHUB_SHA
 if ([string]::IsNullOrWhiteSpace($commit)) { $commit = (& git -C $repoRoot rev-parse HEAD).Trim() }

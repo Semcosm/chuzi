@@ -24,10 +24,32 @@ New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
 $payloadDir = Join-Path $OutputDir "payload"
 New-Item -ItemType Directory -Force -Path $payloadDir | Out-Null
 $coreDir = Join-Path $payloadDir "CorePayload"
+New-Item -ItemType Directory -Force -Path $coreDir | Out-Null
 if (-not [string]::IsNullOrWhiteSpace($CorePayloadDir)) {
     if (-not (Test-Path $CorePayloadDir)) { throw "Core payload directory is missing: $CorePayloadDir" }
-    New-Item -ItemType Directory -Force -Path $coreDir | Out-Null
     Copy-Item (Join-Path $CorePayloadDir "*") $coreDir -Recurse -Force
+}
+$presentMon = Join-Path $coreDir "PresentMon.exe"
+if (-not (Test-Path $presentMon)) {
+    $presentMon = Join-Path ([System.IO.Path]::GetTempPath()) "chuzi-presentmon/PresentMon.exe"
+    & (Join-Path $repoRoot "scripts/prepare_presentmon.ps1") -OutputPath $presentMon
+    if ($LASTEXITCODE -ne 0) { throw "PresentMon preparation failed" }
+    Copy-Item -Force $presentMon (Join-Path $coreDir "PresentMon.exe")
+    $presentMon = Join-Path $coreDir "PresentMon.exe"
+}
+$presentMonHash = (Get-FileHash -Path $presentMon -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($presentMonHash -ne "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af") {
+    throw "PresentMon SHA256 mismatch"
+}
+Copy-Item -Force (Join-Path $repoRoot "third_party/licenses/PresentMon-2.6.0-LICENSE.txt") (Join-Path $coreDir "PresentMon-LICENSE.txt")
+if (Test-Path (Join-Path $coreDir "build-manifest.json")) {
+    $build = Get-Content -Raw (Join-Path $coreDir "build-manifest.json") | ConvertFrom-Json
+    if ($build.target -eq "windows-amd64") {
+        $channel = if ($build.version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } elseif ($build.version -like 'test-*') { "test" } else { "nightly" }
+        & python (Join-Path $repoRoot "scripts/generate_release_manifest.py") `
+            --stage $coreDir --target $build.target --version $build.version --commit $build.commit --channel $channel
+        if ($LASTEXITCODE -ne 0) { throw "release manifest regeneration failed" }
+    }
 }
 
 $target = "x86_64-pc-windows-msvc"
