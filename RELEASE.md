@@ -2,13 +2,28 @@
 
 Releases use signed annotated semantic-version tags and the UGS release workflow.
 
-## Nightly builds
+## Release channels
 
-Nightly builds are the first release artifact and do not create Git tags or
-GitHub Releases. The `chuzi-build` workflow runs at `02:17 UTC` and can also be
-started manually. Scheduled and manually started runs use a
+The three channels have separate entry points and artifact namespaces. A build
+never promotes itself to another channel.
+
+### Test builds
+
+Test builds are manually dispatched with `channel=test` from any branch. They
+may contain newly written code and unknown defects. The workflow runs the full
+build and contract checks, then uploads 14-day Actions artifacts named
+`chuzi-test-<target>` and publishes only the `test/` release catalog entries.
+The version is `test-<run-number>-<commit-short-hash>`. Test artifacts are not
+GitHub Releases and are never treated as stable input.
+
+### Nightly builds
+
+Nightly builds run only from `main` after the full build and contract checks
+pass. The `chuzi-build` workflow runs at `02:17 UTC` and can also be started
+manually with `channel=nightly`. Scheduled and manually started runs use a
 `nightly-<run-number>-<commit-short-hash>` version and upload one 14-day Actions
-artifact per target: Windows amd64, Linux amd64, Linux arm64, and macOS arm64.
+Artifacts are named `chuzi-nightly-<target>` and publish only the `nightly/`
+release catalog entries.
 
 Each target bundle contains the complete package, `release-manifest.json`, the
 UI-neutral `chuzi-launcher` CLI, the Rust browser runtime helper,
@@ -35,9 +50,22 @@ the run/job SHA, retention metadata, release index, manifests, archive
 contents, sidecars, and resource hashes. It only runs the extracted launcher
 CLI on a matching host, using a loopback catalog and temporary installation
 directory; foreign targets are never executed. This is consumer evidence for
-the nightly artifact and does not create a tag or GitHub Release.
+the nightly artifact and does not create a tag or GitHub Release. Test-channel
+artifacts use the same index and manifest validators, are named
+`chuzi-test-<target>`, and live under `test/<target>/<version>/` in the catalog.
+Consumer validation for a successful test run is available with:
 
-## Stable signed releases
+```bash
+scripts/accept_test_run.sh <run-id> <full-commit-sha>
+```
+
+### Stable signed releases
+
+Stable releases enter only after manual review of a test or nightly result.
+The operator creates a signed annotated `v<major>.<minor>.<patch>` tag; no
+workflow step promotes a test or nightly artifact automatically. The tag build
+uses the stable channel and uploads `chuzi-stable-<target>` artifacts before
+publishing the GitHub Release and stable catalog entries.
 
 Stable releases use a signed annotated `v<major>.<minor>.<patch>` tag and a
 matching `releases/v<version>.md` file. The tag build uploads all four target
@@ -51,3 +79,5 @@ release SSH private key and the repository variable `CHUZI_RELEASE_SIGNER`
 with its principal. The private key is written only to the ephemeral runner;
 it is never committed or included in a release asset. Local verification can
 use `scripts/verify_release_bundle.sh` with the repository trust registry.
+The retry workflow is only for a completed stable tag build whose publication
+step needs to be rerun; it does not promote a nightly or test run.

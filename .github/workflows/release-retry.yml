@@ -57,7 +57,7 @@ jobs:
           mkdir -p dist
           for target in windows-amd64 linux-amd64 linux-arm64 darwin-arm64; do
             mkdir -p "dist/$target"
-            gh run download "${{ inputs.run_id }}" --repo "${{ github.repository }}" --name "chuzi-nightly-$target" --dir "dist/$target"
+            gh run download "${{ inputs.run_id }}" --repo "${{ github.repository }}" --name "chuzi-stable-$target" --dir "dist/$target"
           done
       - name: Validate target packages and bind stable metadata
         shell: bash
