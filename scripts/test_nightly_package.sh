@@ -47,10 +47,39 @@ for target in linux-amd64 windows-amd64; do
     printf '%s' service >"$stage/chuzi"
   fi
   printf '%s' worker >"$stage/browser-worker/index.mjs"
+  cat >"$stage/browser-worker/worker-manifest.json" <<'JSON'
+{
+  "protocol": "v1",
+  "browserRuntime": "deferred",
+  "availableBackends": ["deferred", "headless-cdp", "headed-cdp"],
+  "adapters": [
+    {
+      "id": "chuzi.headless-cdp",
+      "api": "chuzi.adapter/v1",
+      "entry": "index.mjs",
+      "capabilities": ["cdp@1", "genshin-cloudgame@1"]
+    }
+  ]
+}
+JSON
 
   "$python_command" "$repo_root/scripts/generate_release_manifest.py" \
     --stage "$stage" --target "$target" --version "$version" \
     --commit "$commit" --channel nightly
+  "$python_command" - "$stage/release-manifest.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as stream:
+    manifest = json.load(stream)
+plugins = manifest.get("plugins")
+assert len(plugins) == 1, plugins
+plugin = plugins[0]
+assert plugin["id"] == "chuzi.headless-cdp", plugin
+assert plugin["api"] == "chuzi.plugin/v1", plugin
+assert "genshin-cloudgame@1" in plugin["capabilities"], plugin
+assert plugin["installable"] is False, plugin
+PY
 
   if [ "$target" = "windows-amd64" ]; then
     "$python_command" - "$stage" "$dist" "$version" "$target" <<'PY'
