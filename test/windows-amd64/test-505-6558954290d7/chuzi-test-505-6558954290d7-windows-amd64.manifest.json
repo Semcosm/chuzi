@@ -1,0 +1,99 @@
+{
+  "format": "chuzi-release/v1",
+  "channel": "test",
+  "version": "test-505-6558954290d7",
+  "commit": "6558954290d7775b652c4a3fe86f47f401ab5d12",
+  "target": "windows-amd64",
+  "generated_at": "2026-09-26T06:00:14.767044Z",
+  "components": [
+    {
+      "id": "launcher",
+      "version": "test-505-6558954290d7",
+      "required": true,
+      "dependencies": [],
+      "artifact": "chuzi-test-505-6558954290d7-windows-amd64-launcher.zip",
+      "resources": [
+        {
+          "path": "chuzi-launcher.exe",
+          "sha256": "3e5540e80037785cd51fa5bcdff939c3e97d0ed1424ad2f8d1b7a761b2ade736",
+          "size": 6866944
+        }
+      ]
+    },
+    {
+      "id": "service",
+      "version": "test-505-6558954290d7",
+      "required": false,
+      "dependencies": [
+        "browser-worker"
+      ],
+      "artifact": "chuzi-test-505-6558954290d7-windows-amd64-service.zip",
+      "resources": [
+        {
+          "path": "chuzi.exe",
+          "sha256": "0e418e95f4aa633411cd032b9d09d15dc17dd06b00345ac38518453bf70b765e",
+          "size": 8045568
+        },
+        {
+          "path": "chuzi-browser-launcher.exe",
+          "sha256": "eb49b6c74be93c59b623b63a7523e733d11f81b594dd04747ef67f649b7469dc",
+          "size": 2721792
+        }
+      ]
+    },
+    {
+      "id": "browser-worker",
+      "version": "test-505-6558954290d7",
+      "required": false,
+      "dependencies": [],
+      "artifact": "chuzi-test-505-6558954290d7-windows-amd64-browser-worker.zip",
+      "resources": [
+        {
+          "path": "browser-worker/src/headless-adapter.mjs",
+          "sha256": "931298dad1264c76a23fcb5510b7bc23434326ba664a93ef521a92a43d8a7c9b",
+          "size": 38805
+        },
+        {
+          "path": "browser-worker/src/headless.mjs",
+          "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+          "size": 14202
+        },
+        {
+          "path": "browser-worker/src/local-test-page.html",
+          "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+          "size": 397
+        },
+        {
+          "path": "browser-worker/src/worker.mjs",
+          "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+          "size": 3421
+        },
+        {
+          "path": "browser-worker/worker-manifest.json",
+          "sha256": "a08c7c11d6ac000f6ea2817c1fab4d03caf80a192fd33db13028bea758632453",
+          "size": 465
+        }
+      ]
+    },
+    {
+      "id": "presentmon",
+      "version": "test-505-6558954290d7",
+      "required": true,
+      "dependencies": [],
+      "artifact": "chuzi-test-505-6558954290d7-windows-amd64-presentmon.zip",
+      "resources": [
+        {
+          "path": "PresentMon.exe",
+          "sha256": "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af",
+          "size": 980320
+        },
+        {
+          "path": "PresentMon-LICENSE.txt",
+          "sha256": "b1043ee2efacbd24a1ad830128a61f40dc3d27e2b9b24d7d3631950b88f2d66e",
+          "size": 1086
+        }
+      ]
+    }
+  ],
+  "plugins": []
+}
