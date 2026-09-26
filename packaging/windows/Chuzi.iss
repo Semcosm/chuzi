@@ -58,16 +58,32 @@ Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonap
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
-Type: filesandordirs; Name: "{commonappdata}\chuzi"; Check: not KeepUserData
+Type: filesandordirs; Name: "{commonappdata}\chuzi"; Check: ShouldDeleteUserData
 
 [Code]
 var
-  KeepUserData: Boolean;
+  KeepUserDataValue: Boolean;
+  KeepUserDataPrompted: Boolean;
+
+function KeepUserData(): Boolean;
+begin
+  if not KeepUserDataPrompted then
+  begin
+    KeepUserDataValue := MsgBox(
+      '是否保留 Chuzi 用户数据？选择“否”将删除 %ProgramData%\chuzi。',
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDYES;
+    KeepUserDataPrompted := True;
+  end;
+  Result := KeepUserDataValue;
+end;
+
+function ShouldDeleteUserData(): Boolean;
+begin
+  Result := not KeepUserData();
+end;
 
 function InitializeUninstall(): Boolean;
 begin
-  KeepUserData := MsgBox(
-    '是否保留 Chuzi 用户数据？选择“否”将删除 %ProgramData%\chuzi。',
-    mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDYES;
+  KeepUserData();
   Result := True;
 end;
