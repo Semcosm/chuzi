@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 INDEX_FORMAT = "chuzi-release-index/v1"
-COMPONENTS = ("launcher", "service", "browser-worker")
+BASE_COMPONENTS = ("launcher", "service", "browser-worker")
 
 
 def digest(path: Path) -> str:
@@ -57,11 +57,14 @@ def main() -> int:
             raise SystemExit(f"manifest {key} does not match index arguments")
 
     extension = "zip" if args.target == "windows-amd64" else "tar.gz"
+    components = list(BASE_COMPONENTS)
+    if args.target == "windows-amd64":
+        components.append("presentmon")
     names = {
         "bundle": f"chuzi-{args.version}-{args.target}.{extension}",
     }
     names.update({component: f"chuzi-{args.version}-{args.target}-{component}.{extension}"
-                  for component in COMPONENTS})
+                  for component in components})
 
     plugins = manifest.get("plugins", [])
     if not isinstance(plugins, list):
@@ -108,7 +111,7 @@ def main() -> int:
 
     manifest_artifacts = {item.get("id"): item.get("artifact")
                           for item in manifest.get("components", [])}
-    for component in COMPONENTS:
+    for component in components:
         expected = names[component]
         if manifest_artifacts.get(component) != expected:
             raise SystemExit(f"manifest component artifact mismatch: {component}")
