@@ -192,6 +192,50 @@ test("Genshin Cloud Game session probe reports only redacted page observations",
   await stop(child, lines);
 });
 
+test("Genshin Cloud Game session probe works with a headed-CDP session handle", async (t) => {
+  const profile = await mkdtemp(resolve(root, "adapter-profile-cloudgame-headed-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const port = await reservePort();
+  const targetURLFile = resolve(profile, "target-url.txt");
+  const browser = spawn(process.execPath, [fakeBrowser, `--remote-debugging-port=${port}`, `--user-data-dir=${profile}`], {
+    stdio: ["ignore", "ignore", "ignore"],
+    env: {
+      ...process.env,
+      FAKE_CDP_MODE: "cloudgame-initial-blank",
+      FAKE_CDP_TARGET_URL_FILE: targetURLFile,
+      FAKE_CDP_RESULT_SHAPE: "chromium",
+    },
+  });
+  t.after(() => { if (browser.exitCode === null) browser.kill(); });
+  await waitForEndpoint(port);
+
+  const child = spawnAdapter();
+  const lines = createReader(child, "headless-adapter-cloudgame-headed");
+  cleanup(t, child, lines);
+  execute(child, {
+    session_id: "session-cloudgame-headed",
+    account_id: "authorized-account",
+    request_id: "request-cloudgame-headed",
+    profile_dir: profile,
+    runtime: "headed-cdp",
+    session_handle: `headed-cdp://127.0.0.1:${port}`,
+    operation_id: "operation-cloudgame-headed",
+    operation: "genshin.cloudgame.session_probe",
+    parameters: "{}",
+  });
+  await readType(lines, "operation_started");
+  const succeeded = await readType(lines, "operation_succeeded");
+  assert.deepEqual(JSON.parse(succeeded.payload.facts), {
+    platform: "genshin-cloudgame",
+    flow: "authorized-session-check",
+    page: "recognized",
+    shell: "present",
+    session: "authenticated",
+  });
+  assert.equal(await readFile(targetURLFile, "utf8"), "https://ys.mihoyo.com/cloud/#/");
+  await stop(child, lines);
+});
+
 test("Genshin Cloud Game probe reports a non-authenticated page observation", async (t) => {
   const profile = await mkdtemp(resolve(root, "adapter-profile-cloudgame-auth-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
@@ -217,6 +261,35 @@ test("Genshin Cloud Game probe reports a non-authenticated page observation", as
     page: "recognized",
     shell: "present",
     session: "not_authenticated",
+  });
+  await stop(child, lines);
+});
+
+test("Genshin Cloud Game probe keeps contradictory authentication markers unknown", async (t) => {
+  const profile = await mkdtemp(resolve(root, "adapter-profile-cloudgame-conflicting-auth-"));
+  t.after(() => rm(profile, { recursive: true, force: true }));
+  const child = spawnAdapter("cloudgame-conflicting-auth");
+  const lines = createReader(child, "headless-adapter-cloudgame-conflicting-auth");
+  cleanup(t, child, lines);
+
+  execute(child, {
+    session_id: "session-cloudgame-conflicting-auth",
+    account_id: "authorized-account",
+    request_id: "request-cloudgame-conflicting-auth",
+    profile_dir: profile,
+    runtime: "headless-cdp",
+    operation_id: "operation-cloudgame-conflicting-auth",
+    operation: "genshin.cloudgame.session_probe",
+    parameters: "{}",
+  });
+  await readType(lines, "operation_started");
+  const succeeded = await readType(lines, "operation_succeeded");
+  assert.deepEqual(JSON.parse(succeeded.payload.facts), {
+    platform: "genshin-cloudgame",
+    flow: "authorized-session-check",
+    page: "recognized",
+    shell: "present",
+    session: "unknown",
   });
   await stop(child, lines);
 });

@@ -834,7 +834,7 @@ async function executeGenshinCloudGame(session, operation, parameters, signal, l
         shell: pageValue.shell === true ? "present" : "missing",
         session: pageValue.loggedIn === true && pageValue.loggedOut !== true
           ? "authenticated"
-          : pageValue.loggedOut === true ? "not_authenticated" : "unknown",
+          : pageValue.loggedOut === true && pageValue.loggedIn !== true ? "not_authenticated" : "unknown",
       },
     };
   } finally {
