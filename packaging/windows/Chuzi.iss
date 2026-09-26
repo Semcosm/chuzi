@@ -58,11 +58,16 @@ Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonap
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
-Type: filesandordirs; Name: "{commonappdata}\chuzi"; Check: not KeepUserData
+Type: filesandordirs; Name: "{commonappdata}\chuzi"; Check: ShouldDeleteUserData
 
 [Code]
 var
   KeepUserData: Boolean;
+
+function ShouldDeleteUserData(): Boolean;
+begin
+  Result := not KeepUserData;
+end;
 
 function InitializeUninstall(): Boolean;
 begin
