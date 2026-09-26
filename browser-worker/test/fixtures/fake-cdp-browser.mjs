@@ -67,7 +67,7 @@ function cdpResult(message) {
           title: "云·原神",
           shell: mode !== "cloudgame-no-shell",
           loggedIn: mode !== "cloudgame-unauthenticated",
-          loggedOut: mode === "cloudgame-unauthenticated",
+          loggedOut: mode === "cloudgame-unauthenticated" || mode === "cloudgame-conflicting-auth",
         });
       }
       return evaluatedResult({

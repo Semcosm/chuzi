@@ -241,6 +241,14 @@ func TestPipelineEvaluatesGenshinPageFactsInCore(t *testing.T) {
 			},
 			failure: account.UnknownFailure,
 		},
+		{
+			name: "contradictory authentication markers",
+			facts: map[string]string{
+				"platform": "genshin-cloudgame", "flow": "authorized-session-check",
+				"page": "recognized", "shell": "present", "session": "unknown",
+			},
+			failure: account.UnknownFailure,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
