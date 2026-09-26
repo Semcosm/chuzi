@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add integrated RDP performance capture
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 05bc13205f47490bfa3025f2858f011337222a50
+Head OID: ae8987e2f092dfe0307240a3834774272c35522c
 Integrated Result: pending
 
 ## Summary
@@ -39,8 +39,12 @@ build-contract, RDP analyzer, nightly package, nightly artifact validator, and
 release catalog checks passed, as did `git diff --check`. PresentMon 2.6.0's
 upstream troubleshooting documentation confirms its ETW access requirement.
 Windows Rust target and Inno Setup are unavailable on this host, so the Windows
-binary and installer still require the Windows Actions build for compile-time
-and packaging verification.
+binary and installer require the Windows Actions build for compile-time and
+packaging verification. Test workflow run 503 completed the Windows Rust and
+FreeRDP release build, then exposed an Inno Setup error because an uninstall
+Check entry referenced a variable directly. The candidate head replaces that
+entry with a Boolean check function and adds a build-contract assertion for the
+valid callback shape; a Windows rerun remains the authoritative verification.
 
 ## Risk
 
