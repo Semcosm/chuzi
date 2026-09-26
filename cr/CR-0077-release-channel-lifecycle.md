@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: pending
+Head OID: 04f6dfba7018b28d7fa7f032fd41e0524528a396
 Integrated Result: pending
 
 ## Summary
