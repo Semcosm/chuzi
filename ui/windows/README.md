@@ -118,15 +118,28 @@ on the remote session.
 
 #### RDP performance capture
 
-The client keeps FreeRDP CPU decoding and uses the normal Slint/WGPU presentation
-path. For a local performance capture, set CHUZI_RDP_PERF=1 before launching
-the Windows client and redirect stderr to a log file. The client emits periodic
-rdp_perf JSON records containing the selected frame mode, RDP update rate, dirty
-rectangle area, actual and full-frame-equivalent copy traffic, framebuffer copy
-time, snapshot time, queue overwrites, UI tick timing, and UI handoff intervals;
-records contain no host, account, credential, certificate, or pixel data. The
-analyzer accepts PowerShell-wrapped stderr records, so long JSON lines remain
-parseable when native stderr is redirected on Windows.
+The RDP login page has two independent options: `显示性能分析 HUD` shows live
+client and PresentMon measurements in the session window, while
+`记录性能分析数据` saves raw samples for later analysis. Both are off by
+default. The Windows installer bundles PresentMon 2.6.0 as a required release
+component, so no separate download or setup is needed.
+
+Recorded files are stored under
+`%ProgramData%\chuzi\data\rdp-performance`. Each recorded session writes
+paired `rdp-<session>.rdp.log` and `rdp-<session>.presentmon.csv` files. The
+internal JSON records contain frame mode, RDP update rate, dirty rectangle
+area, copy traffic and timing, queue overwrites, UI tick timing, and UI handoff
+intervals. They exclude the RDP host, account, credentials, certificate, and
+pixel data. If only the HUD is enabled, its temporary PresentMon CSV is deleted
+when the session closes.
+
+The HUD reports the RDP update rate, dirty area, copy bandwidth and time,
+snapshot time, UI handoff p50/p95, delivery ratio, PresentMon FPS, and dropped
+presents. If the bundled collector cannot start, the HUD displays its status and
+the internal RDP metrics remain available. PresentMon reads Windows ETW
+presentation events; if it exits for lack of access, run Chuzi elevated or add
+the signed-in account to the Windows `Performance Log Users` group and sign in
+again. Chuzi does not elevate the collector automatically.
 
 The default `CHUZI_RDP_DIRTY_FRAME_MODE=optimized` path keeps one complete CPU
 framebuffer, copies only the clipped union of FreeRDP's dirty rectangles during
@@ -136,14 +149,22 @@ faster than the UI. Set `CHUZI_RDP_DIRTY_FRAME_MODE=legacy` for an A/B capture
 of the previous full-frame copy and queue behavior. Keep the mode fixed for both
 runs in a comparison.
 
-From the repository root, summarize the internal RDP path with:
+For integrated recording, summarize the saved RDP and PresentMon data together
+from the repository root:
+
+    $perf = "$env:ProgramData\chuzi\data\rdp-performance"
+    python scripts/analyze_rdp_perf.py "$perf\rdp-<session>.rdp.log" `
+      --presentmon "$perf\rdp-<session>.presentmon.csv" `
+      --process Chuzi.Native.Windows.exe
+
+For legacy developer captures, summarize the stderr log with:
 
     python scripts/analyze_rdp_perf.py --json .\\rdp-client.stderr.log
     python scripts/analyze_rdp_perf.py .\\rdp-client.stderr.log
 
-For end-to-end GPU/presentation evidence, run PresentMon on the same Windows
-host against Chuzi.Native.Windows.exe (or the installed client process) and
-export its CSV output alongside the stderr log. PresentMon measures the final
+For a legacy external PresentMon capture, run it on the same Windows host
+against Chuzi.Native.Windows.exe and export its CSV alongside the stderr log.
+PresentMon measures the final
 desktop-present path, including present interval, display-change interval,
 display latency, GPU/CPU duration, dropped presents, PresentMode, tearing flags,
 and sync interval. rdp_perf measures the client-side copy and UI handoff path.
@@ -178,16 +199,20 @@ their current PresentMon equivalents): `Application`, `TimeInSeconds`,
 `GPUDuration`, `CPUDuration`, `PresentMode`, `Dropped`, `AllowsTearing`, and
 `SyncInterval`. Keep the process name in the export and pass
 `--process Chuzi.Native.Windows.exe` so unrelated desktop presents do not skew
-the result. Preserve the raw stderr and CSV files with the summarized JSON for
-each 60-90 second scenario.
+the result. For integrated captures, preserve the `.rdp.log` and PresentMon CSV
+with the summarized JSON for each 60-90 second scenario. Legacy manual captures
+can preserve their stderr log and CSV instead.
 
 ## Runtime and packaging
 
 The Slint executable is built for `x86_64-pc-windows-msvc` and installed by the
 same conventional EXE installer used by the rest of the Windows distribution.
 The installer carries a matching `CorePayload` directory containing the Go
-service, launcher, browser worker, and release manifest. Core remains a
-separate process and continues running when the UI window closes.
+service, launcher, browser worker, PresentMon, and release manifest. Core remains
+a separate process and continues running when the UI window closes. During
+uninstall, Chuzi asks whether to keep `%ProgramData%\chuzi`; keeping user data
+is the default. Choosing No removes its data, including saved RDP performance
+logs.
 
 For local Windows builds, install Rust, Cargo, and Inno Setup 6, then run:
 

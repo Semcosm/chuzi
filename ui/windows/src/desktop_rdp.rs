@@ -6,8 +6,9 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{fs::File, io::BufWriter, io::Write, path::PathBuf};
 
 #[cfg(windows)]
 use slint::TimerMode;
@@ -33,6 +34,22 @@ pub struct RdpTarget {
     pub allow_untrusted_certificate: bool,
     pub width: u32,
     pub height: u32,
+}
+
+pub struct RdpPerformanceOptions {
+    pub show_hud: bool,
+    pub record: bool,
+    pub data_dir: PathBuf,
+}
+
+impl Default for RdpPerformanceOptions {
+    fn default() -> Self {
+        Self {
+            show_hud: false,
+            record: false,
+            data_dir: PathBuf::new(),
+        }
+    }
 }
 
 impl RdpTarget {
@@ -595,6 +612,7 @@ struct RdpPerfStats {
     frame_to_image_us: AtomicU64,
     ui_handoff_interval_us: AtomicU64,
     ui_handoff_interval_samples_us: Mutex<Vec<u64>>,
+    ui_handoff_recent_samples_us: Mutex<Vec<u64>>,
     coalesced_frames: AtomicU64,
     queue_overwrites: AtomicU64,
     ui_handoffs: AtomicU64,
@@ -603,21 +621,33 @@ struct RdpPerfStats {
     ui_tick_commits: AtomicU64,
     ui_tick_interval_us: AtomicU64,
     ui_tick_processing_us: AtomicU64,
+    log_writer: Option<Mutex<BufWriter<File>>>,
+    emit_stderr: bool,
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]
 impl RdpPerfStats {
     fn new(mode: DirtyFrameMode) -> Self {
+        let enabled = std::env::var("CHUZI_RDP_PERF")
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false);
+        Self::configured(mode, enabled, None, enabled)
+    }
+
+    fn configured(
+        mode: DirtyFrameMode,
+        enabled: bool,
+        log_file: Option<File>,
+        emit_stderr: bool,
+    ) -> Self {
         let now = Instant::now();
         Self {
-            enabled: std::env::var("CHUZI_RDP_PERF")
-                .map(|value| {
-                    matches!(
-                        value.trim().to_ascii_lowercase().as_str(),
-                        "1" | "true" | "yes"
-                    )
-                })
-                .unwrap_or(false),
+            enabled,
             mode,
             started: now,
             last_report: Mutex::new(now),
@@ -635,6 +665,7 @@ impl RdpPerfStats {
             frame_to_image_us: AtomicU64::new(0),
             ui_handoff_interval_us: AtomicU64::new(0),
             ui_handoff_interval_samples_us: Mutex::new(Vec::new()),
+            ui_handoff_recent_samples_us: Mutex::new(Vec::new()),
             coalesced_frames: AtomicU64::new(0),
             queue_overwrites: AtomicU64::new(0),
             ui_handoffs: AtomicU64::new(0),
@@ -643,6 +674,8 @@ impl RdpPerfStats {
             ui_tick_commits: AtomicU64::new(0),
             ui_tick_interval_us: AtomicU64::new(0),
             ui_tick_processing_us: AtomicU64::new(0),
+            log_writer: log_file.map(|file| Mutex::new(BufWriter::new(file))),
+            emit_stderr,
         }
     }
 
@@ -724,6 +757,13 @@ impl RdpPerfStats {
                 if let Ok(mut samples) = self.ui_handoff_interval_samples_us.lock() {
                     samples.push(interval_us);
                 }
+                if let Ok(mut samples) = self.ui_handoff_recent_samples_us.lock() {
+                    samples.push(interval_us);
+                    if samples.len() > 240 {
+                        let excess = samples.len() - 240;
+                        samples.drain(..excess);
+                    }
+                }
             }
             *last_ui_handoff = Some(now);
         }
@@ -774,7 +814,7 @@ impl RdpPerfStats {
         } else {
             self.dirty_union_area_pixels.load(Ordering::Relaxed) as f64 / full_frame_pixels as f64
         };
-        eprintln!(
+        let line = format!(
             "rdp_perf {{\"elapsed_ms\":{},\"dirty_frame_mode\":\"{}\",\"frame_width\":{},\"frame_height\":{},\"rdp_update_batches\":{},\"dirty_rect_count\":{},\"dirty_area_pixels\":{},\"dirty_union_area_pixels\":{},\"dirty_area_ratio\":{},\"full_frame_copy_bytes\":{},\"actual_copy_bytes\":{},\"framebuffer_copy_us\":{},\"frame_to_image_us\":{},\"ui_handoffs\":{},\"ui_handoff_time_us\":{},\"ui_handoff_interval_us\":{},\"ui_handoff_interval_samples_us\":{:?},\"coalesced_frames\":{},\"queue_overwrites\":{},\"ui_ticks\":{},\"ui_tick_commits\":{},\"ui_tick_interval_us\":{},\"ui_tick_processing_us\":{}}}",
             self.started.elapsed().as_millis(),
             self.mode.as_str(),
@@ -800,6 +840,89 @@ impl RdpPerfStats {
             self.ui_tick_interval_us.load(Ordering::Relaxed),
             self.ui_tick_processing_us.load(Ordering::Relaxed),
         );
+        if self.emit_stderr {
+            eprintln!("{line}");
+        }
+        if let Some(writer) = &self.log_writer {
+            if let Ok(mut writer) = writer.lock() {
+                let _ = writeln!(writer, "{line}");
+                let _ = writer.flush();
+            }
+        }
+    }
+
+    fn hud_text(&self, presentmon: &str) -> String {
+        let elapsed = self.started.elapsed().as_secs_f64().max(0.001);
+        let updates = self.rdp_update_batches.load(Ordering::Relaxed);
+        let handoffs = self.ui_handoffs.load(Ordering::Relaxed);
+        let full_frame_pixels =
+            self.full_frame_copy_bytes.load(Ordering::Relaxed) as f64 / BYTES_PER_PIXEL as f64;
+        let dirty_ratio = if full_frame_pixels == 0.0 {
+            0.0
+        } else {
+            self.dirty_union_area_pixels.load(Ordering::Relaxed) as f64 / full_frame_pixels
+        };
+        let copy_mib_s =
+            self.actual_copy_bytes.load(Ordering::Relaxed) as f64 / elapsed / (1024.0 * 1024.0);
+        let avg_copy_us = if updates == 0 {
+            0
+        } else {
+            self.framebuffer_copy_us.load(Ordering::Relaxed) / updates
+        };
+        let avg_snapshot_us = if handoffs == 0 {
+            0
+        } else {
+            self.frame_to_image_us.load(Ordering::Relaxed) / handoffs
+        };
+        let intervals = self
+            .ui_handoff_recent_samples_us
+            .lock()
+            .map(|samples| {
+                let mut sorted = samples.clone();
+                sorted.sort_unstable();
+                sorted
+            })
+            .unwrap_or_default();
+        let p50 = percentile_us(&intervals, 0.50);
+        let p95 = percentile_us(&intervals, 0.95);
+        let delivered = handoffs as f64
+            / (handoffs + self.coalesced_frames.load(Ordering::Relaxed)).max(1) as f64
+            * 100.0;
+        format!(
+            "{} | RDP {:.1}/s | dirty {:.2}% | copy {:.2} MiB/s | copy {} us | snapshot {} us\nUI handoff p50/p95: {}/{} ms | delivered {:.1}%\n{}",
+            self.mode.as_str(), updates as f64 / elapsed, dirty_ratio * 100.0, copy_mib_s, avg_copy_us,
+            avg_snapshot_us, p50 as f64 / 1000.0, p95 as f64 / 1000.0, delivered, presentmon
+        )
+    }
+}
+
+fn percentile_us(sorted_samples: &[u64], percentile: f64) -> u64 {
+    if sorted_samples.is_empty() {
+        return 0;
+    }
+    let index = ((sorted_samples.len() as f64 * percentile).ceil() as usize)
+        .saturating_sub(1)
+        .min(sorted_samples.len() - 1);
+    sorted_samples[index]
+}
+
+fn read_available_csv_records(
+    reader: &mut csv::Reader<File>,
+    mut consume: impl FnMut(&csv::StringRecord),
+) -> csv::Result<()> {
+    use std::io::SeekFrom;
+
+    let mut record = csv::StringRecord::new();
+    loop {
+        match reader.read_record(&mut record) {
+            Ok(true) => consume(&record),
+            Ok(false) => {
+                let position = reader.position().clone();
+                reader.seek_raw(SeekFrom::Start(position.byte()), position)?;
+                return Ok(());
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
@@ -820,6 +943,23 @@ impl SharedState {
     }
 
     fn with_mode(dirty_frame_mode: DirtyFrameMode) -> Self {
+        let enabled = std::env::var("CHUZI_RDP_PERF")
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false);
+        Self::with_performance(dirty_frame_mode, enabled, None, enabled)
+    }
+
+    fn with_performance(
+        dirty_frame_mode: DirtyFrameMode,
+        enabled: bool,
+        log_file: Option<File>,
+        emit_stderr: bool,
+    ) -> Self {
         Self {
             update: Mutex::new(PendingUpdate {
                 state: "connecting".to_owned(),
@@ -829,7 +969,7 @@ impl SharedState {
             framebuffers: Mutex::new(Framebuffers::default()),
             certificate_failure: Mutex::new(None),
             dirty_frame_mode,
-            perf: RdpPerfStats::new(dirty_frame_mode),
+            perf: RdpPerfStats::configured(dirty_frame_mode, enabled, log_file, emit_stderr),
             pending: AtomicBool::new(false),
             stop: AtomicBool::new(false),
         }
@@ -977,10 +1117,35 @@ pub struct DesktopRdpController {
     frame_timer: Timer,
     #[cfg_attr(not(windows), allow(dead_code))]
     input_tx: Sender<RdpInput>,
+    #[cfg(windows)]
+    presentmon: Option<Rc<RefCell<PresentMonCapture>>>,
 }
 
 impl DesktopRdpController {
-    pub fn new_with_target(mut target: RdpTarget) -> Result<Self, String> {
+    pub fn new_with_target(target: RdpTarget) -> Result<Self, String> {
+        let legacy_stderr = std::env::var("CHUZI_RDP_PERF")
+            .map(|value| {
+                matches!(
+                    value.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes"
+                )
+            })
+            .unwrap_or(false);
+        Self::new_with_target_internal(target, RdpPerformanceOptions::default(), legacy_stderr)
+    }
+
+    pub fn new_with_target_and_performance(
+        target: RdpTarget,
+        options: RdpPerformanceOptions,
+    ) -> Result<Self, String> {
+        Self::new_with_target_internal(target, options, false)
+    }
+
+    fn new_with_target_internal(
+        mut target: RdpTarget,
+        options: RdpPerformanceOptions,
+        emit_perf_stderr: bool,
+    ) -> Result<Self, String> {
         target.host = target.host.trim().to_owned();
         if target.host.is_empty() {
             return Err("RDP host must not be empty".to_owned());
@@ -1033,7 +1198,52 @@ impl DesktopRdpController {
             .window()
             .on_close_requested(move || CloseRequestResponse::HideWindow);
 
-        let shared = Arc::new(SharedState::new());
+        let perf_enabled = options.show_hud || options.record || emit_perf_stderr;
+        if (options.show_hud || options.record) && options.data_dir.as_os_str().is_empty() {
+            return Err("RDP 性能数据目录不可用。".to_owned());
+        }
+        let performance_dir = options.data_dir.join("rdp-performance");
+        let mut perf_log = None;
+        #[cfg(windows)]
+        let mut presentmon_path: Option<PathBuf> = None;
+        if options.show_hud || options.record {
+            std::fs::create_dir_all(&performance_dir)
+                .map_err(|error| format!("无法创建 RDP 性能数据目录：{error}"))?;
+            let session_id = performance_session_id();
+            if options.record {
+                let log_path = performance_dir.join(format!("rdp-{session_id}.rdp.log"));
+                perf_log = Some(
+                    File::create(&log_path)
+                        .map_err(|error| format!("无法创建 RDP 性能日志：{error}"))?,
+                );
+            }
+            #[cfg(windows)]
+            {
+                presentmon_path =
+                    Some(performance_dir.join(format!("rdp-{session_id}.presentmon.csv")));
+            }
+        }
+        let shared = Arc::new(SharedState::with_performance(
+            DirtyFrameMode::from_environment(),
+            perf_enabled,
+            perf_log,
+            emit_perf_stderr,
+        ));
+        #[cfg(windows)]
+        let presentmon = {
+            presentmon_path.map(|csv_path| {
+                let executable = std::env::current_exe()
+                    .ok()
+                    .and_then(|path| path.parent().map(PathBuf::from))
+                    .map(|path| path.join("CorePayload").join("PresentMon.exe"))
+                    .unwrap_or_else(|| PathBuf::from("PresentMon.exe"));
+                Rc::new(RefCell::new(PresentMonCapture::start(
+                    executable,
+                    csv_path,
+                    !options.record,
+                )))
+            })
+        };
         let (input_tx, input_rx) = mpsc::channel();
         let input_callback_tx = input_tx.clone();
         window.on_rdp_pointer_event(move |kind, button, x, y, viewport_width, viewport_height| {
@@ -1142,12 +1352,39 @@ impl DesktopRdpController {
         {
             let timer_shared = Arc::clone(&shared);
             let timer_window = window.as_weak();
+            let timer_presentmon = presentmon.clone();
+            let show_hud = options.show_hud;
+            let mut last_hud_update = Instant::now() - Duration::from_secs(1);
             frame_timer.start(TimerMode::Repeated, Duration::from_millis(16), move || {
                 let started = Instant::now();
                 let committed = timer_shared.has_pending()
                     && apply_pending_update(&timer_window, &timer_shared);
                 timer_shared.perf.record_ui_tick(started, committed);
+                if last_hud_update.elapsed() >= Duration::from_millis(500) {
+                    last_hud_update = Instant::now();
+                    let (state, _) = timer_shared.status_snapshot();
+                    let presentmon_text = timer_presentmon.as_ref().map(|capture| {
+                        let mut capture = capture.borrow_mut();
+                        let text = capture.refresh();
+                        if matches!(state.as_str(), "closed" | "failed") {
+                            capture.finish();
+                        }
+                        text
+                    });
+                    if show_hud {
+                        if let Some(window) = timer_window.upgrade() {
+                            let presentmon_text = presentmon_text
+                                .unwrap_or_else(|| "PresentMon unavailable".to_owned());
+                            window.set_perf_hud_text(
+                                timer_shared.perf.hud_text(&presentmon_text).into(),
+                            );
+                        }
+                    }
+                }
             });
+            if options.show_hud {
+                window.set_perf_hud_visible(true);
+            }
         }
 
         Ok(Self {
@@ -1156,6 +1393,8 @@ impl DesktopRdpController {
             worker,
             frame_timer,
             input_tx,
+            #[cfg(windows)]
+            presentmon,
         })
     }
 
@@ -1171,6 +1410,198 @@ impl Drop for DesktopRdpController {
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
+        self.shared.perf.report_if_due(true);
+        #[cfg(windows)]
+        if let Some(presentmon) = self.presentmon.take() {
+            presentmon.borrow_mut().finish();
+        }
+    }
+}
+
+fn performance_session_id() -> String {
+    let micros = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_micros())
+        .unwrap_or_default();
+    format!("{}-{}", micros, std::process::id())
+}
+
+#[cfg(windows)]
+struct PresentMonCapture {
+    child: Option<std::process::Child>,
+    csv_path: PathBuf,
+    delete_csv_on_drop: bool,
+    reader: Option<csv::Reader<File>>,
+    present_interval_column: Option<usize>,
+    dropped_column: Option<usize>,
+    recent_intervals: std::collections::VecDeque<(Instant, f64)>,
+    dropped_presents: u64,
+    status: String,
+    finished: bool,
+}
+
+#[cfg(windows)]
+impl PresentMonCapture {
+    fn start(executable: PathBuf, csv_path: PathBuf, delete_csv_on_drop: bool) -> Self {
+        use std::os::windows::process::CommandExt;
+        use std::process::{Command, Stdio};
+
+        let (child, status) = if !executable.is_file() {
+            (None, "PresentMon missing from CorePayload".to_owned())
+        } else {
+            match Command::new(&executable)
+                .arg("--process_name")
+                .arg("Chuzi.Native.Windows.exe")
+                .arg("--output_file")
+                .arg(&csv_path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .creation_flags(0x08000000)
+                .spawn()
+            {
+                Ok(child) => (Some(child), "PresentMon starting".to_owned()),
+                Err(error) => (None, format!("PresentMon could not start: {error}")),
+            }
+        };
+        Self {
+            child,
+            csv_path,
+            delete_csv_on_drop,
+            reader: None,
+            present_interval_column: None,
+            dropped_column: None,
+            recent_intervals: std::collections::VecDeque::new(),
+            dropped_presents: 0,
+            status,
+            finished: false,
+        }
+    }
+
+    fn refresh(&mut self) -> String {
+        let mut exited = None;
+        if let Some(child) = self.child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => exited = Some(status),
+                Ok(None) => self.status = "PresentMon running".to_owned(),
+                Err(_) => self.status = "PresentMon status unavailable".to_owned(),
+            }
+        }
+        if let Some(status) = exited {
+            self.status = if status.success() {
+                format!("PresentMon stopped ({})", status.code().unwrap_or(0))
+            } else {
+                format!(
+                    "PresentMon failed ({}); ETW access requires Administrator or Performance Log Users membership",
+                    status.code().unwrap_or(-1)
+                )
+            };
+            self.child.take();
+        }
+        self.read_available_rows();
+        let now = Instant::now();
+        while self
+            .recent_intervals
+            .front()
+            .map(|(time, _)| now.duration_since(*time) > Duration::from_secs(3))
+            .unwrap_or(false)
+        {
+            self.recent_intervals.pop_front();
+        }
+        if self.recent_intervals.is_empty() {
+            return format!("{} | waiting for presentation samples", self.status);
+        }
+        let average_ms = self
+            .recent_intervals
+            .iter()
+            .map(|(_, interval)| interval)
+            .sum::<f64>()
+            / self.recent_intervals.len() as f64;
+        format!(
+            "PresentMon {:.1} FPS | dropped {} | {}",
+            1000.0 / average_ms.max(0.001),
+            self.dropped_presents,
+            self.status
+        )
+    }
+
+    fn finish(&mut self) {
+        if self.finished {
+            return;
+        }
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+            if self.status == "PresentMon running" || self.status == "PresentMon starting" {
+                self.status = "PresentMon stopped with RDP session".to_owned();
+            }
+        }
+        self.reader.take();
+        if self.delete_csv_on_drop {
+            let _ = std::fs::remove_file(&self.csv_path);
+        }
+        self.finished = true;
+    }
+
+    fn read_available_rows(&mut self) {
+        if self.reader.is_none() {
+            let Ok(file) = File::open(&self.csv_path) else {
+                return;
+            };
+            let mut reader = csv::ReaderBuilder::new().flexible(true).from_reader(file);
+            let Ok(headers) = reader.headers() else {
+                return;
+            };
+            let column = |names: &[&str]| {
+                headers.iter().position(|header| {
+                    let header = header.trim_start_matches('\u{feff}').trim();
+                    names.iter().any(|name| header.eq_ignore_ascii_case(name))
+                })
+            };
+            self.present_interval_column = column(&["MsBetweenPresents"]);
+            self.dropped_column = column(&["Dropped"]);
+            self.reader = Some(reader);
+        }
+        let Some(reader) = self.reader.as_mut() else {
+            return;
+        };
+        let now = Instant::now();
+        let interval_column = self.present_interval_column;
+        let dropped_column = self.dropped_column;
+        let intervals = &mut self.recent_intervals;
+        let dropped_presents = &mut self.dropped_presents;
+        let _ = read_available_csv_records(reader, |record| {
+            if let Some(index) = interval_column {
+                if let Some(interval) = record
+                    .get(index)
+                    .and_then(|value| value.trim().parse::<f64>().ok())
+                    .filter(|value| *value > 0.0)
+                {
+                    intervals.push_back((now, interval));
+                }
+            }
+            if let Some(index) = dropped_column {
+                if record
+                    .get(index)
+                    .map(|value| {
+                        matches!(
+                            value.trim().to_ascii_lowercase().as_str(),
+                            "1" | "true" | "yes"
+                        )
+                    })
+                    .unwrap_or(false)
+                {
+                    *dropped_presents += 1;
+                }
+            }
+        });
+    }
+}
+
+#[cfg(windows)]
+impl Drop for PresentMonCapture {
+    fn drop(&mut self) {
+        self.finish();
     }
 }
 
@@ -2079,10 +2510,13 @@ fn wipe_string(value: &mut String) {
 #[cfg(test)]
 mod tests {
     use super::{
-        coalesce_dirty_rects, special_key_virtual_code, take_pressed_key, wheel_delta_to_rdp,
-        DirtyFrameMode, DirtyRect, Framebuffers, RdpFrame, RemoteKey, SharedState,
+        coalesce_dirty_rects, read_available_csv_records, special_key_virtual_code,
+        take_pressed_key, wheel_delta_to_rdp, DirtyFrameMode, DirtyRect, Framebuffers, RdpFrame,
+        RdpPerfStats, RemoteKey, SharedState,
     };
     use std::collections::HashMap;
+    use std::fs::{File, OpenOptions};
+    use std::io::Write;
 
     #[cfg(windows)]
     use slint::{Rgba8Pixel, SharedPixelBuffer};
@@ -2124,6 +2558,69 @@ mod tests {
         assert_eq!(wheel_delta_to_rdp(-10_000.0), Some((true, 255)));
         assert_eq!(wheel_delta_to_rdp(0.0), None);
         assert_eq!(wheel_delta_to_rdp(f32::NAN), None);
+    }
+
+    #[test]
+    fn recorded_performance_report_is_flushed_as_redacted_json() {
+        let path = std::env::temp_dir().join(format!(
+            "chuzi-rdp-perf-test-{}-{}.log",
+            std::process::id(),
+            super::performance_session_id()
+        ));
+        let stats = RdpPerfStats::configured(
+            DirtyFrameMode::Optimized,
+            true,
+            Some(File::create(&path).expect("test performance log should open")),
+            false,
+        );
+        stats.report_if_due(true);
+        drop(stats);
+
+        let output = std::fs::read_to_string(&path).expect("performance record should flush");
+        let _ = std::fs::remove_file(path);
+        let json = output
+            .strip_prefix("rdp_perf ")
+            .expect("record should retain analyzer prefix")
+            .trim();
+        let record: serde_json::Value =
+            serde_json::from_str(json).expect("performance record should be valid JSON");
+        assert_eq!(record["dirty_frame_mode"], "optimized");
+        assert!(record.get("actual_copy_bytes").is_some());
+        assert!(record.get("host").is_none());
+        assert!(record.get("password").is_none());
+    }
+
+    #[test]
+    fn performance_csv_reader_follows_appended_rows_after_eof() {
+        let path = std::env::temp_dir().join(format!(
+            "chuzi-rdp-perf-csv-test-{}-{}.csv",
+            std::process::id(),
+            super::performance_session_id()
+        ));
+        std::fs::write(&path, "value\nfirst\n").expect("test CSV should be created");
+        let file = File::open(&path).expect("test CSV should open");
+        let mut reader = csv::Reader::from_reader(file);
+        let _ = reader.headers().expect("test CSV header should parse");
+        let mut values = Vec::new();
+        read_available_csv_records(&mut reader, |record| {
+            values.push(record.get(0).unwrap_or_default().to_owned());
+        })
+        .expect("initial CSV rows should parse");
+
+        OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("test CSV should reopen for append")
+            .write_all(b"second\n")
+            .expect("test CSV row should append");
+        read_available_csv_records(&mut reader, |record| {
+            values.push(record.get(0).unwrap_or_default().to_owned());
+        })
+        .expect("appended CSV rows should parse");
+        drop(reader);
+        let _ = std::fs::remove_file(path);
+
+        assert_eq!(values, ["first", "second"]);
     }
 
     #[test]

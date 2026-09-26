@@ -2,7 +2,7 @@ mod desktop_rdp;
 mod models;
 
 use base64::Engine;
-use desktop_rdp::{DesktopRdpController, RdpTarget};
+use desktop_rdp::{DesktopRdpController, RdpPerformanceOptions, RdpTarget};
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
     CoreRequest, CoreStatus, DiagnosticStatus, SubmitResult, UiPreferences,
@@ -588,8 +588,16 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let desktop_rdp_state: Rc<RefCell<Option<DesktopRdpController>>> = Rc::new(RefCell::new(None));
     schedule_rdp_status_poll(ui.as_weak(), desktop_rdp_state.clone());
     let desktop_rdp_slot = desktop_rdp_state.clone();
+    let performance_data_root = state.lock().unwrap().data_root.clone();
     ui.on_connect_rdp(
-        move |host, port, domain, username, password, allow_untrusted_certificate| {
+        move |host,
+              port,
+              domain,
+              username,
+              password,
+              allow_untrusted_certificate,
+              show_hud,
+              record_performance| {
             let host = host.to_string().trim().to_owned();
             let port_text = port.to_string();
             let domain = domain.to_string().trim().to_owned();
@@ -626,7 +634,12 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                 target.allow_untrusted_certificate = allow_untrusted_certificate;
                 window.set_rdp_password("".into());
                 window.set_rdp_status(format!("正在打开 RDP 窗体（目标：{host}:{port}）…").into());
-                match DesktopRdpController::new_with_target(target) {
+                let options = RdpPerformanceOptions {
+                    show_hud,
+                    record: record_performance,
+                    data_dir: performance_data_root.clone(),
+                };
+                match DesktopRdpController::new_with_target_and_performance(target, options) {
                     Ok(controller) => {
                         *desktop_rdp_slot.borrow_mut() = Some(controller);
                         window.set_message("RDP 窗体已打开，FreeRDP 正在连接…".into());
