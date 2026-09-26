@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(launcher): route Windows UI Core calls through launcher
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: b16132fbd30f334a3184bb2811bf15cfa2853bb9
+Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
+Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
 Integrated Result: pending
 
 ## Summary

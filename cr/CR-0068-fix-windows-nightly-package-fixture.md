@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(build): include Windows browser launcher in nightly fixture
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 9b87d80531156db7aa8d4cba22e5c8b377bad442
+Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
+Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
 Integrated Result: pending
 
 ## Summary

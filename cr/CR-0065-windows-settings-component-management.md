@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add Settings component management
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: b6e579e2e8e8462cd75b990f2a22a05b0d92d914
+Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
+Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
 Integrated Result: pending
 
 ## Summary

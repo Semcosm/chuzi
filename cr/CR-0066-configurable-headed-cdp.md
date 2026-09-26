@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add configurable headed and headless CDP runtime
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: e44b53048b566f4a8722bf32b353aa7d44ccd73c
+Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
+Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
 Integrated Result: pending
 
 ## Summary

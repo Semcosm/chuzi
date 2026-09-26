@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(browser): add on-demand headless browser views
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: aa1feda74e3a4b6b328a7311a3fd970e1e92d0c0
+Base OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
+Head OID: 2a69ed603dd8acbb2a61af16f25999f7b7b0946f
 Integrated Result: pending
 
 ## Summary
