@@ -5,7 +5,7 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ci): parallelize Windows Slint validation and packaging
-Revision: 2
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -15,46 +15,54 @@ Integrated Result: pending
 
 ## Summary
 
-Split the Windows Slint layout snapshot check into its own Windows job so it
-runs alongside the installer packaging job. Add bounded, explicit polling
-timeouts to installer setup and the installed-client smoke test so a stuck
-process cannot consume the full job timeout.
+Split the Windows Slint workflow into independent compile, layout, packaging,
+and runtime boundaries. Compile the Windows UI once and hand the executable to
+the packaging job; the layout job uses a feature that skips FreeRDP bindgen.
+Wait for Inno Setup through PowerShell's process-tree wait and keep a bounded,
+explicit polling timeout only around the installed-client smoke test.
 
 ## Motivation
 
-The Windows Slint job performed FreeRDP setup, layout rendering, installer
-packaging, and runtime smoke tests serially. The layout check and installer
-payload build are independent, so serial execution made this job the slowest
-stage of the build. The previous installer and installed-client smoke test
-launches could also wait indefinitely when a process failed to exit.
+The Windows Slint job performed FreeRDP setup, layout rendering, UI
+compilation, installer packaging, and runtime smoke tests in one long chain.
+The layout check repeated the same FreeRDP and bindgen setup as the installer
+job, and the installer job compiled the UI immediately before packaging it.
+The installer smoke test had also been changed to poll only the top-level Inno
+Setup process. Inno Setup creates a temporary child executable for the actual
+transaction, so that polling could kill a valid install while the child was
+still running. PowerShell's `Start-Process -Wait` waits the process tree and is
+the behavior used by the last successful Windows Slint run.
 
 ## Test Evidence
 
 `scripts/test_build_contract.sh`, `scripts/validate_action_pinning.sh`,
 repository shape validation, quality and supply-chain profile validation, and
-`git diff --check` pass. The Windows Actions run is required to verify the
-parallel job graph, PowerShell syntax, installer timeout, and installer
-smoke-test behavior.
+`git diff --check` pass. Windows Actions runs are required to verify the
+compile artifact handoff, dependency-free layout feature, parallel job graph,
+PowerShell syntax, process-tree installer waiting, and installer smoke-test
+behavior.
 
 ## Risk
 
-The layout job duplicates the Windows dependency setup on a separate runner,
-but its wall-clock work overlaps the installer job. Both jobs retain the same
-Rust, FreeRDP, and bindgen inputs. An installer that exceeds 120 seconds or a
-smoke test that exceeds 60 seconds now fails explicitly and terminates its
-child process. The installer stays in its normal windowed process mode because
-Inno Setup can leave its temporary child running with `-NoNewWindow`.
+The compile job remains the only job that installs FreeRDP and runs bindgen. The
+layout and packaging jobs consume separate outputs and can run concurrently
+with compile where their inputs permit. The installer is waited through its
+complete process tree, then the installed executable and shipped core payload
+are verified. The client smoke test retains a 60-second diagnostic bound and
+terminates only that client process if it fails to exit. The installer stays in
+its normal windowed process mode because Inno Setup can leave its temporary
+child running with `-NoNewWindow`.
 
 ## Rollback
 
-Revert the workflow split and restore the layout step to
-`chuzi-build-windows-slint`; remove the smoke-test timeout if the previous
-behavior is required for diagnosis.
+Revert the workflow split and restore the layout and UI compilation steps to
+`chuzi-build-windows-slint`; remove the prebuilt binary option and smoke-test
+timeouts if the previous behavior is required for diagnosis.
 
 ## Breaking Change
 
 None to release artifacts or application protocols. The aggregate build check
-now requires the additional layout validation job.
+now requires the compile, layout, and packaging jobs.
 
 ## Backport Target
 

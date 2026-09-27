@@ -178,13 +178,14 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  windows_slint_layout:
-    name: chuzi-build-windows-slint-layout
+  windows_slint_build:
+    name: chuzi-build-windows-slint-build
     runs-on: windows-2022
-    timeout-minutes: 20
+    timeout-minutes: 30
     needs: [contract_checks]
     permissions:
       contents: read
+      actions: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -231,14 +232,45 @@ jobs:
           "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
           'RUSTFLAGS=-C target-feature=+crt-static' >> $env:GITHUB_ENV
           & $vcpkg install 'freerdp[client]:x64-windows-static'
+      - name: Build Slint Windows executable
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --manifest-path ui/windows/Cargo.toml --target x86_64-pc-windows-msvc --locked --release
+          $binary = Join-Path $env:GITHUB_WORKSPACE 'ui/windows/target/x86_64-pc-windows-msvc/release/chuzi-native-windows.exe'
+          if (-not (Test-Path $binary)) { throw "Slint Windows executable is missing: $binary" }
+      - name: Upload prebuilt Slint Windows executable
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-windows-slint-binary
+          path: ui/windows/target/x86_64-pc-windows-msvc/release/chuzi-native-windows.exe
+          if-no-files-found: error
+          retention-days: 1
 
-
+  windows_slint_layout:
+    name: chuzi-build-windows-slint-layout
+    runs-on: windows-2022
+    timeout-minutes: 20
+    needs: [contract_checks]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+      - name: Prepare Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
+          rustup default stable-x86_64-pc-windows-msvc
+          rustc --version
+          cargo --version
       - name: Check Slint layout at multiple viewports
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $output = Join-Path $env:RUNNER_TEMP 'chuzi-layout'
-          cargo run --manifest-path ui/windows/Cargo.toml --locked `
+          cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked `
             --example layout_snapshot -- `
             --output $output
           foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
@@ -254,7 +286,7 @@ jobs:
     name: chuzi-build-windows-slint
     runs-on: windows-2022
     timeout-minutes: 45
-    needs: [release_context, go_build, node_checks]
+    needs: [release_context, go_build, node_checks, windows_slint_build]
     permissions:
       contents: read
       actions: write
@@ -266,48 +298,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: Prepare Rust toolchain
-        shell: pwsh
-        run: |
-          rustup toolchain install stable-x86_64-pc-windows-msvc --profile minimal
-          rustup default stable-x86_64-pc-windows-msvc
-          rustc --version
-          cargo --version
-      - name: Prepare FreeRDP and bindgen dependencies
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $vcpkgRoot = $env:VCPKG_INSTALLATION_ROOT
-          if ([string]::IsNullOrWhiteSpace($vcpkgRoot)) {
-            throw 'VCPKG_INSTALLATION_ROOT is not available on the Windows runner'
-          }
-          $vcpkg = Join-Path $vcpkgRoot 'vcpkg.exe'
-          if (-not (Test-Path $vcpkg)) {
-            throw "vcpkg executable is missing: $vcpkg"
-          }
-          $llvmCandidates = @(
-            (Join-Path ${env:ProgramFiles} 'LLVM\bin'),
-            (Join-Path ${env:ProgramFiles(x86)} 'LLVM\bin')
-          )
-          $clang = Get-Command clang.exe -ErrorAction SilentlyContinue
-          if ($null -ne $clang) {
-            $llvmCandidates += Split-Path -Parent $clang.Source
-          }
-          $llvmBin = $llvmCandidates |
-            Where-Object { Test-Path (Join-Path $_ 'libclang.dll') } |
-            Select-Object -First 1
-          if ([string]::IsNullOrWhiteSpace($llvmBin)) {
-            throw 'libclang.dll is missing from the Windows runner LLVM installation'
-          }
-          $env:VCPKG_ROOT = $vcpkgRoot
-          $env:VCPKGRS_TRIPLET = 'x64-windows-static'
-          $env:LIBCLANG_PATH = $llvmBin
-          $env:RUSTFLAGS = '-C target-feature=+crt-static'
-          "VCPKG_ROOT=$vcpkgRoot" >> $env:GITHUB_ENV
-          'VCPKGRS_TRIPLET=x64-windows-static' >> $env:GITHUB_ENV
-          "LIBCLANG_PATH=$llvmBin" >> $env:GITHUB_ENV
-          'RUSTFLAGS=-C target-feature=+crt-static' >> $env:GITHUB_ENV
-          & $vcpkg install 'freerdp[client]:x64-windows-static'
+      - name: Download prebuilt Slint Windows executable
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
+        with:
+          name: ci-windows-slint-binary
+          path: ${{ runner.temp }}/chuzi-ui-prebuilt
       - name: Assemble Core payload for the Slint package
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16
         with:
@@ -334,7 +329,7 @@ jobs:
           Copy-Item (Join-Path $env:RUNNER_TEMP 'chuzi-core-dist/windows-amd64/stage/*') $payload -Recurse -Force
       - name: Build self-contained Slint installer EXE
         shell: pwsh
-        run: ./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload"
+        run: ./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload" -PrebuiltBinaryPath "$env:RUNNER_TEMP\chuzi-ui-prebuilt\chuzi-native-windows.exe"
         env:
           CHUZI_BUILD_VERSION: ${{ needs.release_context.outputs.version }}
       - name: Test Windows Core named pipe
@@ -395,29 +390,19 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $installer = Join-Path $env:RUNNER_TEMP 'chuzi-ui\ChuziSetup.exe'
           $installDir = Join-Path ${env:ProgramFiles} 'Chuzi'
-          $installProcess = Start-Process -FilePath $installer `
+          Start-Process -FilePath $installer `
             -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') `
-            -PassThru
-          $installDeadline = [DateTime]::UtcNow.AddSeconds(120)
-          while (-not $installProcess.HasExited -and [DateTime]::UtcNow -lt $installDeadline) {
-            Start-Sleep -Milliseconds 500
-          }
-          if (-not $installProcess.HasExited) {
-            Stop-Process -Id $installProcess.Id -Force -ErrorAction SilentlyContinue
-            Get-Process -Name 'ChuziSetup*' -ErrorAction SilentlyContinue |
-              Stop-Process -Force -ErrorAction SilentlyContinue
-            throw 'Slint installer timed out after 120 seconds'
-          }
-          if ($installProcess.ExitCode -ne 0) {
-            throw "Slint installer failed with exit code $($installProcess.ExitCode)"
-          }
+            -Wait
           $exe = Join-Path $installDir 'Chuzi.Native.Windows.exe'
           if (-not (Test-Path $exe)) { throw "Installed Slint executable is missing: $exe" }
           $smoke = Start-Process -FilePath $exe -ArgumentList @('--smoke-test') -PassThru -NoNewWindow
           $smokeDeadline = [DateTime]::UtcNow.AddSeconds(60)
-          while (-not $smoke.HasExited -and [DateTime]::UtcNow -lt $smokeDeadline) {
+          while ([DateTime]::UtcNow -lt $smokeDeadline) {
+            $smoke.Refresh()
+            if ($smoke.HasExited) { break }
             Start-Sleep -Milliseconds 500
           }
+          $smoke.Refresh()
           if (-not $smoke.HasExited) {
             Stop-Process -Id $smoke.Id -Force -ErrorAction SilentlyContinue
             throw 'Installed Slint smoke test timed out after 60 seconds'
@@ -599,7 +584,7 @@ jobs:
   chuzi_build:
     name: chuzi-build
     if: always()
-    needs: [release_context, contract_checks, go_checks, node_checks, go_build, windows_slint_layout, windows_slint, assemble_target, artifact_integration]
+    needs: [release_context, contract_checks, go_checks, node_checks, go_build, windows_slint_build, windows_slint_layout, windows_slint, assemble_target, artifact_integration]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every build stage
@@ -611,6 +596,7 @@ jobs:
             "${{ needs.go_checks.result }}" \
             "${{ needs.node_checks.result }}" \
             "${{ needs.go_build.result }}" \
+            "${{ needs.windows_slint_build.result }}" \
             "${{ needs.windows_slint_layout.result }}" \
             "${{ needs.windows_slint.result }}" \
             "${{ needs.assemble_target.result }}"; do
