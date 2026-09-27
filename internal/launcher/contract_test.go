@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -72,16 +73,77 @@ func TestBehaviorSettingsValidation(t *testing.T) {
 func TestManifestValidatesPluginCapabilities(t *testing.T) {
 	manifest := ReleaseManifest{
 		Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-1", Target: "windows-amd64",
+		Components: []Component{{ID: "browser-worker", Version: "nightly-1"}},
 		Plugins: []PluginDescriptor{{
 			ID: "bettergi", Version: "0.1.0", API: PluginAPIV1,
-			Capabilities: []string{"bettergi.session.v1"}, Installable: false,
+			Capabilities: []string{"bettergi.session.v1"}, Installable: false, SourceComponent: "browser-worker",
 		}},
 	}
 	if err := manifest.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	manifest.Plugins[0].SourceComponent = ""
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("builtin adapter without a source component was accepted")
+	}
+	manifest.Plugins[0].SourceComponent = "browser-worker"
 	manifest.Plugins[0].Capabilities = []string{"bettergi.session.v1", "bettergi.session.v1"}
 	if err := manifest.Validate(); err == nil {
 		t.Fatal("duplicate plugin capability was accepted")
+	}
+}
+
+func TestManifestValidatesAdapterDistribution(t *testing.T) {
+	manifest := ReleaseManifest{
+		Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-1", Target: "linux-amd64",
+		Components: []Component{{ID: "browser-worker", Version: "nightly-1"}},
+		Plugins: []PluginDescriptor{{
+			ID: "genshin", Version: "nightly-1", API: AdapterAPIV1,
+			Distribution: PluginDistributionBuiltin, SourceComponent: "browser-worker",
+			Capabilities: []string{"genshin-cloudgame@1"},
+		}},
+	}
+	if err := manifest.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	manifest.Plugins[0].Archive = "genshin.tar.gz"
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("builtin adapter archive was accepted")
+	}
+	manifest.Plugins[0].Distribution = PluginDistributionPackage
+	manifest.Plugins[0].Installable = true
+	manifest.Plugins[0].SHA256 = strings.Repeat("a", 64)
+	if err := manifest.Validate(); err != nil {
+		t.Fatalf("package adapter validation = %v", err)
+	}
+}
+
+func TestReleaseIndexExcludesBuiltinAdapterArtifacts(t *testing.T) {
+	commit := strings.Repeat("e", 40)
+	manifest := ReleaseManifest{
+		Format: ManifestFormat, Channel: ChannelNightly, Version: "nightly-4", Commit: commit, Target: "linux-amd64",
+		Components: []Component{{ID: "browser-worker", Version: "nightly-4", Artifact: "browser-worker.tar.gz"}},
+		Plugins: []PluginDescriptor{{
+			ID: "genshin", Version: "nightly-4", API: AdapterAPIV1,
+			Distribution: PluginDistributionBuiltin, SourceComponent: "browser-worker",
+		}},
+	}
+	index := ReleaseIndex{
+		Format: ReleaseIndexFormat, Channel: manifest.Channel, Version: manifest.Version,
+		Commit: commit, Target: manifest.Target, Manifest: manifest,
+		Artifacts: []ReleaseArtifact{{
+			Component: "browser-worker", Target: manifest.Target, Version: manifest.Version,
+			Path: "browser-worker.tar.gz", Size: 1, SHA256: strings.Repeat("a", 64),
+		}},
+	}
+	if err := index.Validate(); err != nil {
+		t.Fatalf("builtin adapter index validation = %v", err)
+	}
+	index.Artifacts = append(index.Artifacts, ReleaseArtifact{
+		Component: "genshin", Target: manifest.Target, Version: manifest.Version,
+		Path: "genshin.tar.gz", Size: 1, SHA256: strings.Repeat("b", 64),
+	})
+	if err := index.Validate(); err == nil {
+		t.Fatal("builtin adapter artifact was accepted")
 	}
 }

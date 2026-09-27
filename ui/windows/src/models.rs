@@ -54,6 +54,10 @@ pub(crate) struct PluginDescriptor {
     #[serde(default)]
     pub(crate) api: String,
     #[serde(default)]
+    pub(crate) distribution: String,
+    #[serde(default)]
+    pub(crate) source_component: String,
+    #[serde(default)]
     pub(crate) target: String,
     #[serde(default)]
     pub(crate) capabilities: Vec<String>,

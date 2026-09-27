@@ -109,8 +109,16 @@ def main() -> int:
         if plugin_id in declared_ids:
             raise SystemExit(f"duplicate release manifest item id: {plugin_id}")
         declared_ids.add(plugin_id)
-        if not plugin.get("installable"):
+        distribution = plugin.get("distribution") or ("package" if plugin.get("installable") else "builtin")
+        if distribution == "builtin":
+            source_component = plugin.get("source_component")
+            if not isinstance(source_component, str) or source_component not in {item.get("id") for item in manifest_components if isinstance(item, dict)}:
+                raise SystemExit(f"builtin adapter source component is invalid: {plugin_id}")
+            if plugin.get("installable") or plugin.get("archive") or plugin.get("sha256"):
+                raise SystemExit(f"builtin adapter cannot declare an install artifact: {plugin_id}")
             continue
+        if distribution != "package" or not plugin.get("installable"):
+            raise SystemExit(f"release manifest plugin distribution is invalid: {plugin_id}")
         artifact_ids.add(plugin_id)
         archive = plugin.get("archive")
         if not safe_relative_path(archive):

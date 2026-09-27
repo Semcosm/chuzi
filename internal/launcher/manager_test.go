@@ -278,6 +278,36 @@ func TestFilesystemPluginManagerTrustAndArchiveSafety(t *testing.T) {
 	}
 }
 
+func TestBuiltinAdapterFollowsSourceComponent(t *testing.T) {
+	root := t.TempDir()
+	manager, err := NewFilesystemManager(ManagerOptions{
+		InstallRoot: root,
+		Manifest: ReleaseManifest{
+			Format: ManifestFormat, Channel: ChannelNightly, Version: "1", Target: "linux-amd64",
+			Components: []Component{{ID: "browser-worker", Version: "1"}},
+			Plugins:    []PluginDescriptor{{ID: "genshin", Version: "1", API: PluginAPIV1, Distribution: PluginDistributionBuiltin, SourceComponent: "browser-worker", Capabilities: []string{"genshin-cloudgame@1"}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	states, err := manager.ListPlugins(context.Background())
+	if err != nil || len(states) != 1 || states[0].Health != HealthUnavailable || states[0].Installed {
+		t.Fatalf("missing source state = %#v, err=%v", states, err)
+	}
+	manager.data.Components["browser-worker"] = componentRecord{Installed: true, Enabled: true}
+	states, err = manager.ListPlugins(context.Background())
+	if err != nil || len(states) != 1 || states[0].Health != HealthIncluded || !states[0].Installed || !states[0].Trusted {
+		t.Fatalf("included source state = %#v, err=%v", states, err)
+	}
+	if _, err := manager.InstallPlugin(context.Background(), "genshin"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("builtin install error = %v", err)
+	}
+	if err := manager.RemovePlugin(context.Background(), "genshin"); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("builtin remove error = %v", err)
+	}
+}
+
 func TestArchiveExtractionRejectsTraversalLinksDuplicatesAndOversize(t *testing.T) {
 	archive := filepath.Join(t.TempDir(), "unsafe.zip")
 	file, err := os.Create(archive)

@@ -14,7 +14,7 @@ the operating-system color scheme:
 │ Chuzi                                                                       │
 ├───────────────┬─────────────────────────────────────────────────────────────┤
 │ Overview      │                                                             │
-│ Plugins       │                 selected Slint page                          │
+│ Adapters      │                 selected Slint page                          │
 │ Accounts      │                                                             │
 │ Tasks         │                                                             │
 │               │                                                             │
@@ -32,7 +32,7 @@ resolved data directory, lifecycle actions, and the first-run checklist.
 
 ```text
 Welcome to Chuzi
-Review Core status, configure components and plugins, and personalize the client from one place.
+Review Core status, configure components and adapters, and personalize the client from one place.
 
 ┌ Core status ────────────────────────────────────────────────┐
 │ Core is running / Core is stopped / Core is not installed    │
@@ -43,8 +43,8 @@ Review Core status, configure components and plugins, and personalize the client
 
 ┌ First-run checklist ────────────────────────────────────────┐
 │ 1. Install Core from Settings > Components                    │
-│ 2. Start Core to unlock account and plugin actions            │
-│ 3. Review components and plugins                              │
+│ 2. Start Core to unlock account and adapter actions           │
+│ 3. Review components and adapters                             │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,7 +61,7 @@ native controls and the content surface update together. The UI-only choice is
 stored in `.chuzi-ui-settings.json` below the resolved Chuzi data directory;
 launcher behavior settings remain in the launcher's validated settings file.
 
-The snapshot example also accepts `--page overview|plugins|accounts|tasks|rdp|settings`
+The snapshot example also accepts `--page overview|adapters|accounts|tasks|rdp|settings` and `--adapter-state empty|builtin|package`.
 so each page can be checked at the supported window sizes.
 
 ### Components
@@ -72,14 +72,13 @@ disablement, and removal. Core lifecycle status and start/stop actions remain
 on Overview and in the Settings Core group; component operations do not require
 Core to be running.
 
-### Plugins
+### Adapters
 
-Plugins displays a security-oriented summary and lifecycle actions. Core must
-be running before refresh, install, trust, enable, or remove actions are
-enabled. All actions are delegated to the launcher; the UI never opens the Core
-endpoint. The current release exposes launcher package/trust state. A separate
-Core adapter registry and runtime health projection still require the adapter
-manager increment described in the roadmap.
+Adapters displays the release catalog and the lifecycle actions supported by each
+entry. Core must be running before refresh or package changes are enabled. Built-in
+entries show their source component and availability; package entries expose the
+explicit install, trust, enable, and remove actions. All actions are delegated to
+the launcher; the UI never opens the Core endpoint.
 
 ### Accounts
 
@@ -255,7 +254,7 @@ runner as part of the Slint build job.
 - Route Core lifecycle and API operations through the launcher façade. The
   launcher owns the owner-only named pipe; the optional HTTP health listener
   remains disabled by default.
-- Keep plugin trust and removal actions explicit; an untrusted plugin cannot be
+- Keep adapter trust and removal actions explicit; an untrusted adapter cannot be
   enabled.
 - Keep theme state UI-local. Do not add presentation-only fields to the Core
   launcher's strict behavior-settings contract.

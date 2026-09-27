@@ -77,8 +77,15 @@ def main() -> int:
         if plugin_id in names or plugin_id in plugin_descriptors:
             raise SystemExit(f"manifest plugin ID collides with another release item: {plugin_id}")
         plugin_descriptors[plugin_id] = plugin
-        if not plugin.get("installable"):
+        distribution = plugin.get("distribution") or ("package" if plugin.get("installable") else "builtin")
+        if distribution == "builtin":
+            if not isinstance(plugin.get("source_component"), str) or plugin["source_component"] not in {item.get("id") for item in manifest.get("components", []) if isinstance(item, dict)}:
+                raise SystemExit(f"builtin plugin source component is invalid: {plugin_id}")
+            if plugin.get("installable") or plugin.get("archive") or plugin.get("sha256"):
+                raise SystemExit(f"builtin plugin cannot declare an install artifact: {plugin_id}")
             continue
+        if distribution != "package" or not plugin.get("installable"):
+            raise SystemExit(f"manifest plugin distribution is invalid: {plugin_id}")
         archive = plugin.get("archive")
         if not safe_relative_path(archive):
             raise SystemExit(f"installable plugin archive path is unsafe: {plugin_id}")

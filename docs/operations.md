@@ -166,7 +166,8 @@ Test 允许新代码带有未知问题，只能发布 test catalog。Nightly 只
 macOS SwiftUI 和 Linux GTK 客户端待后续 CR。所有平台 UI 都通过 Stable API Boundary
 调用同一 CLI/Core 能力，不复制文件、下载、校验、执行插件、授予 signer 信任或实现回滚策略。诊断输出不得记录
 凭证或启动器响应 payload。
-Nightly 的 `plugins` 列表默认为空，不能将组件包误认为已实现插件生态。
+Nightly 的适配器清单会列出随 `browser-worker` 内置的适配器能力；只有声明
+`distribution: package` 且带归档和 SHA-256 的适配器才提供独立安装包。不能将组件包误认为适配器包。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链，目标矩阵为：
 

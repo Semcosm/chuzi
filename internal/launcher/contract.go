@@ -15,12 +15,15 @@ import (
 )
 
 const (
-	ManifestFormat     = "chuzi-release/v1"
-	ReleaseIndexFormat = "chuzi-release-index/v1"
-	ChannelNightly     = "nightly"
-	ChannelTest        = "test"
-	ChannelStable      = "stable"
-	PluginAPIV1        = "chuzi.plugin/v1"
+	ManifestFormat            = "chuzi-release/v1"
+	ReleaseIndexFormat        = "chuzi-release-index/v1"
+	ChannelNightly            = "nightly"
+	ChannelTest               = "test"
+	ChannelStable             = "stable"
+	PluginAPIV1               = "chuzi.plugin/v1"
+	AdapterAPIV1              = "chuzi.adapter/v1"
+	PluginDistributionBuiltin = "builtin"
+	PluginDistributionPackage = "package"
 )
 
 var (
@@ -41,6 +44,8 @@ const (
 	HealthDisabled     = "disabled"
 	HealthUntrusted    = "untrusted"
 	HealthNotInstalled = "not_installed"
+	HealthIncluded     = "included"
+	HealthUnavailable  = "unavailable"
 )
 
 // ReleaseManifest is the signed/verified metadata a launcher consumes before
@@ -115,7 +120,7 @@ func (i ReleaseIndex) Validate() error {
 			return fmt.Errorf("%w: manifest id %q collides with release artifact namespace", ErrInvalidManifest, plugin.ID)
 		}
 		declaredIDs[plugin.ID] = struct{}{}
-		if plugin.Installable {
+		if plugin.distribution() == PluginDistributionPackage {
 			declaredArtifacts[plugin.ID] = struct{}{}
 		}
 	}
@@ -161,7 +166,7 @@ func (i ReleaseIndex) Validate() error {
 		}
 	}
 	for _, plugin := range i.Manifest.Plugins {
-		if !plugin.Installable {
+		if plugin.distribution() != PluginDistributionPackage {
 			continue
 		}
 		artifact, ok := i.Artifact(plugin.ID)
@@ -211,19 +216,36 @@ type Resource struct {
 	Size   int64  `json:"size"`
 }
 
-// PluginDescriptor describes an adapter that can be managed independently of
-// the core release. The launcher never grants permissions implicitly.
+// PluginDescriptor describes an adapter exposed by the release. Built-in
+// adapters follow their source component; package adapters are managed
+// independently and never receive permissions implicitly.
 type PluginDescriptor struct {
-	ID           string   `json:"id"`
-	Version      string   `json:"version"`
-	API          string   `json:"api"`
-	Target       string   `json:"target,omitempty"`
-	Archive      string   `json:"archive,omitempty"`
-	SHA256       string   `json:"sha256,omitempty"`
-	Capabilities []string `json:"capabilities,omitempty"`
-	Permissions  []string `json:"permissions,omitempty"`
-	SignedBy     string   `json:"signed_by,omitempty"`
-	Installable  bool     `json:"installable"`
+	ID              string   `json:"id"`
+	Version         string   `json:"version"`
+	API             string   `json:"api"`
+	Distribution    string   `json:"distribution,omitempty"`
+	SourceComponent string   `json:"source_component,omitempty"`
+	Target          string   `json:"target,omitempty"`
+	Archive         string   `json:"archive,omitempty"`
+	SHA256          string   `json:"sha256,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
+	Permissions     []string `json:"permissions,omitempty"`
+	SignedBy        string   `json:"signed_by,omitempty"`
+	Installable     bool     `json:"installable"`
+}
+
+func (p PluginDescriptor) distribution() string {
+	if strings.TrimSpace(p.Distribution) != "" {
+		return p.Distribution
+	}
+	if p.Installable {
+		return PluginDistributionPackage
+	}
+	return PluginDistributionBuiltin
+}
+
+func (p PluginDescriptor) builtin() bool {
+	return p.distribution() == PluginDistributionBuiltin
 }
 
 func (m ReleaseManifest) Validate() error {
@@ -283,7 +305,7 @@ func (m ReleaseManifest) Validate() error {
 	}
 	seenPlugins := make(map[string]struct{}, len(m.Plugins))
 	for _, plugin := range m.Plugins {
-		if strings.TrimSpace(plugin.ID) == "" || strings.TrimSpace(plugin.Version) == "" || plugin.API != PluginAPIV1 {
+		if strings.TrimSpace(plugin.ID) == "" || strings.TrimSpace(plugin.Version) == "" || (plugin.API != PluginAPIV1 && plugin.API != AdapterAPIV1) {
 			return fmt.Errorf("%w: plugin %q has invalid id, version, or api", ErrInvalidManifest, plugin.ID)
 		}
 		if !validIdentifier(plugin.ID) {
@@ -314,8 +336,23 @@ func (m ReleaseManifest) Validate() error {
 		if plugin.SHA256 != "" && !validSHA256(plugin.SHA256) {
 			return fmt.Errorf("%w: plugin %s has invalid sha256", ErrInvalidManifest, plugin.ID)
 		}
-		if plugin.Installable && (plugin.Archive == "" || plugin.SHA256 == "") {
-			return fmt.Errorf("%w: installable plugin %s requires archive and sha256", ErrInvalidManifest, plugin.ID)
+		switch plugin.distribution() {
+		case PluginDistributionBuiltin:
+			if plugin.Installable || plugin.Archive != "" || plugin.SHA256 != "" {
+				return fmt.Errorf("%w: builtin plugin %s cannot declare an install archive", ErrInvalidManifest, plugin.ID)
+			}
+			if strings.TrimSpace(plugin.SourceComponent) == "" {
+				return fmt.Errorf("%w: builtin plugin %s requires a source component", ErrInvalidManifest, plugin.ID)
+			}
+			if _, ok := seenComponents[plugin.SourceComponent]; !ok {
+				return fmt.Errorf("%w: builtin plugin %s references unknown source component %q", ErrInvalidManifest, plugin.ID, plugin.SourceComponent)
+			}
+		case PluginDistributionPackage:
+			if !plugin.Installable || plugin.Archive == "" || plugin.SHA256 == "" {
+				return fmt.Errorf("%w: package plugin %s requires installable archive and sha256", ErrInvalidManifest, plugin.ID)
+			}
+		default:
+			return fmt.Errorf("%w: plugin %s has unknown distribution %q", ErrInvalidManifest, plugin.ID, plugin.Distribution)
 		}
 		if plugin.Target != "" && plugin.Target != m.Target {
 			return fmt.Errorf("%w: plugin %s target does not match manifest", ErrInvalidManifest, plugin.ID)
