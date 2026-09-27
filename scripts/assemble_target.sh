@@ -36,6 +36,15 @@ if [ "$target" = "windows-amd64" ]; then
   chmod 0755 "$stage_dir/$browser_launcher_binary"
 fi
 tar -xzf "$worker_archive" -C "$stage_dir/browser-worker"
+adapter_extension=tar.gz
+if [ "$target" = "windows-amd64" ]; then
+  adapter_extension=zip
+fi
+adapter_archive="$target_dir/chuzi-${version}-${target}-genshin-cloudgame.${adapter_extension}"
+adapter_manifest="$target_dir/genshin-cloudgame-adapter-manifest.json"
+python3 "$repo_root/scripts/build_adapter_package.py" \
+  --source "$repo_root/browser-worker/adapters/genshin-cloudgame" \
+  --output "$adapter_archive" --manifest-output "$adapter_manifest" --version "$version"
 
 commit="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
 python3 - "$stage_dir/build-manifest.json" "$target" "$version" "$commit" "$goos" "$goarch" <<'PY'
@@ -61,6 +70,7 @@ case "$version" in
   test-*) channel=test ;;
 esac
 python3 "$repo_root/scripts/generate_release_manifest.py" \
-  --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit" --channel "$channel"
+  --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit" --channel "$channel" \
+  --adapter-archive "$adapter_archive" --adapter-manifest "$adapter_manifest"
 
 echo "assembled $target at $stage_dir"

@@ -49,6 +49,14 @@ def normalise_member(name: str) -> str:
     return "/".join(parts)
 
 
+def safe_relative_path(value: object) -> bool:
+    if (not isinstance(value, str) or not value or \
+            "\\" in value or value.startswith("/") or "\x00" in value):
+        return False
+    parts = value.split("/")
+    return all(part not in ("", ".", "..") for part in parts)
+
+
 def archive_members(path: Path, extension: str):
     if extension == "zip":
         with zipfile.ZipFile(path) as archive:
@@ -137,6 +145,43 @@ def validate_bundle(path: Path, extension: str, manifest: dict, target: str, ver
             data = members[name]
             if resource.get("size") != len(data) or hashlib.sha256(data).hexdigest().lower() != str(resource.get("sha256", "")).lower():
                 raise ValueError(f"{path.name} resource digest mismatch: {name}")
+
+
+def validate_adapter_archive(path: Path, extension: str, plugin: dict, target: str, version: str) -> None:
+    members = dict(archive_members(path, extension))
+    manifest_data = members.get("adapter-manifest.json")
+    if manifest_data is None:
+        raise ValueError(f"{path.name} is missing adapter-manifest.json")
+    try:
+        adapter_manifest = json.loads(manifest_data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{path.name} has an invalid adapter manifest: {exc}") from exc
+    if adapter_manifest.get("format") != "chuzi-adapter/v1":
+        raise ValueError(f"{path.name} adapter manifest format is invalid")
+    for field in ("id", "api", "version", "entry"):
+        if adapter_manifest.get(field) != plugin.get(field):
+            raise ValueError(f"{path.name} adapter manifest {field} differs from release manifest")
+    if adapter_manifest.get("version") != version or adapter_manifest.get("api") != "chuzi.adapter/v1":
+        raise ValueError(f"{path.name} adapter metadata does not match release")
+    entry = adapter_manifest.get("entry")
+    if not isinstance(entry, str) or not safe_relative_path(entry) or entry not in members:
+        raise ValueError(f"{path.name} adapter entry is invalid or missing")
+    resources = adapter_manifest.get("resources")
+    if not isinstance(resources, list) or not resources:
+        raise ValueError(f"{path.name} adapter resources are missing")
+    declared = set()
+    for resource in resources:
+        if not isinstance(resource, dict):
+            raise ValueError(f"{path.name} adapter resource is invalid")
+        resource_path = resource.get("path")
+        if not safe_relative_path(resource_path) or resource_path in declared or resource_path not in members:
+            raise ValueError(f"{path.name} adapter resource path is invalid: {resource_path}")
+        declared.add(resource_path)
+        data = members[resource_path]
+        if resource.get("size") != len(data) or not SHA256_RE.fullmatch(str(resource.get("sha256", ""))) or hashlib.sha256(data).hexdigest().lower() != resource["sha256"].lower():
+            raise ValueError(f"{path.name} adapter resource digest mismatch: {resource_path}")
+    if set(members) != declared | {"adapter-manifest.json"}:
+        raise ValueError(f"{path.name} contains undeclared adapter resources")
 
 
 def validate(args) -> dict:
@@ -269,12 +314,12 @@ def validate(args) -> dict:
         validate_archive(root / artifact["path"], extension, manifest, component)
     for plugin_id, plugin in installable_plugins.items():
         artifact = artifact_by_component[plugin_id]
-        if not valid_digest(plugin.get("sha256")) or plugin["sha256"].lower() != artifact["sha256"].lower():
+        if not SHA256_RE.fullmatch(str(plugin.get("sha256", ""))) or plugin["sha256"].lower() != artifact["sha256"].lower():
             raise ValueError(f"plugin digest metadata mismatch: {plugin_id}")
         plugin_extension = "zip" if artifact["path"].lower().endswith(".zip") else "tar.gz" if artifact["path"].lower().endswith(".tar.gz") else ""
         if not plugin_extension:
             raise ValueError(f"plugin archive extension is unsupported: {plugin_id}")
-        list(archive_members(root / artifact["path"], plugin_extension))
+        validate_adapter_archive(root / artifact["path"], plugin_extension, plugin, args.target, index["version"])
     bundle = artifact_by_component["bundle"]
     validate_bundle(root / bundle["path"], extension, manifest, args.target, index["version"], index["commit"])
     return {

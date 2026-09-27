@@ -13,6 +13,7 @@ import hashlib
 import json
 import sys
 import tarfile
+import io
 from pathlib import Path
 
 root = Path(sys.argv[1])
@@ -38,8 +39,27 @@ manifest = {
         {"id": "browser-worker", "version": version, "required": False, "resources": [
             {"path": "browser-worker/index.mjs", "sha256": hashlib.sha256(b"worker").hexdigest(), "size": 6},
         ], "artifact": f"chuzi-{version}-linux-amd64-browser-worker.tar.gz"},
-    ], "plugins": [{"id": "builtin", "version": version, "api": "chuzi.adapter/v1", "distribution": "builtin", "source_component": "browser-worker", "capabilities": ["genshin-cloudgame@1"], "installable": False}],
+    ], "plugins": [{"id": "genshin-cloudgame", "version": version, "api": "chuzi.adapter/v1", "entry": "adapter.mjs", "distribution": "package", "archive": f"chuzi-{version}-linux-amd64-genshin-cloudgame.tar.gz", "sha256": "", "capabilities": ["genshin-cloudgame@1"], "permissions": ["browser.cdp.loopback"], "signed_by": "chuzi-release", "installable": True}],
 }
+adapter_members = {
+    "adapter.mjs": b"export default {};",
+    "cdp-runtime.mjs": b"export default {};",
+}
+adapter_manifest = {
+    "format": "chuzi-adapter/v1", "id": "genshin-cloudgame", "api": "chuzi.adapter/v1",
+    "version": version, "entry": "adapter.mjs", "capabilities": ["genshin-cloudgame@1"],
+    "permissions": ["browser.cdp.loopback"], "targets": ["linux-amd64"], "signed_by": "chuzi-release",
+    "resources": [{"path": name, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)} for name, data in adapter_members.items()],
+}
+adapter_members["adapter-manifest.json"] = json.dumps(adapter_manifest).encode()
+adapter_path = artifact / f"chuzi-{version}-linux-amd64-genshin-cloudgame.tar.gz"
+with tarfile.open(adapter_path, "w:gz") as archive:
+    for name, data in adapter_members.items():
+        info = tarfile.TarInfo(name)
+        info.mode = 0o700
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+manifest["plugins"][0]["sha256"] = hashlib.sha256(adapter_path.read_bytes()).hexdigest()
 for name, members in files.items():
     members["release-manifest.json"] = json.dumps(manifest).encode() if name == "launcher" else members.get("release-manifest.json")
     members = {path: data for path, data in members.items() if data is not None}
@@ -82,6 +102,10 @@ for name in ["bundle", "launcher", "service", "browser-worker"]:
     digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
     artifacts.append({"component": name, "target": "linux-amd64", "version": version, "path": archive_name, "size": archive_path.stat().st_size, "sha256": digest})
     (artifact / f"{archive_name}.sha256").write_text(f"{digest}  {archive_name}\n", encoding="ascii")
+adapter_name = adapter_path.name
+adapter_digest = hashlib.sha256(adapter_path.read_bytes()).hexdigest()
+artifacts.append({"component": "genshin-cloudgame", "target": "linux-amd64", "version": version, "path": adapter_name, "size": adapter_path.stat().st_size, "sha256": adapter_digest})
+(artifact / f"{adapter_name}.sha256").write_text(f"{adapter_digest}  {adapter_name}\n", encoding="ascii")
 
 index = {"format": "chuzi-release-index/v1", "channel": "nightly", "version": version, "commit": commit, "target": "linux-amd64", "generated_at": manifest["generated_at"], "manifest": manifest, "artifacts": artifacts}
 (artifact / f"chuzi-{version}-linux-amd64.index.json").write_text(json.dumps(index), encoding="utf-8")

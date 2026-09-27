@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	adapterpkg "github.com/Semcosm/chuzi/internal/adapter"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/store"
@@ -175,6 +177,85 @@ func TestGenshinAutomationAdapterRequiresExplicitCDPBackend(t *testing.T) {
 	options.automationAdapter = "unsupported"
 	if err := options.validate(); !errors.Is(err, errInvalidOptions) {
 		t.Fatalf("unsupported adapter validation = %v, want errInvalidOptions", err)
+	}
+}
+
+func TestResolveAutomationPackageUsesManagedRegistryAndLifecycleGates(t *testing.T) {
+	cfg, err := config.New(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := serviceTarget()
+	if target == "" {
+		t.Skip("the test host is outside the release target matrix")
+	}
+	root := filepath.Join(cfg.DataDir, "plugins", "genshin-cloudgame")
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("export default {};\n")
+	digest := sha256.Sum256(content)
+	manifest := adapterpkg.Manifest{
+		Format: adapterpkg.ManifestFormat, ID: "genshin-cloudgame", API: adapterpkg.AdapterAPI, Version: "1.0.0",
+		Entry: "adapter.mjs", Capabilities: []string{"genshin-cloudgame@1"},
+		Permissions: []string{"browser.cdp.loopback"}, Targets: []string{target}, SignedBy: "test-signer",
+		Resources: []adapterpkg.Resource{{Path: "adapter.mjs", SHA256: fmt.Sprintf("%x", digest[:]), Size: int64(len(content))}},
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "adapter.mjs"), content, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, adapterpkg.ManifestName), manifestData, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	statePath := filepath.Join(cfg.DataDir, ".chuzi", "launcher-state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeState := func(state adapterpkg.State) {
+		t.Helper()
+		data, marshalErr := json.Marshal(struct {
+			Plugins map[string]adapterpkg.State `json:"plugins"`
+		}{Plugins: map[string]adapterpkg.State{manifest.ID: state}})
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if writeErr := os.WriteFile(statePath, data, 0o600); writeErr != nil {
+			t.Fatal(writeErr)
+		}
+	}
+	base := adapterpkg.State{Installed: true, Verified: true, Trusted: true, Enabled: true, Version: manifest.Version}
+	for _, test := range []struct {
+		name  string
+		state adapterpkg.State
+		want  error
+	}{
+		{name: "not installed", state: adapterpkg.State{}, want: adapterpkg.ErrNotInstalled},
+		{name: "not verified", state: adapterpkg.State{Installed: true, Version: manifest.Version}, want: adapterpkg.ErrNotVerified},
+		{name: "not trusted", state: adapterpkg.State{Installed: true, Verified: true, Version: manifest.Version}, want: adapterpkg.ErrNotTrusted},
+		{name: "disabled", state: adapterpkg.State{Installed: true, Verified: true, Trusted: true, Version: manifest.Version}, want: adapterpkg.ErrDisabled},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			writeState(test.state)
+			_, resolveErr := resolveAutomationPackage(cfg, manifest.ID)
+			if !errors.Is(resolveErr, test.want) {
+				t.Fatalf("resolveAutomationPackage() = %v, want %v", resolveErr, test.want)
+			}
+			if strings.Contains(resolveErr.Error(), cfg.DataDir) || strings.Contains(resolveErr.Error(), "test-signer") {
+				t.Fatalf("resolution error leaked managed path or signer: %v", resolveErr)
+			}
+		})
+	}
+	writeState(base)
+	resolved, err := resolveAutomationPackage(cfg, manifest.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Manifest.ID != manifest.ID || resolved.Entry != filepath.Join(root, manifest.Entry) {
+		t.Fatalf("resolved package = %#v, want managed entry", resolved)
 	}
 }
 

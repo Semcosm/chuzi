@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = window.window().take_snapshot()?;
         window.set_page(
             if page == "rdp-login" || page == "adapters" {
-                "plugins"
+                "adapters"
             } else {
                 &page
             }
@@ -62,38 +62,76 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn configure_adapter_state(window: &MainWindow, state: &str) {
     match state {
         "builtin" => {
-            window.set_plugin_summary("1 built-in adapter included with this release.".into());
-            window.set_plugin_options(ModelRc::from([SharedString::from("chuzi.headless-cdp")]));
-            window.set_plugin_input("chuzi.headless-cdp".into());
-            window.set_plugin_loaded(true);
-            window.set_plugin_display_name("Genshin Cloud Game".into());
-            window.set_plugin_distribution("builtin".into());
-            window.set_plugin_id("chuzi.headless-cdp".into());
-            window.set_plugin_version("0.1.0".into());
-            window.set_plugin_api("chuzi.adapter/v1".into());
-            window.set_plugin_feature_capability("genshin-cloudgame@1".into());
-            window.set_plugin_capabilities("genshin-cloudgame@1".into());
-            window.set_plugin_health("included".into());
-            window.set_plugin_installed(true);
-            window.set_plugin_trusted(true);
-            window.set_plugin_enabled(true);
+            window.set_adapter_summary("1 built-in adapter included with this release.".into());
+            window.set_adapter_options(ModelRc::from([SharedString::from("chuzi.headless-cdp")]));
+            window.set_adapter_input("chuzi.headless-cdp".into());
+            window.set_adapter_loaded(true);
+            window.set_adapter_display_name("Headless CDP runtime".into());
+            window.set_adapter_distribution("builtin".into());
+            window.set_adapter_id("chuzi.headless-cdp".into());
+            window.set_adapter_version("0.1.0".into());
+            window.set_adapter_api("chuzi.adapter/v1".into());
+            window.set_adapter_source_component("browser-worker".into());
+            window.set_adapter_entry("src/headless-adapter.mjs".into());
+            window.set_adapter_feature_capability("cdp@1".into());
+            window.set_adapter_capabilities("cdp@1, headless-cdp@1, headed-cdp@1".into());
+            window.set_adapter_health("included".into());
+            window.set_adapter_installed(true);
+            window.set_adapter_verified(true);
+            window.set_adapter_trusted(true);
+            window.set_adapter_enabled(true);
+            window.set_adapter_running(true);
         }
-        "package" => {
-            window.set_plugin_summary("1 installable adapter package available.".into());
-            window.set_plugin_options(ModelRc::from([SharedString::from("demo.adapter")]));
-            window.set_plugin_input("demo.adapter".into());
-            window.set_plugin_loaded(true);
-            window.set_plugin_display_name("Demo Adapter".into());
-            window.set_plugin_distribution("package".into());
-            window.set_plugin_id("demo.adapter".into());
-            window.set_plugin_version("1.0.0".into());
-            window.set_plugin_api("chuzi.adapter/v1".into());
-            window.set_plugin_capabilities("demo.session@1".into());
-            window.set_plugin_health("untrusted".into());
-            window.set_plugin_installable(true);
+        "package" | "installed" | "trusted" | "enabled" | "rollback" => {
+            let lifecycle = match state {
+                "installed" => "installed",
+                "trusted" => "trusted",
+                "enabled" => "enabled",
+                "rollback" => "upgrade failed; previous package restored",
+                _ => "not_installed",
+            };
+            window.set_adapter_summary(
+                format!("Genshin Cloud Game adapter package: {lifecycle}.").into(),
+            );
+            window.set_adapter_options(ModelRc::from([SharedString::from("genshin-cloudgame")]));
+            window.set_adapter_input("genshin-cloudgame".into());
+            window.set_adapter_loaded(true);
+            window.set_adapter_display_name("Genshin Cloud Game".into());
+            window.set_adapter_distribution("package".into());
+            window.set_adapter_id("genshin-cloudgame".into());
+            window.set_adapter_version("nightly-123".into());
+            window.set_adapter_api("chuzi.adapter/v1".into());
+            window.set_adapter_entry("adapter.mjs".into());
+            window.set_adapter_archive(
+                "chuzi-nightly-123-linux-amd64-genshin-cloudgame.tar.gz".into(),
+            );
+            window.set_adapter_sha256(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+            );
+            window.set_adapter_capabilities("genshin-cloudgame@1".into());
+            window.set_adapter_permissions("browser.cdp.loopback".into());
+            window.set_adapter_signer("chuzi-release".into());
+            window.set_adapter_health(
+                if state == "rollback" {
+                    "rollback"
+                } else if state == "enabled" {
+                    "healthy"
+                } else if state == "trusted" {
+                    "disabled"
+                } else {
+                    "untrusted"
+                }
+                .into(),
+            );
+            window.set_adapter_installable(true);
+            window.set_adapter_installed(state != "package");
+            window.set_adapter_verified(state != "package");
+            window.set_adapter_trusted(state == "trusted" || state == "enabled");
+            window.set_adapter_enabled(state == "enabled");
+            window.set_adapter_running(state == "enabled");
         }
         "empty" => {
-            window.set_plugin_summary("No adapters are available in this release.".into());
+            window.set_adapter_summary("No adapters are available in this release.".into());
         }
         other => panic!("unsupported adapter state: {other}"),
     }
@@ -157,18 +195,27 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
             "--adapter-state" => {
                 adapter_state = args
                     .next()
-                    .ok_or("--adapter-state needs empty, builtin, or package")?
+                    .ok_or("--adapter-state needs empty, builtin, package, installed, trusted, enabled, or rollback")?
             }
             other => return Err(format!("unknown argument: {other}").into()),
         }
     }
     match page.as_str() {
-        "overview" | "plugins" | "adapters" | "accounts" | "tasks" | "rdp" | "rdp-login"
-        | "settings" => {
+        "overview" | "adapters" | "accounts" | "tasks" | "rdp" | "rdp-login" | "settings" => {
             if page == "rdp" && !sizes_explicit {
                 sizes = vec![(1280, 752), (800, 600), (500, 281)];
             }
-            if !["empty", "builtin", "package"].contains(&adapter_state.as_str()) {
+            if ![
+                "empty",
+                "builtin",
+                "package",
+                "installed",
+                "trusted",
+                "enabled",
+                "rollback",
+            ]
+            .contains(&adapter_state.as_str())
+            {
                 return Err(format!("unknown adapter state: {adapter_state}").into());
             }
             Ok((output, sizes, page, adapter_state))

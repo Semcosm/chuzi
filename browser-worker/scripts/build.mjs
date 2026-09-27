@@ -14,6 +14,6 @@ await writeFile(
     protocol: "v1",
     browserRuntime: "deferred",
     availableBackends: ["deferred", "headless-cdp", "headed-cdp"],
-    adapters: [{ id: "chuzi.headless-cdp", api: "chuzi.adapter/v1", entry: "src/headless-adapter.mjs", capabilities: ["cdp@1", "headless-cdp@1", "headed-cdp@1", "browser-view@1", "local.test-page@1", "genshin-cloudgame@1"] }],
+    adapters: [{ id: "chuzi.headless-cdp", api: "chuzi.adapter/v1", entry: "src/headless-adapter.mjs", capabilities: ["cdp@1", "headless-cdp@1", "headed-cdp@1", "browser-view@1", "local.test-page@1"] }],
   }, null, 2)}\n`,
 );

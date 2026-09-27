@@ -48,15 +48,21 @@ pub(crate) struct DiagnosticStatus {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct PluginDescriptor {
+pub(crate) struct AdapterDescriptor {
     pub(crate) id: String,
     pub(crate) version: String,
     #[serde(default)]
     pub(crate) api: String,
     #[serde(default)]
+    pub(crate) entry: String,
+    #[serde(default)]
     pub(crate) distribution: String,
     #[serde(default)]
     pub(crate) source_component: String,
+    #[serde(default)]
+    pub(crate) archive: String,
+    #[serde(default)]
+    pub(crate) sha256: String,
     #[serde(default)]
     pub(crate) target: String,
     #[serde(default)]
@@ -70,11 +76,15 @@ pub(crate) struct PluginDescriptor {
 }
 
 #[derive(Debug, Deserialize)]
-pub(crate) struct CorePlugin {
-    pub(crate) descriptor: PluginDescriptor,
+pub(crate) struct CoreAdapter {
+    pub(crate) descriptor: AdapterDescriptor,
     pub(crate) installed: bool,
+    #[serde(default)]
+    pub(crate) verified: bool,
     pub(crate) enabled: bool,
     pub(crate) trusted: bool,
+    #[serde(default)]
+    pub(crate) running: bool,
     pub(crate) health: String,
 }
 

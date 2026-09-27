@@ -277,6 +277,10 @@ func (m *NetworkPluginManager) Install(ctx context.Context, id string) (PluginSt
 	return m.manager.Install(ctx, id)
 }
 
+func (m *NetworkPluginManager) Update(ctx context.Context, id string) (PluginState, error) {
+	return m.Install(ctx, id)
+}
+
 func copyFileWithContext(ctx context.Context, sourcePath, destinationPath string) error {
 	input, err := os.Open(sourcePath)
 	if err != nil {

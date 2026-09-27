@@ -1,0 +1,32 @@
+{
+  "format": "chuzi-adapter/v1",
+  "id": "genshin-cloudgame",
+  "api": "chuzi.adapter/v1",
+  "version": "0.1.0",
+  "entry": "adapter.mjs",
+  "capabilities": [
+    "genshin-cloudgame@1"
+  ],
+  "permissions": [
+    "browser.cdp.loopback"
+  ],
+  "targets": [
+    "windows-amd64",
+    "linux-amd64",
+    "linux-arm64",
+    "darwin-arm64"
+  ],
+  "signed_by": "chuzi-release",
+  "resources": [
+    {
+      "path": "adapter.mjs",
+      "sha256": "066a7d827d86d53926fad9e5bcfedde030fe3f3a8b3d46d8bcc9fffa75303bb5",
+      "size": 10065
+    },
+    {
+      "path": "cdp-runtime.mjs",
+      "sha256": "c7c31d1df19e89fcd607e8a042e28f32aaa2a3f56608b91f5585bb186dd629d5",
+      "size": 10607
+    }
+  ]
+}

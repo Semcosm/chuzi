@@ -24,7 +24,7 @@ func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
 	verify := flag.Bool("verify", false, "verify declared resources under root")
-	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
+	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
 	sourceRoot := flag.String("source-root", "", "trusted local source root for repair/install")
 	updateManifest := flag.String("update-manifest", "", "candidate manifest for check-update")
 	releaseIndexURL := flag.String("release-index", "", "HTTPS release index URL for update and component downloads")
@@ -398,7 +398,7 @@ func acquireMutationLock(ctx context.Context, root, configured string) (*launche
 func managerCommandNeedsItem(command string) bool {
 	switch command {
 	case "component-install", "component-remove", "component-enable", "component-disable",
-		"plugin-install", "plugin-remove", "plugin-enable", "plugin-disable", "plugin-trust", "plugin-untrust":
+		"plugin-install", "plugin-update", "plugin-remove", "plugin-enable", "plugin-disable", "plugin-trust", "plugin-untrust":
 		return true
 	default:
 		return false
@@ -507,6 +507,12 @@ func runPluginCommand(ctx context.Context, command, id string, options launcher.
 		return true, err
 	case "plugin-install":
 		result, err := manager.Install(ctx, requiredItem(id))
+		if err == nil {
+			writeJSON(result)
+		}
+		return true, err
+	case "plugin-update":
+		result, err := manager.Update(ctx, requiredItem(id))
 		if err == nil {
 			writeJSON(result)
 		}

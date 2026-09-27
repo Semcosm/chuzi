@@ -133,7 +133,7 @@ test("headless-CDP adapter performs a local test-page operation with a fake acco
   assert.equal(hello.type, "hello_ack");
   assert.equal(hello.payload.api, "chuzi.adapter/v1");
   assert.match(hello.payload.capabilities, /local\.test-page@1/u);
-  assert.match(hello.payload.capabilities, /genshin-cloudgame@1/u);
+  assert.doesNotMatch(hello.payload.capabilities, /genshin-cloudgame@1/u);
 
   execute(child, {
     session_id: "session-1",

@@ -50,6 +50,12 @@ if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 & npm --prefix (Join-Path $repoRoot "browser-worker") run build
 if ($LASTEXITCODE -ne 0) { throw "browser worker build failed" }
 Copy-Item -Recurse -Force (Join-Path $repoRoot "browser-worker/dist/*") (Join-Path $stageDir "browser-worker")
+$adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
+$adapterManifest = Join-Path $targetDir "genshin-cloudgame-adapter-manifest.json"
+& python (Join-Path $repoRoot "scripts/build_adapter_package.py") `
+    --source (Join-Path $repoRoot "browser-worker/adapters/genshin-cloudgame") `
+    --output $adapterArchive --manifest-output $adapterManifest --version $Version
+if ($LASTEXITCODE -ne 0) { throw "Genshin adapter package generation failed" }
 
 $commit = $env:GITHUB_SHA
 if ([string]::IsNullOrWhiteSpace($commit)) {
@@ -65,7 +71,7 @@ if ([string]::IsNullOrWhiteSpace($commit)) {
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
 
 $channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } elseif ($Version -like 'test-*') { "test" } else { "nightly" }
-& python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit --channel $channel
+& python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit --channel $channel --adapter-archive $adapterArchive --adapter-manifest $adapterManifest
 if ($LASTEXITCODE -ne 0) { throw "release manifest generation failed" }
 
 Write-Output "built $Target at $stageDir"

@@ -64,6 +64,9 @@ def builtin_plugins(stage: Path, version: str) -> list[dict]:
         if len(set(capabilities)) != len(capabilities):
             raise SystemExit(f"browser worker adapter {adapter_id} has duplicate capabilities")
         seen_ids.add(adapter_id)
+        # Genshin is shipped as an independent adapter archive in stage 2.
+        if adapter_id == "genshin-cloudgame":
+            continue
         plugins.append({
             "id": adapter_id,
             "version": version,
@@ -76,6 +79,30 @@ def builtin_plugins(stage: Path, version: str) -> list[dict]:
     return plugins
 
 
+def package_plugin(archive: Path, manifest_path: Path, version: str) -> dict:
+    try:
+        descriptor = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise SystemExit(f"invalid adapter package manifest: {exc}") from exc
+    for key in ("id", "api", "entry", "capabilities", "permissions"):
+        if key not in descriptor:
+            raise SystemExit(f"adapter package manifest misses {key}")
+    return {
+        "id": descriptor["id"],
+        "version": version,
+        "api": descriptor["api"],
+        "entry": descriptor["entry"],
+        "distribution": "package",
+        "target": descriptor.get("targets", [None])[0] if len(descriptor.get("targets", [])) == 1 else "",
+        "archive": archive.name,
+        "sha256": sha256(archive),
+        "capabilities": descriptor["capabilities"],
+        "permissions": descriptor["permissions"],
+        "signed_by": descriptor.get("signed_by", ""),
+        "installable": True,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage", required=True, type=Path)
@@ -83,6 +110,8 @@ def main() -> int:
     parser.add_argument("--version", required=True)
     parser.add_argument("--commit", required=True)
     parser.add_argument("--channel", default="nightly")
+    parser.add_argument("--adapter-archive", type=Path)
+    parser.add_argument("--adapter-manifest", type=Path)
     args = parser.parse_args()
     if args.channel not in {"nightly", "test", "stable"}:
         raise SystemExit(f"unsupported release channel: {args.channel}")
@@ -124,6 +153,11 @@ def main() -> int:
             "artifact": f"chuzi-{args.version}-{args.target}-{component_id}.{archive_extension}",
             "resources": [resource(stage, item) for item in files],
         })
+    plugins = builtin_plugins(stage, args.version)
+    if args.adapter_archive or args.adapter_manifest:
+        if not args.adapter_archive or not args.adapter_manifest:
+            raise SystemExit("adapter archive and manifest must be supplied together")
+        plugins.append(package_plugin(args.adapter_archive.resolve(), args.adapter_manifest.resolve(), args.version))
     manifest = {
         "format": "chuzi-release/v1",
         "channel": args.channel,
@@ -132,7 +166,7 @@ def main() -> int:
         "target": args.target,
         "generated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "components": components,
-        "plugins": builtin_plugins(stage, args.version),
+        "plugins": plugins,
     }
     output = stage / "release-manifest.json"
     output.write_text(json.dumps(manifest, indent=2, sort_keys=False) + "\n", encoding="utf-8")
