@@ -5,12 +5,12 @@ Head or Range: fix/main-ugs-signed
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(ugs): validate the existing GitHub Web Flow integration signature
-Revision: 2
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 4b80c30496ca02b2efe837addd6dea6bca448782
-Head OID: 123489500c457f3deb01ade6215ecc94fbf7d1bb
+Base OID: b248ac2986adf356a8effdc51bb289f655d6c843
+Head OID: b248ac2986adf356a8effdc51bb289f655d6c843
 Integrated Result: pending
 
 ## Summary
