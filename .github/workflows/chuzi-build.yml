@@ -395,11 +395,28 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $installer = Join-Path $env:RUNNER_TEMP 'chuzi-ui\ChuziSetup.exe'
           $installDir = Join-Path ${env:ProgramFiles} 'Chuzi'
-          Start-Process -FilePath $installer -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') -Wait
+          $installProcess = Start-Process -FilePath $installer `
+            -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') `
+            -PassThru -NoNewWindow
+          $installDeadline = [DateTime]::UtcNow.AddSeconds(120)
+          while (-not $installProcess.HasExited -and [DateTime]::UtcNow -lt $installDeadline) {
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $installProcess.HasExited) {
+            Stop-Process -Id $installProcess.Id -Force -ErrorAction SilentlyContinue
+            throw 'Slint installer timed out after 120 seconds'
+          }
+          if ($installProcess.ExitCode -ne 0) {
+            throw "Slint installer failed with exit code $($installProcess.ExitCode)"
+          }
           $exe = Join-Path $installDir 'Chuzi.Native.Windows.exe'
           if (-not (Test-Path $exe)) { throw "Installed Slint executable is missing: $exe" }
           $smoke = Start-Process -FilePath $exe -ArgumentList @('--smoke-test') -PassThru -NoNewWindow
-          if (-not $smoke.WaitForExit(60000)) {
+          $smokeDeadline = [DateTime]::UtcNow.AddSeconds(60)
+          while (-not $smoke.HasExited -and [DateTime]::UtcNow -lt $smokeDeadline) {
+            Start-Sleep -Milliseconds 500
+          }
+          if (-not $smoke.HasExited) {
             Stop-Process -Id $smoke.Id -Force -ErrorAction SilentlyContinue
             throw 'Installed Slint smoke test timed out after 60 seconds'
           }
