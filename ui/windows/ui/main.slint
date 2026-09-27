@@ -92,26 +92,31 @@ export component MainWindow inherits Window {
     in-out property <bool> browser-view-loaded: false;
     in-out property <string> browser-view-status: "No browser view captured.";
 
-    in-out property <string> plugin-input: "";
-    in-out property <[string]> plugin-options: [];
-    in-out property <bool> plugin-loaded: false;
-    in-out property <string> plugin-summary: "Core is not ready. Start Core to load adapters.";
-    in-out property <string> plugin-display-name: "";
-    in-out property <string> plugin-distribution: "";
-    in-out property <string> plugin-source-component: "";
-    in-out property <string> plugin-id: "";
-    in-out property <string> plugin-version: "";
-    in-out property <string> plugin-health: "";
-    in-out property <string> plugin-api: "";
-    in-out property <string> plugin-target: "";
-    in-out property <string> plugin-feature-capability: "";
-    in-out property <string> plugin-capabilities: "";
-    in-out property <string> plugin-permissions: "";
-    in-out property <string> plugin-signer: "";
-    in-out property <bool> plugin-installed: false;
-    in-out property <bool> plugin-installable: false;
-    in-out property <bool> plugin-trusted: false;
-    in-out property <bool> plugin-enabled: false;
+    in-out property <string> adapter-input: "";
+    in-out property <[string]> adapter-options: [];
+    in-out property <bool> adapter-loaded: false;
+    in-out property <string> adapter-summary: "Core is not ready. Start Core to load adapters.";
+    in-out property <string> adapter-display-name: "";
+    in-out property <string> adapter-distribution: "";
+    in-out property <string> adapter-source-component: "";
+    in-out property <string> adapter-id: "";
+    in-out property <string> adapter-version: "";
+    in-out property <string> adapter-health: "";
+    in-out property <string> adapter-api: "";
+    in-out property <string> adapter-target: "";
+    in-out property <string> adapter-feature-capability: "";
+    in-out property <string> adapter-capabilities: "";
+    in-out property <string> adapter-permissions: "";
+    in-out property <string> adapter-signer: "";
+    in-out property <string> adapter-entry: "";
+    in-out property <string> adapter-archive: "";
+    in-out property <string> adapter-sha256: "";
+    in-out property <bool> adapter-installed: false;
+    in-out property <bool> adapter-verified: false;
+    in-out property <bool> adapter-installable: false;
+    in-out property <bool> adapter-trusted: false;
+    in-out property <bool> adapter-enabled: false;
+    in-out property <bool> adapter-running: false;
 
     in-out property <string> component-input: "";
     in-out property <[string]> component-options: [];
@@ -146,13 +151,14 @@ export component MainWindow inherits Window {
     callback refresh-core();
     callback save-settings();
     callback theme-changed(string);
-    callback refresh-plugins();
-    callback install-plugin(string);
-    callback trust-plugin(string);
-    callback enable-plugin(string);
-    callback disable-plugin(string);
-    callback untrust-plugin(string);
-    callback remove-plugin(string);
+    callback refresh-adapters();
+    callback install-adapter(string);
+    callback update-adapter(string);
+    callback trust-adapter(string);
+    callback enable-adapter(string);
+    callback disable-adapter(string);
+    callback untrust-adapter(string);
+    callback remove-adapter(string);
     callback refresh-components();
     callback install-component(string);
     callback enable-component(string);
@@ -197,8 +203,8 @@ export component MainWindow inherits Window {
                 }
                 HorizontalBox {
                     spacing: 4px;
-                    Rectangle { width: 3px; background: root.page == "plugins" ? #3d6f9f : transparent; border-radius: 2px; }
-                    Button { text: "Adapters"; clicked => { root.page = "plugins"; } }
+                    Rectangle { width: 3px; background: root.page == "adapters" ? #3d6f9f : transparent; border-radius: 2px; }
+                    Button { text: "Adapters"; clicked => { root.page = "adapters"; } }
                 }
                 HorizontalBox {
                     spacing: 4px;
@@ -268,7 +274,7 @@ export component MainWindow inherits Window {
                             padding: 14px;
                             spacing: 10px;
                             height: 40px;
-                            Button { text: "Open Adapters"; clicked => { root.page = "plugins"; } }
+                            Button { text: "Open Adapters"; clicked => { root.page = "adapters"; } }
                             Button { text: "Open Accounts"; clicked => { root.page = "accounts"; } }
                             Button { text: "Open Tasks"; clicked => { root.page = "tasks"; } }
                             Button { text: "Open Settings"; clicked => { root.page = "settings"; } }
@@ -277,12 +283,12 @@ export component MainWindow inherits Window {
                 }
             }
 
-            if root.page == "plugins": ScrollView {
+            if root.page == "adapters": ScrollView {
                 VerticalBox {
                     padding: 32px;
                     spacing: 18px;
                     PageHeader { title: "Adapters"; subtitle: "Review capabilities and manage installable adapter packages."; }
-                    Text { text: root.plugin-summary; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                    Text { text: root.adapter-summary; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                     if !root.core-ready: FeedbackBar { text: "Core is not running. Start Core before changing adapters."; accent: #c18a35; vertical-stretch: 0; }
                     GroupBox {
                         title: "Adapter catalog";
@@ -295,19 +301,20 @@ export component MainWindow inherits Window {
                                 spacing: 8px;
                                 height: 40px;
                                 vertical-stretch: 0;
-                                ComboBox { model: root.plugin-options; current-value <=> root.plugin-input; enabled: root.plugin-options.length > 0 && !root.busy; }
-                                Button { text: "Refresh"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.refresh-plugins(); } }
+                                ComboBox { model: root.adapter-options; current-value <=> root.adapter-input; enabled: root.adapter-options.length > 0 && !root.busy; }
+                                Button { text: "Refresh"; enabled: root.core-ready && !root.busy; vertical-stretch: 0; clicked => { root.refresh-adapters(); } }
                             }
-                            if root.plugin-distribution == "package": HorizontalBox {
+                            if root.adapter-distribution == "package": HorizontalBox {
                                 spacing: 8px;
                                 height: 40px;
                                 vertical-stretch: 0;
-                                Button { text: "Install"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installable && !root.plugin-installed; vertical-stretch: 0; clicked => { root.install-plugin(root.plugin-input); } }
-                                Button { text: "Trust signer"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-signer != "" && !root.plugin-trusted; vertical-stretch: 0; clicked => { root.trust-plugin(root.plugin-input); } }
-                                Button { text: "Enable"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-trusted && !root.plugin-enabled; vertical-stretch: 0; clicked => { root.enable-plugin(root.plugin-input); } }
-                                Button { text: "Disable"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-enabled; vertical-stretch: 0; clicked => { root.disable-plugin(root.plugin-input); } }
-                                Button { text: "Revoke trust"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed && root.plugin-trusted; vertical-stretch: 0; clicked => { root.untrust-plugin(root.plugin-input); } }
-                                Button { text: "Remove"; enabled: root.core-ready && !root.busy && root.plugin-loaded && root.plugin-installed; vertical-stretch: 0; clicked => { root.remove-plugin(root.plugin-input); } }
+                                Button { text: "Install"; enabled: root.core-ready && !root.busy && root.adapter-loaded && root.adapter-installable && !root.adapter-installed; vertical-stretch: 0; clicked => { root.install-adapter(root.adapter-input); } }
+                                Button { text: "Update"; enabled: root.core-ready && !root.busy && root.adapter-loaded && root.adapter-installable && root.adapter-installed; vertical-stretch: 0; clicked => { root.update-adapter(root.adapter-input); } }
+                                Button { text: "Trust signer"; enabled: root.core-ready && !root.busy && root.adapter-loaded && root.adapter-installed && root.adapter-signer != "" && !root.adapter-trusted; vertical-stretch: 0; clicked => { root.trust-adapter(root.adapter-input); } }
+                                Button { text: "Enable"; enabled: root.core-ready && !root.busy && root.adapter-loaded && root.adapter-installed && root.adapter-trusted && !root.adapter-enabled; vertical-stretch: 0; clicked => { root.enable-adapter(root.adapter-input); } }
+                                Button { text: "Disable"; enabled: root.core-ready && !root.busy && root.adapter-loaded && root.adapter-installed && root.adapter-enabled; vertical-stretch: 0; clicked => { root.disable-adapter(root.adapter-input); } }
+                                Button { text: "Revoke trust"; enabled: root.core-ready && !root.busy && root.adapter-loaded && root.adapter-installed && root.adapter-trusted; vertical-stretch: 0; clicked => { root.untrust-adapter(root.adapter-input); } }
+                                Button { text: "Remove"; enabled: root.core-ready && !root.busy && root.adapter-loaded && root.adapter-installed; vertical-stretch: 0; clicked => { root.remove-adapter(root.adapter-input); } }
                             }
                         }
                     }
@@ -318,14 +325,19 @@ export component MainWindow inherits Window {
                         VerticalBox {
                             padding: 14px;
                             spacing: 8px;
-                            Text { text: root.plugin-loaded ? root.plugin-display-name : (root.plugin-options.length == 0 ? "No adapters are available in this release." : "Select an adapter."); font-size: 17px; font-weight: 700; wrap: word-wrap; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Version: " + root.plugin-version + "    API: " + root.plugin-api : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Target: " + (root.plugin-target == "" ? "Any" : root.plugin-target) : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? (root.plugin-distribution == "builtin" ? "Included with Browser Worker" : "Distribution: Adapter package") : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Signer: " + (root.plugin-signer == "" ? "Not declared" : root.plugin-signer) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? "Permissions: " + (root.plugin-permissions == "" ? "None declared" : root.plugin-permissions) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? (root.plugin-feature-capability != "" ? "Capability: " + root.plugin-feature-capability : "Capabilities: " + (root.plugin-capabilities == "" ? "None declared" : root.plugin-capabilities)) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
-                            Text { text: root.plugin-loaded ? (root.plugin-distribution == "builtin" ? "Availability: " + root.plugin-health : "Package state: " + root.plugin-health) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? root.adapter-display-name : (root.adapter-options.length == 0 ? "No adapters are available in this release." : "Select an adapter."); font-size: 17px; font-weight: 700; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Version: " + root.adapter-version + "    API: " + root.adapter-api : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Entry: " + (root.adapter-entry == "" ? "Not declared" : root.adapter-entry) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Target: " + (root.adapter-target == "" ? "Any" : root.adapter-target) : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded && root.adapter-distribution == "package" ? "Archive: " + (root.adapter-archive == "" ? "Not declared" : root.adapter-archive) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded && root.adapter-distribution == "package" ? "SHA-256: " + (root.adapter-sha256 == "" ? "Not declared" : root.adapter-sha256) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Installable: " + (root.adapter-installable ? "yes" : "no") : ""; color: Palette.alternate-foreground; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? (root.adapter-distribution == "builtin" ? "Included with Browser Worker" : "Distribution: Adapter package") : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Signer: " + (root.adapter-signer == "" ? "Not declared" : root.adapter-signer) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Permissions: " + (root.adapter-permissions == "" ? "None declared" : root.adapter-permissions) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? (root.adapter-feature-capability != "" ? "Capability: " + root.adapter-feature-capability : "Capabilities: " + (root.adapter-capabilities == "" ? "None declared" : root.adapter-capabilities)) : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Lifecycle: installed=" + (root.adapter-installed ? "yes" : "no") + " verified=" + (root.adapter-verified ? "yes" : "no") + " trusted=" + (root.adapter-trusted ? "yes" : "no") + " enabled=" + (root.adapter-enabled ? "yes" : "no") + " running=" + (root.adapter-running ? "yes" : "no") : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
+                            Text { text: root.adapter-loaded ? "Health: " + root.adapter-health : ""; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 0; }
                         }
                     }
                     FeedbackBar { text: root.message; accent: root.message-kind == "error" ? #b04a3a : #526c92; vertical-stretch: 0; }

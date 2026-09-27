@@ -15,6 +15,8 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	adapterpkg "github.com/Semcosm/chuzi/internal/adapter"
 )
 
 const (
@@ -71,9 +73,14 @@ type componentRecord struct {
 }
 
 type pluginRecord struct {
-	Installed bool `json:"installed"`
-	Enabled   bool `json:"enabled"`
-	Trusted   bool `json:"trusted"`
+	Installed      bool   `json:"installed"`
+	Verified       bool   `json:"verified"`
+	Enabled        bool   `json:"enabled"`
+	Trusted        bool   `json:"trusted"`
+	Version        string `json:"version,omitempty"`
+	Entry          string `json:"entry,omitempty"`
+	SignedBy       string `json:"signed_by,omitempty"`
+	ManifestSHA256 string `json:"manifest_sha256,omitempty"`
 }
 
 type resourceSnapshot struct {
@@ -494,6 +501,9 @@ func (m *FilesystemManager) pluginHealth(descriptor PluginDescriptor, record plu
 	if !record.Installed {
 		return HealthNotInstalled
 	}
+	if !record.Verified || !m.installedPackageMatches(descriptor, record) {
+		return HealthUnverified
+	}
 	if !record.Trusted {
 		return HealthUntrusted
 	}
@@ -508,10 +518,48 @@ func (m *FilesystemManager) pluginState(descriptor PluginDescriptor) PluginState
 		component, ok := m.data.Components[descriptor.SourceComponent]
 		installed := ok && component.Installed
 		enabled := installed && component.Enabled
-		return PluginState{Descriptor: descriptor, Installed: installed, Enabled: enabled, Trusted: installed, Health: m.pluginHealth(descriptor, pluginRecord{})}
+		return PluginState{Descriptor: descriptor, Installed: installed, Verified: installed, Enabled: enabled, Trusted: installed, Running: enabled, Health: m.pluginHealth(descriptor, pluginRecord{Installed: installed, Verified: installed})}
 	}
 	record := m.data.Plugins[descriptor.ID]
-	return PluginState{Descriptor: descriptor, Installed: record.Installed, Enabled: record.Enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}
+	verified := record.Verified && m.installedPackageMatches(descriptor, record)
+	return PluginState{Descriptor: descriptor, Installed: record.Installed, Verified: verified, Enabled: record.Enabled, Trusted: record.Trusted, Running: record.Enabled && record.Trusted && verified, Health: m.pluginHealth(descriptor, record)}
+}
+
+// installedPackageMatches revalidates the package on every projection and
+// mutation. A release manifest can change while launcher state persists; an
+// old package must then lose its verified gate before it can be trusted or run.
+func (m *FilesystemManager) installedPackageMatches(descriptor PluginDescriptor, record pluginRecord) bool {
+	if descriptor.builtin() || descriptor.API != AdapterAPIV1 || !record.Installed {
+		return true
+	}
+	root, err := safeJoin(filepath.Join(m.root, pluginDirectory), descriptor.ID)
+	if err != nil {
+		return false
+	}
+	manifest, err := adapterpkg.ValidatePackage(root, m.manifest.Target)
+	if err != nil || manifest.ID != descriptor.ID || manifest.API != descriptor.API || manifest.Version != descriptor.Version {
+		return false
+	}
+	if record.Version != "" && record.Version != manifest.Version {
+		return false
+	}
+	if record.Entry != "" && record.Entry != manifest.Entry {
+		return false
+	}
+	if record.SignedBy != "" && record.SignedBy != manifest.SignedBy {
+		return false
+	}
+	if record.ManifestSHA256 != "" {
+		digest, digestErr := adapterpkg.ManifestDigest(root)
+		if digestErr != nil || !strings.EqualFold(digest, record.ManifestSHA256) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *FilesystemManager) packageReady(descriptor PluginDescriptor, record pluginRecord) bool {
+	return record.Installed && record.Verified && m.installedPackageMatches(descriptor, record)
 }
 
 func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (PluginState, error) {
@@ -557,6 +605,29 @@ func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (Plugi
 	if err := extractArchive(ctx, archivePath, stage); err != nil {
 		return PluginState{}, err
 	}
+	verified := true
+	packageManifest := adapterpkg.Manifest{}
+	manifestDigest := ""
+	if descriptor.API == AdapterAPIV1 {
+		var validateErr error
+		packageManifest, validateErr = adapterpkg.ValidatePackage(stage, m.manifest.Target)
+		if validateErr != nil {
+			return PluginState{}, fmt.Errorf("%w: adapter package %s: %v", ErrInvalidManifest, id, validateErr)
+		}
+		if packageManifest.ID != descriptor.ID || packageManifest.API != descriptor.API || packageManifest.Version != descriptor.Version {
+			return PluginState{}, fmt.Errorf("%w: adapter package metadata mismatch: %s", ErrInvalidManifest, id)
+		}
+		if descriptor.Entry != "" && packageManifest.Entry != descriptor.Entry {
+			return PluginState{}, fmt.Errorf("%w: adapter package entry mismatch: %s", ErrInvalidManifest, id)
+		}
+		if descriptor.SignedBy == "" || packageManifest.SignedBy != descriptor.SignedBy {
+			return PluginState{}, fmt.Errorf("%w: adapter package signer mismatch: %s", ErrInvalidManifest, id)
+		}
+		manifestDigest, err = adapterpkg.ManifestDigest(stage)
+		if err != nil {
+			return PluginState{}, fmt.Errorf("%w: adapter package manifest digest: %s", ErrInvalidManifest, id)
+		}
+	}
 	previous := cloneState(m.data)
 	backup := pluginRoot + ".rollback"
 	if err := os.RemoveAll(backup); err != nil {
@@ -579,7 +650,13 @@ func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (Plugi
 	}
 	// A new archive always requires a fresh trust decision, even when the
 	// plugin ID is unchanged.
-	m.data.Plugins[id] = pluginRecord{Installed: true, Enabled: false, Trusted: false}
+	record := pluginRecord{Installed: true, Verified: verified, Enabled: false, Trusted: false, Version: descriptor.Version}
+	if descriptor.API == AdapterAPIV1 {
+		record.Entry = packageManifest.Entry
+		record.SignedBy = packageManifest.SignedBy
+		record.ManifestSHA256 = manifestDigest
+	}
+	m.data.Plugins[id] = record
 	if err := m.save(); err != nil {
 		rollbackErr := os.RemoveAll(pluginRoot)
 		if rollbackErr == nil && hadPrevious {
@@ -593,8 +670,14 @@ func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (Plugi
 	}
 	reportProgress(m.progress, ProgressEvent{Operation: "plugin-install", Stage: "complete", Item: id, Completed: 1, Total: 1})
 	_ = os.RemoveAll(backup)
-	record := m.data.Plugins[id]
-	return PluginState{Descriptor: descriptor, Installed: true, Enabled: record.Enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}, nil
+	return m.pluginState(descriptor), nil
+}
+
+// Update replaces an installed package using the same staged install path.
+// InstallPlugin always clears trust and keeps the previous package until the
+// new archive and launcher state have committed.
+func (m *FilesystemManager) Update(ctx context.Context, id string) (PluginState, error) {
+	return m.InstallPlugin(ctx, id)
 }
 
 func (m *FilesystemManager) RemovePlugin(ctx context.Context, id string) error {
@@ -668,6 +751,9 @@ func (m *FilesystemManager) SetPluginEnabled(ctx context.Context, id string, ena
 	if !ok || !record.Installed {
 		return PluginState{}, fmt.Errorf("%w: plugin %q is not installed", ErrNotFound, id)
 	}
+	if enabled && !m.packageReady(descriptor, record) {
+		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrInvalidManifest, id)
+	}
 	if enabled && !record.Trusted {
 		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotTrusted, id)
 	}
@@ -679,7 +765,7 @@ func (m *FilesystemManager) SetPluginEnabled(ctx context.Context, id string, ena
 		return PluginState{}, fmt.Errorf("%w: save plugin state: %v", ErrTransaction, err)
 	}
 	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "complete", Item: id, Completed: 1, Total: 1})
-	return PluginState{Descriptor: descriptor, Installed: true, Enabled: enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}, nil
+	return m.pluginState(descriptor), nil
 }
 
 func (m *FilesystemManager) SetTrusted(ctx context.Context, id string, trusted bool) (PluginState, error) {
@@ -704,6 +790,9 @@ func (m *FilesystemManager) SetTrusted(ctx context.Context, id string, trusted b
 	if !ok || !record.Installed {
 		return PluginState{}, fmt.Errorf("%w: plugin %q is not installed", ErrNotFound, id)
 	}
+	if trusted && !m.packageReady(descriptor, record) {
+		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrInvalidManifest, id)
+	}
 	if trusted {
 		if m.requireSigned && descriptor.SignedBy == "" {
 			return PluginState{}, fmt.Errorf("%w: plugin %q has no signer", ErrNotTrusted, id)
@@ -726,7 +815,7 @@ func (m *FilesystemManager) SetTrusted(ctx context.Context, id string, trusted b
 		return PluginState{}, fmt.Errorf("%w: save plugin trust: %v", ErrTransaction, err)
 	}
 	reportProgress(m.progress, ProgressEvent{Operation: operation, Stage: "complete", Item: id, Completed: 1, Total: 1})
-	return PluginState{Descriptor: descriptor, Installed: record.Installed, Enabled: record.Enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}, nil
+	return m.pluginState(descriptor), nil
 }
 
 // FilesystemComponentManager exposes component operations through the
@@ -768,6 +857,9 @@ func (m *FilesystemPluginManager) List(ctx context.Context) ([]PluginState, erro
 }
 func (m *FilesystemPluginManager) Install(ctx context.Context, id string) (PluginState, error) {
 	return m.InstallPlugin(ctx, id)
+}
+func (m *FilesystemPluginManager) Update(ctx context.Context, id string) (PluginState, error) {
+	return m.FilesystemManager.Update(ctx, id)
 }
 func (m *FilesystemPluginManager) Remove(ctx context.Context, id string) error {
 	return m.RemovePlugin(ctx, id)

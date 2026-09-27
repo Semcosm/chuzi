@@ -4,7 +4,7 @@ mod models;
 use base64::Engine;
 use desktop_rdp::{DesktopRdpController, RdpPerformanceOptions, RdpTarget};
 use models::{
-    default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreComponent, CorePlugin,
+    default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreAdapter, CoreComponent,
     CoreRequest, CoreStatus, DiagnosticStatus, SubmitResult, UiPreferences,
 };
 use serde_json::{json, Value};
@@ -315,66 +315,76 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_refresh_plugins(move || refresh_plugins(&weak, Arc::clone(&plugin_state)));
+    let adapter_state = Arc::clone(&state);
+    ui.on_refresh_adapters(move || refresh_adapters(&weak, Arc::clone(&adapter_state)));
     let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_install_plugin(move |plugin| {
-        plugin_action(
+    let adapter_state = Arc::clone(&state);
+    ui.on_install_adapter(move |adapter| {
+        adapter_action(
             &weak,
-            Arc::clone(&plugin_state),
+            Arc::clone(&adapter_state),
             "plugin-install",
-            plugin.to_string(),
+            adapter.to_string(),
         )
     });
     let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_trust_plugin(move |plugin| {
-        plugin_action(
+    let adapter_state = Arc::clone(&state);
+    ui.on_update_adapter(move |adapter| {
+        adapter_action(
             &weak,
-            Arc::clone(&plugin_state),
+            Arc::clone(&adapter_state),
+            "plugin-update",
+            adapter.to_string(),
+        )
+    });
+    let weak = ui.as_weak();
+    let adapter_state = Arc::clone(&state);
+    ui.on_trust_adapter(move |adapter| {
+        adapter_action(
+            &weak,
+            Arc::clone(&adapter_state),
             "plugin-trust",
-            plugin.to_string(),
+            adapter.to_string(),
         )
     });
     let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_enable_plugin(move |plugin| {
-        plugin_action(
+    let adapter_state = Arc::clone(&state);
+    ui.on_enable_adapter(move |adapter| {
+        adapter_action(
             &weak,
-            Arc::clone(&plugin_state),
+            Arc::clone(&adapter_state),
             "plugin-enable",
-            plugin.to_string(),
+            adapter.to_string(),
         )
     });
     let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_disable_plugin(move |plugin| {
-        plugin_action(
+    let adapter_state = Arc::clone(&state);
+    ui.on_disable_adapter(move |adapter| {
+        adapter_action(
             &weak,
-            Arc::clone(&plugin_state),
+            Arc::clone(&adapter_state),
             "plugin-disable",
-            plugin.to_string(),
+            adapter.to_string(),
         )
     });
     let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_untrust_plugin(move |plugin| {
-        plugin_action(
+    let adapter_state = Arc::clone(&state);
+    ui.on_untrust_adapter(move |adapter| {
+        adapter_action(
             &weak,
-            Arc::clone(&plugin_state),
+            Arc::clone(&adapter_state),
             "plugin-untrust",
-            plugin.to_string(),
+            adapter.to_string(),
         )
     });
     let weak = ui.as_weak();
-    let plugin_state = Arc::clone(&state);
-    ui.on_remove_plugin(move |plugin| {
-        plugin_action(
+    let adapter_state = Arc::clone(&state);
+    ui.on_remove_adapter(move |adapter| {
+        adapter_action(
             &weak,
-            Arc::clone(&plugin_state),
+            Arc::clone(&adapter_state),
             "plugin-remove",
-            plugin.to_string(),
+            adapter.to_string(),
         )
     });
 
@@ -758,6 +768,7 @@ struct CoreSnapshot {
 }
 
 fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    let adapter_state = Arc::clone(&state);
     run_background_with(
         ui,
         state,
@@ -795,11 +806,14 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
             };
             Ok(("Core status refreshed.".to_owned(), snapshot))
         },
-        |window, snapshot: CoreSnapshot| {
+        move |window, snapshot: CoreSnapshot| {
             window.set_core_ready(snapshot.ready);
             window.set_core_installed(snapshot.installed);
             window.set_core_status(snapshot.status.into());
             window.set_core_details(snapshot.details.into());
+            if snapshot.ready {
+                refresh_adapters(&window.as_weak(), Arc::clone(&adapter_state));
+            }
         },
     );
 }
@@ -888,11 +902,12 @@ fn run_background_status<F>(
 ) where
     F: FnOnce(&mut AppState) -> Result<String, String> + Send + 'static,
 {
+    let adapter_state = Arc::clone(&state);
     run_background_with(
         ui,
         state,
         move |state| operation(state).map(|message| (message, core_ready)),
-        |window, ready: Option<bool>| {
+        move |window, ready: Option<bool>| {
             if let Some(ready) = ready {
                 window.set_core_ready(ready);
                 window.set_core_status(
@@ -904,6 +919,9 @@ fn run_background_status<F>(
                     .into(),
                 );
                 window.set_core_installed(true);
+                if ready {
+                    refresh_adapters(&window.as_weak(), Arc::clone(&adapter_state));
+                }
             }
         },
     );
@@ -1123,27 +1141,27 @@ fn apply_components(window: &MainWindow, components: Vec<CoreComponent>) {
     window.set_component_enabled(component.enabled);
 }
 
-fn refresh_plugins(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+fn refresh_adapters(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
     run_background_with(
         ui,
         state,
         |state| {
             ensure_core_ready(state)?;
             let output = state.run_launcher("plugin-list", &[])?;
-            let plugins = parse_plugins(&output)?;
-            Ok((format_plugin_summary(&plugins), plugins))
+            let adapters = parse_adapters(&output)?;
+            Ok((format_adapter_summary(&adapters), adapters))
         },
-        apply_plugins,
+        apply_adapters,
     );
 }
 
-fn plugin_action(
+fn adapter_action(
     ui: &slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
     command: &'static str,
-    plugin: String,
+    adapter: String,
 ) {
-    if let Err(error) = validate_text(&plugin, "plugin ID") {
+    if let Err(error) = validate_text(&adapter, "adapter ID") {
         set_feedback(ui, friendly_error(&error), "error");
         return;
     }
@@ -1154,44 +1172,45 @@ fn plugin_action(
             ensure_core_ready(state)?;
             if command == "plugin-trust" {
                 let output = state.run_launcher("plugin-list", &[])?;
-                let plugins = parse_plugins(&output)?;
-                let signer = plugin_signer_for(&plugins, &plugin)?;
+                let adapters = parse_adapters(&output)?;
+                let signer = adapter_signer_for(&adapters, &adapter)?;
                 state.run_launcher(
                     command,
                     &[
                         "-item",
-                        plugin.as_str(),
+                        adapter.as_str(),
                         "-trusted-signers",
                         signer.as_str(),
                     ],
                 )?;
             } else {
-                state.run_launcher(command, &["-item", plugin.as_str()])?;
+                state.run_launcher(command, &["-item", adapter.as_str()])?;
             }
             let output = state.run_launcher("plugin-list", &[])?;
-            let plugins = parse_plugins(&output)?;
-            Ok((plugin_action_message(command), plugins))
+            let adapters = parse_adapters(&output)?;
+            Ok((adapter_action_message(command), adapters))
         },
-        apply_plugins,
+        apply_adapters,
     );
 }
 
-fn parse_plugins(output: &str) -> Result<Vec<CorePlugin>, String> {
-    serde_json::from_str(output).map_err(|error| format!("plugin projection: {error}"))
+fn parse_adapters(output: &str) -> Result<Vec<CoreAdapter>, String> {
+    serde_json::from_str(output).map_err(|error| format!("adapter projection: {error}"))
 }
 
-fn format_plugin_summary(plugins: &[CorePlugin]) -> String {
-    if plugins.is_empty() {
+fn format_adapter_summary(adapters: &[CoreAdapter]) -> String {
+    if adapters.is_empty() {
         "No adapters are available in this release.".to_owned()
     } else {
-        let builtins = plugins
+        let builtins = adapters
             .iter()
-            .filter(|plugin| {
-                plugin.descriptor.distribution == "builtin"
-                    || (plugin.descriptor.distribution.is_empty() && !plugin.descriptor.installable)
+            .filter(|adapter| {
+                adapter.descriptor.distribution == "builtin"
+                    || (adapter.descriptor.distribution.is_empty()
+                        && !adapter.descriptor.installable)
             })
             .count();
-        let packages = plugins.len() - builtins;
+        let packages = adapters.len() - builtins;
         match (builtins, packages) {
             (builtins, 0) => format!("{builtins} built-in adapter(s) included with this release."),
             (0, packages) => format!("{packages} installable adapter package(s) available."),
@@ -1200,19 +1219,22 @@ fn format_plugin_summary(plugins: &[CorePlugin]) -> String {
     }
 }
 
-fn plugin_signer_for(plugins: &[CorePlugin], id: &str) -> Result<String, String> {
-    plugins
+fn adapter_signer_for(adapters: &[CoreAdapter], id: &str) -> Result<String, String> {
+    adapters
         .iter()
-        .find(|plugin| plugin.descriptor.id == id)
-        .map(|plugin| plugin.descriptor.signed_by.trim().to_owned())
+        .find(|adapter| adapter.descriptor.id == id)
+        .map(|adapter| adapter.descriptor.signed_by.trim().to_owned())
         .filter(|signer| !signer.is_empty())
-        .ok_or_else(|| "plugin_signer_missing".to_owned())
+        .ok_or_else(|| "adapter_signer_missing".to_owned())
 }
 
-fn plugin_action_message(command: &str) -> String {
+fn adapter_action_message(command: &str) -> String {
     match command {
         "plugin-install" => {
             "Adapter installed; it remains untrusted until explicitly trusted.".to_owned()
+        }
+        "plugin-update" => {
+            "Adapter updated; verify the new package and trust it again before enabling.".to_owned()
         }
         "plugin-trust" => "Adapter trust updated. Review the signer before enabling it.".to_owned(),
         "plugin-enable" => "Adapter enabled.".to_owned(),
@@ -1223,51 +1245,56 @@ fn plugin_action_message(command: &str) -> String {
     }
 }
 
-fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
-    window.set_plugin_summary(format_plugin_summary(&plugins).into());
-    let options = plugins
+fn apply_adapters(window: &MainWindow, adapters: Vec<CoreAdapter>) {
+    window.set_adapter_summary(format_adapter_summary(&adapters).into());
+    let options = adapters
         .iter()
-        .map(|plugin| SharedString::from(plugin.descriptor.id.clone()))
+        .map(|adapter| SharedString::from(adapter.descriptor.id.clone()))
         .collect::<Vec<_>>();
-    window.set_plugin_options(ModelRc::from(options.as_slice()));
-    let selected = window.get_plugin_input().to_string();
-    let plugin = plugins
+    window.set_adapter_options(ModelRc::from(options.as_slice()));
+    let selected = window.get_adapter_input().to_string();
+    let adapter = adapters
         .iter()
-        .find(|plugin| plugin.descriptor.id == selected)
-        .or_else(|| plugins.first());
-    let Some(plugin) = plugin else {
-        window.set_plugin_loaded(false);
-        window.set_plugin_display_name(SharedString::default());
-        window.set_plugin_distribution(SharedString::default());
-        window.set_plugin_source_component(SharedString::default());
-        window.set_plugin_id(SharedString::default());
-        window.set_plugin_version(SharedString::default());
-        window.set_plugin_api(SharedString::default());
-        window.set_plugin_target(SharedString::default());
-        window.set_plugin_feature_capability(SharedString::default());
-        window.set_plugin_capabilities(SharedString::default());
-        window.set_plugin_permissions(SharedString::default());
-        window.set_plugin_signer(SharedString::default());
-        window.set_plugin_installed(false);
-        window.set_plugin_installable(false);
-        window.set_plugin_trusted(false);
-        window.set_plugin_enabled(false);
-        window.set_plugin_health(SharedString::default());
+        .find(|adapter| adapter.descriptor.id == selected)
+        .or_else(|| adapters.first());
+    let Some(adapter) = adapter else {
+        window.set_adapter_loaded(false);
+        window.set_adapter_display_name(SharedString::default());
+        window.set_adapter_distribution(SharedString::default());
+        window.set_adapter_source_component(SharedString::default());
+        window.set_adapter_id(SharedString::default());
+        window.set_adapter_version(SharedString::default());
+        window.set_adapter_entry(SharedString::default());
+        window.set_adapter_archive(SharedString::default());
+        window.set_adapter_sha256(SharedString::default());
+        window.set_adapter_api(SharedString::default());
+        window.set_adapter_target(SharedString::default());
+        window.set_adapter_feature_capability(SharedString::default());
+        window.set_adapter_capabilities(SharedString::default());
+        window.set_adapter_permissions(SharedString::default());
+        window.set_adapter_signer(SharedString::default());
+        window.set_adapter_installed(false);
+        window.set_adapter_verified(false);
+        window.set_adapter_installable(false);
+        window.set_adapter_trusted(false);
+        window.set_adapter_enabled(false);
+        window.set_adapter_running(false);
+        window.set_adapter_health(SharedString::default());
         return;
     };
-    window.set_plugin_loaded(true);
-    window.set_plugin_input(plugin.descriptor.id.clone().into());
-    window.set_plugin_id(plugin.descriptor.id.clone().into());
-    let distribution = if plugin.descriptor.distribution.is_empty() {
-        if plugin.descriptor.installable {
+    window.set_adapter_loaded(true);
+    window.set_adapter_input(adapter.descriptor.id.clone().into());
+    window.set_adapter_id(adapter.descriptor.id.clone().into());
+    let distribution = if adapter.descriptor.distribution.is_empty() {
+        if adapter.descriptor.installable {
             "package"
         } else {
             "builtin"
         }
     } else {
-        plugin.descriptor.distribution.as_str()
+        adapter.descriptor.distribution.as_str()
     };
-    let display_name = if plugin
+    let display_name = if adapter
         .descriptor
         .capabilities
         .iter()
@@ -1275,16 +1302,19 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
     {
         "Genshin Cloud Game"
     } else {
-        plugin.descriptor.id.as_str()
+        adapter.descriptor.id.as_str()
     };
-    window.set_plugin_display_name(display_name.into());
-    window.set_plugin_distribution(distribution.into());
-    window.set_plugin_source_component(plugin.descriptor.source_component.clone().into());
-    window.set_plugin_version(plugin.descriptor.version.clone().into());
-    window.set_plugin_api(plugin.descriptor.api.clone().into());
-    window.set_plugin_target(plugin.descriptor.target.clone().into());
-    window.set_plugin_feature_capability(
-        plugin
+    window.set_adapter_display_name(display_name.into());
+    window.set_adapter_distribution(distribution.into());
+    window.set_adapter_source_component(adapter.descriptor.source_component.clone().into());
+    window.set_adapter_version(adapter.descriptor.version.clone().into());
+    window.set_adapter_entry(adapter.descriptor.entry.clone().into());
+    window.set_adapter_archive(adapter.descriptor.archive.clone().into());
+    window.set_adapter_sha256(adapter.descriptor.sha256.clone().into());
+    window.set_adapter_api(adapter.descriptor.api.clone().into());
+    window.set_adapter_target(adapter.descriptor.target.clone().into());
+    window.set_adapter_feature_capability(
+        adapter
             .descriptor
             .capabilities
             .iter()
@@ -1293,14 +1323,18 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
             .unwrap_or_default()
             .into(),
     );
-    window.set_plugin_capabilities(plugin.descriptor.capabilities.join(", ").into());
-    window.set_plugin_permissions(plugin.descriptor.permissions.join(", ").into());
-    window.set_plugin_signer(plugin.descriptor.signed_by.clone().into());
-    window.set_plugin_installed(plugin.installed);
-    window.set_plugin_installable(distribution == "package" && plugin.descriptor.installable);
-    window.set_plugin_trusted(plugin.trusted);
-    window.set_plugin_enabled(plugin.trusted && plugin.enabled);
-    window.set_plugin_health(plugin.health.clone().into());
+    window.set_adapter_capabilities(adapter.descriptor.capabilities.join(", ").into());
+    window.set_adapter_permissions(adapter.descriptor.permissions.join(", ").into());
+    window.set_adapter_signer(adapter.descriptor.signed_by.clone().into());
+    window.set_adapter_installed(adapter.installed);
+    window.set_adapter_verified(adapter.verified);
+    window.set_adapter_installable(distribution == "package" && adapter.descriptor.installable);
+    window.set_adapter_trusted(adapter.trusted);
+    window.set_adapter_enabled(adapter.trusted && adapter.enabled);
+    window.set_adapter_running(
+        adapter.running && adapter.verified && adapter.trusted && adapter.enabled,
+    );
+    window.set_adapter_health(adapter.health.clone().into());
 }
 
 fn validate_text(value: &str, label: &str) -> Result<(), String> {
@@ -1341,7 +1375,7 @@ fn friendly_error(error: &str) -> String {
     }
     if value.contains("missing_account")
         || value.contains("missing_request")
-        || value.contains("missing_plugin")
+        || value.contains("missing_adapter")
         || value.contains("missing_component")
     {
         return "Enter an ID before trying this action.".to_owned();
@@ -1429,29 +1463,31 @@ mod tests {
     }
 
     #[test]
-    fn plugin_projection_never_promotes_untrusted_state() {
-        let plugins: Vec<CorePlugin> = serde_json::from_str(
-            r#"[{"descriptor":{"id":"demo","version":"1"},"installed":true,"enabled":true,"trusted":false,"health":"untrusted"}]"#,
+    fn adapter_projection_never_promotes_untrusted_state() {
+        let adapters: Vec<CoreAdapter> = serde_json::from_str(
+            r#"[{"descriptor":{"id":"demo","version":"1"},"installed":true,"verified":true,"enabled":true,"trusted":false,"running":true,"health":"untrusted"}]"#,
         )
-        .expect("valid plugin projection");
-        let plugin = &plugins[0];
-        assert!(plugin.enabled);
-        assert!(!plugin.trusted);
-        assert!(!(plugin.trusted && plugin.enabled));
+        .expect("valid adapter projection");
+        let adapter = &adapters[0];
+        assert!(adapter.enabled);
+        assert!(!adapter.trusted);
+        assert!(!(adapter.trusted && adapter.enabled));
+        assert!(!(adapter.trusted && adapter.enabled && adapter.running));
     }
 
     #[test]
     fn adapter_projection_distinguishes_builtin_and_package_catalog_entries() {
-        let plugins: Vec<CorePlugin> = serde_json::from_str(
-            r#"[{"descriptor":{"id":"chuzi.headless-cdp","version":"1","api":"chuzi.adapter/v1","distribution":"builtin","source_component":"browser-worker","capabilities":["genshin-cloudgame@1"]},"installed":true,"enabled":true,"trusted":true,"health":"included"},{"descriptor":{"id":"demo","version":"1","api":"chuzi.adapter/v1","distribution":"package","installable":true},"installed":false,"enabled":false,"trusted":false,"health":"not_installed"}]"#,
+        let adapters: Vec<CoreAdapter> = serde_json::from_str(
+            r#"[{"descriptor":{"id":"chuzi.headless-cdp","version":"1","api":"chuzi.adapter/v1","distribution":"builtin","source_component":"browser-worker","entry":"src/headless-adapter.mjs","capabilities":["cdp@1"]},"installed":true,"verified":true,"enabled":true,"trusted":true,"running":true,"health":"included"},{"descriptor":{"id":"genshin-cloudgame","version":"1","api":"chuzi.adapter/v1","distribution":"package","entry":"adapter.mjs","archive":"genshin.tar.gz","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","installable":true},"installed":false,"verified":false,"enabled":false,"trusted":false,"running":false,"health":"not_installed"}]"#,
         )
         .expect("valid adapter projection");
         assert_eq!(
-            format_plugin_summary(&plugins),
+            format_adapter_summary(&adapters),
             "1 built-in adapter(s) included; 1 installable package(s) available."
         );
-        assert_eq!(plugins[0].descriptor.distribution, "builtin");
-        assert_eq!(plugins[1].descriptor.distribution, "package");
+        assert_eq!(adapters[0].descriptor.distribution, "builtin");
+        assert_eq!(adapters[1].descriptor.distribution, "package");
+        assert_eq!(adapters[1].descriptor.id, "genshin-cloudgame");
     }
 
     #[test]

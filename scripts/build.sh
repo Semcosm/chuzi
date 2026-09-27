@@ -54,6 +54,15 @@ fi
 npm --prefix "$repo_root/browser-worker" ci --ignore-scripts
 npm --prefix "$repo_root/browser-worker" run build
 cp -R "$repo_root/browser-worker/dist/." "$stage_dir/browser-worker/"
+adapter_extension=tar.gz
+if [ "$target" = "windows-amd64" ]; then
+  adapter_extension=zip
+fi
+adapter_archive="$target_dir/chuzi-${version}-${target}-genshin-cloudgame.${adapter_extension}"
+adapter_manifest="$target_dir/genshin-cloudgame-adapter-manifest.json"
+python3 "$repo_root/scripts/build_adapter_package.py" \
+  --source "$repo_root/browser-worker/adapters/genshin-cloudgame" \
+  --output "$adapter_archive" --manifest-output "$adapter_manifest" --version "$version"
 
 commit="${GITHUB_SHA:-$(git -C "$repo_root" rev-parse HEAD)}"
 printf '{\n  "target": "%s",\n  "version": "%s",\n  "commit": "%s",\n  "goos": "%s",\n  "goarch": "%s",\n  "cgo": false\n}\n' \
@@ -66,6 +75,6 @@ case "$version" in
 esac
 python3 "$repo_root/scripts/generate_release_manifest.py" \
   --stage "$stage_dir" --target "$target" --version "$version" --commit "$commit" \
-  --channel "$channel"
+  --channel "$channel" --adapter-archive "$adapter_archive" --adapter-manifest "$adapter_manifest"
 
 echo "built $target at $stage_dir"

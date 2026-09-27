@@ -150,9 +150,9 @@ Test 允许新代码带有未知问题，只能发布 test catalog。Nightly 只
 组件包，以及记录归档大小/SHA-256 的 `release-index.json`；不创建 tag 或 GitHub Release。
 
 完整包内的 `release-manifest.json` 是启动器 CLI 和原生客户端的稳定输入，声明目标平台、
-版本、组件资源 SHA-256/大小、插件描述和更新 channel。`cmd/launcher` 提供 manifest
+版本、组件资源 SHA-256/大小、适配器描述和更新 channel。`cmd/launcher` 提供 manifest
 展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
-的更新检查、资源修复、组件启停、插件信任/启停和 `settings`/`settings-save` CLI。
+的更新检查、资源修复、组件启停、适配器安装/更新/信任/启停/移除和 `settings`/`settings-save` CLI。
 修改安装目录或设置前会取得 `.chuzi/launcher.lock`，`-progress` 可将脱敏的阶段事件
 写到 stderr，Ctrl-C 会通过 context 取消当前操作。显式 `-release-index` 时，下载器
 只接受 HTTPS（本地测试可显式允许 loopback HTTP）、同源归档，并校验目标平台、版本、
@@ -164,10 +164,15 @@ Test 允许新代码带有未知问题，只能发布 test catalog。Nightly 只
 锁不会自动清除遗留文件，确认占用进程已退出后才允许人工移除。launcher 组件当前
 只包含 UI-neutral `chuzi-launcher` CLI；Windows Slint 客户端另以自包含安装器 EXE 分发，
 macOS SwiftUI 和 Linux GTK 客户端待后续 CR。所有平台 UI 都通过 Stable API Boundary
-调用同一 CLI/Core 能力，不复制文件、下载、校验、执行插件、授予 signer 信任或实现回滚策略。诊断输出不得记录
+调用同一 CLI/Core 能力，不复制文件、下载、校验、执行适配器、授予 signer 信任或实现回滚策略。诊断输出不得记录
 凭证或启动器响应 payload。
-Nightly 的适配器清单会列出随 `browser-worker` 内置的适配器能力；只有声明
-`distribution: package` 且带归档和 SHA-256 的适配器才提供独立安装包。不能将组件包误认为适配器包。
+Nightly 的适配器清单会区分 Browser Worker 内置 runtime 和独立适配器包。当前
+`genshin-cloudgame` 使用 `chuzi-adapter/v1` 独立归档：Windows 为 `.zip`，Linux/macOS
+为 `.tar.gz`，索引记录归档大小和 SHA-256。只有声明 `distribution: package` 且带归档
+和 SHA-256 的适配器才提供独立安装包，不能将 browser-worker 组件包误认为适配器包。
+安装包落在服务管理的 `<data_dir>/plugins/<adapter-id>/`，服务只按 adapter ID 从该目录
+建立 Registry；安装、校验、信任、启用和运行状态分开保存。升级会清除旧 trust，归档或
+状态提交失败时旧包保持可恢复。
 
 GitHub Actions 负责远端构建，不要求开发者在本地安装完整的发布工具链。构建使用 Go 控制服务和 Node.js Worker 两套锁定的工具链，目标矩阵为：
 
@@ -214,13 +219,13 @@ gh workflow run release-retry.yml --repo Semcosm/chuzi --ref main \
 ```
 
 当前 Node Worker 提供 deferred 协议和生命周期替身，以及可配置的 headed/headless-CDP
-进程边界；当前仅接入云原神会话检查。其他业务适配器、WebDriver、浏览器下载或
+进程边界；Genshin Cloud Game 已作为独立适配器包接入。其他业务适配器、WebDriver、浏览器下载或
 其他原生模块必须在单独 CR 中增加，并为四个发布目标记录构建和运行覆盖范围。
 
-业务自动化插件是独立于浏览器 Worker 的进程边界。Windows 可直接启动原生插件
+业务自动化适配器是独立于浏览器 Worker 的进程边界。Windows 可直接启动原生适配器
 进程；macOS/Linux 如使用 Wine，必须为每个插件派生独立的 Wine prefix，并验证
 Wine 可执行文件、Windows 运行库、图形会话和目标插件版本。Wine 启动不是当前四
-平台 release 的既定能力。插件协议使用 `chuzi.adapter/v1`，只传递
+平台 release 的既定能力。适配器协议使用 `chuzi.adapter/v1`，只传递
 服务派生的 session/request 标识和脱敏运行事实，凭证不得进入 JSONL payload。
 
 CR-0043 的云原神适配器通过显式服务选项运行，不改变服务默认的 deferred backend：

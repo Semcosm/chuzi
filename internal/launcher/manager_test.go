@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	adapterpkg "github.com/Semcosm/chuzi/internal/adapter"
 )
 
 func resourceFor(t *testing.T, root, name, contents string) Resource {
@@ -275,6 +278,156 @@ func TestFilesystemPluginManagerTrustAndArchiveSafety(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(install, "plugins/demo/plugin/main.js")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func writeAdapterArchive(t *testing.T, path, id, version, source string) string {
+	return writeAdapterArchiveWithSigner(t, path, id, version, source, "test-key")
+}
+
+func writeAdapterArchiveWithSigner(t *testing.T, path, id, version, source, signer string) string {
+	t.Helper()
+	content := []byte(source)
+	digest := sha256.Sum256(content)
+	manifest := adapterpkg.Manifest{
+		Format: adapterpkg.ManifestFormat, ID: id, API: adapterpkg.AdapterAPI, Version: version,
+		Entry: "adapter.mjs", Capabilities: []string{"genshin-cloudgame@1"},
+		Permissions: []string{"browser.cdp.loopback"}, Targets: []string{"linux-amd64"}, SignedBy: signer,
+		Resources: []adapterpkg.Resource{{Path: "adapter.mjs", SHA256: hex.EncodeToString(digest[:]), Size: int64(len(content))}},
+	}
+	manifestData, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer := zip.NewWriter(file)
+	for name, data := range map[string][]byte{"adapter.mjs": content, "adapter-manifest.json": manifestData} {
+		entry, createErr := writer.Create(name)
+		if createErr != nil {
+			_ = file.Close()
+			t.Fatal(createErr)
+		}
+		if _, writeErr := entry.Write(data); writeErr != nil {
+			_ = file.Close()
+			t.Fatal(writeErr)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(data)
+	return hex.EncodeToString(hash[:])
+}
+
+func TestAdapterPackageRejectsManifestSignerMismatch(t *testing.T) {
+	source, install := t.TempDir(), t.TempDir()
+	archive := filepath.Join(source, "genshin.zip")
+	digest := writeAdapterArchiveWithSigner(t, archive, "genshin-cloudgame", "1.0.0", "package", "other-key")
+	manager, err := NewFilesystemPluginManager(ManagerOptions{
+		InstallRoot: install, SourceRoot: source, Manifest: adapterReleaseManifest("genshin.zip", digest, "1.0.0"),
+		Trust: PluginTrustPolicy{AllowedSigners: []string{"test-key"}, RequireSigned: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(context.Background(), "genshin-cloudgame"); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("signer mismatch install = %v, want ErrInvalidManifest", err)
+	}
+	if _, err := os.Stat(filepath.Join(install, "plugins", "genshin-cloudgame")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("signer mismatch left an installed package: %v", err)
+	}
+}
+
+func adapterReleaseManifest(archive, digest, version string) ReleaseManifest {
+	return ReleaseManifest{
+		Format: ManifestFormat, Channel: ChannelNightly, Version: version, Target: "linux-amd64",
+		Plugins: []PluginDescriptor{{
+			ID: "genshin-cloudgame", Version: version, API: AdapterAPIV1, Entry: "adapter.mjs",
+			Distribution: PluginDistributionPackage, Archive: archive, SHA256: digest,
+			Capabilities: []string{"genshin-cloudgame@1"}, Permissions: []string{"browser.cdp.loopback"},
+			SignedBy: "test-key", Installable: true,
+		}},
+	}
+}
+
+func TestAdapterPackageLifecycleUpgradeClearsTrustAndPreservesFailedUpdate(t *testing.T) {
+	source, install := t.TempDir(), t.TempDir()
+	archive := filepath.Join(source, "genshin.zip")
+	digest := writeAdapterArchive(t, archive, "genshin-cloudgame", "1.0.0", "version-one")
+	manager, err := NewFilesystemPluginManager(ManagerOptions{
+		InstallRoot: install, SourceRoot: source, Manifest: adapterReleaseManifest("genshin.zip", digest, "1.0.0"),
+		Trust: PluginTrustPolicy{AllowedSigners: []string{"test-key"}, RequireSigned: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := manager.Install(context.Background(), "genshin-cloudgame")
+	if err != nil || !state.Installed || !state.Verified || state.Trusted || state.Enabled || state.Running {
+		t.Fatalf("initial adapter state = %#v, err=%v", state, err)
+	}
+	if _, err := manager.SetEnabled(context.Background(), "genshin-cloudgame", true); !errors.Is(err, ErrNotTrusted) {
+		t.Fatalf("enable before trust = %v, want ErrNotTrusted", err)
+	}
+	if state, err = manager.SetTrusted(context.Background(), "genshin-cloudgame", true); err != nil || !state.Trusted || state.Enabled {
+		t.Fatalf("trusted state = %#v, err=%v", state, err)
+	}
+	if state, err = manager.SetEnabled(context.Background(), "genshin-cloudgame", true); err != nil || !state.Enabled || !state.Running {
+		t.Fatalf("enabled state = %#v, err=%v", state, err)
+	}
+
+	digest = writeAdapterArchive(t, archive, "genshin-cloudgame", "2.0.0", "version-two")
+	updated, err := NewFilesystemPluginManager(ManagerOptions{
+		InstallRoot: install, SourceRoot: source, Manifest: adapterReleaseManifest("genshin.zip", digest, "2.0.0"),
+		Trust: PluginTrustPolicy{AllowedSigners: []string{"test-key"}, RequireSigned: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err = updated.Update(context.Background(), "genshin-cloudgame")
+	if err != nil || !state.Verified || state.Trusted || state.Enabled || state.Running || state.Descriptor.Version != "2.0.0" {
+		t.Fatalf("upgraded adapter state = %#v, err=%v", state, err)
+	}
+	installedData, err := os.ReadFile(filepath.Join(install, "plugins", "genshin-cloudgame", "adapter.mjs"))
+	if err != nil || string(installedData) != "version-two" {
+		t.Fatalf("installed upgraded package = %q, err=%v", installedData, err)
+	}
+
+	if _, err := updated.SetTrusted(context.Background(), "genshin-cloudgame", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updated.SetEnabled(context.Background(), "genshin-cloudgame", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(archive, []byte("corrupt archive"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := updated.Update(context.Background(), "genshin-cloudgame"); err == nil {
+		t.Fatal("corrupt adapter update was accepted")
+	}
+	installedData, err = os.ReadFile(filepath.Join(install, "plugins", "genshin-cloudgame", "adapter.mjs"))
+	if err != nil || string(installedData) != "version-two" {
+		t.Fatalf("failed update replaced old package = %q, err=%v", installedData, err)
+	}
+	states, err := updated.List(context.Background())
+	if err != nil || len(states) != 1 || !states[0].Installed || states[0].Descriptor.Version != "2.0.0" {
+		t.Fatalf("failed update state = %#v, err=%v", states, err)
+	}
+	if err := updated.Remove(context.Background(), "genshin-cloudgame"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(install, "plugins", "genshin-cloudgame")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("removed adapter directory remains: %v", err)
 	}
 }
 

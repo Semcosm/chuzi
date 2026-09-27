@@ -61,7 +61,7 @@ native controls and the content surface update together. The UI-only choice is
 stored in `.chuzi-ui-settings.json` below the resolved Chuzi data directory;
 launcher behavior settings remain in the launcher's validated settings file.
 
-The snapshot example also accepts `--page overview|adapters|accounts|tasks|rdp|settings` and `--adapter-state empty|builtin|package`.
+The snapshot example also accepts `--page overview|adapters|accounts|tasks|rdp|settings` and `--adapter-state empty|builtin|package|installed|trusted|enabled|rollback`.
 so each page can be checked at the supported window sizes.
 
 ### Components
@@ -77,8 +77,11 @@ Core to be running.
 Adapters displays the release catalog and the lifecycle actions supported by each
 entry. Core must be running before refresh or package changes are enabled. Built-in
 entries show their source component and availability; package entries expose the
-explicit install, trust, enable, and remove actions. All actions are delegated to
-the launcher; the UI never opens the Core endpoint.
+archive, SHA-256, signer, verification, install, update, trust, enable, disable,
+and remove state. The Genshin Cloud Game entry is an independent
+`chuzi-adapter/v1` package, so it is shown as installable when the selected release
+index contains its target archive. All actions are delegated to the launcher; the
+UI never opens the Core endpoint.
 
 ### Accounts
 

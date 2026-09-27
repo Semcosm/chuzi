@@ -48,6 +48,12 @@ $manifestCopy = Join-Path $repoRoot "dist/chuzi-$Version-$Target.manifest.json"
 Copy-Item -Force (Join-Path $stageDir "release-manifest.json") $manifestCopy
 $hash = (Get-FileHash -Algorithm SHA256 $artifact).Hash.ToLowerInvariant()
 "$hash  $(Split-Path -Leaf $artifact)" | Set-Content -Encoding ascii "$artifact.sha256"
+$adapterSource = Join-Path $repoRoot "dist/$Target/chuzi-$Version-$Target-genshin-cloudgame.zip"
+$adapterArtifact = Join-Path $repoRoot "dist/chuzi-$Version-$Target-genshin-cloudgame.zip"
+if (-not (Test-Path $adapterSource)) { throw "Genshin adapter archive is missing: $adapterSource" }
+Copy-Item -Force $adapterSource $adapterArtifact
+$adapterHash = (Get-FileHash -Algorithm SHA256 $adapterArtifact).Hash.ToLowerInvariant()
+"$adapterHash  $(Split-Path -Leaf $adapterArtifact)" | Set-Content -Encoding ascii "$adapterArtifact.sha256"
 $commit = $env:GITHUB_SHA
 if ([string]::IsNullOrWhiteSpace($commit)) {
     $commit = (& git -C $repoRoot rev-parse HEAD).Trim()

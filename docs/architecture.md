@@ -42,7 +42,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 .
 ├── cmd/                         # 可执行程序入口
 │   └── service/
-├── browser-worker/              # Node.js Worker 协议、deferred 与 headed/headless-CDP 适配器
+├── browser-worker/              # Node.js Worker 协议、通用 CDP runtime 与适配器包源码
 ├── cmd/launcher/                # UI-neutral 启动器 CLI 入口
 ├── ui/                          # 原生平台客户端
 │   ├── windows/                  # 已有 Rust + Slint 首个客户端
@@ -57,7 +57,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 │   ├── account/                 # 已实现：账号实体与状态机
 │   ├── browser/                 # Profile 生命周期与会话运行器
 │   ├── automation/              # 业务自动化适配器契约与 JSONL 协议
-│   ├── plugin/                  # 原生/Wine 插件进程启动与回收边界
+│   ├── plugin/                  # 兼容旧命名的原生/Wine 进程启动与回收边界
 │   ├── request/                 # 已实现：请求创建、查询和取消服务
 │   ├── credential/              # 凭证加密、轮换和访问接口
 │   ├── queue/                   # 排队、租约、超时和重试
@@ -65,7 +65,8 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 │   ├── store/                   # 已实现：数据库与事务封装
 │   ├── config/                  # 已实现：配置加载与路径派生
 │   ├── observability/           # 已实现：结构化脱敏日志、轮转、指标和事件 Sink
-│   └── launcher/                # release manifest、校验和组件/插件管理接口
+│   ├── adapter/                 # chuzi-adapter/v1 manifest、校验和受控 Registry
+│   └── launcher/                # release manifest、校验和组件/适配器管理接口
 ├── migrations/                  # 已实现：bbolt schema 迁移
 ├── tests/                       # 跨模块集成测试与端到端测试
 ├── configs/                     # 脱敏示例配置
@@ -82,7 +83,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 首阶段采用 Rust + Slint，macOS 采用 SwiftUI（必要时使用 AppKit），Linux 采用 GTK；
 三者分别遵循目标平台的默认控件、窗口行为、无障碍和主题机制。客户端只负责视图、
 交互和平台生命周期，不读取 bbolt、凭证或 Profile，也不复制 Core IPC、下载、校验、锁、插件
-信任和回滚策略。Windows 首个客户端已落在 `ui/windows`；macOS/Linux 的实现 CR 仍需
+适配器信任和回滚策略。Windows 首个客户端已落在 `ui/windows`；macOS/Linux 的实现 CR 仍需
 分别明确 API 版本、打包方式和运行时支持范围。
 
 `internal/coreapi` 定义 `chuzi.core/v1` 的 transport-neutral DTO、命令接口和稳定
@@ -103,18 +104,18 @@ Sender 替身，供跨模块测试复用；这些替身不参与生产拼装。
 pipe 和 owner-only SDDL。客户端不接受任意 endpoint 作为业务参数，UI 只能使用部署派生的
 本地地址；原生 UI 只能调用 launcher 的稳定命令。
 
-## 业务自动化适配器与插件
+## 业务自动化适配器
 
 `internal/browser` 只管理浏览器 Worker 的生命周期；业务自动化操作必须通过
 `internal/automation.Adapter` 执行。该接口描述能力、服务派生的会话标识、操作、
 取消、关闭和稳定错误分类，适配器只能返回脱敏运行事实，不能直接写账号状态、
 队列或审计记录。
 
-需要独立进程时，`internal/plugin` 通过版本化 JSONL 协议承载同一接口。原生进程和
+需要独立进程时，兼容层 `internal/plugin` 通过版本化 JSONL 协议承载同一接口。原生进程和
 Wine 进程都使用参数数组启动，不经过 shell；Wine prefix 必须是服务派生的绝对
 路径。平台差异只存在于进程启动后端，不能扩散到 BetterGI 等业务协议中。
 
-`plugins/bettergi` 是 BetterGI 通信插件的预留目录。它不包含 BetterGI 自动化本体
+`plugins/bettergi` 是 BetterGI 通信适配器的预留目录。它不包含 BetterGI 自动化本体
 或二进制，只负责将 `chuzi.adapter/v1` 映射到 BetterGI 的公开集成接口。BetterGI
 具体协议、版本兼容性和 Wine 运行要求必须在独立实现 CR 中以证据确认；当前不能
 把该目录解释为已经支持 BetterGI 自动化。
@@ -140,14 +141,14 @@ Nightly release 的最小安装单元是启动器。发布 stage 同时携带服
 browser-worker，package 脚本还为三者生成独立组件归档，
 让安装者可以按需安装而不必把所有运行资源放入本地安装。完整包的
 `release-manifest.json` 记录每个组件的版本、依赖、入口和资源 SHA-256/大小；组件
-包本身不是信任凭证，插件仍须通过未来的签名/权限策略审查。
+包本身不是信任凭证，独立适配器包仍须通过 manifest、SHA-256 和显式 signer trust 审查。
 
 `internal/launcher` 是 transport-neutral 的后台接口：`UpdateChecker` 负责查询更新，
 `ResourceVerifier`/`ResourceRepairer` 负责完整性检查与修复，`ComponentManager` 和
-`PluginManager` 负责安装状态，`SettingsStore` 保存启动行为设置，文件锁和
+`PluginManager`（保留旧 API 名称）负责适配器安装状态，`SettingsStore` 保存启动行为设置，文件锁和
 `ServiceController` 约束本地操作并管理由调用方持有的前台服务进程。接口不假设 UI
 技术、网络协议或平台服务管理器。CR-0022 与 CR-0026 提供了本地 manifest source、
-原子资源修复、组件依赖安装、插件归档安全解包、显式 signer 信任、原子设置持久化、
+原子资源修复、组件依赖安装、适配器归档安全解包、显式 signer 信任、原子设置持久化、
 跨进程锁和可取消进度事件；CR-0027 增加了 `ReleaseIndex`、HTTPS 同源归档下载、
 临时文件原子落盘和首次运行初始化状态。`cmd/launcher` 只在显式提供
 `-release-index` 时联网。原生平台客户端通过 Stable API Boundary 调用该

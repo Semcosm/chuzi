@@ -24,6 +24,12 @@ Copy-Item -Force (Join-Path $GoDir "chuzi-launcher.exe") (Join-Path $stageDir "c
 Copy-Item -Force (Join-Path $GoDir "chuzi-browser-launcher.exe") (Join-Path $stageDir "chuzi-browser-launcher.exe")
 tar -xzf $WorkerArchive -C (Join-Path $stageDir "browser-worker")
 if ($LASTEXITCODE -ne 0) { throw "browser worker archive extraction failed" }
+$adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
+$adapterManifest = Join-Path $targetDir "genshin-cloudgame-adapter-manifest.json"
+& python (Join-Path $repoRoot "scripts/build_adapter_package.py") `
+    --source (Join-Path $repoRoot "browser-worker/adapters/genshin-cloudgame") `
+    --output $adapterArchive --manifest-output $adapterManifest --version $Version
+if ($LASTEXITCODE -ne 0) { throw "Genshin adapter package generation failed" }
 if ([string]::IsNullOrWhiteSpace($PresentMonPath)) {
     $PresentMonPath = Join-Path ([System.IO.Path]::GetTempPath()) "chuzi-presentmon/PresentMon.exe"
     & (Join-Path $repoRoot "scripts/prepare_presentmon.ps1") -OutputPath $PresentMonPath
@@ -48,6 +54,6 @@ if ([string]::IsNullOrWhiteSpace($commit)) { $commit = (& git -C $repoRoot rev-p
 } | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
 
 $channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } elseif ($Version -like 'test-*') { "test" } else { "nightly" }
-& python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit --channel $channel
+& python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit --channel $channel --adapter-archive $adapterArchive --adapter-manifest $adapterManifest
 if ($LASTEXITCODE -ne 0) { throw "release manifest generation failed" }
 Write-Output "assembled $Target at $stageDir"

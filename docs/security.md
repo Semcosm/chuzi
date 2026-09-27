@@ -66,6 +66,15 @@ fail closed，并映射为分类 runtime/configuration fact。浏览器进程或
 为分类 runtime/configuration fact；不能自动下载未知浏览器、回退到系统任意
 可执行文件，或借助 CAPTCHA、风控和反检测技术改变第三方服务行为。
 
+## 适配器包边界
+
+适配器包使用 `chuzi-adapter/v1` manifest，入口、能力、权限、目标平台、版本和 signer
+必须显式声明。服务只扫描自身数据目录下的适配器 ID 目录，拒绝任意调用方路径；加载前
+重新校验 manifest、目标平台、每个资源的大小和 SHA-256，并拒绝路径穿越、软链接、重复
+归档成员和未声明文件。`installed`、`verified`、`trusted`、`enabled` 与运行状态互相独立；
+任何一个门未满足都不能启动适配器。更新会清除旧 trust 并在新归档和状态提交成功前保留
+旧包。适配器归档不包含 Chromium、Cookie、Profile、密码、token 或真实账号数据。
+
 ## 权限与审计
 
 Matrix 用户/房间采用白名单或角色授权。目标部署中的管理命令（添加账号、读取

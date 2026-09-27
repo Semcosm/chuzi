@@ -11,11 +11,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	adapterpkg "github.com/Semcosm/chuzi/internal/adapter"
 	"github.com/Semcosm/chuzi/internal/automation"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
@@ -202,6 +204,37 @@ func hasCapability(descriptor automation.Descriptor, id, version string) bool {
 	return false
 }
 
+func serviceTarget() string {
+	switch runtime.GOOS + "/" + runtime.GOARCH {
+	case "windows/amd64":
+		return "windows-amd64"
+	case "linux/amd64":
+		return "linux-amd64"
+	case "linux/arm64":
+		return "linux-arm64"
+	case "darwin/arm64":
+		return "darwin-arm64"
+	default:
+		return ""
+	}
+}
+
+func resolveAutomationPackage(cfg config.Config, id string) (adapterpkg.Package, error) {
+	states, err := adapterpkg.LoadStates(filepath.Join(cfg.DataDir, ".chuzi", "launcher-state.json"))
+	if err != nil {
+		return adapterpkg.Package{}, fmt.Errorf("service: automation adapter unavailable: %w", err)
+	}
+	registry, err := adapterpkg.NewRegistry(filepath.Join(cfg.DataDir, "plugins"), serviceTarget(), states)
+	if err != nil {
+		return adapterpkg.Package{}, fmt.Errorf("service: automation adapter unavailable: %w", err)
+	}
+	resolved, err := registry.Resolve(id)
+	if err != nil {
+		return adapterpkg.Package{}, fmt.Errorf("service: automation adapter unavailable: %w", err)
+	}
+	return resolved, nil
+}
+
 func (o serviceOptions) validate() error {
 	if strings.TrimSpace(o.owner) == "" || o.pollInterval <= 0 || o.leaseTTL <= 0 ||
 		o.runTimeout <= 0 || o.cancelTimeout <= 0 || o.shutdownTimeout <= 0 ||
@@ -353,11 +386,15 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	}
 	var sessionRunner queue.Runner
 	if strings.TrimSpace(options.automationAdapter) != "" {
+		packageAdapter, packageErr := resolveAutomationPackage(cfg, strings.TrimSpace(options.automationAdapter))
+		if packageErr != nil {
+			return closeOnError(packageErr)
+		}
 		node, lookErr := exec.LookPath(options.workerCommand)
 		if lookErr != nil {
 			return closeOnError(fmt.Errorf("service: automation adapter runtime unavailable"))
 		}
-		adapterPath := filepath.Join("browser-worker", "src", "headless-adapter.mjs")
+		adapterPath := packageAdapter.Entry
 		adapterMode := backendHeadless
 		if options.backend == backendHeaded {
 			adapterMode = backendHeaded
@@ -376,7 +413,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		}
 		automationAdapter = client
 		descriptor, describeErr := client.Describe(context.Background())
-		if describeErr != nil || !hasCapability(descriptor, "genshin-cloudgame", "1") {
+		if describeErr != nil || descriptor.ID != packageAdapter.Manifest.ID || descriptor.API != adapterpkg.AdapterAPI || descriptor.Version != packageAdapter.Manifest.Version || !hasCapability(descriptor, "genshin-cloudgame", "1") {
 			return closeOnError(fmt.Errorf("service: requested automation capability unavailable"))
 		}
 		pipelineRunner, pipelineErr := core.NewPipelineRunner(database, core.PipelineConfig{

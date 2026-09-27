@@ -197,7 +197,10 @@ Windows/macOS/Linux 客户端通过 Core API 工作，不依赖浏览器 WebView
 已授权会话，返回标题、应用根节点和登录状态等脱敏页面事实；Core evaluator 才将
 事实映射为账号结果，未认证或页面结构变化时 fail closed，endpoint discovery 不被视为
 业务成功。仓库内本地测试页仍用于协议
-回归。更广泛的业务自动化适配器、WebDriver、浏览器版本策略、资源限制和四平台运行
+回归。第二阶段（CR-0081）将 Genshin 从 Worker 内置能力迁移为独立的
+`genshin-cloudgame` 适配器包：通用 CDP runtime 与业务入口分离，服务通过受控 Registry
+加载，Launcher 管理安装、验证、signer trust、启用、更新、回滚和移除，发布索引列出独立
+归档。更广泛的业务自动化适配器、WebDriver、浏览器版本策略、资源限制和四平台运行
 证据仍需后续独立 CR。
 
 #### 7B：业务自动化适配器与插件进程边界（CR-0020 第一增量）

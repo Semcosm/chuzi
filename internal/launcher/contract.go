@@ -43,6 +43,7 @@ const (
 	HealthMissing      = "missing"
 	HealthDisabled     = "disabled"
 	HealthUntrusted    = "untrusted"
+	HealthUnverified   = "unverified"
 	HealthNotInstalled = "not_installed"
 	HealthIncluded     = "included"
 	HealthUnavailable  = "unavailable"
@@ -223,6 +224,7 @@ type PluginDescriptor struct {
 	ID              string   `json:"id"`
 	Version         string   `json:"version"`
 	API             string   `json:"api"`
+	Entry           string   `json:"entry,omitempty"`
 	Distribution    string   `json:"distribution,omitempty"`
 	SourceComponent string   `json:"source_component,omitempty"`
 	Target          string   `json:"target,omitempty"`
@@ -350,6 +352,14 @@ func (m ReleaseManifest) Validate() error {
 		case PluginDistributionPackage:
 			if !plugin.Installable || plugin.Archive == "" || plugin.SHA256 == "" {
 				return fmt.Errorf("%w: package plugin %s requires installable archive and sha256", ErrInvalidManifest, plugin.ID)
+			}
+			if plugin.API == AdapterAPIV1 {
+				if err := validateRelativePath(plugin.Entry); err != nil {
+					return fmt.Errorf("%w: package adapter %s entry: %v", ErrInvalidManifest, plugin.ID, err)
+				}
+				if strings.TrimSpace(plugin.SignedBy) == "" {
+					return fmt.Errorf("%w: package adapter %s requires a signer", ErrInvalidManifest, plugin.ID)
+				}
 			}
 		default:
 			return fmt.Errorf("%w: plugin %s has unknown distribution %q", ErrInvalidManifest, plugin.ID, plugin.Distribution)
@@ -529,14 +539,17 @@ type ComponentManager interface {
 type PluginState struct {
 	Descriptor PluginDescriptor `json:"descriptor"`
 	Installed  bool             `json:"installed"`
+	Verified   bool             `json:"verified"`
 	Enabled    bool             `json:"enabled"`
 	Trusted    bool             `json:"trusted"`
+	Running    bool             `json:"running"`
 	Health     string           `json:"health"`
 }
 
 type PluginManager interface {
 	List(context.Context) ([]PluginState, error)
 	Install(context.Context, string) (PluginState, error)
+	Update(context.Context, string) (PluginState, error)
 	Remove(context.Context, string) error
 	SetEnabled(context.Context, string, bool) (PluginState, error)
 	SetTrusted(context.Context, string, bool) (PluginState, error)

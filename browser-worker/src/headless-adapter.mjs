@@ -1,11 +1,10 @@
-import { createHash, randomBytes } from "node:crypto";
-import { createConnection } from "node:net";
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, isAbsolute, normalize, resolve, sep } from "node:path";
+import { CdpSocket, ExternalLifecycle, classified, cancelledError, fetchVersion, wait } from "./cdp-runtime.mjs";
 
 const adapterProtocol = "chuzi.adapter/v1";
 const adapterID = "chuzi.headless-cdp";
@@ -63,14 +62,6 @@ function value(request, key) {
   return typeof candidate === "string" ? candidate : "";
 }
 
-function classified(className, code, retryable = false) {
-  return { failure: { class: className, code, retryable } };
-}
-
-function cancelledError() {
-  return Object.assign(new Error("operation cancelled"), classified("cancelled", "operation_cancelled"));
-}
-
 function validProfileDir(profileDir) {
   if (!isAbsolute(profileDir)) return false;
   const cleaned = normalize(profileDir);
@@ -83,21 +74,6 @@ function validAccountID(accountID) {
 
 function isCdpRuntime(runtime) {
   return runtime === "headless-cdp" || runtime === "headed-cdp";
-}
-
-function wait(milliseconds, signal) {
-  return new Promise((resolveWait, rejectWait) => {
-    if (signal && signal.aborted) {
-      rejectWait(cancelledError());
-      return;
-    }
-    const timer = setTimeout(resolveWait, milliseconds);
-    if (!signal) return;
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      rejectWait(cancelledError());
-    }, { once: true });
-  });
 }
 
 function parseParameters(request) {
@@ -278,7 +254,7 @@ class HeadlessLifecycle {
         throw classified("runtime", "lifecycle_metadata_invalid", true);
       }
       this.port = port;
-      const version = await fetchVersion(port, this.signal);
+      const version = await fetchVersion(port, this.signal, cdpTimeoutMs);
       this.websocketURL = version.websocketURL;
       return { browserProduct: version.browserProduct, protocolVersion: version.protocolVersion };
     } catch (error) {
@@ -322,285 +298,12 @@ class HeadlessLifecycle {
 // Core may hand the adapter an ephemeral handle for the browser worker that
 // already owns this Profile. Only loopback CDP handles created by the worker
 // are accepted; arbitrary endpoints and caller-provided URLs are rejected.
-class ExternalLifecycle {
-  constructor(handle, signal) {
-    this.handle = handle;
-    this.signal = signal;
-    this.websocketURL = null;
-  }
-
-  async start() {
-    const match = /^(?:headless|headed)-cdp:\/\/127\.0\.0\.1:(\d+)$/u.exec(this.handle);
-    const port = Number(match?.[1] || 0);
-    if (!match || !Number.isInteger(port) || port < 1 || port > 65535) {
-      throw classified("configuration", "cdp_handle_invalid");
-    }
-    const version = await fetchVersion(String(port), this.signal);
-    this.websocketURL = version.websocketURL;
-    return { browserProduct: version.browserProduct, protocolVersion: version.protocolVersion };
-  }
-
-  async close() {}
-}
-
-async function fetchVersion(port, signal) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), cdpTimeoutMs);
-  const relay = () => controller.abort();
-  signal.addEventListener("abort", relay, { once: true });
-  try {
-    const response = await fetch("http://127.0.0.1:" + port + "/json/version", { signal: controller.signal });
-    if (!response.ok) throw new Error("endpoint unavailable");
-    const body = await response.json();
-    const websocketURL = typeof body.webSocketDebuggerUrl === "string" ? new URL(body.webSocketDebuggerUrl) : null;
-    if (!websocketURL || websocketURL.protocol !== "ws:" || websocketURL.hostname !== "127.0.0.1" ||
-        websocketURL.port !== String(port) || !websocketURL.pathname.startsWith("/devtools/browser/")) {
-      throw classified("configuration", "cdp_endpoint_invalid");
-    }
-    return {
-      websocketURL,
-      browserProduct: typeof body.Browser === "string" ? body.Browser.split("/")[0] : "unknown",
-      protocolVersion: typeof body["Protocol-Version"] === "string" ? body["Protocol-Version"] : "unknown",
-    };
-  } catch (error) {
-    if (error?.failure) throw error;
-    if (signal.aborted || error?.name === "AbortError") throw cancelledError();
-    throw classified("transient", "cdp_endpoint_unavailable", true);
-  } finally {
-    clearTimeout(timer);
-    signal.removeEventListener("abort", relay);
-  }
-}
-
-class CdpSocket {
-  constructor(url, signal) {
-    this.url = url;
-    this.signal = signal;
-    this.socket = null;
-    this.buffer = Buffer.alloc(0);
-    this.handshakeBuffer = Buffer.alloc(0);
-    this.handshaken = false;
-    this.closed = false;
-    this.fragments = [];
-    this.pending = new Map();
-    this.nextCommandID = 0;
-  }
-
-  async connect() {
-    if (this.url.protocol !== "ws:" || this.url.hostname !== "127.0.0.1") {
-      throw classified("configuration", "cdp_endpoint_invalid");
-    }
-    const key = randomBytes(16).toString("base64");
-    const expectedAccept = createHash("sha1")
-      .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest("base64");
-    await new Promise((resolveConnect, rejectConnect) => {
-      const socket = createConnection({ host: this.url.hostname, port: Number(this.url.port) });
-      this.socket = socket;
-      let settled = false;
-      const settle = (error) => {
-        if (settled) return;
-        settled = true;
-        if (error) rejectConnect(error);
-        else resolveConnect();
-      };
-      socket.on("error", () => {
-        this.failAll(new Error("cdp_connection_failed"));
-        settle(classified("runtime", "cdp_connection_failed", true));
-      });
-      socket.on("close", () => {
-        this.failAll(new Error("cdp_connection_closed"));
-        if (!this.handshaken) settle(classified("runtime", "cdp_connection_failed", true));
-      });
-      socket.on("data", (chunk) => {
-        if (!this.handshaken) {
-          this.handshakeBuffer = Buffer.concat([this.handshakeBuffer, chunk]);
-          const end = this.handshakeBuffer.indexOf("\r\n\r\n");
-          if (end < 0) return;
-          const header = this.handshakeBuffer.subarray(0, end).toString("ascii");
-          const lines = header.split("\r\n");
-          const acceptLine = lines.find((line) => /^sec-websocket-accept:/iu.test(line));
-          const accept = acceptLine?.split(":", 2)[1]?.trim();
-          if (!lines[0]?.includes(" 101 ") || accept !== expectedAccept) {
-            settle(classified("runtime", "cdp_handshake_invalid", true));
-            socket.destroy();
-            return;
-          }
-          this.handshaken = true;
-          this.buffer = this.handshakeBuffer.subarray(end + 4);
-          this.handshakeBuffer = Buffer.alloc(0);
-          this.consumeFrames();
-          settle();
-          return;
-        }
-        this.buffer = Buffer.concat([this.buffer, chunk]);
-        this.consumeFrames();
-      });
-      socket.once("connect", () => {
-        socket.write("GET " + this.url.pathname + this.url.search + " HTTP/1.1\r\n" +
-          "Host: " + this.url.hostname + ":" + this.url.port + "\r\n" +
-          "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
-          "Sec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 13\r\n\r\n");
-      });
-      const abort = () => {
-        socket.destroy();
-        settle(cancelledError());
-      };
-      this.signal.addEventListener("abort", abort, { once: true });
-    }).catch((error) => {
-      if (error?.failure) throw error.failure;
-      throw classified("runtime", "cdp_connection_failed", true);
-    });
-  }
-
-  consumeFrames() {
-    while (this.buffer.length >= 2) {
-      const first = this.buffer[0];
-      const second = this.buffer[1];
-      const masked = (second & 0x80) !== 0;
-      let length = second & 0x7f;
-      let offset = 2;
-      if (length === 126) {
-        if (this.buffer.length < 4) return;
-        length = this.buffer.readUInt16BE(2);
-        offset = 4;
-      } else if (length === 127) {
-        if (this.buffer.length < 10) return;
-        const high = this.buffer.readUInt32BE(2);
-        const low = this.buffer.readUInt32BE(6);
-        if (high > 0x1fffff) {
-          this.failAll(new Error("cdp_frame_too_large"));
-          return;
-        }
-        length = high * 0x100000000 + low;
-        offset = 10;
-      }
-      const payloadOffset = masked ? offset + 4 : offset;
-      const frameLength = payloadOffset + length;
-      if (this.buffer.length < frameLength) return;
-      let payload = this.buffer.subarray(payloadOffset, frameLength);
-      if (masked) {
-        const mask = this.buffer.subarray(offset, offset + 4);
-        payload = Buffer.from(payload);
-        for (let index = 0; index < payload.length; index += 1) payload[index] ^= mask[index % 4];
-      }
-      this.buffer = this.buffer.subarray(frameLength);
-      const opcode = first & 0x0f;
-      if (opcode === 0x8) {
-        this.close();
-        return;
-      }
-      if (opcode === 0x9) {
-        this.writeFrame(0xA, payload);
-        continue;
-      }
-      if (opcode === 0xA) continue;
-      if (opcode === 0x0) {
-        this.fragments.push(payload);
-        if ((first & 0x80) !== 0) {
-          this.handleText(Buffer.concat(this.fragments));
-          this.fragments = [];
-        }
-      } else if (opcode === 0x1) {
-        if ((first & 0x80) === 0) this.fragments = [payload];
-        else this.handleText(payload);
-      }
-    }
-  }
-
-  handleText(payload) {
-    let message;
-    try {
-      message = JSON.parse(payload.toString("utf8"));
-    } catch {
-      this.failAll(new Error("cdp_message_invalid"));
-      return;
-    }
-    if (!Number.isInteger(message.id)) return;
-    const pending = this.pending.get(message.id);
-    if (!pending) return;
-    this.pending.delete(message.id);
-    clearTimeout(pending.timer);
-    if (message.error) {
-      pending.reject(classified("runtime", "cdp_command_failed", true));
-    } else {
-      pending.resolve(message.result || {});
-    }
-  }
-
-  writeFrame(opcode, payload) {
-    if (!this.socket || this.closed) return;
-    const body = Buffer.isBuffer(payload) ? payload : Buffer.from(payload);
-    const mask = randomBytes(4);
-    let header;
-    if (body.length < 126) {
-      header = Buffer.from([0x80 | opcode, 0x80 | body.length]);
-    } else if (body.length <= 0xffff) {
-      header = Buffer.alloc(4);
-      header[0] = 0x80 | opcode;
-      header[1] = 0x80 | 126;
-      header.writeUInt16BE(body.length, 2);
-    } else {
-      header = Buffer.alloc(10);
-      header[0] = 0x80 | opcode;
-      header[1] = 0x80 | 127;
-      header.writeUInt32BE(Math.floor(body.length / 0x100000000), 2);
-      header.writeUInt32BE(body.length >>> 0, 6);
-    }
-    const masked = Buffer.from(body);
-    for (let index = 0; index < masked.length; index += 1) masked[index] ^= mask[index % 4];
-    this.socket.write(Buffer.concat([header, mask, masked]));
-  }
-
-  command(method, params = {}, sessionID = "", signal = this.signal) {
-    if (this.closed || !this.handshaken) return Promise.reject(classified("runtime", "cdp_not_connected", true));
-    if (signal.aborted) return Promise.reject(cancelledError());
-    const id = ++this.nextCommandID;
-    const message = { id, method, params };
-    if (sessionID) message.sessionId = sessionID;
-    return new Promise((resolveCommand, rejectCommand) => {
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectCommand(classified("transient", "cdp_command_timeout", true));
-      }, cdpTimeoutMs);
-      this.pending.set(id, { resolve: resolveCommand, reject: rejectCommand, timer });
-      this.writeFrame(0x1, JSON.stringify(message));
-      signal.addEventListener("abort", () => {
-        const pending = this.pending.get(id);
-        if (!pending) return;
-        this.pending.delete(id);
-        clearTimeout(pending.timer);
-        rejectCommand(cancelledError());
-      }, { once: true });
-    });
-  }
-
-  failAll(error) {
-    for (const [id, pending] of this.pending) {
-      clearTimeout(pending.timer);
-      pending.reject(error);
-      this.pending.delete(id);
-    }
-  }
-
-  close() {
-    if (this.closed) return;
-    this.failAll(new Error("cdp_connection_closed"));
-    try {
-      this.writeFrame(0x8, Buffer.alloc(0));
-    } catch {
-      // the socket may already be closed
-    }
-    this.closed = true;
-    this.socket?.destroy();
-  }
-}
-
 async function captureSnapshot(session, width, height, signal, lifecycle) {
   if (session.runtime && !isCdpRuntime(session.runtime)) {
     throw classified("configuration", "runtime_mismatch");
   }
   if (!session.handle) throw classified("runtime", "browser_view_unavailable", true);
-  const socket = new CdpSocket(lifecycle.websocketURL, signal);
+  const socket = new CdpSocket(lifecycle.websocketURL, signal, cdpTimeoutMs);
   let targetID = "";
   let createdTarget = false;
   let attachedSessionID = "";
@@ -669,7 +372,7 @@ async function handleViewSnapshot(request) {
   }
   try {
     const deadline = deadlineFor(request, new AbortController().signal);
-    const lifecycle = new ExternalLifecycle(session.handle, deadline.signal);
+    const lifecycle = new ExternalLifecycle(session.handle, deadline.signal, cdpTimeoutMs);
     try {
       await lifecycle.start();
       const frame = await captureSnapshot(session, width, height, deadline.signal, lifecycle);
@@ -728,7 +431,7 @@ async function executeLocalPage(session, operation, parameters, signal, lifecycl
   if (!validAccountID(session.accountID)) throw classified("configuration", "account_id_invalid");
 
   const page = await createLocalPage(session.accountID);
-  const socket = new CdpSocket(lifecycle.websocketURL, signal);
+  const socket = new CdpSocket(lifecycle.websocketURL, signal, cdpTimeoutMs);
   let targetID = "";
   try {
     await socket.connect();
@@ -785,7 +488,7 @@ async function executeGenshinCloudGame(session, operation, parameters, signal, l
   if (session.runtime && !isCdpRuntime(session.runtime)) throw classified("configuration", "runtime_mismatch");
   if (!validAccountID(session.accountID)) throw classified("configuration", "account_id_invalid");
 
-  const socket = new CdpSocket(lifecycle.websocketURL, signal);
+  const socket = new CdpSocket(lifecycle.websocketURL, signal, cdpTimeoutMs);
   let targetID = "";
   try {
     await socket.connect();
@@ -882,7 +585,7 @@ async function runOperation(request, task) {
     deadline = deadlineFor(request, task.controller.signal);
     reply(request, "operation_started", { operation_id: value(request, "operation_id") });
     lifecycle = session.handle
-      ? new ExternalLifecycle(session.handle, deadline.signal)
+      ? new ExternalLifecycle(session.handle, deadline.signal, cdpTimeoutMs)
       : new HeadlessLifecycle(session, deadline.signal);
     await lifecycle.start();
     const operation = value(request, "operation");
@@ -969,7 +672,7 @@ input.on("line", (line) => {
         adapter_id: adapterID,
         version: adapterVersion,
         api: adapterProtocol,
-        capabilities: "cdp@1,headless-cdp@1,headed-cdp@1,browser-view@1,local.test-page@1,genshin-cloudgame@1",
+        capabilities: "cdp@1,headless-cdp@1,headed-cdp@1,browser-view@1,local.test-page@1",
       });
       break;
     case "execute":

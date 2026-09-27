@@ -57,15 +57,37 @@ for target in linux-amd64 windows-amd64; do
       "id": "chuzi.headless-cdp",
       "api": "chuzi.adapter/v1",
       "entry": "index.mjs",
-      "capabilities": ["cdp@1", "genshin-cloudgame@1"]
+      "capabilities": ["cdp@1"]
     }
   ]
 }
 JSON
+  adapter_source="$test_root/$target-adapter-source"
+  mkdir -p "$adapter_source"
+  printf '%s' 'export default {};' >"$adapter_source/adapter.mjs"
+  printf '%s' 'export default {};' >"$adapter_source/cdp-runtime.mjs"
+  cat >"$adapter_source/adapter-manifest.json" <<'JSON'
+{
+  "format": "chuzi-adapter/v1",
+  "id": "genshin-cloudgame",
+  "api": "chuzi.adapter/v1",
+  "version": "0.1.0",
+  "entry": "adapter.mjs",
+  "capabilities": ["genshin-cloudgame@1"],
+  "permissions": ["browser.cdp.loopback"],
+  "targets": ["linux-amd64", "windows-amd64"],
+  "signed_by": "chuzi-release"
+}
+JSON
+  adapter_extension=tar.gz
+  [ "$target" = "windows-amd64" ] && adapter_extension=zip
+  adapter_archive="$dist/chuzi-${version}-${target}-genshin-cloudgame.$adapter_extension"
+  adapter_manifest="$dist/genshin-cloudgame-adapter-manifest.json"
+  "$python_command" "$repo_root/scripts/build_adapter_package.py" --source "$adapter_source" --output "$adapter_archive" --manifest-output "$adapter_manifest" --version "$version"
 
   "$python_command" "$repo_root/scripts/generate_release_manifest.py" \
     --stage "$stage" --target "$target" --version "$version" \
-    --commit "$commit" --channel nightly
+    --commit "$commit" --channel nightly --adapter-archive "$adapter_archive" --adapter-manifest "$adapter_manifest"
   "$python_command" - "$stage/release-manifest.json" <<'PY'
 import json
 import sys
@@ -73,14 +95,15 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as stream:
     manifest = json.load(stream)
 plugins = manifest.get("plugins")
-assert len(plugins) == 1, plugins
-plugin = plugins[0]
-assert plugin["id"] == "chuzi.headless-cdp", plugin
-assert plugin["api"] == "chuzi.adapter/v1", plugin
-assert plugin["distribution"] == "builtin", plugin
-assert plugin["source_component"] == "browser-worker", plugin
-assert "genshin-cloudgame@1" in plugin["capabilities"], plugin
-assert plugin["installable"] is False, plugin
+assert len(plugins) == 2, plugins
+builtin = next(item for item in plugins if item["id"] == "chuzi.headless-cdp")
+assert builtin["distribution"] == "builtin", builtin
+assert "genshin-cloudgame@1" not in builtin["capabilities"], builtin
+package = next(item for item in plugins if item["id"] == "genshin-cloudgame")
+assert package["distribution"] == "package", package
+assert package["installable"] is True, package
+assert package["archive"].endswith((".zip", ".tar.gz")), package
+assert len(package["sha256"]) == 64, package
 PY
 
   if [ "$target" = "windows-amd64" ]; then
