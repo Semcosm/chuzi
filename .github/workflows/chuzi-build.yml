@@ -473,7 +473,7 @@ jobs:
           }
           Write-InstallerLogTail
           if (Test-Path $installDir) {
-            Write-Host "Installed files under $installDir:"
+            Write-Host "Installed files under ${installDir}:"
             Get-ChildItem -LiteralPath $installDir -Recurse -Force |
               Select-Object Mode, Length, LastWriteTime, FullName |
               Format-Table -Wrap -AutoSize | Out-String | Write-Host
