@@ -1,0 +1,16 @@
+{
+  "format": "chuzi-release-catalog/v1",
+  "channel": "nightly",
+  "target": "darwin-arm64",
+  "releases": [
+    {
+      "channel": "nightly",
+      "version": "nightly-524-0a8f0c04e5fc",
+      "commit": "0a8f0c04e5fc12778f259e4fe8bb0a1c09416233",
+      "target": "darwin-arm64",
+      "index_url": "https://raw.githubusercontent.com/Semcosm/chuzi/release-catalog/nightly/darwin-arm64/nightly-524-0a8f0c04e5fc/chuzi-nightly-524-0a8f0c04e5fc-darwin-arm64.index.json",
+      "published_at": "2026-09-27T08:36:15Z",
+      "prerelease": true
+    }
+  ]
+}
