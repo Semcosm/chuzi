@@ -5,7 +5,7 @@ Head or Range: fix/main-ugs-signed
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(ugs): validate the existing GitHub Web Flow integration signature
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
