@@ -4,7 +4,8 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Release",
     [string]$OutputDir = "",
-    [string]$CorePayloadDir = ""
+    [string]$CorePayloadDir = "",
+    [string]$PrebuiltBinaryPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -54,18 +55,22 @@ if (Test-Path (Join-Path $coreDir "build-manifest.json")) {
 
 $target = "x86_64-pc-windows-msvc"
 $profile = if ($Configuration -eq "Release") { "release" } else { "debug" }
-$cargoArgs = @("build", "--manifest-path", $manifest, "--target", $target, "--locked")
-if ($Configuration -eq "Release") { $cargoArgs += "--release" }
-Push-Location $projectRoot
-try {
-    & cargo @cargoArgs
-    if ($LASTEXITCODE -ne 0) { throw "Slint Windows client build failed" }
+$builtBinary = if ([string]::IsNullOrWhiteSpace($PrebuiltBinaryPath)) {
+    $cargoArgs = @("build", "--manifest-path", $manifest, "--target", $target, "--locked")
+    if ($Configuration -eq "Release") { $cargoArgs += "--release" }
+    Push-Location $projectRoot
+    try {
+        & cargo @cargoArgs
+        if ($LASTEXITCODE -ne 0) { throw "Slint Windows client build failed" }
+    }
+    finally {
+        Pop-Location
+    }
+    Join-Path $projectRoot "target/$target/$profile/chuzi-native-windows.exe"
 }
-finally {
-    Pop-Location
+else {
+    (Resolve-Path $PrebuiltBinaryPath).Path
 }
-
-$builtBinary = Join-Path $projectRoot "target/$target/$profile/chuzi-native-windows.exe"
 if (-not (Test-Path $builtBinary)) { throw "Slint Windows executable is missing: $builtBinary" }
 Copy-Item $builtBinary (Join-Path $payloadDir "Chuzi.Native.Windows.exe") -Force
 

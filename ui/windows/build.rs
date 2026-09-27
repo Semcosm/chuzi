@@ -2,7 +2,9 @@ fn main() {
     slint_build::compile("ui/main.slint").expect("compile Slint UI");
 
     #[cfg(windows)]
-    generate_freerdp_bindings();
+    if std::env::var_os("CARGO_FEATURE_LAYOUT_SNAPSHOT").is_none() {
+        generate_freerdp_bindings();
+    }
 }
 
 #[cfg(windows)]
