@@ -168,9 +168,11 @@ grep -Fq 'ci-windows-slint-binary' "$repo_root/.github/workflows/chuzi-build.yml
 grep -Fq 'windows_slint_build.result' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build misses Slint compile job"
 grep -Fq 'needs.windows_slint_layout.result' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build misses Slint layout job"
 if grep -Fq 'Slint installer timed out' "$repo_root/.github/workflows/chuzi-build.yml"; then
-    fail "Slint installer smoke test must wait for the installer process tree"
+    fail "Slint installer smoke test must not hide the installer root cause behind a timeout"
 fi
-grep -Fq -- '-Wait' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses process-tree wait"
+grep -Fq 'installer-runtime.log' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses runtime logging"
+grep -Fq 'Get-CimInstance -ClassName Win32_Process' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses process diagnostics"
+grep -Fq 'activeKnown.Count -eq 0' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses process-tree completion"
 grep -Eq 'WaitForExit\(60000\)|AddSeconds\(60\)' "$repo_root/.github/workflows/chuzi-build.yml" || fail "installed Slint smoke test misses timeout"
 grep -Fq 'i-slint-backend-testing' "$repo_root/ui/windows/Cargo.toml" || fail "Windows Slint manifest misses testing backend"
 grep -Fq 'slint-lsp' "$repo_root/ui/windows/README.md" || fail "Windows Slint README misses editor diagnostics"

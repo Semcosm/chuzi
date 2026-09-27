@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ci): parallelize Windows Slint validation and packaging
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: af4ce9166c132c1f3abc42e74b18080fb9132e6e
+Head OID: 3485e55d03531658263a81a3b714e98140d12589
 Integrated Result: pending
 
 ## Summary
@@ -18,7 +18,8 @@ Integrated Result: pending
 Split the Windows Slint workflow into independent compile, layout, packaging,
 and runtime boundaries. Compile the Windows UI once and hand the executable to
 the packaging job; the layout job uses a feature that skips FreeRDP bindgen.
-Wait for Inno Setup through PowerShell's process-tree wait and keep a bounded,
+Run the installer with runtime logging and continuously report its process tree
+and log tail while waiting for the complete setup tree to exit. Keep a bounded,
 explicit polling timeout only around the installed-client smoke test.
 
 ## Motivation
@@ -30,8 +31,10 @@ job, and the installer job compiled the UI immediately before packaging it.
 The installer smoke test had also been changed to poll only the top-level Inno
 Setup process. Inno Setup creates a temporary child executable for the actual
 transaction, so that polling could kill a valid install while the child was
-still running. PowerShell's `Start-Process -Wait` waits the process tree and is
-the behavior used by the last successful Windows Slint run.
+still running. A later run remained stuck even with `Start-Process -Wait`, so
+the smoke step now records the installer hash, runtime log, process IDs, parent
+IDs, command lines, and installed files while it waits without a business-level
+deadline.
 
 ## Test Evidence
 
@@ -39,19 +42,18 @@ the behavior used by the last successful Windows Slint run.
 repository shape validation, quality and supply-chain profile validation, and
 `git diff --check` pass. Windows Actions runs are required to verify the
 compile artifact handoff, dependency-free layout feature, parallel job graph,
-PowerShell syntax, process-tree installer waiting, and installer smoke-test
-behavior.
+PowerShell syntax, installer runtime diagnostics, process-tree completion, and
+installer smoke-test behavior.
 
 ## Risk
 
 The compile job remains the only job that installs FreeRDP and runs bindgen. The
 layout and packaging jobs consume separate outputs and can run concurrently
-with compile where their inputs permit. The installer is waited through its
-complete process tree, then the installed executable and shipped core payload
-are verified. The client smoke test retains a 60-second diagnostic bound and
-terminates only that client process if it fails to exit. The installer stays in
-its normal windowed process mode because Inno Setup can leave its temporary
-child running with `-NoNewWindow`.
+with compile where their inputs permit. The installer is observed through its
+complete process tree, with live diagnostics and a retained runtime log, then
+the installed executable and shipped core payload are verified. The client smoke
+test retains a 60-second diagnostic bound and terminates only that client
+process if it fails to exit.
 
 ## Rollback
 
