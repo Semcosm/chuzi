@@ -5,6 +5,10 @@ formal release tags in this repository.
 
 Files:
 
+- github-web-flow.asc: pinned GitHub Web Flow OpenPGP key used only to verify
+  hosting-platform integration commits. The validator pins its fingerprint to
+  968479A1AFF927E37D1A566BB5690EEEBB952194.
+
 - `allowed_signers`: OpenSSH allowed signers file used for Git and attestation
   signature verification. The release signer uses
   `namespaces="git,ugs-attestation"`.
@@ -16,6 +20,10 @@ Operational rules:
 - Add or remove signers only through a topic branch and CR.
 - Use the maintainer email address as the signer principal.
 - No bot signer is trusted by default.
+- GitHub Web Flow is an explicit hosting-platform integration signer, not a
+  maintainer or release signer. Only the pinned key in github-web-flow.asc is
+  accepted for OpenPGP integration commits; arbitrary PGP keys remain
+  untrusted.
 - Keep at least one standby signing key available when possible.
 - If every trusted signing key is lost, use the repository emergency path only
   to rotate trust material and restore signed normal operation.
