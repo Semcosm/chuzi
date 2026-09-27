@@ -389,10 +389,97 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $installer = Join-Path $env:RUNNER_TEMP 'chuzi-ui\ChuziSetup.exe'
+          $installerLog = Join-Path $env:RUNNER_TEMP 'chuzi-ui\installer-runtime.log'
           $installDir = Join-Path ${env:ProgramFiles} 'Chuzi'
-          Start-Process -FilePath $installer `
-            -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') `
-            -Wait
+          if (-not (Test-Path $installer)) { throw "Installer is missing: $installer" }
+          $installerInfo = Get-Item $installer
+          Write-Host "Installer path: $($installerInfo.FullName)"
+          Write-Host "Installer size: $($installerInfo.Length) bytes"
+          Write-Host "Installer SHA256: $((Get-FileHash -Algorithm SHA256 -Path $installer).Hash)"
+          if (Test-Path $installDir) {
+            Write-Host "Existing install directory before setup: $installDir"
+            Get-ChildItem -LiteralPath $installDir -Force |
+              Select-Object Mode, Length, LastWriteTime, FullName |
+              Format-Table -AutoSize | Out-String | Write-Host
+          } else {
+            Write-Host "Install directory does not exist before setup: $installDir"
+          }
+
+          function Get-SetupSnapshot {
+            @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -like 'ChuziSetup*' -or
+                ($_.CommandLine -and $_.CommandLine -like '*ChuziSetup*')
+              })
+          }
+
+          function Write-SetupSnapshot([object[]] $snapshot) {
+            if ($snapshot.Count -eq 0) {
+              Write-Host 'No ChuziSetup processes are visible.'
+              return
+            }
+            $snapshot |
+              Select-Object ProcessId, ParentProcessId, Name, ExecutablePath, CommandLine |
+              Format-Table -Wrap -AutoSize | Out-String | Write-Host
+          }
+
+          function Write-InstallerLogTail {
+            if (-not (Test-Path $installerLog)) {
+              Write-Host "Installer runtime log is not present yet: $installerLog"
+              return
+            }
+            Write-Host "Installer runtime log tail ($installerLog):"
+            Get-Content -LiteralPath $installerLog -Tail 40 -ErrorAction SilentlyContinue | Write-Host
+          }
+
+          Write-Host 'Starting Inno Setup with runtime logging.'
+          $installProcess = Start-Process -FilePath $installer `
+            -ArgumentList @(
+              '/VERYSILENT',
+              '/SUPPRESSMSGBOXES',
+              '/NORESTART',
+              '/SP-',
+              "/LOG=$installerLog"
+            ) `
+            -PassThru
+          $knownProcessIds = [System.Collections.Generic.HashSet[int]]::new()
+          $knownProcessIds.Add([int]$installProcess.Id) | Out-Null
+          Write-Host "Inno Setup root PID: $($installProcess.Id)"
+
+          while ($true) {
+            $installProcess.Refresh()
+            $snapshot = @(Get-SetupSnapshot)
+            foreach ($process in $snapshot) {
+              $processId = [int]$process.ProcessId
+              $parentProcessId = [int]$process.ParentProcessId
+              if ($processId -eq $installProcess.Id -or $knownProcessIds.Contains($parentProcessId)) {
+                $knownProcessIds.Add($processId) | Out-Null
+              }
+            }
+            $activeKnown = @($snapshot | Where-Object {
+              $knownProcessIds.Contains([int]$_.ProcessId)
+            })
+            Write-Host "[$(Get-Date -Format o)] Installer exited: $($installProcess.HasExited); tracked setup processes: $($activeKnown.Count)"
+            Write-SetupSnapshot $activeKnown
+            Write-InstallerLogTail
+            if ($installProcess.HasExited -and $activeKnown.Count -eq 0) { break }
+            Start-Sleep -Seconds 5
+          }
+
+          $installProcess.Refresh()
+          Write-Host "Inno Setup exit code: $($installProcess.ExitCode)"
+          if ($installProcess.ExitCode -ne 0) {
+            throw "Inno Setup failed with exit code $($installProcess.ExitCode)"
+          }
+          Write-InstallerLogTail
+          if (Test-Path $installDir) {
+            Write-Host "Installed files under $installDir:"
+            Get-ChildItem -LiteralPath $installDir -Recurse -Force |
+              Select-Object Mode, Length, LastWriteTime, FullName |
+              Format-Table -Wrap -AutoSize | Out-String | Write-Host
+          } else {
+            Write-Host "Install directory is still missing after setup: $installDir"
+          }
           $exe = Join-Path $installDir 'Chuzi.Native.Windows.exe'
           if (-not (Test-Path $exe)) { throw "Installed Slint executable is missing: $exe" }
           $smoke = Start-Process -FilePath $exe -ArgumentList @('--smoke-test') -PassThru -NoNewWindow
@@ -408,6 +495,14 @@ jobs:
             throw 'Installed Slint smoke test timed out after 60 seconds'
           }
           if ($smoke.ExitCode -ne 0) { throw "Installed Slint smoke test failed with exit code $($smoke.ExitCode)" }
+      - name: Upload Windows installer diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chuzi-windows-installer-diagnostics
+          path: ${{ runner.temp }}/chuzi-ui/installer-runtime.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Smoke test Core payload shipped inside installer
         shell: pwsh
         run: |
