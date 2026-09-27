@@ -42,7 +42,8 @@ The layout job duplicates the Windows dependency setup on a separate runner,
 but its wall-clock work overlaps the installer job. Both jobs retain the same
 Rust, FreeRDP, and bindgen inputs. An installer that exceeds 120 seconds or a
 smoke test that exceeds 60 seconds now fails explicitly and terminates its
-child process.
+child process. The installer stays in its normal windowed process mode because
+Inno Setup can leave its temporary child running with `-NoNewWindow`.
 
 ## Rollback
 

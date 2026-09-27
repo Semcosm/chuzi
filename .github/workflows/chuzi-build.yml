@@ -397,13 +397,15 @@ jobs:
           $installDir = Join-Path ${env:ProgramFiles} 'Chuzi'
           $installProcess = Start-Process -FilePath $installer `
             -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-') `
-            -PassThru -NoNewWindow
+            -PassThru
           $installDeadline = [DateTime]::UtcNow.AddSeconds(120)
           while (-not $installProcess.HasExited -and [DateTime]::UtcNow -lt $installDeadline) {
             Start-Sleep -Milliseconds 500
           }
           if (-not $installProcess.HasExited) {
             Stop-Process -Id $installProcess.Id -Force -ErrorAction SilentlyContinue
+            Get-Process -Name 'ChuziSetup*' -ErrorAction SilentlyContinue |
+              Stop-Process -Force -ErrorAction SilentlyContinue
             throw 'Slint installer timed out after 120 seconds'
           }
           if ($installProcess.ExitCode -ne 0) {
