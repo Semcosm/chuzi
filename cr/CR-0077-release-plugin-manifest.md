@@ -5,7 +5,7 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(release): publish built-in Genshin adapter metadata
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3

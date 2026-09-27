@@ -5,7 +5,7 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ci): parallelize Windows Slint validation and packaging
-Revision: 6
+Revision: 7
 Status: pending
 Decision: pending
 Policy Version: v0.3
