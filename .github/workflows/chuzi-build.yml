@@ -282,6 +282,21 @@ jobs:
               throw "Empty Slint layout snapshot: $path"
             }
           }
+          foreach ($state in @('empty', 'builtin', 'package')) {
+            $stateOutput = Join-Path $output $state
+            cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked `
+              --example layout_snapshot -- `
+              --output $stateOutput --page adapters --adapter-state $state
+            foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
+              $path = Join-Path (Join-Path $stateOutput 'adapters') $size
+              if (-not (Test-Path $path)) {
+                throw "Missing $state adapter snapshot: $path"
+              }
+              if ((Get-Item $path).Length -le 0) {
+                throw "Empty $state adapter snapshot: $path"
+              }
+            }
+          }
   windows_slint:
     name: chuzi-build-windows-slint
     runs-on: windows-2022

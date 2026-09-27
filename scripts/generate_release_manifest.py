@@ -8,7 +8,6 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
-PLUGIN_API = "chuzi.plugin/v1"
 ADAPTER_API = "chuzi.adapter/v1"
 
 
@@ -68,7 +67,9 @@ def builtin_plugins(stage: Path, version: str) -> list[dict]:
         plugins.append({
             "id": adapter_id,
             "version": version,
-            "api": PLUGIN_API,
+            "api": ADAPTER_API,
+            "distribution": "builtin",
+            "source_component": "browser-worker",
             "capabilities": capabilities,
             "installable": False,
         })

@@ -99,6 +99,8 @@ grep -Fq 'genshin.cloudgame.session_probe' "$repo_root/browser-worker/src/headle
 grep -Fq 'https://ys.mihoyo.com/cloud/#/' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "Genshin Cloud Game endpoint is missing"
 grep -Fq 'genshin-cloudgame@1' "$repo_root/browser-worker/scripts/build.mjs" || fail "Genshin Cloud Game capability is missing"
 grep -Fq 'worker-manifest.json' "$repo_root/scripts/generate_release_manifest.py" || fail "release manifest misses browser worker adapter metadata"
+grep -Fq '"distribution": "builtin"' "$repo_root/scripts/generate_release_manifest.py" || fail "release manifest misses adapter distribution metadata"
+grep -Fq '"source_component": "browser-worker"' "$repo_root/scripts/generate_release_manifest.py" || fail "release manifest misses adapter source component"
 grep -Fq 'local.test_page_probe' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter operation is missing"
 grep -Fq 'local-test-page.html' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter test page is missing"
 grep -Fq 'process.stdin.resume()' "$repo_root/browser-worker/src/headless-adapter.mjs" || fail "headless adapter stdin is not kept alive"

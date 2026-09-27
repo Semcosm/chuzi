@@ -477,14 +477,20 @@ func (m *FilesystemManager) ListPlugins(ctx context.Context) ([]PluginState, err
 	defer m.mu.Unlock()
 	states := make([]PluginState, 0, len(m.manifest.Plugins))
 	for _, descriptor := range m.manifest.Plugins {
-		record := m.data.Plugins[descriptor.ID]
-		states = append(states, PluginState{Descriptor: descriptor, Installed: record.Installed, Enabled: record.Enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)})
+		states = append(states, m.pluginState(descriptor))
 	}
 	sort.Slice(states, func(i, j int) bool { return states[i].Descriptor.ID < states[j].Descriptor.ID })
 	return states, nil
 }
 
 func (m *FilesystemManager) pluginHealth(descriptor PluginDescriptor, record pluginRecord) string {
+	if descriptor.builtin() {
+		component, ok := m.data.Components[descriptor.SourceComponent]
+		if !ok || !component.Installed || !component.Enabled {
+			return HealthUnavailable
+		}
+		return HealthIncluded
+	}
 	if !record.Installed {
 		return HealthNotInstalled
 	}
@@ -497,6 +503,17 @@ func (m *FilesystemManager) pluginHealth(descriptor PluginDescriptor, record plu
 	return HealthHealthy
 }
 
+func (m *FilesystemManager) pluginState(descriptor PluginDescriptor) PluginState {
+	if descriptor.builtin() {
+		component, ok := m.data.Components[descriptor.SourceComponent]
+		installed := ok && component.Installed
+		enabled := installed && component.Enabled
+		return PluginState{Descriptor: descriptor, Installed: installed, Enabled: enabled, Trusted: installed, Health: m.pluginHealth(descriptor, pluginRecord{})}
+	}
+	record := m.data.Plugins[descriptor.ID]
+	return PluginState{Descriptor: descriptor, Installed: record.Installed, Enabled: record.Enabled, Trusted: record.Trusted, Health: m.pluginHealth(descriptor, record)}
+}
+
 func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (PluginState, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -507,6 +524,9 @@ func (m *FilesystemManager) InstallPlugin(ctx context.Context, id string) (Plugi
 	descriptor, ok := m.plugin(id)
 	if !ok {
 		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotFound, id)
+	}
+	if descriptor.builtin() {
+		return PluginState{}, fmt.Errorf("%w: builtin adapter %q is included with its source component", ErrUnsupported, id)
 	}
 	if !descriptor.Installable || descriptor.Archive == "" {
 		return PluginState{}, fmt.Errorf("%w: plugin %q is not installable", ErrUnsupported, id)
@@ -584,8 +604,12 @@ func (m *FilesystemManager) RemovePlugin(ctx context.Context, id string) error {
 		return err
 	}
 	reportProgress(m.progress, ProgressEvent{Operation: "plugin-remove", Stage: "start", Item: id, Total: 1})
-	if _, ok := m.plugin(id); !ok {
+	descriptor, ok := m.plugin(id)
+	if !ok {
 		return fmt.Errorf("%w: plugin %q", ErrNotFound, id)
+	}
+	if descriptor.builtin() {
+		return fmt.Errorf("%w: builtin adapter %q is included with its source component", ErrUnsupported, id)
 	}
 	previous := cloneState(m.data)
 	pluginRoot, err := safeJoin(filepath.Join(m.root, pluginDirectory), id)
@@ -637,6 +661,9 @@ func (m *FilesystemManager) SetPluginEnabled(ctx context.Context, id string, ena
 	if !ok {
 		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotFound, id)
 	}
+	if descriptor.builtin() {
+		return PluginState{}, fmt.Errorf("%w: builtin adapter %q follows its source component", ErrUnsupported, id)
+	}
 	record, ok := m.data.Plugins[id]
 	if !ok || !record.Installed {
 		return PluginState{}, fmt.Errorf("%w: plugin %q is not installed", ErrNotFound, id)
@@ -669,6 +696,9 @@ func (m *FilesystemManager) SetTrusted(ctx context.Context, id string, trusted b
 	descriptor, ok := m.plugin(id)
 	if !ok {
 		return PluginState{}, fmt.Errorf("%w: plugin %q", ErrNotFound, id)
+	}
+	if descriptor.builtin() {
+		return PluginState{}, fmt.Errorf("%w: builtin adapter %q does not have a trust decision", ErrUnsupported, id)
 	}
 	record, ok := m.data.Plugins[id]
 	if !ok || !record.Installed {

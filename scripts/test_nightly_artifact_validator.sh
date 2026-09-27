@@ -38,7 +38,7 @@ manifest = {
         {"id": "browser-worker", "version": version, "required": False, "resources": [
             {"path": "browser-worker/index.mjs", "sha256": hashlib.sha256(b"worker").hexdigest(), "size": 6},
         ], "artifact": f"chuzi-{version}-linux-amd64-browser-worker.tar.gz"},
-    ], "plugins": [],
+    ], "plugins": [{"id": "builtin", "version": version, "api": "chuzi.adapter/v1", "distribution": "builtin", "source_component": "browser-worker", "capabilities": ["genshin-cloudgame@1"], "installable": False}],
 }
 for name, members in files.items():
     members["release-manifest.json"] = json.dumps(manifest).encode() if name == "launcher" else members.get("release-manifest.json")
@@ -98,7 +98,7 @@ version="nightly-500-aaaaaaaaaaaa"
 
 cp -R "$artifact_dir" "$test_root/invalid"
 printf '%s  %s\n' "$(printf '0%.0s' {1..64})" "chuzi-${version}-linux-amd64-service.tar.gz" > "$test_root/invalid/chuzi-${version}-linux-amd64-service.tar.gz.sha256"
-if "$python_command" "$repo_root/scripts/validate_nightly_artifact.py" --artifact "$test_root/invalid" --target linux-amd64 --commit "$commit" --version "$version"; then
+if "$python_command" "$repo_root/scripts/validate_nightly_artifact.py" --artifact "$test_root/invalid" --target linux-amd64 --commit "$commit" --version "$version" >/dev/null 2>&1; then
   echo "validator accepted a corrupted artifact checksum" >&2
   exit 1
 fi

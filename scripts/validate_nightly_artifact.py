@@ -193,15 +193,25 @@ def validate(args) -> dict:
         raise ValueError("release manifest component set is incomplete or contains duplicates")
     plugin_descriptors = manifest["plugins"]
     plugin_by_id = {}
+    component_ids = {item.get("id") for item in component_descriptors if isinstance(item, dict)}
     for plugin in plugin_descriptors:
         if not isinstance(plugin, dict) or not isinstance(plugin.get("id"), str) or not plugin["id"]:
             raise ValueError("release manifest plugin id is invalid")
         plugin_id = plugin["id"]
         if plugin_id in plugin_by_id or plugin_id in components or plugin_id == "bundle":
             raise ValueError(f"release manifest plugin id collides: {plugin_id}")
+        distribution = plugin.get("distribution") or ("package" if plugin.get("installable") else "builtin")
+        if distribution == "builtin":
+            source_component = plugin.get("source_component")
+            if not isinstance(source_component, str) or source_component not in component_ids:
+                raise ValueError(f"builtin adapter source component is invalid: {plugin_id}")
+            if plugin.get("installable") or plugin.get("archive") or plugin.get("sha256"):
+                raise ValueError(f"builtin adapter cannot declare an install artifact: {plugin_id}")
+        elif distribution != "package" or not plugin.get("installable"):
+            raise ValueError(f"release manifest plugin distribution is invalid: {plugin_id}")
         plugin_by_id[plugin_id] = plugin
     artifacts = index.get("artifacts")
-    installable_plugins = {plugin_id: plugin for plugin_id, plugin in plugin_by_id.items() if plugin.get("installable")}
+    installable_plugins = {plugin_id: plugin for plugin_id, plugin in plugin_by_id.items() if (plugin.get("distribution") or ("package" if plugin.get("installable") else "builtin")) == "package"}
     declared_component_artifacts = {item.get("id") for item in component_descriptors if item.get("artifact")}
     if not isinstance(artifacts, list) or len(artifacts) != len(declared_component_artifacts) + len(installable_plugins) + 1:
         raise ValueError("release index does not contain the bundle and every declared artifact")

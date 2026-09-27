@@ -782,7 +782,7 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
                     ready: false,
                     installed: true,
                     status: "Core is stopped".to_owned(),
-                    details: "Start Core to enable accounts, tasks, and plugins.".to_owned(),
+                    details: "Start Core to enable accounts, tasks, and adapters.".to_owned(),
                 }
             } else {
                 CoreSnapshot {
@@ -1182,12 +1182,21 @@ fn parse_plugins(output: &str) -> Result<Vec<CorePlugin>, String> {
 
 fn format_plugin_summary(plugins: &[CorePlugin]) -> String {
     if plugins.is_empty() {
-        "This release declares no adapter packages.".to_owned()
+        "No adapters are available in this release.".to_owned()
     } else {
-        format!(
-            "{} adapter package(s) declared by this release.",
-            plugins.len()
-        )
+        let builtins = plugins
+            .iter()
+            .filter(|plugin| {
+                plugin.descriptor.distribution == "builtin"
+                    || (plugin.descriptor.distribution.is_empty() && !plugin.descriptor.installable)
+            })
+            .count();
+        let packages = plugins.len() - builtins;
+        match (builtins, packages) {
+            (builtins, 0) => format!("{builtins} built-in adapter(s) included with this release."),
+            (0, packages) => format!("{packages} installable adapter package(s) available."),
+            (builtins, packages) => format!("{builtins} built-in adapter(s) included; {packages} installable package(s) available."),
+        }
     }
 }
 
@@ -1203,14 +1212,14 @@ fn plugin_signer_for(plugins: &[CorePlugin], id: &str) -> Result<String, String>
 fn plugin_action_message(command: &str) -> String {
     match command {
         "plugin-install" => {
-            "Plugin installed; it remains untrusted until explicitly trusted.".to_owned()
+            "Adapter installed; it remains untrusted until explicitly trusted.".to_owned()
         }
-        "plugin-trust" => "Plugin trust updated. Review the signer before enabling it.".to_owned(),
-        "plugin-enable" => "Plugin enabled.".to_owned(),
-        "plugin-disable" => "Plugin disabled.".to_owned(),
-        "plugin-untrust" => "Plugin trust revoked and the package disabled.".to_owned(),
-        "plugin-remove" => "Plugin removed.".to_owned(),
-        _ => "Plugin state updated.".to_owned(),
+        "plugin-trust" => "Adapter trust updated. Review the signer before enabling it.".to_owned(),
+        "plugin-enable" => "Adapter enabled.".to_owned(),
+        "plugin-disable" => "Adapter disabled.".to_owned(),
+        "plugin-untrust" => "Adapter trust revoked and the package disabled.".to_owned(),
+        "plugin-remove" => "Adapter removed.".to_owned(),
+        _ => "Adapter state updated.".to_owned(),
     }
 }
 
@@ -1228,10 +1237,14 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
         .or_else(|| plugins.first());
     let Some(plugin) = plugin else {
         window.set_plugin_loaded(false);
+        window.set_plugin_display_name(SharedString::default());
+        window.set_plugin_distribution(SharedString::default());
+        window.set_plugin_source_component(SharedString::default());
         window.set_plugin_id(SharedString::default());
         window.set_plugin_version(SharedString::default());
         window.set_plugin_api(SharedString::default());
         window.set_plugin_target(SharedString::default());
+        window.set_plugin_feature_capability(SharedString::default());
         window.set_plugin_capabilities(SharedString::default());
         window.set_plugin_permissions(SharedString::default());
         window.set_plugin_signer(SharedString::default());
@@ -1245,14 +1258,46 @@ fn apply_plugins(window: &MainWindow, plugins: Vec<CorePlugin>) {
     window.set_plugin_loaded(true);
     window.set_plugin_input(plugin.descriptor.id.clone().into());
     window.set_plugin_id(plugin.descriptor.id.clone().into());
+    let distribution = if plugin.descriptor.distribution.is_empty() {
+        if plugin.descriptor.installable {
+            "package"
+        } else {
+            "builtin"
+        }
+    } else {
+        plugin.descriptor.distribution.as_str()
+    };
+    let display_name = if plugin
+        .descriptor
+        .capabilities
+        .iter()
+        .any(|capability| capability == "genshin-cloudgame@1")
+    {
+        "Genshin Cloud Game"
+    } else {
+        plugin.descriptor.id.as_str()
+    };
+    window.set_plugin_display_name(display_name.into());
+    window.set_plugin_distribution(distribution.into());
+    window.set_plugin_source_component(plugin.descriptor.source_component.clone().into());
     window.set_plugin_version(plugin.descriptor.version.clone().into());
     window.set_plugin_api(plugin.descriptor.api.clone().into());
     window.set_plugin_target(plugin.descriptor.target.clone().into());
+    window.set_plugin_feature_capability(
+        plugin
+            .descriptor
+            .capabilities
+            .iter()
+            .find(|capability| capability.as_str() == "genshin-cloudgame@1")
+            .cloned()
+            .unwrap_or_default()
+            .into(),
+    );
     window.set_plugin_capabilities(plugin.descriptor.capabilities.join(", ").into());
     window.set_plugin_permissions(plugin.descriptor.permissions.join(", ").into());
     window.set_plugin_signer(plugin.descriptor.signed_by.clone().into());
     window.set_plugin_installed(plugin.installed);
-    window.set_plugin_installable(plugin.descriptor.installable);
+    window.set_plugin_installable(distribution == "package" && plugin.descriptor.installable);
     window.set_plugin_trusted(plugin.trusted);
     window.set_plugin_enabled(plugin.trusted && plugin.enabled);
     window.set_plugin_health(plugin.health.clone().into());
@@ -1322,7 +1367,7 @@ fn friendly_error(error: &str) -> String {
     }
     if value.contains("not trusted") || value.contains("forbidden") || value.contains("not allowed")
     {
-        return "Core did not allow this operation. Review plugin trust and permissions."
+        return "Core did not allow this operation. Review adapter trust and permissions."
             .to_owned();
     }
     if value.contains("conflict") || value.contains("already") {
@@ -1393,6 +1438,20 @@ mod tests {
         assert!(plugin.enabled);
         assert!(!plugin.trusted);
         assert!(!(plugin.trusted && plugin.enabled));
+    }
+
+    #[test]
+    fn adapter_projection_distinguishes_builtin_and_package_catalog_entries() {
+        let plugins: Vec<CorePlugin> = serde_json::from_str(
+            r#"[{"descriptor":{"id":"chuzi.headless-cdp","version":"1","api":"chuzi.adapter/v1","distribution":"builtin","source_component":"browser-worker","capabilities":["genshin-cloudgame@1"]},"installed":true,"enabled":true,"trusted":true,"health":"included"},{"descriptor":{"id":"demo","version":"1","api":"chuzi.adapter/v1","distribution":"package","installable":true},"installed":false,"enabled":false,"trusted":false,"health":"not_installed"}]"#,
+        )
+        .expect("valid adapter projection");
+        assert_eq!(
+            format_plugin_summary(&plugins),
+            "1 built-in adapter(s) included; 1 installable package(s) available."
+        );
+        assert_eq!(plugins[0].descriptor.distribution, "builtin");
+        assert_eq!(plugins[1].descriptor.distribution, "package");
     }
 
     #[test]

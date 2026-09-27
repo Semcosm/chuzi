@@ -76,7 +76,9 @@ plugins = manifest.get("plugins")
 assert len(plugins) == 1, plugins
 plugin = plugins[0]
 assert plugin["id"] == "chuzi.headless-cdp", plugin
-assert plugin["api"] == "chuzi.plugin/v1", plugin
+assert plugin["api"] == "chuzi.adapter/v1", plugin
+assert plugin["distribution"] == "builtin", plugin
+assert plugin["source_component"] == "browser-worker", plugin
 assert "genshin-cloudgame@1" in plugin["capabilities"], plugin
 assert plugin["installable"] is False, plugin
 PY
