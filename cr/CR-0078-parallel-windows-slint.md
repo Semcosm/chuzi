@@ -5,12 +5,12 @@ Head or Range: feat/windows-ui-client-foundation
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: perf(ci): parallelize Windows Slint validation and packaging
-Revision: 5
+Revision: 6
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 6f92f28bb70d52adbd9576fcdfef4103c30d0898
-Head OID: 3485e55d03531658263a81a3b714e98140d12589
+Head OID: 08c8479d632ea9421ec272bbda84041858c37b7e
 Integrated Result: pending
 
 ## Summary
@@ -21,6 +21,8 @@ the packaging job; the layout job uses a feature that skips FreeRDP bindgen.
 Run the installer with runtime logging and continuously report its process tree
 and log tail while waiting for the complete setup tree to exit. Keep a bounded,
 explicit polling timeout only around the installed-client smoke test.
+Guard uninstall-only user-data prompts so silent installation cannot wait on a
+hidden confirmation dialog.
 
 ## Motivation
 
@@ -35,6 +37,10 @@ still running. A later run remained stuck even with `Start-Process -Wait`, so
 the smoke step now records the installer hash, runtime log, process IDs, parent
 IDs, command lines, and installed files while it waits without a business-level
 deadline.
+The runtime log then showed the installer waiting on the custom user-data
+confirmation during installation. The uninstall check now has an explicit
+uninstall context and uses `SuppressibleMsgBox`, so installation never prompts
+and silent uninstall receives the documented default.
 
 ## Test Evidence
 
@@ -44,6 +50,8 @@ repository shape validation, quality and supply-chain profile validation, and
 compile artifact handoff, dependency-free layout feature, parallel job graph,
 PowerShell syntax, installer runtime diagnostics, process-tree completion, and
 installer smoke-test behavior.
+The latest run reached the installer and confirmed the previous wait was the
+custom user-data prompt; the follow-up run must verify installation proceeds.
 
 ## Risk
 

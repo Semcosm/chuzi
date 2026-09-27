@@ -62,16 +62,17 @@ Type: filesandordirs; Name: "{commonappdata}\chuzi"; Check: ShouldDeleteUserData
 
 [Code]
 var
+  UninstallContext: Boolean;
   KeepUserDataValue: Boolean;
   KeepUserDataPrompted: Boolean;
 
 function KeepUserData(): Boolean;
 begin
-  if not KeepUserDataPrompted then
+  if UninstallContext and not KeepUserDataPrompted then
   begin
-    KeepUserDataValue := MsgBox(
+    KeepUserDataValue := SuppressibleMsgBox(
       '是否保留 Chuzi 用户数据？选择“否”将删除 %ProgramData%\chuzi。',
-      mbConfirmation, MB_YESNO or MB_DEFBUTTON1) = IDYES;
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON1, IDYES) = IDYES;
     KeepUserDataPrompted := True;
   end;
   Result := KeepUserDataValue;
@@ -79,16 +80,14 @@ end;
 
 function ShouldDeleteUserData(): Boolean;
 begin
-  Result := not KeepUserData();
-end;
-
-function ShouldDeleteUserData(): Boolean;
-begin
-  Result := not KeepUserData;
+  { Inno may evaluate uninstall-delete checks while building the install
+    transaction. Never prompt or delete user data outside uninstall mode. }
+  Result := UninstallContext and not KeepUserData();
 end;
 
 function InitializeUninstall(): Boolean;
 begin
+  UninstallContext := True;
   KeepUserData();
   Result := True;
 end;

@@ -204,6 +204,8 @@ grep -Fq 'UninstallDelete' "$repo_root/packaging/windows/Chuzi.iss" || fail "Win
 grep -Fq 'KeepUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall misses user-data retention option"
 grep -Fq 'Check: ShouldDeleteUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall data cleanup must use a check function"
 grep -Fq 'function ShouldDeleteUserData(): Boolean;' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall data cleanup check function is missing"
+grep -Fq 'UninstallContext' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall prompt is not restricted to uninstall context"
+grep -Fq 'SuppressibleMsgBox' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall prompt is not suppressible in silent mode"
 grep -Fq 'prepare_presentmon.ps1' "$repo_root/scripts/assemble_target.ps1" || fail "Windows target assembly misses PresentMon preparation"
 grep -Fq 'PresentMon.exe' "$repo_root/scripts/generate_release_manifest.py" || fail "Windows release manifest misses PresentMon component"
 grep -Fq 'PresentMon-LICENSE.txt' "$repo_root/scripts/generate_release_manifest.py" || fail "Windows PresentMon component misses its license"
