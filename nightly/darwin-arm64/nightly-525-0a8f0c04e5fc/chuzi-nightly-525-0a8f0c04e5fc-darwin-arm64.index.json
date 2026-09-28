@@ -1,0 +1,132 @@
+{
+  "format": "chuzi-release-index/v1",
+  "channel": "nightly",
+  "version": "nightly-525-0a8f0c04e5fc",
+  "commit": "0a8f0c04e5fc12778f259e4fe8bb0a1c09416233",
+  "target": "darwin-arm64",
+  "generated_at": "2026-09-28T08:47:05.381459Z",
+  "manifest": {
+    "format": "chuzi-release/v1",
+    "channel": "nightly",
+    "version": "nightly-525-0a8f0c04e5fc",
+    "commit": "0a8f0c04e5fc12778f259e4fe8bb0a1c09416233",
+    "target": "darwin-arm64",
+    "generated_at": "2026-09-28T08:47:05.381459Z",
+    "components": [
+      {
+        "id": "launcher",
+        "version": "nightly-525-0a8f0c04e5fc",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-nightly-525-0a8f0c04e5fc-darwin-arm64-launcher.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi-launcher",
+            "sha256": "207c5b5868ce50fc48279d19dd3015eba23bffeb172c6411e8e8dcd5e136ead2",
+            "size": 6302674
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "version": "nightly-525-0a8f0c04e5fc",
+        "required": false,
+        "dependencies": [
+          "browser-worker"
+        ],
+        "artifact": "chuzi-nightly-525-0a8f0c04e5fc-darwin-arm64-service.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi",
+            "sha256": "82c9fb417e6766f3e09847818cd07e39ab4fc0497bc555f18cb68aca739ade2e",
+            "size": 7407650
+          }
+        ]
+      },
+      {
+        "id": "browser-worker",
+        "version": "nightly-525-0a8f0c04e5fc",
+        "required": false,
+        "dependencies": [],
+        "artifact": "chuzi-nightly-525-0a8f0c04e5fc-darwin-arm64-browser-worker.tar.gz",
+        "resources": [
+          {
+            "path": "browser-worker/src/headless-adapter.mjs",
+            "sha256": "931298dad1264c76a23fcb5510b7bc23434326ba664a93ef521a92a43d8a7c9b",
+            "size": 38805
+          },
+          {
+            "path": "browser-worker/src/headless.mjs",
+            "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+            "size": 14202
+          },
+          {
+            "path": "browser-worker/src/local-test-page.html",
+            "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+            "size": 397
+          },
+          {
+            "path": "browser-worker/src/worker.mjs",
+            "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+            "size": 3421
+          },
+          {
+            "path": "browser-worker/worker-manifest.json",
+            "sha256": "a08c7c11d6ac000f6ea2817c1fab4d03caf80a192fd33db13028bea758632453",
+            "size": 465
+          }
+        ]
+      }
+    ],
+    "plugins": [
+      {
+        "id": "chuzi.headless-cdp",
+        "version": "nightly-525-0a8f0c04e5fc",
+        "api": "chuzi.plugin/v1",
+        "capabilities": [
+          "cdp@1",
+          "headless-cdp@1",
+          "headed-cdp@1",
+          "browser-view@1",
+          "local.test-page@1",
+          "genshin-cloudgame@1"
+        ],
+        "installable": false
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "component": "bundle",
+      "target": "darwin-arm64",
+      "version": "nightly-525-0a8f0c04e5fc",
+      "path": "chuzi-nightly-525-0a8f0c04e5fc-darwin-arm64.tar.gz",
+      "size": 5626752,
+      "sha256": "a27ac14a2cd758860ae5e3ec903f68ff8e7699d365ae0b9bed7c282c85c2d02d"
+    },
+    {
+      "component": "launcher",
+      "target": "darwin-arm64",
+      "version": "nightly-525-0a8f0c04e5fc",
+      "path": "chuzi-nightly-525-0a8f0c04e5fc-darwin-arm64-launcher.tar.gz",
+      "size": 2592411,
+      "sha256": "ce0f0ae08e6771f6576f195212b33dd6cc3fadb697f623a558fe5b02dee14d5b"
+    },
+    {
+      "component": "service",
+      "target": "darwin-arm64",
+      "version": "nightly-525-0a8f0c04e5fc",
+      "path": "chuzi-nightly-525-0a8f0c04e5fc-darwin-arm64-service.tar.gz",
+      "size": 3021783,
+      "sha256": "0e037fbd67b221ad676db62e25d9f56233b699f51a4c4e36c36a2bb03c073ffc"
+    },
+    {
+      "component": "browser-worker",
+      "target": "darwin-arm64",
+      "version": "nightly-525-0a8f0c04e5fc",
+      "path": "chuzi-nightly-525-0a8f0c04e5fc-darwin-arm64-browser-worker.tar.gz",
+      "size": 13150,
+      "sha256": "ce63b5f3aa2df2d8f4a330ba589f72ab55304dd05587ddde39accb9a851d1083"
+    }
+  ]
+}
