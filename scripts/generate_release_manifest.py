@@ -79,21 +79,34 @@ def builtin_plugins(stage: Path, version: str) -> list[dict]:
     return plugins
 
 
-def package_plugin(archive: Path, manifest_path: Path, version: str) -> dict:
+def package_plugin(archive: Path, manifest_path: Path, version: str, target: str) -> dict:
     try:
         descriptor = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise SystemExit(f"invalid adapter package manifest: {exc}") from exc
-    for key in ("id", "api", "entry", "capabilities", "permissions"):
+    for key in ("id", "api", "entry", "capabilities", "permissions", "targets", "signed_by"):
         if key not in descriptor:
             raise SystemExit(f"adapter package manifest misses {key}")
+    targets = descriptor["targets"]
+    if (not isinstance(targets, list) or not targets or
+            any(not isinstance(item, str) or not item.strip() for item in targets) or
+            len(set(targets)) != len(targets)):
+        raise SystemExit("adapter package manifest targets are invalid")
+    if target not in targets:
+        raise SystemExit(f"adapter package does not support target: {target}")
+    if descriptor["api"] != ADAPTER_API or not isinstance(descriptor["signed_by"], str) or not descriptor["signed_by"].strip():
+        raise SystemExit("adapter package manifest api or signer is invalid")
+    if not isinstance(descriptor["capabilities"], list) or not descriptor["capabilities"]:
+        raise SystemExit("adapter package manifest capabilities are invalid")
+    if not isinstance(descriptor["permissions"], list):
+        raise SystemExit("adapter package manifest permissions are invalid")
     return {
         "id": descriptor["id"],
         "version": version,
         "api": descriptor["api"],
         "entry": descriptor["entry"],
         "distribution": "package",
-        "target": descriptor.get("targets", [None])[0] if len(descriptor.get("targets", [])) == 1 else "",
+        "target": target,
         "archive": archive.name,
         "sha256": sha256(archive),
         "capabilities": descriptor["capabilities"],
@@ -157,7 +170,7 @@ def main() -> int:
     if args.adapter_archive or args.adapter_manifest:
         if not args.adapter_archive or not args.adapter_manifest:
             raise SystemExit("adapter archive and manifest must be supplied together")
-        plugins.append(package_plugin(args.adapter_archive.resolve(), args.adapter_manifest.resolve(), args.version))
+        plugins.append(package_plugin(args.adapter_archive.resolve(), args.adapter_manifest.resolve(), args.version, args.target))
     manifest = {
         "format": "chuzi-release/v1",
         "channel": args.channel,

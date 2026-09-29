@@ -360,6 +360,9 @@ func (m ReleaseManifest) Validate() error {
 				if strings.TrimSpace(plugin.SignedBy) == "" {
 					return fmt.Errorf("%w: package adapter %s requires a signer", ErrInvalidManifest, plugin.ID)
 				}
+				if plugin.Target != m.Target {
+					return fmt.Errorf("%w: package adapter %s target does not match release target", ErrInvalidManifest, plugin.ID)
+				}
 			}
 		default:
 			return fmt.Errorf("%w: plugin %s has unknown distribution %q", ErrInvalidManifest, plugin.ID, plugin.Distribution)

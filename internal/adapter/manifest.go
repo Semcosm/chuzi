@@ -75,6 +75,9 @@ func (m Manifest) Validate() error {
 	if err := uniqueStrings(m.Targets, "target"); err != nil {
 		return err
 	}
+	if len(m.Targets) == 0 {
+		return fmt.Errorf("%w: targets are required", ErrInvalidManifest)
+	}
 	seen := make(map[string]struct{}, len(m.Resources))
 	for _, resource := range m.Resources {
 		if err := validateResource(resource); err != nil {

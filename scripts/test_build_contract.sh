@@ -173,6 +173,9 @@ grep -Fq 'needs: [contract_checks]' "$repo_root/.github/workflows/chuzi-build.ym
 grep -Fq 'build_windows_slint.ps1' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows Slint packaging"
 grep -Fq 'layout_snapshot' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Slint layout snapshot check"
 grep -Fq -- '--features layout-snapshot' "$repo_root/.github/workflows/chuzi-build.yml" || fail "layout job misses dependency-free snapshot feature"
+for adapter_state in installed trusted enabled rollback; do
+  grep -Fq "'$adapter_state'" "$repo_root/.github/workflows/chuzi-build.yml" || fail "layout job misses $adapter_state adapter snapshot"
+done
 grep -Fq 'ci-windows-slint-binary' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses prebuilt Slint binary handoff"
 grep -Fq 'windows_slint_build.result' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build misses Slint compile job"
 grep -Fq 'needs.windows_slint_layout.result' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build misses Slint layout job"

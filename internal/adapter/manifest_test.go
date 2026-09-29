@@ -48,6 +48,7 @@ func TestManifestValidateRequiresTrustedAdapterMetadata(t *testing.T) {
 	for name, mutate := range map[string]func(*Manifest){
 		"api":      func(m *Manifest) { m.API = "chuzi.plugin/v1" },
 		"signer":   func(m *Manifest) { m.SignedBy = "" },
+		"targets":  func(m *Manifest) { m.Targets = nil },
 		"entry":    func(m *Manifest) { m.Entry = "../adapter.mjs" },
 		"resource": func(m *Manifest) { m.Resources[0].Path = "..\\adapter.mjs" },
 		"checksum": func(m *Manifest) { m.Resources[0].SHA256 = "bad" },
@@ -60,6 +61,11 @@ func TestManifestValidateRequiresTrustedAdapterMetadata(t *testing.T) {
 				t.Fatalf("Validate() = %v, want ErrInvalidManifest", err)
 			}
 		})
+	}
+	missingTarget := valid
+	missingTarget.Targets = []string{"windows-amd64"}
+	if _, err := ValidatePackage(writeTestPackage(t, t.TempDir(), missingTarget, content), "linux-amd64"); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("unsupported target error = %v, want ErrInvalidManifest", err)
 	}
 }
 
