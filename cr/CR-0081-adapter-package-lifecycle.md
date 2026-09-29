@@ -5,12 +5,12 @@ Head or Range: feat/genshin-adapter-package
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): package Genshin adapter with controlled lifecycle
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 0a8f0c04e5fc12778f259e4fe8bb0a1c09416233
-Head OID: 1cb03244dbf75a2d7b51c2377e7b29482795c9c2
+Base OID: d49b7138f8443ef03e2c3aa5e155e325db4cf798
+Head OID: d49b7138f8443ef03e2c3aa5e155e325db4cf798
 Integrated Result: pending
 
 ## Summary
