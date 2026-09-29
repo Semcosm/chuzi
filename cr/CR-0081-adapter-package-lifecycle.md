@@ -1,17 +1,17 @@
 # CR-0081: package the Genshin adapter and enforce its lifecycle
 
 Base: main
-Head or Range: feat/genshin-adapter-package
+Head or Range: d49b7138f8443ef03e2c3aa5e155e325db4cf798
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(adapter): package Genshin adapter with controlled lifecycle
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: d49b7138f8443ef03e2c3aa5e155e325db4cf798
-Head OID: d49b7138f8443ef03e2c3aa5e155e325db4cf798
-Integrated Result: pending
+Base OID: 6cfe46c2d7f9a7fdcb6507362ac91c6de5b4f305
+Head OID: 6cfe46c2d7f9a7fdcb6507362ac91c6de5b4f305
+Integrated Result: main@6cfe46c2d7f9a7fdcb6507362ac91c6de5b4f305
 
 ## Summary
 
