@@ -44,9 +44,10 @@ const (
 )
 
 var (
-	errInvalidBackend = errors.New("service: invalid browser backend")
-	errInvalidOptions = errors.New("service: invalid runtime options")
-	serviceSequence   atomic.Uint64
+	errInvalidBackend     = errors.New("service: invalid browser backend")
+	errInvalidOptions     = errors.New("service: invalid runtime options")
+	errAdapterUnavailable = errors.New("service: automation adapter unavailable")
+	serviceSequence       atomic.Uint64
 )
 
 type serviceOptions struct {
@@ -222,15 +223,15 @@ func serviceTarget() string {
 func resolveAutomationPackage(cfg config.Config, id string) (adapterpkg.Package, error) {
 	states, err := adapterpkg.LoadStates(filepath.Join(cfg.DataDir, ".chuzi", "launcher-state.json"))
 	if err != nil {
-		return adapterpkg.Package{}, fmt.Errorf("service: automation adapter unavailable: %w", err)
+		return adapterpkg.Package{}, fmt.Errorf("%w: %w", errAdapterUnavailable, err)
 	}
 	registry, err := adapterpkg.NewRegistry(filepath.Join(cfg.DataDir, "plugins"), serviceTarget(), states)
 	if err != nil {
-		return adapterpkg.Package{}, fmt.Errorf("service: automation adapter unavailable: %w", err)
+		return adapterpkg.Package{}, fmt.Errorf("%w: %w", errAdapterUnavailable, err)
 	}
 	resolved, err := registry.Resolve(id)
 	if err != nil {
-		return adapterpkg.Package{}, fmt.Errorf("service: automation adapter unavailable: %w", err)
+		return adapterpkg.Package{}, fmt.Errorf("%w: %w", errAdapterUnavailable, err)
 	}
 	return resolved, nil
 }
@@ -388,7 +389,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if strings.TrimSpace(options.automationAdapter) != "" {
 		packageAdapter, packageErr := resolveAutomationPackage(cfg, strings.TrimSpace(options.automationAdapter))
 		if packageErr != nil {
-			return closeOnError(packageErr)
+			return closeOnError(errAdapterUnavailable)
 		}
 		node, lookErr := exec.LookPath(options.workerCommand)
 		if lookErr != nil {
@@ -414,7 +415,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		automationAdapter = client
 		descriptor, describeErr := client.Describe(context.Background())
 		if describeErr != nil || descriptor.ID != packageAdapter.Manifest.ID || descriptor.API != adapterpkg.AdapterAPI || descriptor.Version != packageAdapter.Manifest.Version || !hasCapability(descriptor, "genshin-cloudgame", "1") {
-			return closeOnError(fmt.Errorf("service: requested automation capability unavailable"))
+			return closeOnError(errAdapterUnavailable)
 		}
 		pipelineRunner, pipelineErr := core.NewPipelineRunner(database, core.PipelineConfig{
 			Factory: factory, Credentials: credentials, Automation: client, Profiles: profiles,

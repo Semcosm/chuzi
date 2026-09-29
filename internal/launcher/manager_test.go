@@ -354,7 +354,7 @@ func adapterReleaseManifest(archive, digest, version string) ReleaseManifest {
 		Format: ManifestFormat, Channel: ChannelNightly, Version: version, Target: "linux-amd64",
 		Plugins: []PluginDescriptor{{
 			ID: "genshin-cloudgame", Version: version, API: AdapterAPIV1, Entry: "adapter.mjs",
-			Distribution: PluginDistributionPackage, Archive: archive, SHA256: digest,
+			Distribution: PluginDistributionPackage, Archive: archive, SHA256: digest, Target: "linux-amd64",
 			Capabilities: []string{"genshin-cloudgame@1"}, Permissions: []string{"browser.cdp.loopback"},
 			SignedBy: "test-key", Installable: true,
 		}},
@@ -482,6 +482,63 @@ func TestArchiveExtractionRejectsTraversalLinksDuplicatesAndOversize(t *testing.
 	if err := extractArchive(context.Background(), archive, t.TempDir()); !errors.Is(err, ErrInvalidPath) {
 		t.Fatalf("traversal archive error = %v", err)
 	}
+
+	duplicate := filepath.Join(t.TempDir(), "duplicate.zip")
+	file, err = os.Create(duplicate)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer = zip.NewWriter(file)
+	for range 2 {
+		entry, createErr := writer.Create("payload")
+		if createErr != nil {
+			_ = file.Close()
+			t.Fatal(createErr)
+		}
+		if _, writeErr := entry.Write([]byte("payload")); writeErr != nil {
+			_ = file.Close()
+			t.Fatal(writeErr)
+		}
+	}
+	if err := writer.Close(); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractArchive(context.Background(), duplicate, t.TempDir()); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("duplicate archive error = %v", err)
+	}
+
+	symlink := filepath.Join(t.TempDir(), "symlink.zip")
+	file, err = os.Create(symlink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writer = zip.NewWriter(file)
+	linkHeader := &zip.FileHeader{Name: "link", Method: zip.Store}
+	linkHeader.SetMode(os.ModeSymlink | 0o700)
+	entry, err = writer.CreateHeader(linkHeader)
+	if err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if _, err := entry.Write([]byte("target")); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractArchive(context.Background(), symlink, t.TempDir()); !errors.Is(err, ErrInvalidManifest) {
+		t.Fatalf("symlink archive error = %v", err)
+	}
+
 	large := filepath.Join(t.TempDir(), "large.zip")
 	file, err = os.Create(large)
 	if err != nil {

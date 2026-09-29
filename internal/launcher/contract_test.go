@@ -115,9 +115,15 @@ func TestManifestValidatesAdapterDistribution(t *testing.T) {
 	manifest.Plugins[0].Entry = "adapter.mjs"
 	manifest.Plugins[0].SHA256 = strings.Repeat("a", 64)
 	manifest.Plugins[0].SignedBy = "release-key"
+	manifest.Plugins[0].Target = manifest.Target
 	if err := manifest.Validate(); err != nil {
 		t.Fatalf("package adapter validation = %v", err)
 	}
+	manifest.Plugins[0].Target = "windows-amd64"
+	if err := manifest.Validate(); err == nil {
+		t.Fatal("package adapter for another target was accepted")
+	}
+	manifest.Plugins[0].Target = manifest.Target
 	manifest.Plugins[0].SignedBy = ""
 	if err := manifest.Validate(); err == nil {
 		t.Fatal("package adapter without signer was accepted")

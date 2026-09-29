@@ -282,7 +282,7 @@ jobs:
               throw "Empty Slint layout snapshot: $path"
             }
           }
-          foreach ($state in @('empty', 'builtin', 'package')) {
+          foreach ($state in @('empty', 'builtin', 'package', 'installed', 'trusted', 'enabled', 'rollback')) {
             $stateOutput = Join-Path $output $state
             cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked `
               --example layout_snapshot -- `
