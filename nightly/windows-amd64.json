@@ -5,6 +5,15 @@
   "releases": [
     {
       "channel": "nightly",
+      "version": "nightly-530-dd126d00dce6",
+      "commit": "dd126d00dce6d33d3c4329fcccea0b0158f38f0a",
+      "target": "windows-amd64",
+      "index_url": "https://raw.githubusercontent.com/Semcosm/chuzi/release-catalog/nightly/windows-amd64/nightly-530-dd126d00dce6/chuzi-nightly-530-dd126d00dce6-windows-amd64.index.json",
+      "published_at": "2026-09-29T08:58:59Z",
+      "prerelease": true
+    },
+    {
+      "channel": "nightly",
       "version": "nightly-525-0a8f0c04e5fc",
       "commit": "0a8f0c04e5fc12778f259e4fe8bb0a1c09416233",
       "target": "windows-amd64",
