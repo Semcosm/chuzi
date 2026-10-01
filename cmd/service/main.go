@@ -519,7 +519,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 				syncTimeout = 30 * time.Second
 			}
 			pollInterval := time.Duration(cfg.Matrix.PollIntervalMillis) * time.Millisecond
-			gateway, gatewayErr := matrix.NewGateway(matrix.GatewayConfig{Client: client, Adapter: adapter, SyncTimeout: syncTimeout, PollInterval: pollInterval})
+			gateway, gatewayErr := matrix.NewGateway(matrix.GatewayConfig{Client: client, Adapter: adapter, CursorStore: database, SyncTimeout: syncTimeout, PollInterval: pollInterval})
 			if gatewayErr != nil {
 				return closeOnError(gatewayErr)
 			}

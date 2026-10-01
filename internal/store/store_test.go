@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -81,6 +82,9 @@ func TestStorePersistsStateAndRecoversAfterRestart(t *testing.T) {
 	if _, err := service.CreateAccount("account-1"); err != nil {
 		t.Fatal(err)
 	}
+	if err := service.SetMatrixSyncCursor("batch-before-restart"); err != nil {
+		t.Fatal(err)
+	}
 	request := createRequest(t, service, "request-1", "account-1", "idem-1", storeTestTime)
 	created, idempotent, err := service.CreateRequest(request)
 	if err != nil || idempotent || created != request {
@@ -108,6 +112,10 @@ func TestStorePersistsStateAndRecoversAfterRestart(t *testing.T) {
 	if state.Status != account.Starting || state.RequestID != "request-1" || state.Revision != 2 {
 		t.Fatalf("recovered account = %#v", state)
 	}
+	cursor, err := restarted.GetMatrixSyncCursor()
+	if err != nil || cursor != "batch-before-restart" {
+		t.Fatalf("recovered Matrix sync cursor = %q, %v", cursor, err)
+	}
 	recoveredRequest, err := restarted.GetRequest("request-1")
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +130,41 @@ func TestStorePersistsStateAndRecoversAfterRestart(t *testing.T) {
 	audit, err := restarted.GetAudit("account-1", 2)
 	if err != nil || audit.Event.EventID != "event-2" {
 		t.Fatalf("GetAudit() = %#v, %v", audit, err)
+	}
+}
+
+func TestStoreMatrixSyncCursorCanBeClearedAndRejectsInvalidValues(t *testing.T) {
+	service, _ := openTestStore(t)
+	cursor, err := service.GetMatrixSyncCursor()
+	if err != nil || cursor != "" {
+		t.Fatalf("initial Matrix sync cursor = %q, %v", cursor, err)
+	}
+	for _, invalid := range []string{" leading", "trailing ", strings.Repeat("x", 4097), "bad\x00cursor"} {
+		if err := service.SetMatrixSyncCursor(invalid); !errors.Is(err, ErrInvalidMatrixSyncCursor) {
+			t.Fatalf("SetMatrixSyncCursor(%q) = %v", invalid, err)
+		}
+	}
+	if err := service.SetMatrixSyncCursor("batch-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.SetMatrixSyncCursor(""); err != nil {
+		t.Fatal(err)
+	}
+	cursor, err = service.GetMatrixSyncCursor()
+	if err != nil || cursor != "" {
+		t.Fatalf("cleared Matrix sync cursor = %q, %v", cursor, err)
+	}
+}
+
+func TestStoreValidationRejectsEmptyPersistedMatrixSyncCursor(t *testing.T) {
+	service, _ := openTestStore(t)
+	if err := service.db.Update(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(migrations.MatrixSyncCursorsBucket)).Put([]byte(matrixSyncCursorKey), []byte{})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ValidateDatabase(); !errors.Is(err, ErrCorruptData) {
+		t.Fatalf("ValidateDatabase() = %v, want ErrCorruptData", err)
 	}
 }
 

@@ -191,7 +191,9 @@ URL、CDP endpoint 或 Profile 路径，帧不持久化也不进入日志、审�
 状态事件在请求带有通知房间时由 Store 在同一事务至多写入一条
 `matrix_notifications` outbox 记录。Notifier 使用短期 claim、稳定 event ID
 和可注入 Sender 进行发送；网络失败不会删除记录，重试或服务重启会重新使用
-同一 event ID。HTTP Client 只实现必要的 Client-Server API 调用；access token 由
+同一 event ID。同步网关把最后一个完整处理批次的 `next_batch` 写入
+`matrix_sync_cursors`；批次中途失败时保留旧游标，重启后可安全重放并在批内按
+event ID 去重。HTTP Client 只实现必要的 Client-Server API 调用；access token 由
 部署环境注入，不进入配置、日志或错误文本。
 
 ## Session Runner 生命周期契约

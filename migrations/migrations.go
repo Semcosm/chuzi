@@ -28,6 +28,7 @@ const (
 	CredentialAuditsBucket    = "credential_audits"
 	MatrixNotificationsBucket = "matrix_notifications"
 	AccountDeletionsBucket    = "account_deletions"
+	MatrixSyncCursorsBucket   = "matrix_sync_cursors"
 	VersionKey                = "version"
 )
 
@@ -116,8 +117,10 @@ func createVersionFour(tx *bbolt.Tx) error {
 }
 
 func createVersionFive(tx *bbolt.Tx) error {
-	if _, err := tx.CreateBucketIfNotExists([]byte(AccountDeletionsBucket)); err != nil {
-		return fmt.Errorf("create %s bucket: %w", AccountDeletionsBucket, err)
+	for _, name := range []string{AccountDeletionsBucket, MatrixSyncCursorsBucket} {
+		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
+			return fmt.Errorf("create %s bucket: %w", name, err)
+		}
 	}
 	return nil
 }

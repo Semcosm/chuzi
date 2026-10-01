@@ -200,7 +200,7 @@ func TestProductionMatrixSyncSendAndOutboxRecoveryAcrossRestart(t *testing.T) {
 		MsgType string `json:"msgtype"`
 		Body    string `json:"body"`
 	}{MsgType: "m.text", Body: "!ugs request account-matrix-secret"}})
-	gateway, err := matrix.NewGateway(matrix.GatewayConfig{Client: client, Adapter: adapter, SyncTimeout: time.Second})
+	gateway, err := matrix.NewGateway(matrix.GatewayConfig{Client: client, Adapter: adapter, CursorStore: database, SyncTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -115,10 +115,14 @@ func (c *HTTPClient) Sync(ctx context.Context, since string, timeout time.Durati
 	if err := c.doJSON(ctx, http.MethodGet, path, nil, &result); err != nil {
 		return SyncResponse{}, err
 	}
-	if strings.TrimSpace(result.NextBatch) == "" {
+	if !validSyncCursor(result.NextBatch) {
 		return SyncResponse{}, ErrSyncProtocol
 	}
 	return result, nil
+}
+
+func validSyncCursor(cursor string) bool {
+	return cursor != "" && strings.TrimSpace(cursor) == cursor && len(cursor) <= 4096 && !strings.ContainsRune(cursor, '\x00')
 }
 
 func (c *HTTPClient) doJSON(ctx context.Context, method, path string, body []byte, result any) error {
@@ -182,29 +186,41 @@ func safePathSegment(value string) bool {
 type Gateway struct {
 	client       *HTTPClient
 	adapter      *Adapter
+	cursorStore  SyncCursorStore
 	syncTimeout  time.Duration
 	pollInterval time.Duration
+}
+
+// SyncCursorStore is the minimal durable capability required by the sync
+// gateway. The cursor is advanced only after one complete batch succeeds.
+type SyncCursorStore interface {
+	GetMatrixSyncCursor() (string, error)
+	SetMatrixSyncCursor(string) error
 }
 
 type GatewayConfig struct {
 	Client       *HTTPClient
 	Adapter      *Adapter
+	CursorStore  SyncCursorStore
 	SyncTimeout  time.Duration
 	PollInterval time.Duration
 }
 
 func NewGateway(config GatewayConfig) (*Gateway, error) {
-	if config.Client == nil || config.Adapter == nil || config.SyncTimeout <= 0 || config.SyncTimeout > 5*time.Minute || config.PollInterval < 0 {
+	if config.Client == nil || config.Adapter == nil || config.CursorStore == nil || config.SyncTimeout <= 0 || config.SyncTimeout > 5*time.Minute || config.PollInterval < 0 {
 		return nil, ErrInvalidClient
 	}
-	return &Gateway{client: config.Client, adapter: config.Adapter, syncTimeout: config.SyncTimeout, pollInterval: config.PollInterval}, nil
+	return &Gateway{client: config.Client, adapter: config.Adapter, cursorStore: config.CursorStore, syncTimeout: config.SyncTimeout, pollInterval: config.PollInterval}, nil
 }
 
 func (g *Gateway) Run(ctx context.Context) error {
-	if g == nil || ctx == nil {
+	if g == nil || ctx == nil || g.client == nil || g.adapter == nil || g.cursorStore == nil || g.syncTimeout <= 0 || g.syncTimeout > 5*time.Minute || g.pollInterval < 0 {
 		return ErrInvalidClient
 	}
-	since := ""
+	since, err := g.cursorStore.GetMatrixSyncCursor()
+	if err != nil {
+		return err
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -213,12 +229,21 @@ func (g *Gateway) Run(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		seenEvents := make(map[string]struct{})
 		for roomID, room := range sync.Rooms.Join {
 			for _, event := range room.Timeline.Events {
 				if event.Type != "m.room.message" || event.Content.MsgType != "m.text" || event.Sender == "" || event.Sender == g.adapterBotUser() {
 					continue
 				}
-				reply, handleErr := g.adapter.Handle(IncomingEvent{EventID: event.EventID, RoomID: roomID, UserID: event.Sender, Body: event.Content.Body})
+				incoming := IncomingEvent{EventID: event.EventID, RoomID: roomID, UserID: event.Sender, Body: event.Content.Body}
+				if !validIncomingEvent(incoming) {
+					continue
+				}
+				if _, seen := seenEvents[event.EventID]; seen {
+					continue
+				}
+				seenEvents[event.EventID] = struct{}{}
+				reply, handleErr := g.adapter.Handle(incoming)
 				if handleErr != nil {
 					if errors.Is(handleErr, ErrNotAuthorized) || errors.Is(handleErr, ErrInvalidCommand) || errors.Is(handleErr, ErrNotVisible) || errors.Is(handleErr, ErrRateLimited) {
 						continue
@@ -229,6 +254,9 @@ func (g *Gateway) Run(ctx context.Context) error {
 					return err
 				}
 			}
+		}
+		if err := g.cursorStore.SetMatrixSyncCursor(sync.NextBatch); err != nil {
+			return err
 		}
 		since = sync.NextBatch
 		if g.pollInterval > 0 {

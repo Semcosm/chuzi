@@ -88,7 +88,7 @@ func TestControlledMatrixHomeserverSyncSend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := matrix.NewGateway(matrix.GatewayConfig{Client: client, Adapter: adapter, SyncTimeout: 20 * time.Second})
+	gateway, err := matrix.NewGateway(matrix.GatewayConfig{Client: client, Adapter: adapter, CursorStore: database, SyncTimeout: 20 * time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}

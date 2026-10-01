@@ -71,6 +71,7 @@ func validateDB(database *bbolt.DB) error {
 			migrations.EventsBucket, migrations.LeasesBucket, migrations.QueueBucket,
 			migrations.CredentialsBucket, migrations.CredentialAuditsBucket,
 			migrations.MatrixNotificationsBucket, migrations.AccountDeletionsBucket,
+			migrations.MatrixSyncCursorsBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				return fmt.Errorf("%w: required bucket %q is missing", ErrCorruptData, name)
@@ -100,6 +101,9 @@ func validateDB(database *bbolt.DB) error {
 		if err := validateDeletionsTx(tx); err != nil {
 			return err
 		}
+		if err := validateMatrixSyncCursorTx(tx); err != nil {
+			return err
+		}
 		return validateEventsTx(tx)
 	})
 }
@@ -123,6 +127,16 @@ func validateDeletionsTx(tx *bbolt.Tx) error {
 			return fmt.Errorf("%w: deletion references missing account", ErrCorruptData)
 		}
 		return nil
+	})
+}
+
+func validateMatrixSyncCursorTx(tx *bbolt.Tx) error {
+	bucket := tx.Bucket([]byte(migrations.MatrixSyncCursorsBucket))
+	return bucket.ForEach(func(key, value []byte) error {
+		if string(key) != matrixSyncCursorKey || len(value) == 0 {
+			return fmt.Errorf("%w: invalid Matrix sync cursor record", ErrCorruptData)
+		}
+		return validateMatrixSyncCursor(string(value))
 	})
 }
 
