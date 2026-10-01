@@ -1,7 +1,7 @@
 # CR-0084: implement account deletion lifecycle foundations
 
 Base: main
-Head or Range: feat/account-deletion-lifecycle
+Head or Range: feat/integrate-account-request-matrix
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(account): add account deletion lifecycle foundations
@@ -9,8 +9,8 @@ Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6cfe46c2d7f9a7fdcb6507362ac91c6de5b4f305
-Head OID: 0298225e397b3d50c4ff8863d66c9362833b2a77
+Base OID: 958178438ac84cca2f3374c21f5c7f60f046c1ca
+Head OID: f7d1e9fe9dc45a3bdd6b6230d90e7d1c20e851d3
 Integrated Result: pending
 
 ## Summary

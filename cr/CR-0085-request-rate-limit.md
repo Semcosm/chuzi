@@ -1,7 +1,7 @@
 # CR-0085: add service level request rate limiting
 
 Base: main
-Head or Range: 6cfe46c2d7f9a7fdcb6507362ac91c6de5b4f305..0ae2fe442549ad1b062dd69ff757f90a748d0acd
+Head or Range: feat/integrate-account-request-matrix
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(request): add deterministic service level request rate limiting
@@ -9,8 +9,8 @@ Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 6cfe46c2d7f9a7fdcb6507362ac91c6de5b4f305
-Head OID: 0ae2fe442549ad1b062dd69ff757f90a748d0acd
+Base OID: 958178438ac84cca2f3374c21f5c7f60f046c1ca
+Head OID: 5c8bb179964f1f1a590e9270b22ce65feae262b1
 Integrated Result: pending
 
 ## Summary
