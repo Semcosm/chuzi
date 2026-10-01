@@ -5,13 +5,13 @@ Head or Range: b1affb0
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add automatic Core startup setting
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: b1affb0bee2890ea41736f0325e40a179a0bf352
-Integrated Result: pending
+Base OID: e5760e8c16b73578ff6f1658473de3ab3dfbd5fa
+Head OID: e5760e8c16b73578ff6f1658473de3ab3dfbd5fa
+Integrated Result: main@e5760e8c16b73578ff6f1658473de3ab3dfbd5fa
 
 ## Summary
 
