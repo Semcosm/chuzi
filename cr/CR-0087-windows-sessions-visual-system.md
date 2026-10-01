@@ -1,7 +1,7 @@
 # CR-0087: refine Windows Sessions visual system
 
 Base: main
-Head or Range: c44a608ea13793d5413b01f58915f178a98a0215
+Head or Range: 1fa5de12d4263e425cf5c803eebbfcb19b89b9bf
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): refine Windows Sessions visual system
@@ -9,8 +9,8 @@ Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 3c977e42773f6ef2e9db831e58c19f3787502a7a
-Head OID: c44a608ea13793d5413b01f58915f178a98a0215
+Base OID: 1fa5de12d4263e425cf5c803eebbfcb19b89b9bf
+Head OID: 1fa5de12d4263e425cf5c803eebbfcb19b89b9bf
 Integrated Result: pending
 
 ## Summary
