@@ -173,8 +173,8 @@ grep -Fq 'needs: [contract_checks]' "$repo_root/.github/workflows/chuzi-build.ym
 grep -Fq 'build_windows_slint.ps1' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows Slint packaging"
 grep -Fq 'layout_snapshot' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Slint layout snapshot check"
 grep -Fq -- '--features layout-snapshot' "$repo_root/.github/workflows/chuzi-build.yml" || fail "layout job misses dependency-free snapshot feature"
-for adapter_state in installed trusted enabled rollback; do
-  grep -Fq "'$adapter_state'" "$repo_root/.github/workflows/chuzi-build.yml" || fail "layout job misses $adapter_state adapter snapshot"
+for session_state in mixed empty loading error unavailable; do
+  grep -Fq "'$session_state'" "$repo_root/.github/workflows/chuzi-build.yml" || fail "layout job misses $session_state Sessions snapshot"
 done
 grep -Fq 'ci-windows-slint-binary' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses prebuilt Slint binary handoff"
 grep -Fq 'windows_slint_build.result' "$repo_root/.github/workflows/chuzi-build.yml" || fail "aggregate build misses Slint compile job"
@@ -226,11 +226,15 @@ grep -Fq 'PrebuiltBinaryPath' "$repo_root/scripts/build_windows_slint.ps1" || fa
 grep -Fq 'CorePayload' "$repo_root/scripts/build_windows_slint.ps1" || fail "Windows Slint build misses Core payload staging"
 grep -Fq 'slint::include_modules!' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client does not include generated UI"
 grep -Fq 'MainWindow' "$repo_root/ui/windows/ui/main.slint" || fail "Windows Slint shell is missing"
-grep -Fq 'First-run checklist' "$repo_root/ui/windows/ui/main.slint" || fail "Windows Slint overview misses first-run checklist"
-grep -Fq 'refresh-adapters' "$repo_root/ui/windows/ui/main.slint" || fail "Windows Slint adapter flow is missing"
-grep -Fq 'get_account' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses account lookup"
-grep -Fq 'submit_request' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses task submission"
-grep -Fq 'cancel_request' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses task cancellation"
+grep -Fq 'callback refresh-sessions();' "$repo_root/ui/windows/ui/main.slint" || fail "Windows Sessions screen misses refresh action"
+grep -Fq 'list_requests' "$repo_root/ui/windows/src/main.rs" || fail "Windows Sessions client misses Core request listing"
+grep -Fq 'cancel_request' "$repo_root/ui/windows/src/main.rs" || fail "Windows Sessions client misses request cancellation"
+grep -Fq 'get_browser_view' "$repo_root/ui/windows/src/main.rs" || fail "Windows Sessions client misses read-only browser preview"
+if rg -n --regexp 'text: "(Overview|Accounts|Tasks|Adapters|Settings|RDP login)"|First-run checklist|refresh-adapters|get_account|submit_request' \
+  "$repo_root/ui/windows/src/main.rs" "$repo_root/ui/windows/src/models.rs" \
+  "$repo_root/ui/windows/ui/main.slint" "$repo_root/ui/windows/examples/layout_snapshot.rs"; then
+  fail "Windows Slint source retains a removed main-window page or action"
+fi
 grep -Fq 'Smoke test installed Slint client' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Windows Slint workflow misses startup smoke test"
 grep -Fq 'Assemble Core payload for the Slint package' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Windows Slint workflow misses Core payload assembly"
 grep -Fq 'core-call' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses launcher Core façade"

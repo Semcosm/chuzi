@@ -1,0 +1,151 @@
+import { Palette, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { ChuziTheme } from "design_tokens.slint";
+
+export component ChuziTitlebar inherits Rectangle {
+    in property <string> theme: "system";
+    callback theme-request(string);
+
+    height: ChuziTheme.titlebar-height;
+    background: ChuziTheme.window-background;
+
+    HorizontalBox {
+        padding-left: ChuziTheme.space-6;
+        padding-right: ChuziTheme.space-4;
+        spacing: ChuziTheme.space-4;
+
+        HorizontalBox {
+            spacing: ChuziTheme.space-2;
+            vertical-stretch: 0;
+            Text {
+                text: "✦";
+                color: ChuziTheme.accent;
+                font-size: 20px;
+                font-weight: 700;
+                vertical-alignment: center;
+                vertical-stretch: 1;
+            }
+            VerticalBox {
+                spacing: 0px;
+                vertical-stretch: 0;
+                Text {
+                    text: "CHUZI";
+                    color: ChuziTheme.text-primary;
+                    font-size: 15px;
+                    font-weight: 700;
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: "Sessions";
+                    color: ChuziTheme.text-secondary;
+                    font-size: 11px;
+                    vertical-stretch: 0;
+                }
+            }
+        }
+
+        Rectangle { horizontal-stretch: 1; background: transparent; }
+
+        Rectangle {
+            width: 76px;
+            height: ChuziTheme.control-height;
+            background: ChuziTheme.surface-background;
+            border-color: ChuziTheme.separator;
+            border-width: 1px;
+            border-radius: ChuziTheme.radius-control;
+            Text {
+                text: root.theme == "dark" ? "Dark" : root.theme == "light" ? "Light" : "System";
+                color: ChuziTheme.text-secondary;
+                font-size: ChuziTheme.type-caption;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+                height: parent.height;
+            }
+            TouchArea {
+                clicked => {
+                    root.theme-request(root.theme == "dark" ? "light" : root.theme == "light" ? "system" : "dark");
+                }
+            }
+        }
+    }
+
+    Rectangle {
+        x: 0px;
+        y: root.height - 1px;
+        width: root.width;
+        height: 1px;
+        background: ChuziTheme.separator;
+        opacity: 0.55;
+    }
+}
+
+export component ChuziSidebar inherits Rectangle {
+    in property <bool> compact: false;
+
+    preferred-width: root.compact ? ChuziTheme.sidebar-compact-width : ChuziTheme.sidebar-width;
+    min-width: root.compact ? ChuziTheme.sidebar-compact-width : 196px;
+    max-width: root.compact ? ChuziTheme.sidebar-compact-width : 250px;
+    background: ChuziTheme.sidebar-background;
+
+    VerticalBox {
+        padding-top: ChuziTheme.space-6;
+        padding-bottom: ChuziTheme.space-4;
+        padding-left: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
+        padding-right: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
+        spacing: ChuziTheme.space-2;
+
+        if !root.compact: Text {
+            text: "SESSIONS";
+            color: ChuziTheme.text-secondary;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            vertical-stretch: 0;
+        }
+
+        Rectangle {
+            height: 38px;
+            background: ChuziTheme.accent-soft;
+            border-radius: ChuziTheme.radius-control;
+            HorizontalBox {
+                padding-left: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
+                padding-right: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
+                spacing: root.compact ? 0px : ChuziTheme.space-3;
+                Text {
+                    text: "◉";
+                    color: ChuziTheme.accent;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    vertical-stretch: 1;
+                    width: root.compact ? 36px : 20px;
+                }
+                if !root.compact: Text {
+                    text: "Sessions";
+                    color: ChuziTheme.text-primary;
+                    font-size: 13px;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                    vertical-stretch: 1;
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; visible: !root.compact; }
+                if !root.compact: Rectangle {
+                    width: 3px;
+                    height: 18px;
+                    background: ChuziTheme.accent;
+                    border-radius: 2px;
+                }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; background: transparent; }
+
+        if !root.compact: Text {
+            text: "Semcosm";
+            color: ChuziTheme.text-secondary;
+            font-size: 11px;
+            vertical-stretch: 0;
+            horizontal-alignment: center;
+        }
+    }
+}

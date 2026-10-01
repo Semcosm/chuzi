@@ -1,23 +1,25 @@
 mod desktop_rdp;
 mod models;
+mod session_ui;
+mod view_model;
 
 use base64::Engine;
-use desktop_rdp::{DesktopRdpController, RdpPerformanceOptions, RdpTarget};
+use desktop_rdp::RdpHost;
 use models::{
-    default_theme, BehaviorSettings, BrowserView, CoreAccount, CoreAdapter, CoreComponent,
-    CoreRequest, CoreStatus, DiagnosticStatus, SubmitResult, UiPreferences,
+    default_theme, BrowserView, CoreRequest, CoreRequestList, CoreStatus, DiagnosticStatus,
+    UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
-use slint::{ComponentHandle, Image, ModelRc, SharedString};
-use std::cell::RefCell;
+use slint::{ComponentHandle, Image, SharedString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use view_model::{
+    sessions_from_requests, ProjectionError, SelectionMove, SessionFilter, SessionViewModel,
+};
 
 slint::include_modules!();
 
@@ -27,6 +29,8 @@ struct AppState {
     payload_root: PathBuf,
     release_index_url: Option<String>,
     busy: bool,
+    session_view_model: SessionViewModel,
+    workspace_host: RdpHost,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -39,14 +43,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let initial_theme = state.lock().unwrap().load_ui_theme();
     apply_theme(&ui, &initial_theme);
     ui.set_theme(initial_theme.into());
-    let data_directory = state.lock().unwrap().data_root.display().to_string();
-    ui.set_data_directory(SharedString::from(format!(
-        "Data directory: {data_directory}"
-    )));
 
     connect_callbacks(&ui, Arc::clone(&state));
     refresh_core(&ui.as_weak(), Arc::clone(&state));
-    load_settings(&ui, Arc::clone(&state));
     ui.run()?;
     Ok(())
 }
@@ -76,6 +75,8 @@ impl AppState {
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty()),
             busy: false,
+            session_view_model: SessionViewModel::default(),
+            workspace_host: RdpHost::Docked,
         })
     }
 
@@ -140,9 +141,7 @@ impl AppState {
             .arg(&self.payload_root)
             .arg("-manifest")
             .arg(self.manifest_path());
-        if (command.starts_with("component-") || command.starts_with("plugin-"))
-            && self.release_index_url.is_some()
-        {
+        if command.starts_with("component-") && self.release_index_url.is_some() {
             launcher.args(
                 self.release_index_url
                     .as_ref()
@@ -161,15 +160,6 @@ impl AppState {
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
-}
-
-fn unique_id() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
-        .to_string()
 }
 
 fn core_call(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
@@ -201,7 +191,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             |state| {
                 state.run_launcher("component-install", &["-item", "service"])?;
                 state.run_launcher("core-start", &[])?;
-                Ok("Core installed.".to_owned())
+                Ok("Core installed and started.".to_owned())
             },
             Some(true),
         )
@@ -222,74 +212,111 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let weak = ui.as_weak();
-    let stop_state = Arc::clone(&state);
-    ui.on_stop_core(move || {
-        run_background_status(
-            &weak,
-            Arc::clone(&stop_state),
-            |state| {
-                state.run_launcher("core-stop", &[])?;
-                Ok("Core stopped.".to_owned())
-            },
-            Some(false),
-        )
-    });
-
-    let weak = ui.as_weak();
     let refresh_state = Arc::clone(&state);
     ui.on_refresh_core(move || refresh_core(&weak, Arc::clone(&refresh_state)));
 
     let weak = ui.as_weak();
-    let settings_state = Arc::clone(&state);
-    ui.on_save_settings(move || {
-        let weak = weak.clone();
-        let state = Arc::clone(&settings_state);
-        let (auto_check, auto_repair, channel, launch, tray, interval, theme) =
-            (weak.upgrade().map(|window| {
-                (
-                    window.get_auto_check_updates(),
-                    window.get_auto_repair(),
-                    window.get_update_channel().to_string(),
-                    window.get_launch_on_login(),
-                    window.get_close_to_tray(),
-                    window.get_update_interval(),
-                    window.get_theme().to_string(),
-                )
-            }),)
-                .0
-                .unwrap_or((
-                    false,
-                    false,
-                    "nightly".to_owned(),
-                    false,
-                    false,
-                    60,
-                    default_theme(),
-                ));
-        run_background(&weak, state, move |state| {
-            let settings = BehaviorSettings {
-                auto_check_updates: auto_check,
-                auto_repair,
-                update_channel: normalize_update_channel(&channel).to_owned(),
-                launch_on_login: launch,
-                close_to_tray: tray,
-                check_interval: i64::from(interval.max(5)) * 60_000_000_000,
-            };
-            let input = state.data_root.join(".chuzi-settings-input.json");
-            fs::write(
-                &input,
-                serde_json::to_vec(&settings).map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| error.to_string())?;
-            let result = state.run_launcher(
-                "settings-save",
-                &["-settings-input", input.to_string_lossy().as_ref()],
-            );
-            let _ = fs::remove_file(input);
-            result?;
-            state.save_ui_theme(&theme)?;
-            Ok("Settings saved.".to_owned())
-        });
+    let session_state = Arc::clone(&state);
+    ui.on_refresh_sessions(move || refresh_sessions(&weak, Arc::clone(&session_state)));
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
+    ui.on_load_more_sessions(move || load_more_sessions(&weak, Arc::clone(&session_state)));
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
+    ui.on_session_filter_changed(move |filter| {
+        let Some(filter) = SessionFilter::from_str(filter.as_str()) else {
+            return;
+        };
+        if let Some(window) = weak.upgrade() {
+            let mut state = session_state.lock().unwrap();
+            state.session_view_model.set_filter(filter);
+            session_ui::render(&window, &state.session_view_model);
+        }
+    });
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
+    ui.on_session_search_changed(move |search| {
+        if let Some(window) = weak.upgrade() {
+            let mut state = session_state.lock().unwrap();
+            state.session_view_model.set_search(search.as_str());
+            session_ui::render(&window, &state.session_view_model);
+        }
+    });
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
+    ui.on_select_session(move |request_id| {
+        if let Some(window) = weak.upgrade() {
+            let mut state = session_state.lock().unwrap();
+            if state.session_view_model.select_key(request_id.as_str()) {
+                window.set_session_browser_view(Image::default());
+                window.set_session_browser_view_loaded(false);
+                window.set_session_browser_view_status(SharedString::default());
+                session_ui::render(&window, &state.session_view_model);
+            }
+        }
+    });
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
+    ui.on_move_session_selection(move |movement| {
+        let movement = match movement.as_str() {
+            "up" => SelectionMove::Up,
+            "down" => SelectionMove::Down,
+            "home" => SelectionMove::Home,
+            "end" => SelectionMove::End,
+            _ => return,
+        };
+        if let Some(window) = weak.upgrade() {
+            let mut state = session_state.lock().unwrap();
+            if state.session_view_model.move_selection(movement) {
+                window.set_session_browser_view(Image::default());
+                window.set_session_browser_view_loaded(false);
+                window.set_session_browser_view_status(SharedString::default());
+                session_ui::render(&window, &state.session_view_model);
+            }
+        }
+    });
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
+    ui.on_session_primary_action(move |request_id, action| {
+        run_session_action(
+            &weak,
+            Arc::clone(&session_state),
+            request_id.to_string(),
+            action.to_string(),
+            false,
+        );
+    });
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
+    ui.on_session_more_action(move |request_id, action| {
+        run_session_action(
+            &weak,
+            Arc::clone(&session_state),
+            request_id.to_string(),
+            action.to_string(),
+            true,
+        );
+    });
+
+    let weak = ui.as_weak();
+    let workspace_state = Arc::clone(&state);
+    ui.on_session_workspace_dock(move || {
+        set_workspace_host(&weak, &workspace_state, RdpHost::Docked)
+    });
+    let weak = ui.as_weak();
+    let workspace_state = Arc::clone(&state);
+    ui.on_session_workspace_float(move || {
+        set_workspace_host(&weak, &workspace_state, RdpHost::Floating)
+    });
+    let weak = ui.as_weak();
+    let workspace_state = Arc::clone(&state);
+    ui.on_session_workspace_hide(move || {
+        set_workspace_host(&weak, &workspace_state, RdpHost::Hidden)
+    });
+    let weak = ui.as_weak();
+    let workspace_state = Arc::clone(&state);
+    ui.on_session_workspace_stop(move || {
+        set_workspace_host(&weak, &workspace_state, RdpHost::Stopped)
     });
 
     let weak = ui.as_weak();
@@ -307,357 +334,12 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             if let Err(error) = result {
                 set_feedback(
                     &weak,
-                    friendly_error(&format!("settings: {error}")),
+                    friendly_error(&format!("theme preference: {error}")),
                     "error",
                 );
             }
         });
     });
-
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_refresh_adapters(move || refresh_adapters(&weak, Arc::clone(&adapter_state)));
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_install_adapter(move |adapter| {
-        adapter_action(
-            &weak,
-            Arc::clone(&adapter_state),
-            "plugin-install",
-            adapter.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_update_adapter(move |adapter| {
-        adapter_action(
-            &weak,
-            Arc::clone(&adapter_state),
-            "plugin-update",
-            adapter.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_trust_adapter(move |adapter| {
-        adapter_action(
-            &weak,
-            Arc::clone(&adapter_state),
-            "plugin-trust",
-            adapter.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_enable_adapter(move |adapter| {
-        adapter_action(
-            &weak,
-            Arc::clone(&adapter_state),
-            "plugin-enable",
-            adapter.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_disable_adapter(move |adapter| {
-        adapter_action(
-            &weak,
-            Arc::clone(&adapter_state),
-            "plugin-disable",
-            adapter.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_untrust_adapter(move |adapter| {
-        adapter_action(
-            &weak,
-            Arc::clone(&adapter_state),
-            "plugin-untrust",
-            adapter.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let adapter_state = Arc::clone(&state);
-    ui.on_remove_adapter(move |adapter| {
-        adapter_action(
-            &weak,
-            Arc::clone(&adapter_state),
-            "plugin-remove",
-            adapter.to_string(),
-        )
-    });
-
-    let weak = ui.as_weak();
-    let component_state = Arc::clone(&state);
-    ui.on_refresh_components(move || refresh_components(&weak, Arc::clone(&component_state)));
-    let weak = ui.as_weak();
-    let component_state = Arc::clone(&state);
-    ui.on_install_component(move |component| {
-        component_action(
-            &weak,
-            Arc::clone(&component_state),
-            "component-install",
-            component.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let component_state = Arc::clone(&state);
-    ui.on_enable_component(move |component| {
-        component_action(
-            &weak,
-            Arc::clone(&component_state),
-            "component-enable",
-            component.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let component_state = Arc::clone(&state);
-    ui.on_disable_component(move |component| {
-        component_action(
-            &weak,
-            Arc::clone(&component_state),
-            "component-disable",
-            component.to_string(),
-        )
-    });
-    let weak = ui.as_weak();
-    let component_state = Arc::clone(&state);
-    ui.on_remove_component(move |component| {
-        component_action(
-            &weak,
-            Arc::clone(&component_state),
-            "component-remove",
-            component.to_string(),
-        )
-    });
-
-    let weak = ui.as_weak();
-    let account_state = Arc::clone(&state);
-    ui.on_lookup_account(move |account| {
-        let account = account.to_string();
-        if let Some(window) = weak.upgrade() {
-            window.set_account_loaded(false);
-        }
-        run_background_with(
-            &weak,
-            Arc::clone(&account_state),
-            move |state| {
-                validate_text(&account, "account ID")?;
-                let result = core_call(state, "get_account", json!({"account_id": account}))?;
-                let parsed: CoreAccount =
-                    serde_json::from_value(result).map_err(|error| error.to_string())?;
-                Ok(("Account status loaded.".to_owned(), parsed))
-            },
-            |window, account: CoreAccount| {
-                window.set_account_loaded(true);
-                window.set_account_status(format!("Account {}", account.account).into());
-                window.set_account_state(account.state.into());
-                window.set_account_revision(account.revision.to_string().into());
-                window.set_account_request(account.request_id.into());
-            },
-        );
-    });
-
-    let weak = ui.as_weak();
-    let submit_state = Arc::clone(&state);
-    ui.on_submit_task(move |account| {
-        let account = account.to_string();
-        if let Some(window) = weak.upgrade() {
-            window.set_task_loaded(false);
-        }
-        run_background_with(
-            &weak,
-            Arc::clone(&submit_state),
-            move |state| {
-                validate_text(&account, "account ID")?;
-                let id = format!("ui-{}", unique_id());
-                let result = core_call(
-                    state,
-                    "submit_request",
-                    json!({
-                        "request_id": id,
-                        "account_id": account,
-                        "idempotency_key": format!("ui-{id}"),
-                        "actor": "windows-ui"
-                    }),
-                )?;
-                let parsed: SubmitResult =
-                    serde_json::from_value(result).map_err(|error| error.to_string())?;
-                Ok((
-                    if parsed.idempotent {
-                        "Request already existed; showing the existing request.".to_owned()
-                    } else {
-                        "Request submitted.".to_owned()
-                    },
-                    parsed,
-                ))
-            },
-            |window, result: SubmitResult| {
-                let request = result.request;
-                window.set_request_input(request.request_id.clone().into());
-                window.set_task_request_id(request.request_id.clone().into());
-                window.set_task_loaded(true);
-                window.set_task_status("Request submitted".into());
-                window.set_task_account(request.account.into());
-                window.set_task_state(request.state.into());
-                window.set_task_attempt(request.attempt.to_string().into());
-                window.set_task_failure(request.last_failure.into());
-                window.set_page("tasks".into());
-            },
-        );
-    });
-
-    let weak = ui.as_weak();
-    let task_state = Arc::clone(&state);
-    ui.on_refresh_task(move |request| {
-        if let Some(window) = weak.upgrade() {
-            window.set_task_loaded(false);
-        }
-        request_action(
-            &weak,
-            Arc::clone(&task_state),
-            request.to_string(),
-            "get_request",
-        )
-    });
-    let weak = ui.as_weak();
-    let cancel_state = Arc::clone(&state);
-    ui.on_cancel_task(move |request| {
-        if let Some(window) = weak.upgrade() {
-            window.set_task_loaded(false);
-        }
-        request_action(
-            &weak,
-            Arc::clone(&cancel_state),
-            request.to_string(),
-            "cancel_request",
-        )
-    });
-
-    let weak = ui.as_weak();
-    let view_state = Arc::clone(&state);
-    ui.on_refresh_view(move |request| {
-        let request = request.to_string();
-        if let Some(window) = weak.upgrade() {
-            window.set_browser_view_status("Capturing the active browser page...".into());
-        }
-        run_background_with(
-            &weak,
-            Arc::clone(&view_state),
-            move |state| {
-                validate_text(&request, "request ID")?;
-                let result = core_call(
-                    state,
-                    "get_browser_view",
-                    json!({"request_id": request, "width": 640, "height": 360}),
-                )?;
-                let parsed: BrowserView =
-                    serde_json::from_value(result).map_err(|error| error.to_string())?;
-                Ok(("Browser view captured.".to_owned(), parsed))
-            },
-            |window, view: BrowserView| {
-                let bytes = match base64::engine::general_purpose::STANDARD.decode(&view.data) {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        window.set_browser_view_status(
-                            format!("Invalid browser frame: {error}").into(),
-                        );
-                        return;
-                    }
-                };
-                match Image::load_from_data(&bytes, Some("jpeg")) {
-                    Ok(image) => {
-                        window.set_browser_view(image);
-                        window.set_browser_view_loaded(true);
-                        window.set_browser_view_status(
-                            format!(
-                                "{}x{} {} captured for {} at {}",
-                                view.width,
-                                view.height,
-                                view.content_type,
-                                view.request_id,
-                                view.captured_at
-                            )
-                            .into(),
-                        );
-                    }
-                    Err(error) => window.set_browser_view_status(
-                        format!("Unable to decode browser frame: {error:?}").into(),
-                    ),
-                }
-            },
-        );
-    });
-
-    let weak = ui.as_weak();
-    let desktop_rdp_state: Rc<RefCell<Option<DesktopRdpController>>> = Rc::new(RefCell::new(None));
-    schedule_rdp_status_poll(ui.as_weak(), desktop_rdp_state.clone());
-    let desktop_rdp_slot = desktop_rdp_state.clone();
-    let performance_data_root = state.lock().unwrap().data_root.clone();
-    ui.on_connect_rdp(
-        move |host,
-              port,
-              domain,
-              username,
-              password,
-              allow_untrusted_certificate,
-              show_hud,
-              record_performance| {
-            let host = host.to_string().trim().to_owned();
-            let port_text = port.to_string();
-            let domain = domain.to_string().trim().to_owned();
-            let username = username.to_string().trim().to_owned();
-            let password = password.to_string();
-            if let Some(window) = weak.upgrade() {
-                if host.is_empty() {
-                    set_rdp_error(&window, "请输入 RDP 服务器地址。".to_owned());
-                    return;
-                }
-                let port = match port_text.trim().parse::<u16>() {
-                    Ok(port) if port != 0 => port,
-                    _ => {
-                        set_rdp_error(&window, "RDP 端口必须是 1 到 65535 之间的数字。".to_owned());
-                        return;
-                    }
-                };
-                if username.is_empty() {
-                    set_rdp_error(&window, "请输入 RDP 用户名。".to_owned());
-                    return;
-                }
-                if password.is_empty() {
-                    set_rdp_error(&window, "请输入 RDP 密码。".to_owned());
-                    return;
-                }
-
-                let mut target = RdpTarget::with_credentials(
-                    host.clone(),
-                    username,
-                    password,
-                    (!domain.is_empty()).then_some(domain),
-                );
-                target.port = port;
-                target.allow_untrusted_certificate = allow_untrusted_certificate;
-                window.set_rdp_password("".into());
-                window.set_rdp_status(format!("正在打开 RDP 窗体（目标：{host}:{port}）…").into());
-                let options = RdpPerformanceOptions {
-                    show_hud,
-                    record: record_performance,
-                    data_dir: performance_data_root.clone(),
-                };
-                match DesktopRdpController::new_with_target_and_performance(target, options) {
-                    Ok(controller) => {
-                        *desktop_rdp_slot.borrow_mut() = Some(controller);
-                        window.set_message("RDP 窗体已打开，FreeRDP 正在连接…".into());
-                        window.set_message_kind("success".into());
-                    }
-                    Err(error) => {
-                        set_rdp_error(&window, error);
-                    }
-                }
-            }
-        },
-    );
 
     let diagnostic_weak = ui.as_weak();
     let diagnostic_state = Arc::clone(&state);
@@ -705,11 +387,20 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 }
 
-fn set_rdp_error(window: &MainWindow, message: String) {
-    window.set_rdp_status(message.clone().into());
-    window.set_message(format!("RDP 连接失败：{message}").into());
-    window.set_message_kind("error".into());
-    show_diagnostic_consent(window, "rdp", "error");
+fn set_workspace_host(ui: &slint::Weak<MainWindow>, state: &Arc<Mutex<AppState>>, host: RdpHost) {
+    let Ok(mut guard) = state.lock() else {
+        return;
+    };
+    if guard.workspace_host == RdpHost::Stopped && host != RdpHost::Stopped {
+        return;
+    }
+    guard.workspace_host = host;
+    if let Some(window) = ui.upgrade() {
+        window.set_session_workspace_host(host.as_str().into());
+        if host == RdpHost::Stopped {
+            window.set_session_workspace_visible(false);
+        }
+    }
 }
 
 fn show_diagnostic_consent(window: &MainWindow, category: &str, severity: &str) {
@@ -717,46 +408,12 @@ fn show_diagnostic_consent(window: &MainWindow, category: &str, severity: &str) 
     window.set_diagnostic_consent_severity(severity.into());
     window.set_diagnostic_consent_summary(
         match category {
-            "rdp" => "RDP 连接出现问题，是否发送脱敏诊断信息？",
             "core" => "Core 操作出现问题，是否发送脱敏诊断信息？",
             _ => "应用操作出现问题，是否发送脱敏诊断信息？",
         }
         .into(),
     );
     window.set_diagnostic_consent_visible(true);
-}
-
-fn schedule_rdp_status_poll(
-    weak: slint::Weak<MainWindow>,
-    slot: Rc<RefCell<Option<DesktopRdpController>>>,
-) {
-    slint::Timer::single_shot(Duration::from_millis(100), move || {
-        let Some(window) = weak.upgrade() else {
-            return;
-        };
-
-        let snapshot = slot
-            .borrow()
-            .as_ref()
-            .map(DesktopRdpController::status_snapshot);
-        if let Some((state, status)) = snapshot {
-            window.set_rdp_status(status.clone().into());
-            match state.as_str() {
-                "connected" => {
-                    window.set_message("RDP 已连接，远程画面正在接收。".into());
-                    window.set_message_kind("success".into());
-                }
-                "failed" => set_rdp_error(&window, status),
-                "closed" => {
-                    window.set_message("RDP 连接已断开。".into());
-                    window.set_message_kind("info".into());
-                }
-                _ => {}
-            }
-        }
-
-        schedule_rdp_status_poll(weak, slot);
-    });
 }
 
 #[derive(Debug)]
@@ -768,7 +425,7 @@ struct CoreSnapshot {
 }
 
 fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
-    let adapter_state = Arc::clone(&state);
+    let sessions_state = Arc::clone(&state);
     run_background_with(
         ui,
         state,
@@ -793,15 +450,14 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
                     ready: false,
                     installed: true,
                     status: "Core is stopped".to_owned(),
-                    details: "Start Core to enable accounts, tasks, and adapters.".to_owned(),
+                    details: "Start Core to load Sessions.".to_owned(),
                 }
             } else {
                 CoreSnapshot {
                     ready: false,
                     installed: false,
                     status: "Core is not installed".to_owned(),
-                    details: "Install Core from Settings > Components to begin using Chuzi."
-                        .to_owned(),
+                    details: "Install Core to load Sessions.".to_owned(),
                 }
             };
             Ok(("Core status refreshed.".to_owned(), snapshot))
@@ -809,13 +465,257 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
         move |window, snapshot: CoreSnapshot| {
             window.set_core_ready(snapshot.ready);
             window.set_core_installed(snapshot.installed);
+            window.set_core_status_known(true);
             window.set_core_status(snapshot.status.into());
             window.set_core_details(snapshot.details.into());
             if snapshot.ready {
-                refresh_adapters(&window.as_weak(), Arc::clone(&adapter_state));
+                refresh_sessions(&window.as_weak(), Arc::clone(&sessions_state));
             }
         },
     );
+}
+
+const SESSION_PAGE_SIZE: usize = 100;
+
+fn refresh_sessions(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    if state.lock().unwrap().busy {
+        return;
+    }
+    if let Some(window) = ui.upgrade() {
+        let mut state_guard = state.lock().unwrap();
+        state_guard.session_view_model.begin_loading();
+        window.set_session_browser_view(slint::Image::default());
+        window.set_session_browser_view_loaded(false);
+        window.set_session_browser_view_status(SharedString::default());
+        session_ui::render(&window, &state_guard.session_view_model);
+    }
+
+    let apply_state = Arc::clone(&state);
+    let failure_state = Arc::clone(&state);
+    run_background_with_failure(
+        ui,
+        state,
+        |state| {
+            ensure_core_ready(state)?;
+            let result = core_call(
+                state,
+                "list_requests",
+                json!({"offset": 0, "limit": SESSION_PAGE_SIZE}),
+            )?;
+            let page: CoreRequestList = serde_json::from_value(result)
+                .map_err(|_| "invalid_session_projection".to_owned())?;
+            if page.requests.len() > SESSION_PAGE_SIZE {
+                return Err("invalid_session_projection".to_owned());
+            }
+            let has_more = page.requests.len() == SESSION_PAGE_SIZE;
+            Ok((
+                "Session requests loaded.".to_owned(),
+                (page.requests, has_more),
+            ))
+        },
+        move |window, (requests, has_more): (Vec<CoreRequest>, bool)| {
+            let mut state_guard = apply_state.lock().unwrap();
+            state_guard
+                .session_view_model
+                .set_first_page(sessions_from_requests(&requests), has_more);
+            session_ui::render(window, &state_guard.session_view_model);
+        },
+        move |window, error| {
+            let mut state_guard = failure_state.lock().unwrap();
+            let projection_error = if is_core_unavailable(error) {
+                ProjectionError::CoreUnavailable
+            } else if error.contains("invalid_session_projection") {
+                ProjectionError::InvalidData
+            } else {
+                ProjectionError::Unknown
+            };
+            state_guard.session_view_model.set_error(projection_error);
+            session_ui::render(window, &state_guard.session_view_model);
+        },
+    );
+}
+
+fn load_more_sessions(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    let offset = {
+        let guard = state.lock().unwrap();
+        if guard.busy || !guard.session_view_model.has_more() {
+            return;
+        }
+        guard.session_view_model.next_offset()
+    };
+    if offset > 100_000 {
+        return;
+    }
+    if let Some(window) = ui.upgrade() {
+        let mut state_guard = state.lock().unwrap();
+        state_guard.session_view_model.begin_loading();
+        session_ui::render(&window, &state_guard.session_view_model);
+    }
+
+    let page_state = Arc::clone(&state);
+    let failure_state = Arc::clone(&state);
+    run_background_with_failure(
+        ui,
+        state,
+        move |state| {
+            ensure_core_ready(state)?;
+            let result = core_call(
+                state,
+                "list_requests",
+                json!({"offset": offset, "limit": SESSION_PAGE_SIZE}),
+            )?;
+            let page: CoreRequestList = serde_json::from_value(result)
+                .map_err(|_| "invalid_session_projection".to_owned())?;
+            if page.requests.len() > SESSION_PAGE_SIZE {
+                return Err("invalid_session_projection".to_owned());
+            }
+            let has_more = page.requests.len() == SESSION_PAGE_SIZE;
+            Ok((
+                "Older requests loaded.".to_owned(),
+                (page.requests, has_more),
+            ))
+        },
+        move |window, (requests, has_more): (Vec<CoreRequest>, bool)| {
+            let mut state_guard = page_state.lock().unwrap();
+            state_guard
+                .session_view_model
+                .append_page(sessions_from_requests(&requests).items, has_more);
+            session_ui::render(window, &state_guard.session_view_model);
+        },
+        move |window, error| {
+            let mut state_guard = failure_state.lock().unwrap();
+            let projection_error = if is_core_unavailable(error) {
+                ProjectionError::CoreUnavailable
+            } else if error.contains("invalid_session_projection") {
+                ProjectionError::InvalidData
+            } else {
+                ProjectionError::Unknown
+            };
+            state_guard.session_view_model.set_error(projection_error);
+            session_ui::render(window, &state_guard.session_view_model);
+        },
+    );
+}
+
+fn run_session_action(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    request_id: String,
+    action: String,
+    is_more_action: bool,
+) {
+    let allowed = {
+        let guard = state.lock().unwrap();
+        let inspector = guard.session_view_model.inspector();
+        let selected = inspector.selected.as_ref();
+        let matches_selection = selected
+            .and_then(|item| item.request_id.as_deref())
+            .is_some_and(|selected_id| selected_id == request_id);
+        if !matches_selection {
+            false
+        } else if is_more_action {
+            inspector
+                .actions
+                .iter()
+                .any(|entry| entry.enabled && entry.action.as_str() == action)
+        } else {
+            inspector.primary_enabled && inspector.primary_action.as_str() == action
+        }
+    };
+    if !allowed {
+        return;
+    }
+
+    let action_state = Arc::clone(&state);
+    run_background_with(
+        ui,
+        state,
+        move |state| {
+            validate_text(&request_id, "request ID")?;
+            match action.as_str() {
+                "cancel" => {
+                    let result = core_call(
+                        state,
+                        "cancel_request",
+                        json!({"request_id": request_id, "actor": "windows-ui"}),
+                    )?;
+                    let request: CoreRequest = serde_json::from_value(result)
+                        .map_err(|_| "invalid_session_projection".to_owned())?;
+                    Ok((
+                        "Core updated the request status.".to_owned(),
+                        SessionActionResult::Request(request),
+                    ))
+                }
+                "refresh-status" => {
+                    let result =
+                        core_call(state, "get_request", json!({"request_id": request_id}))?;
+                    let request: CoreRequest = serde_json::from_value(result)
+                        .map_err(|_| "invalid_session_projection".to_owned())?;
+                    Ok((
+                        "Request status refreshed from Core.".to_owned(),
+                        SessionActionResult::Request(request),
+                    ))
+                }
+                "capture-view" => {
+                    let result = core_call(
+                        state,
+                        "get_browser_view",
+                        json!({"request_id": request_id, "width": 640, "height": 360}),
+                    )?;
+                    let view: BrowserView = serde_json::from_value(result)
+                        .map_err(|_| "browser_view_unavailable".to_owned())?;
+                    if view.content_type != "image/jpeg"
+                        || !(160..=1280).contains(&view.width)
+                        || !(90..=720).contains(&view.height)
+                        || view.data.len() > 2_000_000
+                    {
+                        return Err("browser_view_unavailable".to_owned());
+                    }
+                    Ok((
+                        "Read-only browser preview captured.".to_owned(),
+                        SessionActionResult::Browser(view),
+                    ))
+                }
+                _ => Err("unsupported_session_action".to_owned()),
+            }
+        },
+        move |window, result| match result {
+            SessionActionResult::Request(request) => {
+                let mut state_guard = action_state.lock().unwrap();
+                state_guard.session_view_model.update_request(&request);
+                session_ui::render(window, &state_guard.session_view_model);
+            }
+            SessionActionResult::Browser(view) => {
+                let decoded = base64::engine::general_purpose::STANDARD.decode(&view.data);
+                let Ok(bytes) = decoded else {
+                    window.set_session_browser_view_loaded(false);
+                    window
+                        .set_session_browser_view_status("Preview data could not be read.".into());
+                    return;
+                };
+                match Image::load_from_data(&bytes, Some("jpeg")) {
+                    Ok(image) => {
+                        window.set_session_browser_view(image);
+                        window.set_session_browser_view_loaded(true);
+                        window.set_session_browser_view_status(
+                            format!("Read-only preview · {} × {}", view.width, view.height).into(),
+                        );
+                    }
+                    Err(_) => {
+                        window.set_session_browser_view_loaded(false);
+                        window.set_session_browser_view_status(
+                            "Preview image could not be read.".into(),
+                        );
+                    }
+                }
+            }
+        },
+    );
+}
+
+enum SessionActionResult {
+    Request(CoreRequest),
+    Browser(BrowserView),
 }
 
 fn apply_theme(ui: &MainWindow, theme: &str) {
@@ -835,65 +735,6 @@ fn normalize_theme(theme: &str) -> &'static str {
     }
 }
 
-fn normalize_update_channel(channel: &str) -> &'static str {
-    match channel.trim().to_ascii_lowercase().as_str() {
-        "test" => "test",
-        "stable" => "stable",
-        _ => "nightly",
-    }
-}
-
-fn load_settings(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
-    let weak = ui.as_weak();
-    thread::spawn(move || {
-        let result = state.lock().unwrap().run_launcher("settings", &[]);
-        let feedback = match result {
-            Ok(output) => match serde_json::from_str::<BehaviorSettings>(&output) {
-                Ok(settings) => {
-                    let settings_weak = weak.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(window) = settings_weak.upgrade() {
-                            window.set_auto_check_updates(settings.auto_check_updates);
-                            window.set_auto_repair(settings.auto_repair);
-                            window.set_update_channel(
-                                normalize_update_channel(&settings.update_channel).into(),
-                            );
-                            window.set_launch_on_login(settings.launch_on_login);
-                            window.set_close_to_tray(settings.close_to_tray);
-                            window.set_update_interval(
-                                (settings.check_interval / 60_000_000_000).max(5) as i32,
-                            );
-                        }
-                    });
-                    None
-                }
-                Err(_) => Some("Saved launcher settings could not be read. Defaults are in use."),
-            },
-            Err(_) => Some("Launcher settings are unavailable until Core is installed."),
-        };
-        if let Some(message) = feedback {
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(window) = weak.upgrade() {
-                    window.set_message(message.into());
-                    window.set_message_kind("info".into());
-                }
-            });
-        }
-    });
-}
-
-fn run_background<F>(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>, operation: F)
-where
-    F: FnOnce(&mut AppState) -> Result<String, String> + Send + 'static,
-{
-    run_background_with(
-        ui,
-        state,
-        move |state| operation(state).map(|message| (message, ())),
-        |_window, _| {},
-    );
-}
-
 fn run_background_status<F>(
     ui: &slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
@@ -902,7 +743,7 @@ fn run_background_status<F>(
 ) where
     F: FnOnce(&mut AppState) -> Result<String, String> + Send + 'static,
 {
-    let adapter_state = Arc::clone(&state);
+    let sessions_state = Arc::clone(&state);
     run_background_with(
         ui,
         state,
@@ -919,8 +760,9 @@ fn run_background_status<F>(
                     .into(),
                 );
                 window.set_core_installed(true);
+                window.set_core_status_known(true);
                 if ready {
-                    refresh_adapters(&window.as_weak(), Arc::clone(&adapter_state));
+                    refresh_sessions(&window.as_weak(), Arc::clone(&sessions_state));
                 }
             }
         },
@@ -936,6 +778,21 @@ fn run_background_with<T, F, A>(
     T: Send + 'static,
     F: FnOnce(&mut AppState) -> Result<(String, T), String> + Send + 'static,
     A: FnOnce(&MainWindow, T) + Send + 'static,
+{
+    run_background_with_failure(ui, state, operation, apply, |_window, _error| {});
+}
+
+fn run_background_with_failure<T, F, A, E>(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    operation: F,
+    apply: A,
+    on_failure: E,
+) where
+    T: Send + 'static,
+    F: FnOnce(&mut AppState) -> Result<(String, T), String> + Send + 'static,
+    A: FnOnce(&MainWindow, T) + Send + 'static,
+    E: FnOnce(&MainWindow, &str) + Send + 'static,
 {
     {
         let mut guard = state.lock().unwrap();
@@ -982,6 +839,7 @@ fn run_background_with<T, F, A>(
                         window.set_message(friendly_error(&error).into());
                         window.set_message_kind("error".into());
                         show_diagnostic_consent(&window, "core", "error");
+                        on_failure(&window, &error);
                     }
                 }
             }
@@ -996,345 +854,6 @@ fn ensure_core_ready(state: &AppState) -> Result<(), String> {
     } else {
         Err("core_unavailable".to_owned())
     }
-}
-
-fn request_action(
-    ui: &slint::Weak<MainWindow>,
-    state: Arc<Mutex<AppState>>,
-    request: String,
-    method: &'static str,
-) {
-    run_background_with(
-        ui,
-        state,
-        move |state| {
-            validate_text(&request, "request ID")?;
-            let params = if method == "cancel_request" {
-                json!({"request_id": request, "actor": "windows-ui"})
-            } else {
-                json!({"request_id": request})
-            };
-            let result = core_call(state, method, params)?;
-            let parsed: CoreRequest =
-                serde_json::from_value(result).map_err(|error| error.to_string())?;
-            Ok((
-                if method == "cancel_request" {
-                    "Cancellation requested.".to_owned()
-                } else {
-                    "Request status refreshed.".to_owned()
-                },
-                parsed,
-            ))
-        },
-        |window, request: CoreRequest| {
-            window.set_task_loaded(true);
-            window.set_task_status(
-                if request.state == "cancelled" {
-                    "Request cancelled"
-                } else {
-                    "Request loaded"
-                }
-                .into(),
-            );
-            window.set_task_request_id(request.request_id.clone().into());
-            window.set_request_input(request.request_id.into());
-            window.set_task_account(request.account.into());
-            window.set_task_state(request.state.into());
-            window.set_task_attempt(request.attempt.to_string().into());
-            window.set_task_failure(request.last_failure.into());
-        },
-    );
-}
-
-fn refresh_components(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
-    run_background_with(
-        ui,
-        state,
-        |state| {
-            let output = state.run_launcher("component-list", &[])?;
-            let components = parse_components(&output)?;
-            Ok((format_component_summary(&components), components))
-        },
-        apply_components,
-    );
-}
-
-fn component_action(
-    ui: &slint::Weak<MainWindow>,
-    state: Arc<Mutex<AppState>>,
-    command: &'static str,
-    component: String,
-) {
-    if let Err(error) = validate_text(&component, "component ID") {
-        set_feedback(ui, friendly_error(&error), "error");
-        return;
-    }
-    run_background_with(
-        ui,
-        state,
-        move |state| {
-            state.run_launcher(command, &["-item", component.as_str()])?;
-            let output = state.run_launcher("component-list", &[])?;
-            let components = parse_components(&output)?;
-            Ok((component_action_message(command), components))
-        },
-        apply_components,
-    );
-}
-
-fn parse_components(output: &str) -> Result<Vec<CoreComponent>, String> {
-    serde_json::from_str(output).map_err(|error| format!("component projection: {error}"))
-}
-
-fn format_component_summary(components: &[CoreComponent]) -> String {
-    if components.is_empty() {
-        "No components are included in this Core release.".to_owned()
-    } else {
-        let entries = components
-            .iter()
-            .map(|component| format!("{} ({})", component.id, component.health))
-            .collect::<Vec<_>>();
-        format!("{} component(s): {}", components.len(), entries.join(", "))
-    }
-}
-
-fn component_action_message(command: &str) -> String {
-    match command {
-        "component-install" => "Component installed.".to_owned(),
-        "component-enable" => "Component enabled.".to_owned(),
-        "component-disable" => "Component disabled.".to_owned(),
-        "component-remove" => "Component removed.".to_owned(),
-        _ => "Component state updated.".to_owned(),
-    }
-}
-
-fn apply_components(window: &MainWindow, components: Vec<CoreComponent>) {
-    window.set_component_summary(format_component_summary(&components).into());
-    let options = components
-        .iter()
-        .map(|component| SharedString::from(component.id.clone()))
-        .collect::<Vec<_>>();
-    window.set_component_options(ModelRc::from(options.as_slice()));
-    let selected = window.get_component_input().to_string();
-    let component = components
-        .iter()
-        .find(|component| component.id == selected)
-        .or_else(|| components.first());
-    let Some(component) = component else {
-        window.set_component_loaded(false);
-        window.set_component_input(SharedString::default());
-        window.set_component_id(SharedString::default());
-        window.set_component_version(SharedString::default());
-        window.set_component_health(SharedString::default());
-        window.set_component_installed(false);
-        window.set_component_required(false);
-        window.set_component_enabled(false);
-        return;
-    };
-    window.set_component_loaded(true);
-    window.set_component_input(component.id.clone().into());
-    window.set_component_id(component.id.clone().into());
-    window.set_component_version(component.version.clone().into());
-    window.set_component_health(component.health.clone().into());
-    window.set_component_installed(component.installed);
-    window.set_component_required(component.required);
-    window.set_component_enabled(component.enabled);
-}
-
-fn refresh_adapters(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
-    run_background_with(
-        ui,
-        state,
-        |state| {
-            ensure_core_ready(state)?;
-            let output = state.run_launcher("plugin-list", &[])?;
-            let adapters = parse_adapters(&output)?;
-            Ok((format_adapter_summary(&adapters), adapters))
-        },
-        apply_adapters,
-    );
-}
-
-fn adapter_action(
-    ui: &slint::Weak<MainWindow>,
-    state: Arc<Mutex<AppState>>,
-    command: &'static str,
-    adapter: String,
-) {
-    if let Err(error) = validate_text(&adapter, "adapter ID") {
-        set_feedback(ui, friendly_error(&error), "error");
-        return;
-    }
-    run_background_with(
-        ui,
-        state,
-        move |state| {
-            ensure_core_ready(state)?;
-            if command == "plugin-trust" {
-                let output = state.run_launcher("plugin-list", &[])?;
-                let adapters = parse_adapters(&output)?;
-                let signer = adapter_signer_for(&adapters, &adapter)?;
-                state.run_launcher(
-                    command,
-                    &[
-                        "-item",
-                        adapter.as_str(),
-                        "-trusted-signers",
-                        signer.as_str(),
-                    ],
-                )?;
-            } else {
-                state.run_launcher(command, &["-item", adapter.as_str()])?;
-            }
-            let output = state.run_launcher("plugin-list", &[])?;
-            let adapters = parse_adapters(&output)?;
-            Ok((adapter_action_message(command), adapters))
-        },
-        apply_adapters,
-    );
-}
-
-fn parse_adapters(output: &str) -> Result<Vec<CoreAdapter>, String> {
-    serde_json::from_str(output).map_err(|error| format!("adapter projection: {error}"))
-}
-
-fn format_adapter_summary(adapters: &[CoreAdapter]) -> String {
-    if adapters.is_empty() {
-        "No adapters are available in this release.".to_owned()
-    } else {
-        let builtins = adapters
-            .iter()
-            .filter(|adapter| {
-                adapter.descriptor.distribution == "builtin"
-                    || (adapter.descriptor.distribution.is_empty()
-                        && !adapter.descriptor.installable)
-            })
-            .count();
-        let packages = adapters.len() - builtins;
-        match (builtins, packages) {
-            (builtins, 0) => format!("{builtins} built-in adapter(s) included with this release."),
-            (0, packages) => format!("{packages} installable adapter package(s) available."),
-            (builtins, packages) => format!("{builtins} built-in adapter(s) included; {packages} installable package(s) available."),
-        }
-    }
-}
-
-fn adapter_signer_for(adapters: &[CoreAdapter], id: &str) -> Result<String, String> {
-    adapters
-        .iter()
-        .find(|adapter| adapter.descriptor.id == id)
-        .map(|adapter| adapter.descriptor.signed_by.trim().to_owned())
-        .filter(|signer| !signer.is_empty())
-        .ok_or_else(|| "adapter_signer_missing".to_owned())
-}
-
-fn adapter_action_message(command: &str) -> String {
-    match command {
-        "plugin-install" => {
-            "Adapter installed; it remains untrusted until explicitly trusted.".to_owned()
-        }
-        "plugin-update" => {
-            "Adapter updated; verify the new package and trust it again before enabling.".to_owned()
-        }
-        "plugin-trust" => "Adapter trust updated. Review the signer before enabling it.".to_owned(),
-        "plugin-enable" => "Adapter enabled.".to_owned(),
-        "plugin-disable" => "Adapter disabled.".to_owned(),
-        "plugin-untrust" => "Adapter trust revoked and the package disabled.".to_owned(),
-        "plugin-remove" => "Adapter removed.".to_owned(),
-        _ => "Adapter state updated.".to_owned(),
-    }
-}
-
-fn apply_adapters(window: &MainWindow, adapters: Vec<CoreAdapter>) {
-    window.set_adapter_summary(format_adapter_summary(&adapters).into());
-    let options = adapters
-        .iter()
-        .map(|adapter| SharedString::from(adapter.descriptor.id.clone()))
-        .collect::<Vec<_>>();
-    window.set_adapter_options(ModelRc::from(options.as_slice()));
-    let selected = window.get_adapter_input().to_string();
-    let adapter = adapters
-        .iter()
-        .find(|adapter| adapter.descriptor.id == selected)
-        .or_else(|| adapters.first());
-    let Some(adapter) = adapter else {
-        window.set_adapter_loaded(false);
-        window.set_adapter_display_name(SharedString::default());
-        window.set_adapter_distribution(SharedString::default());
-        window.set_adapter_source_component(SharedString::default());
-        window.set_adapter_id(SharedString::default());
-        window.set_adapter_version(SharedString::default());
-        window.set_adapter_entry(SharedString::default());
-        window.set_adapter_archive(SharedString::default());
-        window.set_adapter_sha256(SharedString::default());
-        window.set_adapter_api(SharedString::default());
-        window.set_adapter_target(SharedString::default());
-        window.set_adapter_feature_capability(SharedString::default());
-        window.set_adapter_capabilities(SharedString::default());
-        window.set_adapter_permissions(SharedString::default());
-        window.set_adapter_signer(SharedString::default());
-        window.set_adapter_installed(false);
-        window.set_adapter_verified(false);
-        window.set_adapter_installable(false);
-        window.set_adapter_trusted(false);
-        window.set_adapter_enabled(false);
-        window.set_adapter_running(false);
-        window.set_adapter_health(SharedString::default());
-        return;
-    };
-    window.set_adapter_loaded(true);
-    window.set_adapter_input(adapter.descriptor.id.clone().into());
-    window.set_adapter_id(adapter.descriptor.id.clone().into());
-    let distribution = if adapter.descriptor.distribution.is_empty() {
-        if adapter.descriptor.installable {
-            "package"
-        } else {
-            "builtin"
-        }
-    } else {
-        adapter.descriptor.distribution.as_str()
-    };
-    let display_name = if adapter
-        .descriptor
-        .capabilities
-        .iter()
-        .any(|capability| capability == "genshin-cloudgame@1")
-    {
-        "Genshin Cloud Game"
-    } else {
-        adapter.descriptor.id.as_str()
-    };
-    window.set_adapter_display_name(display_name.into());
-    window.set_adapter_distribution(distribution.into());
-    window.set_adapter_source_component(adapter.descriptor.source_component.clone().into());
-    window.set_adapter_version(adapter.descriptor.version.clone().into());
-    window.set_adapter_entry(adapter.descriptor.entry.clone().into());
-    window.set_adapter_archive(adapter.descriptor.archive.clone().into());
-    window.set_adapter_sha256(adapter.descriptor.sha256.clone().into());
-    window.set_adapter_api(adapter.descriptor.api.clone().into());
-    window.set_adapter_target(adapter.descriptor.target.clone().into());
-    window.set_adapter_feature_capability(
-        adapter
-            .descriptor
-            .capabilities
-            .iter()
-            .find(|capability| capability.as_str() == "genshin-cloudgame@1")
-            .cloned()
-            .unwrap_or_default()
-            .into(),
-    );
-    window.set_adapter_capabilities(adapter.descriptor.capabilities.join(", ").into());
-    window.set_adapter_permissions(adapter.descriptor.permissions.join(", ").into());
-    window.set_adapter_signer(adapter.descriptor.signed_by.clone().into());
-    window.set_adapter_installed(adapter.installed);
-    window.set_adapter_verified(adapter.verified);
-    window.set_adapter_installable(distribution == "package" && adapter.descriptor.installable);
-    window.set_adapter_trusted(adapter.trusted);
-    window.set_adapter_enabled(adapter.trusted && adapter.enabled);
-    window.set_adapter_running(
-        adapter.running && adapter.verified && adapter.trusted && adapter.enabled,
-    );
-    window.set_adapter_health(adapter.health.clone().into());
 }
 
 fn validate_text(value: &str, label: &str) -> Result<(), String> {
@@ -1367,31 +886,24 @@ fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static st
 
 fn friendly_error(error: &str) -> String {
     let value = error.to_ascii_lowercase();
-    if value.contains("rdp_requires_windows") || value.contains("remote_desktop_requires_windows") {
-        return "RDP is only available in the Windows client.".to_owned();
+    if value.contains("browser_view_unavailable") {
+        return "A read-only browser preview is not available for this request.".to_owned();
     }
-    if value.contains("rdp_client_start") || value.contains("remote_client_start") {
-        return "Windows could not start the RDP client.".to_owned();
+    if value.contains("invalid_session_projection") {
+        return "Core returned a request list this client could not read. Refresh and try again."
+            .to_owned();
     }
-    if value.contains("missing_account")
-        || value.contains("missing_request")
-        || value.contains("missing_adapter")
-        || value.contains("missing_component")
-    {
+    if value.contains("unsupported_session_action") {
+        return "That action is not available for the selected request.".to_owned();
+    }
+    if value.contains("missing_request") {
         return "Enter an ID before trying this action.".to_owned();
     }
     if value.contains("not_found") || value.contains("not found") {
         return "Core could not find that item. Check the ID and try again.".to_owned();
     }
     if value.contains("core_not_installed") || value.contains("launcher is missing") {
-        return "Core is not installed. Use Settings > Components, then try again.".to_owned();
-    }
-    if value.contains("core_stop_unavailable") {
-        return "Core is running, but this client cannot identify its process. Restart Core from its owning service.".to_owned();
-    }
-    if value.contains("core_stop_timeout") {
-        return "Core did not stop within the expected time. Refresh its status before trying again."
-            .to_owned();
+        return "Core is not installed. Install Core, then try again.".to_owned();
     }
     if value.contains("core_start_timeout")
         || value.contains("connect core")
@@ -1399,16 +911,15 @@ fn friendly_error(error: &str) -> String {
     {
         return "Core is unavailable. Start Core and refresh its status.".to_owned();
     }
-    if value.contains("not trusted") || value.contains("forbidden") || value.contains("not allowed")
-    {
-        return "Core did not allow this operation. Review adapter trust and permissions."
-            .to_owned();
+    if value.contains("forbidden") || value.contains("not allowed") {
+        return "Core did not allow this operation.".to_owned();
     }
     if value.contains("conflict") || value.contains("already") {
         return "The item changed while this was running. Refresh and try again.".to_owned();
     }
-    if value.contains("settings") {
-        return "Settings could not be saved. Check the launcher and try again.".to_owned();
+    if value.contains("theme preference") {
+        return "Theme preference could not be saved. The current appearance remains active."
+            .to_owned();
     }
     "The operation could not be completed. Refresh and try again.".to_owned()
 }
@@ -1433,17 +944,9 @@ mod tests {
     }
 
     #[test]
-    fn update_channel_preserves_all_supported_release_channels() {
-        assert_eq!(normalize_update_channel("test"), "test");
-        assert_eq!(normalize_update_channel(" NIGHTLY "), "nightly");
-        assert_eq!(normalize_update_channel("stable"), "stable");
-        assert_eq!(normalize_update_channel("unknown"), "nightly");
-    }
-
-    #[test]
     fn user_errors_are_classified_without_internal_details() {
         assert_eq!(
-            friendly_error("not_found: account"),
+            friendly_error("not_found: request"),
             "Core could not find that item. Check the ID and try again."
         );
         assert!(is_core_unavailable("core_unavailable"));
@@ -1455,66 +958,6 @@ mod tests {
         assert_eq!(
             friendly_error("unexpected stack and profile path"),
             "The operation could not be completed. Refresh and try again."
-        );
-        assert_eq!(
-            friendly_error("rdp_client_start: access denied"),
-            "Windows could not start the RDP client."
-        );
-    }
-
-    #[test]
-    fn adapter_projection_never_promotes_untrusted_state() {
-        let adapters: Vec<CoreAdapter> = serde_json::from_str(
-            r#"[{"descriptor":{"id":"demo","version":"1"},"installed":true,"verified":true,"enabled":true,"trusted":false,"running":true,"health":"untrusted"}]"#,
-        )
-        .expect("valid adapter projection");
-        let adapter = &adapters[0];
-        assert!(adapter.enabled);
-        assert!(!adapter.trusted);
-        assert!(!(adapter.trusted && adapter.enabled));
-        assert!(!(adapter.trusted && adapter.enabled && adapter.running));
-    }
-
-    #[test]
-    fn adapter_projection_distinguishes_builtin_and_package_catalog_entries() {
-        let adapters: Vec<CoreAdapter> = serde_json::from_str(
-            r#"[{"descriptor":{"id":"chuzi.headless-cdp","version":"1","api":"chuzi.adapter/v1","distribution":"builtin","source_component":"browser-worker","entry":"src/headless-adapter.mjs","capabilities":["cdp@1"]},"installed":true,"verified":true,"enabled":true,"trusted":true,"running":true,"health":"included"},{"descriptor":{"id":"genshin-cloudgame","version":"1","api":"chuzi.adapter/v1","distribution":"package","entry":"adapter.mjs","archive":"genshin.tar.gz","sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef","installable":true},"installed":false,"verified":false,"enabled":false,"trusted":false,"running":false,"health":"not_installed"}]"#,
-        )
-        .expect("valid adapter projection");
-        assert_eq!(
-            format_adapter_summary(&adapters),
-            "1 built-in adapter(s) included; 1 installable package(s) available."
-        );
-        assert_eq!(adapters[0].descriptor.distribution, "builtin");
-        assert_eq!(adapters[1].descriptor.distribution, "package");
-        assert_eq!(adapters[1].descriptor.id, "genshin-cloudgame");
-    }
-
-    #[test]
-    fn component_projection_preserves_lifecycle_state() {
-        let components = parse_components(
-            r#"[{"id":"service","installed":true,"version":"1","enabled":true,"required":true,"health":"healthy"}]"#,
-        )
-        .expect("valid component projection");
-        assert_eq!(components.len(), 1);
-        assert_eq!(components[0].id, "service");
-        assert!(components[0].installed);
-        assert!(components[0].required);
-        assert_eq!(
-            format_component_summary(&components),
-            "1 component(s): service (healthy)"
-        );
-    }
-
-    #[test]
-    fn unavailable_core_error_is_user_actionable() {
-        assert_eq!(
-            friendly_error("core_stop_timeout"),
-            "Core did not stop within the expected time. Refresh its status before trying again."
-        );
-        assert_eq!(
-            friendly_error("core_stop_unavailable"),
-            "Core is running, but this client cannot identify its process. Restart Core from its owning service."
         );
     }
 }

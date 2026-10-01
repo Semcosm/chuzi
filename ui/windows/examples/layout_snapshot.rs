@@ -3,12 +3,23 @@ use std::fs::{self, File};
 use std::path::PathBuf;
 
 use i_slint_backend_testing::{TestingBackend, TestingBackendOptions};
-use slint::{ComponentHandle, ModelRc, PhysicalSize, SharedString};
+use slint::language::ColorScheme;
+use slint::{ComponentHandle, PhysicalSize, SharedString};
+
+#[path = "../src/models.rs"]
+#[allow(dead_code)]
+mod models;
+#[path = "../src/session_ui.rs"]
+#[allow(dead_code)]
+mod session_ui;
+#[path = "../src/view_model.rs"]
+#[allow(dead_code)]
+mod view_model;
 
 slint::include_modules!();
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let (output, sizes, page, adapter_state) = parse_args()?;
+    let (output, sizes, session_state, theme) = parse_args()?;
     fs::create_dir_all(&output)?;
 
     slint::platform::set_platform(Box::new(TestingBackend::new(TestingBackendOptions {
@@ -17,129 +28,111 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         renderer_name: Some(SharedString::from("software")),
     })))?;
 
+    let themes = if theme == "both" {
+        vec!["light", "dark"]
+    } else {
+        vec![theme.as_str()]
+    };
     for (width, height) in sizes {
-        if page == "rdp" {
-            let window = DesktopRdpWindow::new()?;
-            window.set_host("127.0.0.2".into());
-            window.set_state("not-started".into());
-            window.set_status("RDP 连接界面预览：FreeRDP 画面将在连接后显示。".into());
+        for theme in &themes {
+            let window = MainWindow::new()?;
+            configure_window(&window, theme);
             window.window().set_size(PhysicalSize::new(width, height));
-            let snapshot = window.window().take_snapshot()?;
-            write_snapshot(&output, &page, width, height, &snapshot)?;
-            window.window().hide()?;
-            continue;
-        }
+            window.show()?;
+            slint::platform::update_timers_and_animations();
 
-        let window = MainWindow::new()?;
-        window.set_core_installed(true);
-        window.set_core_ready(true);
-        window.set_core_status("Core is running".into());
-        window.set_core_details("Headless layout snapshot".into());
-        window.set_data_directory("Data directory: snapshot".into());
-        configure_adapter_state(&window, &adapter_state);
-        window.window().set_size(PhysicalSize::new(width, height));
-        window.show()?;
-        window.set_page("overview".into());
-        slint::platform::update_timers_and_animations();
-        let _ = window.window().take_snapshot()?;
-        window.set_page(
-            if page == "rdp-login" || page == "adapters" {
-                "adapters"
-            } else {
-                &page
-            }
-            .into(),
-        );
-        window.window().set_size(PhysicalSize::new(width, height));
-        slint::platform::update_timers_and_animations();
-        let snapshot = window.window().take_snapshot()?;
-        write_snapshot(&output, &page, width, height, &snapshot)?;
-        window.window().hide()?;
+            let session_model = session_fixture(&session_state);
+            let has_selection = session_model.inspector().selected.is_some();
+            session_ui::render(&window, &session_model);
+            window.window().set_size(PhysicalSize::new(width, height));
+            slint::platform::update_timers_and_animations();
+            // The testing backend may create a Window at its final size
+            // without delivering the intermediate resize event.
+            window.set_compact_shell(width < 940);
+            window.set_inspector_collapsed(width < 1200);
+            window.set_inspector_open(width < 1200 && has_selection);
+            slint::platform::update_timers_and_animations();
+
+            let snapshot = window.window().take_snapshot()?;
+            write_snapshot(&output, &session_state, theme, width, height, &snapshot)?;
+            window.window().hide()?;
+        }
     }
     Ok(())
 }
 
-fn configure_adapter_state(window: &MainWindow, state: &str) {
-    match state {
-        "builtin" => {
-            window.set_adapter_summary("1 built-in adapter included with this release.".into());
-            window.set_adapter_options(ModelRc::from([SharedString::from("chuzi.headless-cdp")]));
-            window.set_adapter_input("chuzi.headless-cdp".into());
-            window.set_adapter_loaded(true);
-            window.set_adapter_display_name("Headless CDP runtime".into());
-            window.set_adapter_distribution("builtin".into());
-            window.set_adapter_id("chuzi.headless-cdp".into());
-            window.set_adapter_version("0.1.0".into());
-            window.set_adapter_api("chuzi.adapter/v1".into());
-            window.set_adapter_source_component("browser-worker".into());
-            window.set_adapter_entry("src/headless-adapter.mjs".into());
-            window.set_adapter_feature_capability("cdp@1".into());
-            window.set_adapter_capabilities("cdp@1, headless-cdp@1, headed-cdp@1".into());
-            window.set_adapter_health("included".into());
-            window.set_adapter_installed(true);
-            window.set_adapter_verified(true);
-            window.set_adapter_trusted(true);
-            window.set_adapter_enabled(true);
-            window.set_adapter_running(true);
-        }
-        "package" | "installed" | "trusted" | "enabled" | "rollback" => {
-            let lifecycle = match state {
-                "installed" => "installed",
-                "trusted" => "trusted",
-                "enabled" => "enabled",
-                "rollback" => "upgrade failed; previous package restored",
-                _ => "not_installed",
-            };
-            window.set_adapter_summary(
-                format!("Genshin Cloud Game adapter package: {lifecycle}.").into(),
-            );
-            window.set_adapter_options(ModelRc::from([SharedString::from("genshin-cloudgame")]));
-            window.set_adapter_input("genshin-cloudgame".into());
-            window.set_adapter_loaded(true);
-            window.set_adapter_display_name("Genshin Cloud Game".into());
-            window.set_adapter_distribution("package".into());
-            window.set_adapter_id("genshin-cloudgame".into());
-            window.set_adapter_version("nightly-123".into());
-            window.set_adapter_api("chuzi.adapter/v1".into());
-            window.set_adapter_entry("adapter.mjs".into());
-            window.set_adapter_archive(
-                "chuzi-nightly-123-linux-amd64-genshin-cloudgame.tar.gz".into(),
-            );
-            window.set_adapter_sha256(
-                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
-            );
-            window.set_adapter_capabilities("genshin-cloudgame@1".into());
-            window.set_adapter_permissions("browser.cdp.loopback".into());
-            window.set_adapter_signer("chuzi-release".into());
-            window.set_adapter_health(
-                if state == "rollback" {
-                    "rollback"
-                } else if state == "enabled" {
-                    "healthy"
-                } else if state == "trusted" {
-                    "disabled"
-                } else {
-                    "untrusted"
-                }
-                .into(),
-            );
-            window.set_adapter_installable(true);
-            window.set_adapter_installed(state != "package");
-            window.set_adapter_verified(state != "package");
-            window.set_adapter_trusted(state == "trusted" || state == "enabled");
-            window.set_adapter_enabled(state == "enabled");
-            window.set_adapter_running(state == "enabled");
-        }
-        "empty" => {
-            window.set_adapter_summary("No adapters are available in this release.".into());
-        }
-        other => panic!("unsupported adapter state: {other}"),
+fn configure_window(window: &MainWindow, theme: &str) {
+    window.set_theme(theme.into());
+    window.set_core_installed(true);
+    window.set_core_ready(true);
+    window.set_core_status_known(true);
+    window.set_core_status("Core is running".into());
+    window.set_core_details("Headless layout snapshot".into());
+    window
+        .global::<Palette>()
+        .set_color_scheme(color_scheme(theme));
+}
+
+fn color_scheme(theme: &str) -> ColorScheme {
+    match theme {
+        "light" => ColorScheme::Light,
+        "dark" => ColorScheme::Dark,
+        _ => ColorScheme::Unknown,
     }
+}
+
+fn session_fixture(state: &str) -> view_model::SessionViewModel {
+    use view_model::{ProjectionError, SessionListProjection, SessionViewModel};
+
+    if state == "loading" {
+        return SessionViewModel::default();
+    }
+    if state == "empty" {
+        return SessionViewModel::new(SessionListProjection::empty());
+    }
+
+    let requests = session_requests();
+    let mut model = SessionViewModel::default();
+    model.set_first_page(view_model::sessions_from_requests(&requests), true);
+    model.select_key("req-0000");
+    match state {
+        "mixed" => {}
+        "error" => model.set_error(ProjectionError::Unknown),
+        "unavailable" => model.set_error(ProjectionError::CoreUnavailable),
+        other => panic!("unsupported session fixture: {other}"),
+    }
+    model
+}
+
+fn session_requests() -> Vec<models::CoreRequest> {
+    (0..100)
+        .map(|index| {
+            let (state, failure) = match index {
+                0 => ("LOGGING_IN", ""),
+                1 => ("QUEUED", ""),
+                2 => ("LOGIN_SUCCEEDED", ""),
+                3 => ("LOGIN_FAILED", "credential"),
+                4 => ("BLOCKED", "permission"),
+                _ => ("QUEUED", ""),
+            };
+            let minute = index % 60;
+            models::CoreRequest {
+                request_id: format!("req-{index:04}"),
+                account: format!("id_{index:012x}"),
+                state: state.to_owned(),
+                attempt: if index == 3 { 2 } else { 1 },
+                last_failure: failure.to_owned(),
+                created_at: format!("2026-09-29T09:{minute:02}:00Z"),
+                updated_at: format!("2026-09-29T10:{minute:02}:00Z"),
+            }
+        })
+        .collect()
 }
 
 fn write_snapshot(
     output: &PathBuf,
-    page: &str,
+    state: &str,
+    theme: &str,
     width: u32,
     height: u32,
     snapshot: &slint::SharedPixelBuffer<slint::Rgba8Pixel>,
@@ -159,11 +152,7 @@ fn write_snapshot(
     {
         return Err(format!("snapshot is blank at {width}x{height}").into());
     }
-    let page_output = if page == "overview" {
-        output.clone()
-    } else {
-        output.join(page)
-    };
+    let page_output = output.join("sessions").join(state).join(theme);
     fs::create_dir_all(&page_output)?;
     let path = page_output.join(format!("{width}x{height}.png"));
     write_png(&path, snapshot)
@@ -172,15 +161,13 @@ fn write_snapshot(
 fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn std::error::Error>> {
     let mut output = PathBuf::from("dist/windows-layout");
     let mut sizes = vec![(800, 600), (1120, 760), (1440, 900)];
-    let mut sizes_explicit = false;
-    let mut page = "overview".to_owned();
-    let mut adapter_state = "empty".to_owned();
+    let mut session_state = "mixed".to_owned();
+    let mut theme = "both".to_owned();
     let mut args = env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--output" => output = PathBuf::from(args.next().ok_or("--output needs a path")?),
             "--sizes" => {
-                sizes_explicit = true;
                 sizes = args
                     .next()
                     .ok_or("--sizes needs a comma-separated list")?
@@ -191,37 +178,24 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
                     })
                     .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
             }
-            "--page" => page = args.next().ok_or("--page needs a page name")?,
-            "--adapter-state" => {
-                adapter_state = args
+            "--session-state" => {
+                session_state = args
                     .next()
-                    .ok_or("--adapter-state needs empty, builtin, package, installed, trusted, enabled, or rollback")?
+                    .ok_or("--session-state needs mixed, empty, loading, error, or unavailable")?;
+            }
+            "--theme" => {
+                theme = args.next().ok_or("--theme needs light, dark, or both")?;
             }
             other => return Err(format!("unknown argument: {other}").into()),
         }
     }
-    match page.as_str() {
-        "overview" | "adapters" | "accounts" | "tasks" | "rdp" | "rdp-login" | "settings" => {
-            if page == "rdp" && !sizes_explicit {
-                sizes = vec![(1280, 752), (800, 600), (500, 281)];
-            }
-            if ![
-                "empty",
-                "builtin",
-                "package",
-                "installed",
-                "trusted",
-                "enabled",
-                "rollback",
-            ]
-            .contains(&adapter_state.as_str())
-            {
-                return Err(format!("unknown adapter state: {adapter_state}").into());
-            }
-            Ok((output, sizes, page, adapter_state))
-        }
-        other => Err(format!("unknown page: {other}").into()),
+    if !["mixed", "empty", "loading", "error", "unavailable"].contains(&session_state.as_str()) {
+        return Err(format!("unknown session state: {session_state}").into());
     }
+    if !["light", "dark", "both"].contains(&theme.as_str()) {
+        return Err(format!("unknown theme: {theme}").into());
+    }
+    Ok((output, sizes, session_state, theme))
 }
 
 fn write_png(
