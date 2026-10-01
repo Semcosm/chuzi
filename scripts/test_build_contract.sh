@@ -173,7 +173,7 @@ grep -Fq 'needs: [contract_checks]' "$repo_root/.github/workflows/chuzi-build.ym
 grep -Fq 'build_windows_slint.ps1' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Windows Slint packaging"
 grep -Fq 'layout_snapshot' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Slint layout snapshot check"
 grep -Fq -- '--features layout-snapshot' "$repo_root/.github/workflows/chuzi-build.yml" || fail "layout job misses dependency-free snapshot feature"
-for session_state in mixed empty loading error unavailable; do
+for session_state in mixed empty loading error unavailable settings; do
   grep -Fq "'$session_state'" "$repo_root/.github/workflows/chuzi-build.yml" || fail "layout job misses $session_state Sessions snapshot"
 done
 grep -Fq 'ci-windows-slint-binary' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses prebuilt Slint binary handoff"
@@ -230,7 +230,7 @@ grep -Fq 'callback refresh-sessions();' "$repo_root/ui/windows/ui/main.slint" ||
 grep -Fq 'list_requests' "$repo_root/ui/windows/src/main.rs" || fail "Windows Sessions client misses Core request listing"
 grep -Fq 'cancel_request' "$repo_root/ui/windows/src/main.rs" || fail "Windows Sessions client misses request cancellation"
 grep -Fq 'get_browser_view' "$repo_root/ui/windows/src/main.rs" || fail "Windows Sessions client misses read-only browser preview"
-if rg -n --regexp 'text: "(Overview|Accounts|Tasks|Adapters|Settings|RDP login)"|First-run checklist|refresh-adapters|get_account|submit_request' \
+if rg -n --regexp 'text: "(Overview|Accounts|Tasks|Adapters|RDP login)"|First-run checklist|refresh-adapters|get_account|submit_request' \
   "$repo_root/ui/windows/src/main.rs" "$repo_root/ui/windows/src/models.rs" \
   "$repo_root/ui/windows/ui/main.slint" "$repo_root/ui/windows/examples/layout_snapshot.rs"; then
   fail "Windows Slint source retains a removed main-window page or action"

@@ -38,10 +38,10 @@ it in Rust/Slint.
 ### Phase 2 - Design system and shell (implemented)
 
 Create reusable Slint tokens/components and implement the persistent shell:
-titlebar, Sessions sidebar, content list, Inspector, diagnostic overlay, and
-responsive collapse behavior. The legacy Overview, Accounts, Jobs, Adapters,
-Workspace, Settings, and RDP login page routes are removed; the new main window
-has no compatibility page switch.
+titlebar, Sessions/Settings sidebar, content list, Inspector, diagnostic
+overlay, and responsive collapse behavior. The legacy Overview, Accounts, Jobs,
+Adapters, Workspace, and RDP login page routes are removed; Settings is a new
+current-shell destination backed by the launcher settings contract.
 
 ### Phase 3 - Sessions vertical slice (implemented)
 
@@ -84,8 +84,8 @@ does not become an interactive RDP surface. See `docs/ui/rdp-workspace.md`.
 
 Continue Light/Dark/System materials, keyboard navigation, focus states,
 high-contrast-safe contrast, reduced motion behavior, resizing, and screenshot
-QA at fixed viewports. If a Settings destination is added later, build it in the
-current shell; do not restore the removed page-local Settings UI.
+QA at fixed viewports. Settings must keep launcher behavior settings separate
+from the UI-local theme preference and must not expose credentials or raw paths.
 
 ### Phase 7 - Hardening and handoff
 

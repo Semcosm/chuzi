@@ -31,12 +31,13 @@ from browser facts or read bbolt, credentials, Profiles, or named pipes
 
 ## Current UI scope
 
-The active main window contains one navigation destination: Sessions. It also
-provides Core install/start recovery actions when needed, a light/dark/system
-appearance toggle, and the diagnostic-consent overlay. The old Overview,
-Accounts, Tasks, Adapters, Settings, and RDP login pages and their compatibility
-routes have been removed. Future screens must be implemented in the current
-shell and may not restore those legacy pages.
+The active main window contains Sessions and a Settings destination. Sessions
+provides Core install/start recovery actions when needed, while Settings groups
+appearance, Core lifecycle, launcher update behavior, startup, and diagnostic
+privacy guidance. Launcher behavior settings are read and saved through the
+launcher; the UI theme remains a UI-local preference. The old Overview,
+Accounts, Tasks, Adapters, and RDP login pages and their compatibility routes
+remain removed. Future screens must be implemented in the current shell.
 
 RDP is a Session Workspace capability. The default host is the main window;
 `DesktopRdpWindow` is the optional floating host for the same RDP runtime.
@@ -83,7 +84,7 @@ keyboard focus, and disabled-action fixtures. Each state is rendered in Light
 and Dark at 800x600, 1120x760, and 1440x900:
 
 ~~~bash
-for state in mixed empty loading error unavailable mixed-selected \
+for state in mixed empty loading error unavailable mixed-selected settings \
   compact-inspector more-menu cancel-confirmation keyboard-focus disabled-action; do
   cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot \
     --example layout_snapshot -- --session-state "$state" \

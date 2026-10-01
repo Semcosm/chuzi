@@ -2,6 +2,7 @@ import { Palette, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { ChuziTheme } from "design_tokens.slint";
 
 export component ChuziTitlebar inherits Rectangle {
+    in property <string> page: "sessions";
     in property <string> theme: "system";
     in property <bool> core-ready: false;
     in property <bool> core-status-known: false;
@@ -38,7 +39,7 @@ export component ChuziTitlebar inherits Rectangle {
                     vertical-stretch: 0;
                 }
                 Text {
-                    text: "Sessions";
+                    text: root.page == "settings" ? "Settings" : "Sessions";
                     color: ChuziTheme.text-secondary;
                     font-size: 11px;
                     vertical-stretch: 0;
@@ -139,6 +140,8 @@ export component ChuziTitlebar inherits Rectangle {
 
 export component ChuziSidebar inherits Rectangle {
     in property <bool> compact: false;
+    in property <string> page: "sessions";
+    callback navigate(string);
 
     preferred-width: root.compact ? ChuziTheme.sidebar-compact-width : ChuziTheme.sidebar-width;
     min-width: root.compact ? ChuziTheme.sidebar-compact-width : 196px;
@@ -163,7 +166,7 @@ export component ChuziSidebar inherits Rectangle {
 
         Rectangle {
             height: 38px;
-            background: ChuziTheme.accent-soft;
+            background: root.page == "sessions" ? ChuziTheme.accent-soft : transparent;
             border-radius: ChuziTheme.radius-control;
             HorizontalBox {
                 padding-left: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
@@ -190,10 +193,47 @@ export component ChuziSidebar inherits Rectangle {
                 if !root.compact: Rectangle {
                     width: 3px;
                     height: 18px;
-                    background: ChuziTheme.accent;
+                    background: root.page == "sessions" ? ChuziTheme.accent : transparent;
                     border-radius: 2px;
                 }
             }
+            TouchArea { clicked => { root.navigate("sessions"); } }
+        }
+
+        Rectangle {
+            height: 38px;
+            background: root.page == "settings" ? ChuziTheme.accent-soft : transparent;
+            border-radius: ChuziTheme.radius-control;
+            HorizontalBox {
+                padding-left: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
+                padding-right: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
+                spacing: root.compact ? 0px : ChuziTheme.space-3;
+                Text {
+                    text: "⚙";
+                    color: root.page == "settings" ? ChuziTheme.accent : ChuziTheme.text-secondary;
+                    font-size: 14px;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    vertical-stretch: 1;
+                    width: root.compact ? 36px : 20px;
+                }
+                if !root.compact: Text {
+                    text: "Settings";
+                    color: ChuziTheme.text-primary;
+                    font-size: 13px;
+                    font-weight: root.page == "settings" ? 600 : 500;
+                    vertical-alignment: center;
+                    vertical-stretch: 1;
+                }
+                Rectangle { horizontal-stretch: 1; background: transparent; visible: !root.compact; }
+                if !root.compact: Rectangle {
+                    width: 3px;
+                    height: 18px;
+                    background: root.page == "settings" ? ChuziTheme.accent : transparent;
+                    border-radius: 2px;
+                }
+            }
+            TouchArea { clicked => { root.navigate("settings"); } }
         }
 
         Rectangle { vertical-stretch: 1; background: transparent; }

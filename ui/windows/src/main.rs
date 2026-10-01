@@ -6,8 +6,8 @@ mod view_model;
 use base64::Engine;
 use desktop_rdp::RdpHost;
 use models::{
-    default_theme, BrowserView, CoreRequest, CoreRequestList, CoreStatus, DiagnosticStatus,
-    UiPreferences,
+    default_theme, BehaviorSettings, BrowserView, CoreRequest, CoreRequestList, CoreStatus,
+    DiagnosticStatus, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
@@ -29,6 +29,7 @@ struct AppState {
     payload_root: PathBuf,
     release_index_url: Option<String>,
     busy: bool,
+    settings: BehaviorSettings,
     session_view_model: SessionViewModel,
     workspace_host: RdpHost,
 }
@@ -46,6 +47,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     connect_callbacks(&ui, Arc::clone(&state));
     refresh_core(&ui.as_weak(), Arc::clone(&state));
+    load_launcher_settings(&ui, Arc::clone(&state));
     ui.run()?;
     Ok(())
 }
@@ -75,6 +77,14 @@ impl AppState {
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty()),
             busy: false,
+            settings: BehaviorSettings {
+                auto_check_updates: false,
+                auto_repair: false,
+                update_channel: "nightly".to_owned(),
+                launch_on_login: false,
+                close_to_tray: false,
+                check_interval: 60 * 60 * 1_000_000_000,
+            },
             session_view_model: SessionViewModel::default(),
             workspace_host: RdpHost::Docked,
         })
@@ -182,6 +192,21 @@ fn core_status(state: &AppState) -> Result<CoreStatus, String> {
 }
 
 fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
+    let navigate_weak = ui.as_weak();
+    ui.on_navigate(move |page| {
+        let page = if page.as_str() == "settings" {
+            "settings"
+        } else {
+            "sessions"
+        };
+        if let Some(window) = navigate_weak.upgrade() {
+            // Navigation is a presentation concern; launcher settings are
+            // loaded once and saved explicitly from the Settings page.
+            window.set_page(page.into());
+            window.set_inspector_open(false);
+        }
+    });
+
     let weak = ui.as_weak();
     let install_state = Arc::clone(&state);
     ui.on_install_core(move || {
@@ -212,8 +237,70 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
 
     let weak = ui.as_weak();
+    let stop_state = Arc::clone(&state);
+    ui.on_stop_core(move || {
+        run_background_status(
+            &weak,
+            Arc::clone(&stop_state),
+            |state| {
+                state.run_launcher("core-stop", &[])?;
+                Ok("Core stopped.".to_owned())
+            },
+            Some(false),
+        )
+    });
+
+    let weak = ui.as_weak();
     let refresh_state = Arc::clone(&state);
     ui.on_refresh_core(move || refresh_core(&weak, Arc::clone(&refresh_state)));
+
+    let weak = ui.as_weak();
+    let settings_state = Arc::clone(&state);
+    ui.on_save_settings(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let settings = BehaviorSettings {
+            auto_check_updates: window.get_auto_check_updates(),
+            auto_repair: window.get_auto_repair(),
+            update_channel: match window.get_update_channel().as_str() {
+                "stable" => "stable".to_owned(),
+                "test" => "test".to_owned(),
+                _ => "nightly".to_owned(),
+            },
+            launch_on_login: window.get_launch_on_login(),
+            close_to_tray: window.get_close_to_tray(),
+            check_interval: i64::from(window.get_update_interval().max(5)) * 60 * 1_000_000_000,
+        };
+        window.set_settings_phase("saving".into());
+        run_background_with_failure(
+            &weak,
+            Arc::clone(&settings_state),
+            move |state| {
+                let input = state.data_root.join(".chuzi-settings-input.json");
+                let input_arg = input.to_string_lossy().into_owned();
+                let result = (|| {
+                    fs::write(
+                        &input,
+                        serde_json::to_vec(&settings).map_err(|error| error.to_string())?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    state.run_launcher("settings-save", &["-settings-input", input_arg.as_str()])
+                })();
+                let _ = fs::remove_file(&input);
+                result.map(|_| {
+                    state.settings = settings;
+                    ("Settings saved.".to_owned(), ())
+                })
+            },
+            |window, _| {
+                window.set_settings_phase("ready".into());
+            },
+            |window, _| {
+                window.set_settings_phase("error".into());
+            },
+        );
+    });
 
     let weak = ui.as_weak();
     let session_state = Arc::clone(&state);
@@ -744,6 +831,52 @@ fn normalize_theme(theme: &str) -> &'static str {
         "light" => "light",
         _ => "system",
     }
+}
+
+fn load_launcher_settings(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
+    let weak = ui.as_weak();
+    thread::spawn(move || {
+        let result = state.lock().unwrap().run_launcher("settings", &[]);
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(window) = weak.upgrade() else {
+                return;
+            };
+            match result {
+                Ok(output) => match serde_json::from_str::<BehaviorSettings>(output.trim()) {
+                    Ok(settings) => {
+                        let interval = if settings.check_interval <= 0 {
+                            60
+                        } else {
+                            (settings.check_interval / (60 * 1_000_000_000)).max(5)
+                        };
+                        window.set_auto_check_updates(settings.auto_check_updates);
+                        window.set_auto_repair(settings.auto_repair);
+                        window.set_update_channel(settings.update_channel.clone().into());
+                        window.set_launch_on_login(settings.launch_on_login);
+                        window.set_close_to_tray(settings.close_to_tray);
+                        window.set_update_interval(interval.min(i64::from(i32::MAX)) as i32);
+                        window.set_settings_phase("ready".into());
+                    }
+                    Err(error) => {
+                        window.set_settings_phase("error".into());
+                        window.set_message(
+                            format!("Saved launcher settings could not be read: {error}").into(),
+                        );
+                        window.set_message_kind("warning".into());
+                    }
+                },
+                Err(error) => {
+                    window.set_settings_phase("error".into());
+                    window.set_message(
+                        "Launcher settings are unavailable until the installed payload is ready."
+                            .into(),
+                    );
+                    window.set_message_kind("warning".into());
+                    let _ = error;
+                }
+            }
+        });
+    });
 }
 
 fn run_background_status<F>(

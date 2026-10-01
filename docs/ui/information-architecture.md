@@ -4,15 +4,16 @@
 
 ~~~text
 Titlebar
-Sidebar: Sessions | Content | Inspector
-                    \\ Overlay when the Inspector is narrow
+Sidebar: Sessions | Settings | Content | Inspector
+                              \\ Overlay when the Inspector is narrow
 ~~~
 
-The titlebar owns the appearance toggle. The sidebar currently contains only
-Sessions. Core install/start recovery and diagnostic consent are conditional
-flows attached to Sessions; they are not separate destinations. The former
-Overview, Accounts, Jobs, Adapters, Settings, and RDP login routes are removed
-and must not be kept as hidden compatibility pages.
+The titlebar owns the appearance toggle. The sidebar contains Sessions and a
+Settings destination. Core install/start recovery and diagnostic consent are
+conditional flows attached to the current destination. Settings uses the same
+shell and owns appearance, Core lifecycle, launcher update behavior, startup,
+and diagnostic privacy guidance. The former Overview, Accounts, Jobs,
+Adapters, and RDP login routes remain removed.
 
 An authorized interactive RDP session opens in the Sessions Workspace by
 default. `DesktopRdpWindow` is the optional floating host for that same runtime.

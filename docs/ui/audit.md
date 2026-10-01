@@ -111,9 +111,9 @@ pre-existing and does not block the baseline.
 
 ## Current implementation after Sessions migration
 
-The main window now has only the Sessions destination, plus conditional Core
-install/start recovery, a local theme toggle, and diagnostic consent. The old
-Overview, Accounts, Tasks, Adapters, Settings, and RDP login pages, their page
+The main window now has Sessions and Settings destinations, plus conditional
+Core install/start recovery, a local theme toggle, and diagnostic consent. The
+old Overview, Accounts, Tasks, Adapters, and RDP login pages, their page
 callbacks, DTOs, and snapshot routes are removed. `DesktopRdpWindow` remains a
 floating host for the same RDP runtime in the next workspace phase. The default
 host will be a docked Session Workspace in MainWindow. See `rdp-workspace.md`

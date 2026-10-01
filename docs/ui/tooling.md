@@ -80,7 +80,7 @@ cargo check --manifest-path ui/windows/Cargo.toml --features slint/mcp --locked
 Generate the deterministic layout matrix with the existing example:
 
 ~~~bash
-for state in mixed empty loading error unavailable mixed-selected \
+for state in mixed empty loading error unavailable mixed-selected settings \
   compact-inspector more-menu cancel-confirmation keyboard-focus disabled-action; do
   cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked --example layout_snapshot -- --session-state "$state" --theme both --output dist/ui-sessions
 done
