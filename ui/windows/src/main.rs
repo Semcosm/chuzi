@@ -903,7 +903,7 @@ fn start_core_on_launch(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>
                     (),
                 ));
             }
-            if !status.ready {
+            if !status.running {
                 state.run_launcher("core-start", &[])?;
             }
             Ok(("Core started automatically.".to_owned(), ()))
