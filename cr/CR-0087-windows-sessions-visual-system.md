@@ -5,7 +5,7 @@ Head or Range: c44a608ea13793d5413b01f58915f178a98a0215
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): refine Windows Sessions visual system
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
