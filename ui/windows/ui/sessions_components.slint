@@ -18,21 +18,22 @@ export component ChuziActionButton inherits Rectangle {
     in property <string> label;
     in property <bool> enabled: true;
     in property <bool> primary: false;
+    in property <bool> destructive: false;
     in property <bool> escape-enabled: false;
     callback pressed();
     callback escape-pressed();
 
     height: 34px;
     min-width: 84px;
-    background: root.primary ? ChuziTheme.accent : ChuziTheme.surface-background;
-    border-color: root.primary ? ChuziTheme.accent : ChuziTheme.separator;
+    background: root.primary ? ChuziTheme.accent : root.destructive ? ChuziTheme.status-danger.with-alpha(0.10) : ChuziTheme.surface-background;
+    border-color: root.primary ? ChuziTheme.accent : root.destructive ? ChuziTheme.status-danger.with-alpha(0.35) : ChuziTheme.separator;
     border-width: 1px;
     border-radius: ChuziTheme.radius-control;
     opacity: root.enabled ? 1 : 0.48;
 
     Text {
         text: root.label;
-        color: root.primary ? Palette.background : ChuziTheme.text-primary;
+        color: root.primary ? Palette.background : root.destructive ? ChuziTheme.status-danger : ChuziTheme.text-primary;
         font-size: ChuziTheme.type-secondary;
         font-weight: root.primary ? 600 : 500;
         horizontal-alignment: center;
@@ -104,6 +105,7 @@ export component ChuziFilterChip inherits Rectangle {
 export component ChuziSessionRow inherits Rectangle {
     in property <SessionRowData> item;
     in property <bool> show-action: true;
+    in property <bool> focus-visible: false;
     in property <bool> busy: false;
     callback selected(string);
     callback action(string, string);
@@ -140,7 +142,7 @@ export component ChuziSessionRow inherits Rectangle {
             height: parent.height - 2px;
             background: transparent;
             border-color: ChuziTheme.focus-ring;
-            border-width: focus-scope.has-focus ? ChuziTheme.focus-width : 0px;
+            border-width: focus-scope.has-focus || root.focus-visible ? ChuziTheme.focus-width : 0px;
             border-radius: ChuziTheme.radius-row;
         }
     }
@@ -201,7 +203,10 @@ export component ChuziSessionRow inherits Rectangle {
                 text: "●  " + root.item.status_label;
                 color: root.item.status == "running" ? ChuziTheme.status-positive :
                     root.item.status == "queued" ? ChuziTheme.status-warning :
-                    root.item.status == "failed" ? ChuziTheme.status-danger : ChuziTheme.text-secondary;
+                    root.item.status == "succeeded" ? ChuziTheme.status-positive :
+                    root.item.status == "failed" ? ChuziTheme.status-danger :
+                    root.item.status == "expired" ? ChuziTheme.status-warning :
+                    root.item.status == "blocked" ? ChuziTheme.status-danger : ChuziTheme.status-neutral;
                 font-size: ChuziTheme.type-secondary;
                 font-weight: 600;
                 horizontal-alignment: right;
@@ -227,10 +232,11 @@ export component ChuziSessionRow inherits Rectangle {
         }
 
         if root.show-action && root.item.primary_action != "none": ChuziActionButton {
-            label: root.item.primary_label;
+            label: root.item.primary_action == "cancel" ? "Cancel" : root.item.primary_label;
             enabled: !root.busy;
-            primary: root.item.primary_action == "cancel";
-            width: root.item.primary_action == "refresh-status" ? 108px : 104px;
+            destructive: root.item.primary_action == "cancel";
+            primary: root.item.primary_action == "capture-view";
+            width: root.item.primary_action == "refresh-status" ? 108px : 84px;
             pressed => { root.action(root.item.request_id, root.item.primary_action); }
         }
     }
@@ -264,6 +270,7 @@ export component ChuziSessionInspector inherits Rectangle {
     in property <string> browser-view-status: "";
     in property <bool> compact: false;
     in property <bool> busy: false;
+    in property <bool> menu-visible: false;
     callback primary(string, string);
     callback more-action(string, string);
     callback close();
@@ -272,8 +279,8 @@ export component ChuziSessionInspector inherits Rectangle {
     background: ChuziTheme.inspector-background;
 
     VerticalBox {
-        padding: ChuziTheme.space-5;
-        spacing: ChuziTheme.space-4;
+        padding: root.compact ? ChuziTheme.space-3 : ChuziTheme.space-5;
+        spacing: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-4;
 
         HorizontalBox {
             spacing: ChuziTheme.space-2;
@@ -296,10 +303,10 @@ export component ChuziSessionInspector inherits Rectangle {
         }
 
         if root.selected: VerticalBox {
-            spacing: ChuziTheme.space-4;
+            spacing: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-4;
 
             VerticalBox {
-                spacing: 6px;
+                spacing: root.compact ? 4px : 6px;
                 Text {
                     text: root.account-label;
                     color: ChuziTheme.text-primary;
@@ -317,7 +324,11 @@ export component ChuziSessionInspector inherits Rectangle {
                 }
                 Text {
                     text: "●  " + root.status-label;
-                    color: ChuziTheme.accent;
+                    color: root.primary-action == "cancel" ? ChuziTheme.status-warning :
+                        root.status-label == "Succeeded" ? ChuziTheme.status-positive :
+                        root.status-label == "Failed" ? ChuziTheme.status-danger :
+                        root.status-label == "Expired" ? ChuziTheme.status-warning :
+                        root.status-label == "Blocked" ? ChuziTheme.status-danger : ChuziTheme.accent;
                     font-size: ChuziTheme.type-secondary;
                     font-weight: 600;
                     vertical-stretch: 0;
@@ -327,7 +338,7 @@ export component ChuziSessionInspector inherits Rectangle {
             Rectangle { height: 1px; background: ChuziTheme.separator; vertical-stretch: 0; }
 
             VerticalBox {
-                spacing: ChuziTheme.space-3;
+                spacing: root.compact ? ChuziTheme.space-2 : ChuziTheme.space-3;
                 Text { text: "CORE DETAILS"; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; font-weight: 650; vertical-stretch: 0; }
                 Text { text: root.attempt-label; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
                 Text { text: root.created-at == "" ? "Created time unavailable" : "Created  ·  " + root.created-at; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
@@ -340,29 +351,30 @@ export component ChuziSessionInspector inherits Rectangle {
                 if root.primary-action != "none": ChuziActionButton {
                     label: root.primary-label;
                     enabled: !root.busy;
-                    escape-enabled: root.compact || root.more-open;
-                    primary: root.primary-action == "cancel";
+                    escape-enabled: root.compact || root.menu-open;
+                    destructive: root.primary-action == "cancel";
+                    primary: root.primary-action == "capture-view";
                     horizontal-stretch: 1;
                     pressed => { root.primary(root.request-id, root.primary-action); }
                     escape-pressed => {
-                        if root.more-open { root.more-open = false; }
+                        if root.menu-open { root.menu-open = false; }
                         else { root.close(); }
                     }
                 }
                 if root.has-more-action: ChuziActionButton {
                     label: "More";
                     enabled: !root.busy;
-                    escape-enabled: root.compact || root.more-open;
+                    escape-enabled: root.compact || root.menu-open;
                     width: 64px;
-                    pressed => { root.more-open = !root.more-open; }
+                    pressed => { root.menu-open = !root.menu-open; }
                     escape-pressed => {
-                        if root.more-open { root.more-open = false; }
+                        if root.menu-open { root.menu-open = false; }
                         else { root.close(); }
                     }
                 }
             }
 
-            if more-open && root.has-more-action: Rectangle {
+            if (root.menu-open || root.menu-visible) && root.has-more-action: Rectangle {
                 height: 46px;
                 background: Palette.alternate-background;
                 border-color: ChuziTheme.separator;
@@ -373,9 +385,9 @@ export component ChuziSessionInspector inherits Rectangle {
                     enabled: !root.busy;
                     escape-enabled: true;
                     width: parent.width;
-                    escape-pressed => { root.more-open = false; }
+                    escape-pressed => { root.menu-open = false; }
                     pressed => {
-                        root.more-open = false;
+                        root.menu-open = false;
                         root.more-action(root.request-id, "refresh-status");
                     }
                 }
@@ -404,7 +416,7 @@ export component ChuziSessionInspector inherits Rectangle {
                 visible: root.collection-message != "";
             }
 
-            if root.has-more-requests: ChuziActionButton {
+            if root.has-more-requests && !root.compact: ChuziActionButton {
                 label: "Load older requests";
                 enabled: !root.busy;
                 escape-enabled: root.compact;
@@ -429,7 +441,7 @@ export component ChuziSessionInspector inherits Rectangle {
                 wrap: word-wrap;
                 vertical-stretch: 0;
             }
-            if root.has-more-requests: ChuziActionButton {
+            if root.has-more-requests && !root.compact: ChuziActionButton {
                 label: "Load older requests";
                 enabled: !root.busy;
                 horizontal-stretch: 1;
@@ -448,8 +460,8 @@ export component ChuziSessionInspector inherits Rectangle {
         }
     }
 
-    changed request-id => { root.more-open = false; }
-    in-out property <bool> more-open: false;
+    changed request-id => { root.menu-open = false; }
+    in-out property <bool> menu-open: false;
 
     preferred-width: 304px;
     min-width: 272px;

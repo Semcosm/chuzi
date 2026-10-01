@@ -69,6 +69,43 @@ The policy validator requires `jq`. UGS upgrade/profile tooling uses `python3` a
 
 Application build prerequisites are Go 1.24+, Node.js 20+, npm, and a compatible shell. The local machine does not need to build every target; GitHub Actions is the authoritative four-target build environment.
 
+### Linux + Codex UI Tooling
+
+Windows UI work is performed from an Arch Linux terminal with Codex. Do not
+make VS Code or an editor extension a repository prerequisite.
+
+Before changing the Windows client, read docs/ui/README.md and
+docs/ui/tooling.md together with the relevant UI contract documents. The
+workstation must have ~/.cargo/bin on PATH and should expose:
+
+- rust-analyzer for Rust and generated Slint bindings;
+- slint-lsp for .slint diagnostics;
+- cargo-nextest for the fast Rust test path;
+- just for optional local command aliases.
+
+The current Slint runtime is pinned in ui/windows/Cargo.toml. Keep slint-lsp
+within the same 1.18.x line when changing that dependency.
+
+The optional Slint MCP feature is for local development inspection only:
+
+~~~bash
+cargo check --manifest-path ui/windows/Cargo.toml --features slint/mcp --locked
+SLINT_EMIT_DEBUG_INFO=1 SLINT_MCP_PORT=8080 \
+  cargo run --manifest-path ui/windows/Cargo.toml \
+  --features slint/mcp --locked
+~~~
+
+Never enable that feature in release packaging, expose its port outside the
+developer host, or use it to inspect credentials, Profile paths, raw browser
+data, or production session contents. Playwright is reserved for browser-worker
+or web-surface checks; native Slint verification uses the Slint test backend,
+deterministic layout snapshots, and Windows UI Automation in the Windows CI
+environment. The complete workflow lives in docs/ui/tooling.md.
+
+The layout snapshot example is a required UI check for state, theme, and size
+coverage. It currently validates dimensions and non-blank output; do not claim
+pixel-level golden comparison until that tool is added and documented.
+
 ## GitHub CLI and Remote Workflow
 
 The GitHub repository is `Semcosm/chuzi`. Use the configured `gh` credential

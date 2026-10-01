@@ -288,6 +288,17 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
     let weak = ui.as_weak();
     let session_state = Arc::clone(&state);
+    ui.on_session_cancel_confirmed(move |request_id| {
+        run_session_action(
+            &weak,
+            Arc::clone(&session_state),
+            request_id.to_string(),
+            "cancel".to_owned(),
+            false,
+        );
+    });
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
     ui.on_session_more_action(move |request_id, action| {
         run_session_action(
             &weak,

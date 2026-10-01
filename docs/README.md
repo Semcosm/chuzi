@@ -13,6 +13,8 @@
 | [matrix-api.md](matrix-api.md) | Matrix 房间命令、事件和状态通知约定 |
 | [request-rate-limit.md](request-rate-limit.md) | 新请求的服务级限流范围、配置和错误指标 |
 | [operations.md](operations.md) | 配置、部署、备份、监控和故障恢复 |
+| [ui/README.md](ui/README.md) | Windows Slint UI 设计、交互和组件契约 |
+| [ui/tooling.md](ui/tooling.md) | Arch + Codex UI 工具链与验收流程 |
 
 ## 术语
 
