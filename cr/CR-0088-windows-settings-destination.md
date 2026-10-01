@@ -1,7 +1,7 @@
 # CR-0088: redesign Windows Settings destination
 
 Base: main
-Head or Range: b90d3c4b6e381a984cf2b9fca6155b48062a5d5e
+Head or Range: ac49cbee8b3ac58d5a8abcfc762144451a87cbd2
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): redesign Windows Settings destination
@@ -9,8 +9,8 @@ Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 8d976606adabe15e587c4475e49543482899366e
-Head OID: b90d3c4b6e381a984cf2b9fca6155b48062a5d5e
+Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
+Head OID: ac49cbee8b3ac58d5a8abcfc762144451a87cbd2
 Integrated Result: pending
 
 ## Summary
