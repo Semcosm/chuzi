@@ -270,30 +270,20 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $output = Join-Path $env:RUNNER_TEMP 'chuzi-layout'
-          cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked `
-            --example layout_snapshot -- `
-            --output $output
-          foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
-            $path = Join-Path $output $size
-            if (-not (Test-Path $path)) {
-              throw "Missing Slint layout snapshot: $path"
-            }
-            if ((Get-Item $path).Length -le 0) {
-              throw "Empty Slint layout snapshot: $path"
-            }
-          }
-          foreach ($state in @('empty', 'builtin', 'package', 'installed', 'trusted', 'enabled', 'rollback')) {
-            $stateOutput = Join-Path $output $state
+          foreach ($state in @('mixed', 'empty', 'loading', 'error', 'unavailable')) {
             cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked `
               --example layout_snapshot -- `
-              --output $stateOutput --page adapters --adapter-state $state
-            foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
-              $path = Join-Path (Join-Path $stateOutput 'adapters') $size
-              if (-not (Test-Path $path)) {
-                throw "Missing $state adapter snapshot: $path"
-              }
-              if ((Get-Item $path).Length -le 0) {
-                throw "Empty $state adapter snapshot: $path"
+              --output $output --session-state $state --theme both
+            foreach ($theme in @('light', 'dark')) {
+              $stateDirectory = Join-Path (Join-Path (Join-Path $output 'sessions') $state) $theme
+              foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
+                $path = Join-Path $stateDirectory $size
+                if (-not (Test-Path $path)) {
+                  throw "Missing $state/$theme Slint snapshot: $path"
+                }
+                if ((Get-Item $path).Length -le 0) {
+                  throw "Empty $state/$theme Slint snapshot: $path"
+                }
               }
             }
           }

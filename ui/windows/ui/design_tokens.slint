@@ -1,0 +1,52 @@
+import { Palette } from "std-widgets.slint";
+
+// Semantic visual values for the presentation layer. The palette remains the
+// single source for light/dark system colors; these aliases keep page markup
+// independent from raw color literals.
+export global ChuziTheme {
+    out property <color> window-background: Palette.background;
+    out property <color> content-background: Palette.background;
+    out property <color> sidebar-background: Palette.alternate-background;
+    out property <color> inspector-background: Palette.alternate-background;
+    out property <color> surface-background: Palette.background;
+    out property <color> elevated-background: Palette.background;
+    out property <color> separator: Palette.border;
+    out property <color> text-primary: Palette.foreground;
+    out property <color> text-secondary: Palette.alternate-foreground;
+    out property <color> text-disabled: Palette.alternate-foreground;
+    out property <color> accent: Palette.accent-background;
+    out property <color> accent-soft: Palette.accent-background.with-alpha(0.12);
+    out property <color> focus-ring: Palette.accent-background;
+    out property <color> status-positive: #23865b;
+    out property <color> status-warning: #9a6a16;
+    out property <color> status-danger: #b64b43;
+    out property <color> status-neutral: #738096;
+    out property <color> overlay-scrim: #00000022;
+
+    out property <length> space-1: 4px;
+    out property <length> space-2: 8px;
+    out property <length> space-3: 12px;
+    out property <length> space-4: 16px;
+    out property <length> space-5: 20px;
+    out property <length> space-6: 24px;
+    out property <length> space-7: 32px;
+    out property <length> titlebar-height: 58px;
+    out property <length> sidebar-width: 224px;
+    out property <length> sidebar-compact-width: 56px;
+    out property <length> inspector-width: 304px;
+    out property <length> control-height: 34px;
+    out property <length> focus-width: 2px;
+
+    out property <length> radius-window: 18px;
+    out property <length> radius-surface: 16px;
+    out property <length> radius-row: 12px;
+    out property <length> radius-control: 9px;
+    out property <length> radius-small: 8px;
+
+    out property <length> type-display: 30px;
+    out property <length> type-title: 22px;
+    out property <length> type-section: 16px;
+    out property <length> type-body: 13px;
+    out property <length> type-secondary: 12px;
+    out property <length> type-caption: 11px;
+}

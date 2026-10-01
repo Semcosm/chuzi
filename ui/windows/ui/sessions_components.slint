@@ -1,0 +1,504 @@
+import { Palette, HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { ChuziTheme } from "design_tokens.slint";
+
+export struct SessionRowData {
+    request_id: string,
+    request_label: string,
+    account_label: string,
+    status: string,
+    status_label: string,
+    attempt_label: string,
+    updated_at: string,
+    primary_action: string,
+    primary_label: string,
+    selected: bool,
+}
+
+export component ChuziActionButton inherits Rectangle {
+    in property <string> label;
+    in property <bool> enabled: true;
+    in property <bool> primary: false;
+    in property <bool> escape-enabled: false;
+    callback pressed();
+    callback escape-pressed();
+
+    height: 34px;
+    min-width: 84px;
+    background: root.primary ? ChuziTheme.accent : ChuziTheme.surface-background;
+    border-color: root.primary ? ChuziTheme.accent : ChuziTheme.separator;
+    border-width: 1px;
+    border-radius: ChuziTheme.radius-control;
+    opacity: root.enabled ? 1 : 0.48;
+
+    Text {
+        text: root.label;
+        color: root.primary ? Palette.background : ChuziTheme.text-primary;
+        font-size: ChuziTheme.type-secondary;
+        font-weight: root.primary ? 600 : 500;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        width: parent.width;
+        height: parent.height;
+        overflow: elide;
+    }
+
+    focus-scope := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        focus-on-click: true;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                if root.enabled { root.pressed(); }
+                accept
+            } else if event.text == Key.Escape && root.escape-enabled {
+                root.escape-pressed();
+                accept
+            } else {
+                reject
+            }
+        }
+        Rectangle {
+            x: 1px;
+            y: 1px;
+            width: parent.width - 2px;
+            height: parent.height - 2px;
+            background: transparent;
+            border-color: ChuziTheme.focus-ring;
+            border-width: focus-scope.has-focus ? ChuziTheme.focus-width : 0px;
+            border-radius: ChuziTheme.radius-control;
+        }
+    }
+    TouchArea {
+        enabled: root.enabled;
+        clicked => { focus-scope.focus(); root.pressed(); }
+    }
+}
+
+export component ChuziFilterChip inherits Rectangle {
+    in property <string> label;
+    in property <bool> selected: false;
+    callback activated();
+
+    height: 32px;
+    min-width: 48px;
+    background: root.selected ? ChuziTheme.accent-soft : transparent;
+    border-color: root.selected ? ChuziTheme.accent.with-alpha(0.28) : transparent;
+    border-width: 1px;
+    border-radius: 16px;
+
+    Text {
+        text: root.label;
+        color: root.selected ? ChuziTheme.accent : ChuziTheme.text-secondary;
+        font-size: ChuziTheme.type-secondary;
+        font-weight: root.selected ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+        x: ChuziTheme.space-3;
+        width: parent.width - 24px;
+        height: parent.height;
+        overflow: elide;
+    }
+    TouchArea { clicked => { root.activated(); } }
+}
+
+export component ChuziSessionRow inherits Rectangle {
+    in property <SessionRowData> item;
+    in property <bool> show-action: true;
+    in property <bool> busy: false;
+    callback selected(string);
+    callback action(string, string);
+
+    height: 78px;
+    background: root.item.selected ? ChuziTheme.accent-soft : transparent;
+    border-radius: ChuziTheme.radius-row;
+
+    Rectangle {
+        x: 0px;
+        y: 12px;
+        width: 3px;
+        height: parent.height - 24px;
+        background: root.item.selected ? ChuziTheme.accent : transparent;
+        border-radius: 2px;
+    }
+
+    focus-scope := FocusScope {
+        width: parent.width;
+        height: parent.height;
+        focus-on-click: true;
+        key-pressed(event) => {
+            if event.text == Key.Return || event.text == Key.Space {
+                root.selected(root.item.request_id);
+                accept
+            } else {
+                reject
+            }
+        }
+        Rectangle {
+            x: 1px;
+            y: 1px;
+            width: parent.width - 2px;
+            height: parent.height - 2px;
+            background: transparent;
+            border-color: ChuziTheme.focus-ring;
+            border-width: focus-scope.has-focus ? ChuziTheme.focus-width : 0px;
+            border-radius: ChuziTheme.radius-row;
+        }
+    }
+    TouchArea {
+        clicked => { focus-scope.focus(); root.selected(root.item.request_id); }
+    }
+    changed item => {
+        if root.item.selected { focus-scope.focus(); }
+    }
+
+    HorizontalBox {
+        padding-left: ChuziTheme.space-4;
+        padding-right: ChuziTheme.space-3;
+        spacing: ChuziTheme.space-3;
+
+        Rectangle {
+            width: 36px;
+            height: 36px;
+            background: Palette.alternate-background;
+            border-radius: 18px;
+            Text {
+                text: "S";
+                color: ChuziTheme.text-secondary;
+                font-size: 13px;
+                font-weight: 600;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                width: parent.width;
+                height: parent.height;
+            }
+        }
+
+        VerticalBox {
+            horizontal-stretch: 1;
+            min-width: 100px;
+            spacing: 4px;
+            Text {
+                text: root.item.account_label;
+                color: ChuziTheme.text-primary;
+                font-size: ChuziTheme.type-body;
+                font-weight: 600;
+                overflow: elide;
+                vertical-stretch: 0;
+            }
+            Text {
+                text: root.item.request_label;
+                color: ChuziTheme.text-secondary;
+                font-size: ChuziTheme.type-caption;
+                overflow: elide;
+                vertical-stretch: 0;
+            }
+        }
+
+        VerticalBox {
+            width: 100px;
+            spacing: 3px;
+            Text {
+                text: "●  " + root.item.status_label;
+                color: root.item.status == "running" ? ChuziTheme.status-positive :
+                    root.item.status == "queued" ? ChuziTheme.status-warning :
+                    root.item.status == "failed" ? ChuziTheme.status-danger : ChuziTheme.text-secondary;
+                font-size: ChuziTheme.type-secondary;
+                font-weight: 600;
+                horizontal-alignment: right;
+                overflow: elide;
+                vertical-stretch: 0;
+            }
+            Text {
+                text: root.item.attempt_label;
+                color: ChuziTheme.text-secondary;
+                font-size: ChuziTheme.type-caption;
+                horizontal-alignment: right;
+                overflow: elide;
+                vertical-stretch: 0;
+            }
+            Text {
+                text: root.item.updated_at;
+                color: ChuziTheme.text-secondary;
+                font-size: 9px;
+                horizontal-alignment: right;
+                overflow: elide;
+                vertical-stretch: 0;
+            }
+        }
+
+        if root.show-action && root.item.primary_action != "none": ChuziActionButton {
+            label: root.item.primary_label;
+            enabled: !root.busy;
+            primary: root.item.primary_action == "cancel";
+            width: root.item.primary_action == "refresh-status" ? 108px : 104px;
+            pressed => { root.action(root.item.request_id, root.item.primary_action); }
+        }
+    }
+
+    Rectangle {
+        x: ChuziTheme.space-4;
+        y: parent.height - 1px;
+        width: parent.width - ChuziTheme.space-7;
+        height: 1px;
+        background: ChuziTheme.separator;
+        opacity: 0.42;
+    }
+}
+
+export component ChuziSessionInspector inherits Rectangle {
+    in property <bool> selected: false;
+    in property <string> request-id: "";
+    in property <string> account-label: "";
+    in property <string> status-label: "";
+    in property <string> attempt-label: "";
+    in property <string> created-at: "";
+    in property <string> updated-at: "";
+    in property <string> failure-label: "";
+    in property <string> primary-action: "none";
+    in property <string> primary-label: "";
+    in property <bool> has-more-action: false;
+    in property <bool> has-more-requests: false;
+    in property <string> collection-message: "";
+    in property <image> browser-view;
+    in property <bool> browser-view-loaded: false;
+    in property <string> browser-view-status: "";
+    in property <bool> compact: false;
+    in property <bool> busy: false;
+    callback primary(string, string);
+    callback more-action(string, string);
+    callback close();
+    callback load-more();
+
+    background: ChuziTheme.inspector-background;
+
+    VerticalBox {
+        padding: ChuziTheme.space-5;
+        spacing: ChuziTheme.space-4;
+
+        HorizontalBox {
+            spacing: ChuziTheme.space-2;
+            Text {
+                text: root.selected ? "Session details" : "Inspector";
+                color: ChuziTheme.text-primary;
+                font-size: ChuziTheme.type-section;
+                font-weight: 650;
+                vertical-stretch: 1;
+            }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            if root.compact: ChuziActionButton {
+                label: "Close";
+                enabled: true;
+                escape-enabled: true;
+                width: 56px;
+                pressed => { root.close(); }
+                escape-pressed => { root.close(); }
+            }
+        }
+
+        if root.selected: VerticalBox {
+            spacing: ChuziTheme.space-4;
+
+            VerticalBox {
+                spacing: 6px;
+                Text {
+                    text: root.account-label;
+                    color: ChuziTheme.text-primary;
+                    font-size: ChuziTheme.type-section;
+                    font-weight: 650;
+                    overflow: elide;
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: "Request  ·  " + root.request-id;
+                    color: ChuziTheme.text-secondary;
+                    font-size: ChuziTheme.type-caption;
+                    wrap: word-wrap;
+                    vertical-stretch: 0;
+                }
+                Text {
+                    text: "●  " + root.status-label;
+                    color: ChuziTheme.accent;
+                    font-size: ChuziTheme.type-secondary;
+                    font-weight: 600;
+                    vertical-stretch: 0;
+                }
+            }
+
+            Rectangle { height: 1px; background: ChuziTheme.separator; vertical-stretch: 0; }
+
+            VerticalBox {
+                spacing: ChuziTheme.space-3;
+                Text { text: "CORE DETAILS"; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; font-weight: 650; vertical-stretch: 0; }
+                Text { text: root.attempt-label; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                Text { text: root.created-at == "" ? "Created time unavailable" : "Created  ·  " + root.created-at; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                Text { text: root.updated-at == "" ? "Updated time unavailable" : "Updated  ·  " + root.updated-at; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                Text { text: root.failure-label; color: ChuziTheme.status-danger; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; visible: root.failure-label != ""; }
+            }
+
+            HorizontalBox {
+                spacing: ChuziTheme.space-2;
+                if root.primary-action != "none": ChuziActionButton {
+                    label: root.primary-label;
+                    enabled: !root.busy;
+                    escape-enabled: root.compact || root.more-open;
+                    primary: root.primary-action == "cancel";
+                    horizontal-stretch: 1;
+                    pressed => { root.primary(root.request-id, root.primary-action); }
+                    escape-pressed => {
+                        if root.more-open { root.more-open = false; }
+                        else { root.close(); }
+                    }
+                }
+                if root.has-more-action: ChuziActionButton {
+                    label: "More";
+                    enabled: !root.busy;
+                    escape-enabled: root.compact || root.more-open;
+                    width: 64px;
+                    pressed => { root.more-open = !root.more-open; }
+                    escape-pressed => {
+                        if root.more-open { root.more-open = false; }
+                        else { root.close(); }
+                    }
+                }
+            }
+
+            if more-open && root.has-more-action: Rectangle {
+                height: 46px;
+                background: Palette.alternate-background;
+                border-color: ChuziTheme.separator;
+                border-width: 1px;
+                border-radius: ChuziTheme.radius-small;
+                ChuziActionButton {
+                    label: "Refresh status";
+                    enabled: !root.busy;
+                    escape-enabled: true;
+                    width: parent.width;
+                    escape-pressed => { root.more-open = false; }
+                    pressed => {
+                        root.more-open = false;
+                        root.more-action(root.request-id, "refresh-status");
+                    }
+                }
+            }
+
+            if root.browser-view-loaded: Rectangle {
+                height: 196px;
+                background: Palette.alternate-background;
+                border-color: ChuziTheme.separator;
+                border-width: 1px;
+                border-radius: ChuziTheme.radius-small;
+                VerticalBox {
+                    padding: ChuziTheme.space-2;
+                    spacing: ChuziTheme.space-1;
+                    Image { source: root.browser-view; image-fit: contain; vertical-stretch: 1; }
+                    Text { text: root.browser-view-status; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; vertical-stretch: 0; }
+                }
+            }
+
+            Text {
+                text: root.collection-message;
+                color: ChuziTheme.status-danger;
+                font-size: ChuziTheme.type-caption;
+                wrap: word-wrap;
+                vertical-stretch: 0;
+                visible: root.collection-message != "";
+            }
+
+            if root.has-more-requests: ChuziActionButton {
+                label: "Load older requests";
+                enabled: !root.busy;
+                escape-enabled: root.compact;
+                horizontal-stretch: 1;
+                pressed => { root.load-more(); }
+                escape-pressed => { root.close(); }
+            }
+        }
+        if !root.selected: VerticalBox {
+            spacing: ChuziTheme.space-3;
+            Text {
+                text: "Select a request to inspect its Core state and available actions.";
+                color: ChuziTheme.text-secondary;
+                font-size: ChuziTheme.type-secondary;
+                wrap: word-wrap;
+                vertical-stretch: 0;
+            }
+            if root.collection-message != "": Text {
+                text: root.collection-message;
+                color: root.collection-message == "No requests yet" ? ChuziTheme.text-secondary : ChuziTheme.status-danger;
+                font-size: ChuziTheme.type-secondary;
+                wrap: word-wrap;
+                vertical-stretch: 0;
+            }
+            if root.has-more-requests: ChuziActionButton {
+                label: "Load older requests";
+                enabled: !root.busy;
+                horizontal-stretch: 1;
+                pressed => { root.load-more(); }
+            }
+        }
+
+        Rectangle { vertical-stretch: 1; background: transparent; }
+        Text {
+            text: "Only fields supplied by Core are shown.";
+            color: ChuziTheme.text-secondary;
+            font-size: ChuziTheme.type-caption;
+            wrap: word-wrap;
+            vertical-stretch: 0;
+            visible: !root.compact || root.height > 560px;
+        }
+    }
+
+    changed request-id => { root.more-open = false; }
+    in-out property <bool> more-open: false;
+
+    preferred-width: 304px;
+    min-width: 272px;
+    max-width: 352px;
+}
+
+// Host-neutral workspace chrome. The runtime owns the framebuffer and input
+// queue; this component only emits presentation/lifecycle intents.
+export component ChuziSessionWorkspace inherits Rectangle {
+    in property <string> host: "docked";
+    in property <string> state: "starting";
+    in property <string> status: "Interactive RDP is not available.";
+    in property <image> frame;
+    callback dock();
+    callback float();
+    callback hide();
+    callback stop();
+
+    min-height: 180px;
+    background: #101923;
+    border-color: ChuziTheme.separator;
+    border-width: 1px;
+    border-radius: ChuziTheme.radius-surface;
+
+    VerticalBox {
+        padding: ChuziTheme.space-3;
+        spacing: ChuziTheme.space-2;
+        HorizontalBox {
+            height: 32px;
+            spacing: ChuziTheme.space-2;
+            Text { text: "Session Workspace"; color: #f4f7fb; font-size: ChuziTheme.type-section; font-weight: 650; vertical-alignment: center; }
+            Text { text: root.host == "floating" ? "Floating host" : root.host == "hidden" ? "Hidden" : "Docked host"; color: #9fb2c8; font-size: ChuziTheme.type-caption; vertical-alignment: center; }
+            Rectangle { horizontal-stretch: 1; background: transparent; }
+            ChuziActionButton { label: "Dock"; enabled: root.host != "docked"; width: 54px; pressed => { root.dock(); } }
+            ChuziActionButton { label: "Float"; enabled: root.host != "floating"; width: 58px; pressed => { root.float(); } }
+            ChuziActionButton { label: "Hide"; enabled: root.host != "hidden"; width: 54px; pressed => { root.hide(); } }
+            ChuziActionButton { label: "Stop"; enabled: true; primary: true; width: 54px; pressed => { root.stop(); } }
+        }
+        Rectangle {
+            vertical-stretch: 1;
+            background: #05080c;
+            border-radius: ChuziTheme.radius-small;
+            if root.state == "connected": Image { source: root.frame; image-fit: contain; width: parent.width; height: parent.height; }
+            if root.state != "connected": VerticalBox {
+                alignment: center;
+                spacing: ChuziTheme.space-2;
+                Text { text: root.state == "failed" ? "RDP connection failed" : "Interactive RDP session"; color: #f4f7fb; font-size: ChuziTheme.type-section; horizontal-alignment: center; vertical-stretch: 0; }
+                Text { text: root.status; color: #9fb2c8; font-size: ChuziTheme.type-secondary; wrap: word-wrap; horizontal-alignment: center; vertical-stretch: 0; }
+            }
+        }
+    }
+}
