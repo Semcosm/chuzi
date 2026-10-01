@@ -5,13 +5,13 @@ Head or Range: 7ce4ca1ad611aef8fa1fa897063f928274a3b24d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): redesign Windows Settings destination
-Revision: 3
-Status: pending
-Decision: pending
+Revision: 4
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 7ce4ca1ad611aef8fa1fa897063f928274a3b24d
-Head OID: 7ce4ca1ad611aef8fa1fa897063f928274a3b24d
-Integrated Result: pending
+Base OID: fd7d5c9063285a1112acafa4a0de87a17384afe9
+Head OID: fd7d5c9063285a1112acafa4a0de87a17384afe9
+Integrated Result: main@fd7d5c9063285a1112acafa4a0de87a17384afe9
 
 ## Summary
 
