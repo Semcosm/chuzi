@@ -91,7 +91,9 @@ func (s *Store) ApplyCredentialMutation(mutation credential.Mutation) error {
 					return fmt.Errorf("%w: invalid credential record: %v", ErrCorruptData, err)
 				}
 				if existing.Version > mutation.Record.Version ||
-					(existing.Version == mutation.Record.Version && mutation.Audit.Operation != credential.OperationRevoke) {
+					(existing.Version == mutation.Record.Version &&
+						mutation.Audit.Operation != credential.OperationRevoke &&
+						mutation.Audit.Operation != credential.OperationRevokeForDeletion) {
 					return credential.ErrVersionConflict
 				}
 				if existing.Version == mutation.Record.Version && existing.RevokedAt != nil {
@@ -159,6 +161,7 @@ func (s *Store) ListCredentialAudits(accountID string) ([]credential.Audit, erro
 
 func credentialAuditsEqual(left, right credential.Audit) bool {
 	return left.AuditID == right.AuditID && left.AccountID == right.AccountID &&
+		left.DeletionID == right.DeletionID &&
 		left.Operation == right.Operation && left.Actor == right.Actor &&
 		left.Version == right.Version && left.KeyID == right.KeyID &&
 		left.OccurredAt.Equal(right.OccurredAt)
