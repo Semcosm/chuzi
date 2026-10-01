@@ -37,11 +37,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for theme in &themes {
             let window = MainWindow::new()?;
             configure_window(&window, theme);
+            if session_state == "settings" {
+                window.set_page("settings".into());
+                window.set_settings_phase("ready".into());
+                window.set_auto_check_updates(true);
+                window.set_auto_repair(false);
+                window.set_update_channel("stable".into());
+                window.set_launch_on_login(false);
+                window.set_close_to_tray(true);
+                window.set_update_interval(60);
+            }
             window.window().set_size(PhysicalSize::new(width, height));
             window.show()?;
             slint::platform::update_timers_and_animations();
 
-            let session_model = session_fixture(&session_state);
+            let session_model = if session_state == "settings" {
+                view_model::SessionViewModel::default()
+            } else {
+                session_fixture(&session_state)
+            };
             let has_selection = session_model.inspector().selected.is_some();
             session_ui::render(&window, &session_model);
             window.window().set_size(PhysicalSize::new(width, height));
@@ -174,7 +188,12 @@ fn write_snapshot(
     {
         return Err(format!("snapshot is blank at {width}x{height}").into());
     }
-    let page_output = output.join("sessions").join(state).join(theme);
+    let page = if state == "settings" {
+        "settings"
+    } else {
+        "sessions"
+    };
+    let page_output = output.join(page).join(state).join(theme);
     fs::create_dir_all(&page_output)?;
     let path = page_output.join(format!("{width}x{height}.png"));
     write_png(&path, snapshot)
@@ -223,6 +242,7 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
         "loading",
         "error",
         "unavailable",
+        "settings",
     ]
     .contains(&session_state.as_str())
     {

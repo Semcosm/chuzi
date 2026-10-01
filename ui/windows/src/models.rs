@@ -41,6 +41,16 @@ pub(crate) struct DiagnosticStatus {
     pub(crate) state: String,
 }
 
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub(crate) struct BehaviorSettings {
+    pub(crate) auto_check_updates: bool,
+    pub(crate) auto_repair: bool,
+    pub(crate) update_channel: String,
+    pub(crate) launch_on_login: bool,
+    pub(crate) close_to_tray: bool,
+    pub(crate) check_interval: i64,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct UiPreferences {
     #[serde(default = "default_theme")]

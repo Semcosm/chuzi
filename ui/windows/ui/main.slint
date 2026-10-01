@@ -1,4 +1,4 @@
-import { Button, LineEdit, Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, SpinBox, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { ChuziTheme } from "design_tokens.slint";
 import { ChuziTitlebar, ChuziSidebar } from "shell_components.slint";
 import { SessionRowData, ChuziActionButton, ChuziFilterChip, ChuziSessionRow, ChuziSessionInspector, ChuziSessionWorkspace } from "sessions_components.slint";
@@ -35,6 +35,7 @@ export component MainWindow inherits Window {
     preferred-height: 760px;
 
     in-out property <string> theme: "system";
+    in-out property <string> page: "sessions";
     in-out property <string> message: "";
     in-out property <string> message-kind: "info";
     in-out property <bool> busy: false;
@@ -84,9 +85,20 @@ export component MainWindow inherits Window {
     in-out property <string> session-workspace-status: "Interactive RDP is not available.";
     in-out property <image> session-workspace-frame;
 
+    in-out property <bool> auto-check-updates: false;
+    in-out property <bool> auto-repair: false;
+    in-out property <string> update-channel: "nightly";
+    in-out property <bool> launch-on-login: false;
+    in-out property <bool> close-to-tray: false;
+    in-out property <int> update-interval: 60;
+    in-out property <string> settings-phase: "loading";
+
     callback install-core();
     callback start-core();
+    callback stop-core();
     callback refresh-core();
+    callback navigate(string);
+    callback save-settings();
     callback theme-changed(string);
     callback refresh-sessions();
     callback load-more-sessions();
@@ -118,6 +130,7 @@ export component MainWindow inherits Window {
         spacing: 0px;
 
         ChuziTitlebar {
+            page: root.page;
             theme: root.theme;
             core-ready: root.core-ready;
             core-status-known: root.core-status-known;
@@ -133,7 +146,11 @@ export component MainWindow inherits Window {
             spacing: 0px;
             vertical-stretch: 1;
 
-            ChuziSidebar { compact: root.compact-shell; }
+            ChuziSidebar {
+                compact: root.compact-shell;
+                page: root.page;
+                navigate(page) => { root.navigate(page); }
+            }
 
             Rectangle {
                 horizontal-stretch: 1;
@@ -439,7 +456,166 @@ export component MainWindow inherits Window {
         }
     }
 
-    if root.inspector-collapsed && root.inspector-open: Rectangle {
+    if root.page == "settings": Rectangle {
+        x: root.compact-shell ? ChuziTheme.sidebar-compact-width : ChuziTheme.sidebar-width;
+        y: ChuziTheme.titlebar-height;
+        width: root.width - self.x;
+        height: root.height - self.y;
+        background: ChuziTheme.content-background;
+        z: 20;
+
+        ScrollView {
+            VerticalBox {
+                padding: ChuziTheme.space-6;
+                spacing: ChuziTheme.space-3;
+
+                HorizontalBox {
+                    height: 48px;
+                    spacing: ChuziTheme.space-2;
+                    Text {
+                        text: "Settings";
+                        color: ChuziTheme.text-primary;
+                        font-size: ChuziTheme.type-title;
+                        font-weight: 650;
+                        vertical-alignment: center;
+                        vertical-stretch: 1;
+                    }
+                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                    Button {
+                        text: root.settings-phase == "saving" ? "Saving…" : "Save changes";
+                        enabled: !root.busy && root.settings-phase != "saving";
+                        vertical-stretch: 0;
+                        clicked => { root.save-settings(); }
+                    }
+                }
+
+                Text {
+                    text: "A calm control surface for appearance, Core lifecycle, updates, and startup behavior.";
+                    color: ChuziTheme.text-secondary;
+                    font-size: ChuziTheme.type-secondary;
+                    wrap: word-wrap;
+                    vertical-stretch: 0;
+                }
+
+                FeedbackBar {
+                    text: root.message == "Working..." ? "" : root.message;
+                    kind: root.message-kind;
+                    vertical-stretch: 0;
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-3;
+                        Text { text: "Appearance"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Choose how Chuzi follows your desktop without changing Core behavior."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        ComboBox {
+                            model: ["System default", "Light", "Dark"];
+                            current-index: root.theme == "light" ? 1 : root.theme == "dark" ? 2 : 0;
+                            selected => {
+                                root.theme = self.current-index == 1 ? "light" : self.current-index == 2 ? "dark" : "system";
+                                root.theme-changed(root.theme);
+                            }
+                            vertical-stretch: 0;
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-2;
+                        Text { text: "Core service"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: root.core-status; color: root.core-ready ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-body; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Core data is managed in the application data location."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        HorizontalBox {
+                            spacing: ChuziTheme.space-2;
+                            height: ChuziTheme.control-height;
+                            vertical-stretch: 0;
+                            if !root.core-installed: Button { text: "Install Core"; enabled: !root.busy; clicked => { root.install-core(); } }
+                            if root.core-installed && !root.core-ready: Button { text: "Start Core"; enabled: !root.busy; clicked => { root.start-core(); } }
+                            if root.core-ready: Button { text: "Stop Core"; enabled: !root.busy; clicked => { root.stop-core(); } }
+                            Button { text: "Refresh status"; enabled: !root.busy; clicked => { root.refresh-core(); } }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-2;
+                        Text { text: "Updates"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Automatic checks never change the selected channel without your confirmation."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        CheckBox { text: "Check for updates automatically"; checked: root.auto-check-updates; toggled => { root.auto-check-updates = self.checked; } }
+                        CheckBox { text: "Repair missing files automatically"; checked: root.auto-repair; toggled => { root.auto-repair = self.checked; } }
+                        HorizontalBox {
+                            spacing: ChuziTheme.space-3;
+                            height: ChuziTheme.control-height;
+                            vertical-stretch: 0;
+                            Text { text: "Channel"; color: ChuziTheme.text-secondary; vertical-alignment: center; vertical-stretch: 1; }
+                            ComboBox {
+                                model: ["Nightly", "Test", "Stable"];
+                                current-index: root.update-channel == "stable" ? 2 : root.update-channel == "test" ? 1 : 0;
+                                selected => { root.update-channel = self.current-index == 2 ? "stable" : self.current-index == 1 ? "test" : "nightly"; }
+                                vertical-stretch: 0;
+                            }
+                            Text { text: "Every"; color: ChuziTheme.text-secondary; vertical-alignment: center; vertical-stretch: 1; }
+                            SpinBox { value <=> root.update-interval; minimum: 5; maximum: 10080; vertical-stretch: 0; }
+                            Text { text: "minutes"; color: ChuziTheme.text-secondary; vertical-alignment: center; vertical-stretch: 1; }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-2;
+                        Text { text: "Startup"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Control when Chuzi stays available on this device."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        CheckBox { text: "Launch Chuzi when I sign in"; checked: root.launch-on-login; toggled => { root.launch-on-login = self.checked; } }
+                        CheckBox { text: "Keep Chuzi running when the window closes"; checked: root.close-to-tray; toggled => { root.close-to-tray = self.checked; } }
+                    }
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-2;
+                        Text { text: "Diagnostics and privacy"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Support reports are consent-based and redacted. They exclude passwords, tokens, cookies, page content, RDP credentials, and raw filesystem paths."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        Text { text: "A consent sheet appears only when a Core or UI operation needs diagnostic context."; color: ChuziTheme.text-tertiary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                    }
+                }
+            }
+        }
+    }
+
+    if root.page == "sessions" && root.inspector-collapsed && root.inspector-open: Rectangle {
         x: 0px;
         y: root.compact-inspector-top;
         width: root.width;
@@ -449,7 +625,7 @@ export component MainWindow inherits Window {
         TouchArea { clicked => { root.inspector-open = false; } }
     }
 
-    if root.inspector-collapsed && root.inspector-open: ChuziSessionInspector {
+    if root.page == "sessions" && root.inspector-collapsed && root.inspector-open: ChuziSessionInspector {
         x: root.width - self.width;
         y: root.compact-inspector-top;
         width: root.width < 360px ? root.width : 320px;

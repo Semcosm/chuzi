@@ -7,17 +7,19 @@ browser Profile directories.
 
 ## Current UI
 
-The main window has one destination: **Sessions**. It loads redacted Core
+The main window has two destinations: **Sessions** and **Settings**. Sessions loads redacted Core
 requests, with local search and All/Running/Queued/Failed filters, selection,
 a contextual Inspector, and on-demand read-only browser previews. Core
 installation/start recovery controls appear in the Sessions view when needed.
-The titlebar appearance control changes and saves the UI-local theme. Diagnostic
-consent is shown only before submitting a report.
+Settings groups appearance, Core lifecycle, launcher update behavior, startup,
+and diagnostic privacy guidance. Launcher behavior settings are loaded and
+saved through the launcher settings commands; the titlebar and Settings appearance
+control save only the UI-local theme. Diagnostic consent is shown only before
+submitting a report.
 
-The former Overview, Accounts, Tasks, Adapters, Settings, and RDP login pages
-and their compatibility routes have been removed. The main window does not
-keep hidden legacy pages. New destinations must use the current shell and
-projections.
+The former Overview, Accounts, Tasks, Adapters, and RDP login pages and their
+compatibility routes have been removed. The main window does not keep hidden
+legacy pages. New destinations must use the current shell and projections.
 
 Core `list_requests` does not enumerate accounts without requests and does not
 provide game, region, runtime, or elapsed-time facts. The UI omits those fields.
@@ -109,8 +111,9 @@ matrix, and UI verification rules, read docs/ui/tooling.md.
 The `layout_snapshot` example renders the current Sessions screen for mixed,
 empty, loading, error, unavailable, selected, compact Inspector, More menu,
 cancellation confirmation, keyboard focus, and disabled-action fixture states,
-in Light and Dark at 800x600, 1120x760, and 1440x900. Fixtures are synthetic
-and isolated to the example; production startup always loads Core data.
+plus the Settings destination, in Light and Dark at 800x600, 1120x760, and
+1440x900. Fixtures are synthetic and isolated to the example; production
+startup always loads Core data.
 
 ```bash
 cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot \
