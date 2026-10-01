@@ -1,27 +1,29 @@
 import { Palette } from "std-widgets.slint";
 
-// Semantic visual values for the presentation layer. The palette remains the
-// single source for light/dark system colors; these aliases keep page markup
-// independent from raw color literals.
+// Semantic visual values for the presentation layer. Keep the material steps
+// explicit so Light and Dark do not collapse into a flat palette inversion.
 export global ChuziTheme {
-    out property <color> window-background: Palette.background;
-    out property <color> content-background: Palette.background;
-    out property <color> sidebar-background: Palette.alternate-background;
-    out property <color> inspector-background: Palette.alternate-background;
-    out property <color> surface-background: Palette.background;
-    out property <color> elevated-background: Palette.background;
-    out property <color> separator: Palette.border;
-    out property <color> text-primary: Palette.foreground;
-    out property <color> text-secondary: Palette.alternate-foreground;
-    out property <color> text-disabled: Palette.alternate-foreground;
-    out property <color> accent: Palette.accent-background;
-    out property <color> accent-soft: Palette.accent-background.with-alpha(0.12);
-    out property <color> focus-ring: Palette.accent-background;
-    out property <color> status-positive: #23865b;
-    out property <color> status-warning: #9a6a16;
-    out property <color> status-danger: #b64b43;
-    out property <color> status-neutral: #738096;
-    out property <color> overlay-scrim: #00000022;
+    out property <bool> dark-mode: Palette.color-scheme == ColorScheme.dark;
+
+    out property <color> window-background: root.dark-mode ? #141922 : #F5F7FA;
+    out property <color> content-background: root.dark-mode ? #171D27 : #FBFCFE;
+    out property <color> sidebar-background: root.dark-mode ? #1C2430 : #EEF3F9;
+    out property <color> inspector-background: root.dark-mode ? #202A38 : #F4F7FB;
+    out property <color> surface-background: root.dark-mode ? #202937 : #FFFFFF;
+    out property <color> elevated-background: root.dark-mode ? #293344 : #FFFFFF;
+    out property <color> separator: root.dark-mode ? #384556 : #D8E0EA;
+    out property <color> text-primary: root.dark-mode ? #F1F5FB : #15243A;
+    out property <color> text-secondary: root.dark-mode ? #AAB8CA : #5E7089;
+    out property <color> text-tertiary: root.dark-mode ? #8090A5 : #8493A7;
+    out property <color> text-disabled: root.dark-mode ? #66758A : #A1ADBB;
+    out property <color> accent: root.dark-mode ? #6EA8FF : #2F6FDB;
+    out property <color> accent-soft: root.dark-mode ? #6EA8FF24 : #E7F0FF;
+    out property <color> focus-ring: root.dark-mode ? #84B8FF : #3E83F8;
+    out property <color> status-positive: root.dark-mode ? #55C99A : #15966A;
+    out property <color> status-warning: root.dark-mode ? #E1B35B : #B97918;
+    out property <color> status-danger: root.dark-mode ? #EE827D : #C84B4B;
+    out property <color> status-neutral: root.dark-mode ? #93A1B5 : #66778F;
+    out property <color> overlay-scrim: root.dark-mode ? #00000070 : #1C2A3A40;
 
     out property <length> space-1: 4px;
     out property <length> space-2: 8px;

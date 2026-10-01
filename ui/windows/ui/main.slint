@@ -1,7 +1,7 @@
 import { Button, LineEdit, Palette, ScrollView, VerticalBox, HorizontalBox } from "std-widgets.slint";
 import { ChuziTheme } from "design_tokens.slint";
 import { ChuziTitlebar, ChuziSidebar } from "shell_components.slint";
-import { SessionRowData, ChuziFilterChip, ChuziSessionRow, ChuziSessionInspector, ChuziSessionWorkspace } from "sessions_components.slint";
+import { SessionRowData, ChuziActionButton, ChuziFilterChip, ChuziSessionRow, ChuziSessionInspector, ChuziSessionWorkspace } from "sessions_components.slint";
 export { Palette } from "std-widgets.slint";
 
 component FeedbackBar inherits Rectangle {
@@ -67,12 +67,17 @@ export component MainWindow inherits Window {
     in-out property <string> session-inspector-primary-action: "none";
     in-out property <string> session-inspector-primary-label: "";
     in-out property <bool> session-inspector-has-more-action: false;
+    in-out property <bool> session-inspector-menu-open: false;
     in-out property <image> session-browser-view;
     in-out property <bool> session-browser-view-loaded: false;
     in-out property <string> session-browser-view-status: "";
     in-out property <bool> inspector-open: false;
     in-out property <bool> compact-shell: false;
     in-out property <bool> inspector-collapsed: false;
+    in-out property <bool> snapshot-focus: false;
+    in-out property <bool> cancel-confirmation-visible: false;
+    in-out property <string> cancel-confirmation-request-id: "";
+    in-out property <string> cancel-confirmation-account-label: "";
     in-out property <bool> session-workspace-visible: false;
     in-out property <string> session-workspace-host: "docked";
     in-out property <string> session-workspace-state: "starting";
@@ -90,6 +95,7 @@ export component MainWindow inherits Window {
     callback select-session(string);
     callback move-session-selection(string);
     callback session-primary-action(string, string);
+    callback session-cancel-confirmed(string);
     callback session-more-action(string, string);
     callback diagnostic-submit();
     callback diagnostic-dismiss();
@@ -106,15 +112,20 @@ export component MainWindow inherits Window {
 
     background: ChuziTheme.window-background;
 
+    property <length> compact-inspector-top: ChuziTheme.titlebar-height + 186px;
+
     VerticalBox {
         spacing: 0px;
 
         ChuziTitlebar {
             theme: root.theme;
+            core-ready: root.core-ready;
+            core-status-known: root.core-status-known;
             theme-request(theme) => {
                 root.theme = theme;
                 root.theme-changed(theme);
             }
+            core-status-request => { root.refresh-core(); }
             vertical-stretch: 0;
         }
 
@@ -137,6 +148,7 @@ export component MainWindow inherits Window {
 
                         VerticalBox {
                             padding: ChuziTheme.space-6;
+                            padding-right: root.inspector-collapsed && root.inspector-open ? ChuziTheme.space-6 + 320px : ChuziTheme.space-6;
                             spacing: ChuziTheme.space-3;
 
                             if root.session-workspace-visible: ChuziSessionWorkspace {
@@ -227,14 +239,38 @@ export component MainWindow inherits Window {
                             }
 
                             Text {
-                                text: "Core requests and their business state. Game, region, runtime and elapsed time are not provided here.";
+                                text: "Requests from Core";
                                 color: ChuziTheme.text-secondary;
                                 font-size: ChuziTheme.type-secondary;
                                 wrap: word-wrap;
                                 vertical-stretch: 0;
                             }
 
-                            HorizontalBox {
+                            if root.inspector-collapsed: VerticalBox {
+                                spacing: ChuziTheme.space-1;
+                                vertical-stretch: 0;
+                                HorizontalBox {
+                                    height: 38px;
+                                    spacing: ChuziTheme.space-2;
+                                    LineEdit {
+                                        horizontal-stretch: 1;
+                                        min-width: 132px;
+                                        placeholder-text: "Search request or account";
+                                        text <=> root.session-search;
+                                        edited => { root.session-search-changed(self.text); }
+                                    }
+                                }
+                                HorizontalBox {
+                                    height: 32px;
+                                    spacing: 4px;
+                                    ChuziFilterChip { label: "All"; width: 48px; selected: root.session-filter == "all"; activated => { root.session-filter-changed("all"); } }
+                                    ChuziFilterChip { label: "Running"; width: 78px; selected: root.session-filter == "running"; activated => { root.session-filter-changed("running"); } }
+                                    ChuziFilterChip { label: "Queued"; width: 82px; selected: root.session-filter == "queued"; activated => { root.session-filter-changed("queued"); } }
+                                    ChuziFilterChip { label: "Failed"; width: 64px; selected: root.session-filter == "failed"; activated => { root.session-filter-changed("failed"); } }
+                                    Rectangle { horizontal-stretch: 1; background: transparent; }
+                                }
+                            }
+                            if !root.inspector-collapsed: HorizontalBox {
                                 height: 38px;
                                 spacing: 4px;
                                 LineEdit {
@@ -277,7 +313,13 @@ export component MainWindow inherits Window {
                                     else if event.text == Key.Home { root.move-session-selection("home"); accept }
                                     else if event.text == Key.End { root.move-session-selection("end"); accept }
                                     else if event.text == Key.Return && root.session-inspector-selected && root.session-inspector-primary-action != "none" {
-                                        root.session-primary-action(root.session-inspector-request-id, root.session-inspector-primary-action);
+                                        if root.session-inspector-primary-action == "cancel" {
+                                            root.cancel-confirmation-request-id = root.session-inspector-request-id;
+                                            root.cancel-confirmation-account-label = "";
+                                            root.cancel-confirmation-visible = true;
+                                        } else {
+                                            root.session-primary-action(root.session-inspector-request-id, root.session-inspector-primary-action);
+                                        }
                                         accept
                                     } else if event.text == Key.Escape && root.inspector-open {
                                         root.inspector-open = false;
@@ -328,6 +370,8 @@ export component MainWindow inherits Window {
                                         for row[index] in root.session-rows: ChuziSessionRow {
                                             item: row;
                                             busy: root.busy;
+                                            show-action: !root.inspector-collapsed;
+                                            focus-visible: root.snapshot-focus && index == 0;
                                             selected(request-id) => {
                                                 root.select-session(request-id);
                                                 if root.inspector-collapsed { root.inspector-open = true; }
@@ -335,7 +379,13 @@ export component MainWindow inherits Window {
                                             action(request-id, action) => {
                                                 root.select-session(request-id);
                                                 if root.inspector-collapsed { root.inspector-open = true; }
-                                                root.session-primary-action(request-id, action);
+                                                if action == "cancel" {
+                                                    root.cancel-confirmation-request-id = request-id;
+                                                    root.cancel-confirmation-account-label = "";
+                                                    root.cancel-confirmation-visible = true;
+                                                } else {
+                                                    root.session-primary-action(request-id, action);
+                                                }
                                             }
                                         }
                                     }
@@ -363,13 +413,23 @@ export component MainWindow inherits Window {
                         primary-action: root.session-inspector-primary-action;
                         primary-label: root.session-inspector-primary-label;
                         has-more-action: root.session-inspector-has-more-action;
+                        menu-open: root.session-inspector-menu-open;
+                        menu-visible: root.session-inspector-menu-open;
                         has-more-requests: root.session-has-more-requests;
                         collection-message: root.session-collection-message;
                         browser-view: root.session-browser-view;
                         browser-view-loaded: root.session-browser-view-loaded;
                         browser-view-status: root.session-browser-view-status;
                         busy: root.busy;
-                        primary(request-id, action) => { root.session-primary-action(request-id, action); }
+                        primary(request-id, action) => {
+                            if action == "cancel" {
+                                root.cancel-confirmation-request-id = request-id;
+                                root.cancel-confirmation-account-label = "";
+                                root.cancel-confirmation-visible = true;
+                            } else {
+                                root.session-primary-action(request-id, action);
+                            }
+                        }
                         more-action(request-id, action) => { root.session-more-action(request-id, action); }
                         load-more => { root.load-more-sessions(); }
                         vertical-stretch: 1;
@@ -381,9 +441,9 @@ export component MainWindow inherits Window {
 
     if root.inspector-collapsed && root.inspector-open: Rectangle {
         x: 0px;
-        y: ChuziTheme.titlebar-height;
+        y: root.compact-inspector-top;
         width: root.width;
-        height: root.height - ChuziTheme.titlebar-height;
+        height: root.height - root.compact-inspector-top;
         background: ChuziTheme.overlay-scrim;
         z: 59;
         TouchArea { clicked => { root.inspector-open = false; } }
@@ -391,9 +451,9 @@ export component MainWindow inherits Window {
 
     if root.inspector-collapsed && root.inspector-open: ChuziSessionInspector {
         x: root.width - self.width;
-        y: ChuziTheme.titlebar-height;
+        y: root.compact-inspector-top;
         width: root.width < 360px ? root.width : 320px;
-        height: root.height - ChuziTheme.titlebar-height;
+        height: root.height - root.compact-inspector-top;
         z: 60;
         compact: true;
         selected: root.session-inspector-selected;
@@ -407,16 +467,105 @@ export component MainWindow inherits Window {
         primary-action: root.session-inspector-primary-action;
         primary-label: root.session-inspector-primary-label;
         has-more-action: root.session-inspector-has-more-action;
+        menu-open: root.session-inspector-menu-open;
+        menu-visible: root.session-inspector-menu-open;
         has-more-requests: root.session-has-more-requests;
         collection-message: root.session-collection-message;
         browser-view: root.session-browser-view;
         browser-view-loaded: root.session-browser-view-loaded;
         browser-view-status: root.session-browser-view-status;
         busy: root.busy;
-        primary(request-id, action) => { root.session-primary-action(request-id, action); }
+        primary(request-id, action) => {
+            if action == "cancel" {
+                root.cancel-confirmation-request-id = request-id;
+                root.cancel-confirmation-account-label = "";
+                root.cancel-confirmation-visible = true;
+            } else {
+                root.session-primary-action(request-id, action);
+            }
+        }
         more-action(request-id, action) => { root.session-more-action(request-id, action); }
         close => { root.inspector-open = false; }
         load-more => { root.load-more-sessions(); }
+    }
+
+    if root.cancel-confirmation-visible: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        background: ChuziTheme.overlay-scrim;
+        z: 90;
+
+        Rectangle {
+            width: root.width < 560px ? root.width - 40px : 480px;
+            height: 224px;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: ChuziTheme.elevated-background;
+            border-color: ChuziTheme.separator;
+            border-width: 1px;
+            border-radius: ChuziTheme.radius-surface;
+
+            sheet-focus := FocusScope {
+                width: parent.width;
+                height: parent.height;
+                focus-on-click: true;
+                key-pressed(event) => {
+                    if event.text == Key.Escape {
+                        root.cancel-confirmation-visible = false;
+                        accept
+                    } else {
+                        reject
+                    }
+                }
+
+                VerticalBox {
+                    padding: ChuziTheme.space-6;
+                    spacing: ChuziTheme.space-2;
+                    Text {
+                        text: "Cancel queued request?";
+                        color: ChuziTheme.text-primary;
+                        font-size: ChuziTheme.type-title;
+                        font-weight: 650;
+                        vertical-stretch: 0;
+                    }
+                    Text {
+                        text: root.cancel-confirmation-account-label == "" ?
+                            "This request will stop before it starts." :
+                            "This request for " + root.cancel-confirmation-account-label + " will stop before it starts.";
+                        color: ChuziTheme.text-secondary;
+                        font-size: ChuziTheme.type-body;
+                        wrap: word-wrap;
+                        vertical-stretch: 1;
+                    }
+                    HorizontalBox {
+                        spacing: ChuziTheme.space-2;
+                        height: ChuziTheme.control-height;
+                        vertical-stretch: 0;
+                        Rectangle { horizontal-stretch: 1; background: transparent; }
+                        ChuziActionButton {
+                            label: "Keep request";
+                            width: 112px;
+                            escape-enabled: true;
+                            pressed => { root.cancel-confirmation-visible = false; }
+                            escape-pressed => { root.cancel-confirmation-visible = false; }
+                        }
+                        ChuziActionButton {
+                            label: "Cancel request";
+                            width: 124px;
+                            destructive: true;
+                            escape-enabled: true;
+                            pressed => {
+                                root.cancel-confirmation-visible = false;
+                                root.session-cancel-confirmed(root.cancel-confirmation-request-id);
+                            }
+                            escape-pressed => { root.cancel-confirmation-visible = false; }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if root.diagnostic-consent-visible: Rectangle {

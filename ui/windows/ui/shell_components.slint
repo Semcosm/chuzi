@@ -3,7 +3,10 @@ import { ChuziTheme } from "design_tokens.slint";
 
 export component ChuziTitlebar inherits Rectangle {
     in property <string> theme: "system";
+    in property <bool> core-ready: false;
+    in property <bool> core-status-known: false;
     callback theme-request(string);
+    callback core-status-request();
 
     height: ChuziTheme.titlebar-height;
     background: ChuziTheme.window-background;
@@ -44,6 +47,61 @@ export component ChuziTitlebar inherits Rectangle {
         }
 
         Rectangle { horizontal-stretch: 1; background: transparent; }
+
+        Rectangle {
+            width: root.core-ready ? 92px : 116px;
+            height: ChuziTheme.control-height;
+            background: transparent;
+            border-radius: ChuziTheme.radius-control;
+
+            HorizontalBox {
+                padding-left: ChuziTheme.space-2;
+                padding-right: ChuziTheme.space-2;
+                spacing: 6px;
+                Text {
+                    text: "●";
+                    color: root.core-ready ? ChuziTheme.status-positive : ChuziTheme.status-warning;
+                    font-size: 11px;
+                    vertical-alignment: center;
+                    vertical-stretch: 1;
+                }
+                Text {
+                    text: root.core-ready ? "Core ready" : root.core-status-known ? "Core unavailable" : "Starting Core";
+                    color: root.core-ready ? ChuziTheme.text-secondary : ChuziTheme.status-warning;
+                    font-size: ChuziTheme.type-caption;
+                    vertical-alignment: center;
+                    vertical-stretch: 1;
+                    overflow: elide;
+                }
+            }
+
+            focus-scope := FocusScope {
+                width: parent.width;
+                height: parent.height;
+                focus-on-click: true;
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == Key.Space {
+                        root.core-status-request();
+                        accept
+                    } else {
+                        reject
+                    }
+                }
+                Rectangle {
+                    x: 1px;
+                    y: 1px;
+                    width: parent.width - 2px;
+                    height: parent.height - 2px;
+                    background: transparent;
+                    border-color: ChuziTheme.focus-ring;
+                    border-width: focus-scope.has-focus ? ChuziTheme.focus-width : 0px;
+                    border-radius: ChuziTheme.radius-control;
+                }
+            }
+            TouchArea {
+                clicked => { focus-scope.focus(); root.core-status-request(); }
+            }
+        }
 
         Rectangle {
             width: 76px;

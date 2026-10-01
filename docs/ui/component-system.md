@@ -76,3 +76,8 @@ not be used by the production startup path. Snapshot states should cover:
 - collapsed Inspector at compact width;
 - Light and Dark themes;
 - menu, sheet, focus, and disabled action states.
+
+The checked-in layout fixture names are `mixed-selected`,
+`compact-inspector`, `more-menu`, `cancel-confirmation`,
+`keyboard-focus`, and `disabled-action`. They remain deterministic
+presentation fixtures and are not reachable from production startup.

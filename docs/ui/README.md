@@ -12,6 +12,10 @@ The contract applies to the Rust + Slint client. It does not change the account
 state machine, queue semantics, credential boundary, browser-worker protocol,
 Matrix boundary, or Core storage rules.
 
+The Arch Linux + Codex development path, installed toolchain, optional Slint
+MCP, and deterministic verification commands are documented in
+[tooling.md](tooling.md). The workflow does not require VS Code.
+
 ## Product sentence
 
 CHUZI is a session-first desktop control surface. Its current interaction path
@@ -74,11 +78,13 @@ account-only rows or runtime facts.
 ## Snapshot fixtures
 
 The layout example renders the production view model and Slint components for
-mixed, empty, loading, error, and unavailable states, in Light and Dark at
-800x600, 1120x760, and 1440x900:
+the data states plus selected, compact, More menu, cancellation confirmation,
+keyboard focus, and disabled-action fixtures. Each state is rendered in Light
+and Dark at 800x600, 1120x760, and 1440x900:
 
 ~~~bash
-for state in mixed empty loading error unavailable; do
+for state in mixed empty loading error unavailable mixed-selected \
+  compact-inspector more-menu cancel-confirmation keyboard-focus disabled-action; do
   cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot \
     --example layout_snapshot -- --session-state "$state" \
     --theme both --output dist/ui-sessions

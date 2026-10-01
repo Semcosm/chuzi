@@ -48,9 +48,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             slint::platform::update_timers_and_animations();
             // The testing backend may create a Window at its final size
             // without delivering the intermediate resize event.
+            let force_compact = matches!(
+                session_state.as_str(),
+                "compact-inspector" | "cancel-confirmation"
+            );
             window.set_compact_shell(width < 940);
-            window.set_inspector_collapsed(width < 1200);
-            window.set_inspector_open(width < 1200 && has_selection);
+            window.set_inspector_collapsed(force_compact || width < 1200);
+            window.set_inspector_open((force_compact || width < 1200) && has_selection);
+            window.set_snapshot_focus(session_state == "keyboard-focus");
+            window.set_busy(session_state == "disabled-action");
+            window.set_session_inspector_menu_open(session_state == "more-menu");
+            if session_state == "cancel-confirmation" {
+                window.set_cancel_confirmation_visible(true);
+                window.set_cancel_confirmation_request_id("req-0001".into());
+                window.set_cancel_confirmation_account_label("id_000000000001".into());
+            }
             slint::platform::update_timers_and_animations();
 
             let snapshot = window.window().take_snapshot()?;
@@ -94,9 +106,19 @@ fn session_fixture(state: &str) -> view_model::SessionViewModel {
     let requests = session_requests();
     let mut model = SessionViewModel::default();
     model.set_first_page(view_model::sessions_from_requests(&requests), true);
-    model.select_key("req-0000");
+    model.select_key(if state == "cancel-confirmation" {
+        "req-0001"
+    } else {
+        "req-0000"
+    });
     match state {
-        "mixed" => {}
+        "mixed"
+        | "mixed-selected"
+        | "compact-inspector"
+        | "more-menu"
+        | "keyboard-focus"
+        | "disabled-action"
+        | "cancel-confirmation" => {}
         "error" => model.set_error(ProjectionError::Unknown),
         "unavailable" => model.set_error(ProjectionError::CoreUnavailable),
         other => panic!("unsupported session fixture: {other}"),
@@ -189,7 +211,21 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
             other => return Err(format!("unknown argument: {other}").into()),
         }
     }
-    if !["mixed", "empty", "loading", "error", "unavailable"].contains(&session_state.as_str()) {
+    if ![
+        "mixed",
+        "mixed-selected",
+        "compact-inspector",
+        "cancel-confirmation",
+        "more-menu",
+        "keyboard-focus",
+        "disabled-action",
+        "empty",
+        "loading",
+        "error",
+        "unavailable",
+    ]
+    .contains(&session_state.as_str())
+    {
         return Err(format!("unknown session state: {session_state}").into());
     }
     if !["light", "dark", "both"].contains(&theme.as_str()) {

@@ -99,13 +99,18 @@ Runtime MSIX packages or a signing certificate.
 
 ## Layout diagnostics
 
-Use the Slint editor extension or `slint-lsp` for syntax, type, property, and
-binding diagnostics while editing `.slint` files.
+Use slint-lsp for syntax, type, property, and binding diagnostics while editing
+.slint files. The supported development environment is Arch Linux with Codex
+and the terminal toolchain; VS Code is not required.
+
+For installed tool versions, the optional Slint MCP debug path, the snapshot
+matrix, and UI verification rules, read docs/ui/tooling.md.
 
 The `layout_snapshot` example renders the current Sessions screen for mixed,
-empty, loading, error, and unavailable fixture states, in Light and Dark at
-800x600, 1120x760, and 1440x900. Fixtures are synthetic and isolated to the
-example; production startup always loads Core data.
+empty, loading, error, unavailable, selected, compact Inspector, More menu,
+cancellation confirmation, keyboard focus, and disabled-action fixture states,
+in Light and Dark at 800x600, 1120x760, and 1440x900. Fixtures are synthetic
+and isolated to the example; production startup always loads Core data.
 
 ```bash
 cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot \
