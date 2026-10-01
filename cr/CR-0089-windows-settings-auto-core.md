@@ -1,16 +1,16 @@
 # CR-0089: add automatic Core startup setting
 
 Base: main
-Head or Range: 5c06950
+Head or Range: b1affb0
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add automatic Core startup setting
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 5c0695093ec2105beb305793ae876c4868fe7b53
+Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
+Head OID: b1affb0bee2890ea41736f0325e40a179a0bf352
 Integrated Result: pending
 
 ## Summary
