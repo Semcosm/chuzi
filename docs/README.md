@@ -11,6 +11,7 @@
 | [storage.md](storage.md) | 单节点存储拓扑、Schema、事务和恢复约定 |
 | [security.md](security.md) | 凭证、浏览器 Profile、日志和权限安全 |
 | [matrix-api.md](matrix-api.md) | Matrix 房间命令、事件和状态通知约定 |
+| [request-rate-limit.md](request-rate-limit.md) | 新请求的服务级限流范围、配置和错误指标 |
 | [operations.md](operations.md) | 配置、部署、备份、监控和故障恢复 |
 
 ## 术语

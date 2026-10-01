@@ -187,7 +187,7 @@ func stableError(err error) *ErrorPayload {
 	switch code {
 	case coreapi.CodeInvalidArgument, coreapi.CodeNotFound, coreapi.CodeConflict,
 		coreapi.CodeForbidden, coreapi.CodeUnavailable, coreapi.CodeCancelled,
-		coreapi.CodeDeadline, coreapi.CodeInternal:
+		coreapi.CodeDeadline, coreapi.CodeRateLimited, coreapi.CodeInternal:
 	default:
 		code = coreapi.CodeInternal
 	}
@@ -207,6 +207,8 @@ func stableError(err error) *ErrorPayload {
 		message = "operation was cancelled"
 	case coreapi.CodeDeadline:
 		message = "operation deadline exceeded"
+	case coreapi.CodeRateLimited:
+		message = "request rate limit exceeded"
 	}
 	return &ErrorPayload{Code: code, Message: message}
 }

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -24,6 +25,13 @@ type IDGenerator func(kind string) string
 
 // Clock supplies the current time to keep request behavior replayable.
 type Clock func() time.Time
+
+// Config controls optional request-service behavior. Rate limiting applies
+// only to new submissions; Status and Cancel remain read/control operations.
+type Config struct {
+	RateLimit RateLimitConfig
+	Sink      observability.Sink
+}
 
 // StorePort is the durable request capability consumed by this package. It
 // keeps request orchestration independent from the concrete bbolt store.
@@ -44,14 +52,29 @@ type Service struct {
 	clock        Clock
 	newID        IDGenerator
 	defaultActor string
+	limiter      *rateLimiter
+	sink         observability.Sink
 }
 
 // New constructs a request service with explicit time and ID dependencies.
 func New(database StorePort, clock Clock, newID IDGenerator, defaultActor string) (*Service, error) {
+	return NewWithConfig(database, clock, newID, defaultActor, Config{})
+}
+
+// NewWithConfig constructs a request service with explicit rate-limit and
+// observability dependencies. Config keeps the legacy New signature stable.
+func NewWithConfig(database StorePort, clock Clock, newID IDGenerator, defaultActor string, config Config) (*Service, error) {
 	if database == nil || clock == nil || newID == nil || strings.TrimSpace(defaultActor) == "" {
 		return nil, ErrInvalidInput
 	}
-	return &Service{store: database, clock: clock, newID: newID, defaultActor: defaultActor}, nil
+	limiter, err := newRateLimiter(config.RateLimit)
+	if err != nil {
+		return nil, err
+	}
+	if config.Sink == nil {
+		config.Sink = observability.NopSink{}
+	}
+	return &Service{store: database, clock: clock, newID: newID, defaultActor: defaultActor, limiter: limiter, sink: config.Sink}, nil
 }
 
 // SubmitInput describes one login request. RequestID is supplied by the
@@ -94,6 +117,11 @@ func (s *Service) Submit(input SubmitInput) (store.Request, bool, error) {
 	if actor == "" {
 		actor = s.defaultActor
 	}
+	input.Actor = actor
+	reservation, reserveErr := s.reserveSubmission(input, request, now)
+	if reserveErr != nil {
+		return store.Request{}, false, reserveErr
+	}
 	event := account.Event{
 		EventID:    s.newID("queue"),
 		AccountID:  input.AccountID,
@@ -106,9 +134,33 @@ func (s *Service) Submit(input SubmitInput) (store.Request, bool, error) {
 	}
 	result, idempotent, err := s.store.SubmitRequest(request, event)
 	if err != nil {
+		reservation.rollback()
 		return store.Request{}, false, err
 	}
+	if idempotent {
+		reservation.rollback()
+	}
 	return result, idempotent, nil
+}
+
+type idempotencyReader interface {
+	GetRequestByIdempotencyKey(string) (store.Request, error)
+}
+
+func (s *Service) reserveSubmission(input SubmitInput, request store.Request, now time.Time) (*rateLimitReservation, error) {
+	if reader, ok := s.store.(idempotencyReader); ok {
+		if _, err := reader.GetRequestByIdempotencyKey(input.IdempotencyKey); err == nil {
+			// Let the durable transaction decide whether this is an identical
+			// retry or an idempotency conflict without consuming a quota.
+			return nil, nil
+		}
+	}
+	reservation, err := s.limiter.reserve(input, now)
+	if err != nil {
+		s.sink.Record(observability.Event{At: now, Component: "request", Operation: "submit", Outcome: "denied", ErrorClass: "rate_limited", RequestID: observability.RedactIdentifier(request.RequestID)})
+		return nil, ErrRateLimited
+	}
+	return reservation, nil
 }
 
 // Status returns a validated durable request projection.

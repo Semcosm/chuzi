@@ -32,6 +32,7 @@ type Config struct {
 	Health        HealthConfig        `json:"health,omitempty"`
 	Observability ObservabilityConfig `json:"observability,omitempty"`
 	Diagnostics   DiagnosticsConfig   `json:"diagnostics,omitempty"`
+	RateLimit     RateLimitConfig     `json:"rate_limit,omitempty"`
 }
 
 // MatrixConfig contains non-secret Matrix deployment settings. The access
@@ -44,6 +45,19 @@ type MatrixConfig struct {
 	SyncTimeoutSeconds int                          `json:"sync_timeout_seconds,omitempty"`
 	PollIntervalMillis int                          `json:"poll_interval_millis,omitempty"`
 	Rooms              map[string]map[string]string `json:"rooms,omitempty"`
+}
+
+// RateLimitConfig configures sliding-window limits for new request
+// submissions. A zero limit disables that dimension.
+type RateLimitConfig struct {
+	GlobalLimit          int `json:"global_limit,omitempty"`
+	GlobalWindowSeconds  int `json:"global_window_seconds,omitempty"`
+	ActorLimit           int `json:"actor_limit,omitempty"`
+	ActorWindowSeconds   int `json:"actor_window_seconds,omitempty"`
+	RoomLimit            int `json:"room_limit,omitempty"`
+	RoomWindowSeconds    int `json:"room_window_seconds,omitempty"`
+	AccountLimit         int `json:"account_limit,omitempty"`
+	AccountWindowSeconds int `json:"account_window_seconds,omitempty"`
 }
 
 // CredentialConfig names deployment environment variables for the keyring.
@@ -111,6 +125,7 @@ func Load(path string) (Config, error) {
 	normalized.Health = raw.Health
 	normalized.Observability = raw.Observability
 	normalized.Diagnostics = raw.Diagnostics
+	normalized.RateLimit = raw.RateLimit
 	if err := normalized.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -139,6 +154,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Diagnostics.Validate(); err != nil {
+		return err
+	}
+	if err := c.RateLimit.Validate(); err != nil {
 		return err
 	}
 	return nil
@@ -252,6 +270,27 @@ func (o ObservabilityConfig) Validate() error {
 	}
 	if o.LogMaxBytes < 0 || o.LogMaxBytes > 1<<40 || o.LogMaxFiles < 0 || o.LogMaxFiles > 100 {
 		return fmt.Errorf("%w: observability log rotation limits are out of range", ErrInvalidConfig)
+	}
+	return nil
+}
+
+func (r RateLimitConfig) Validate() error {
+	for _, value := range []int{r.GlobalLimit, r.ActorLimit, r.RoomLimit, r.AccountLimit} {
+		if value < 0 || value > 1_000_000 {
+			return fmt.Errorf("%w: rate limit count is out of range", ErrInvalidConfig)
+		}
+	}
+	for _, value := range []int{r.GlobalWindowSeconds, r.ActorWindowSeconds, r.RoomWindowSeconds, r.AccountWindowSeconds} {
+		if value < 0 || value > 86400 {
+			return fmt.Errorf("%w: rate limit window is out of range", ErrInvalidConfig)
+		}
+	}
+	limits := []int{r.GlobalLimit, r.ActorLimit, r.RoomLimit, r.AccountLimit}
+	windows := []int{r.GlobalWindowSeconds, r.ActorWindowSeconds, r.RoomWindowSeconds, r.AccountWindowSeconds}
+	for index, limit := range limits {
+		if limit > 0 && windows[index] == 0 {
+			return fmt.Errorf("%w: rate limit window is required", ErrInvalidConfig)
+		}
 	}
 	return nil
 }

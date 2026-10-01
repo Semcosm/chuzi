@@ -223,6 +223,9 @@ func (m *Metrics) Record(event Event) {
 		labels = append(labels, Label{Name: "error_class", Value: class})
 	}
 	m.Inc("chuzi_events_total", labels...)
+	if event.Component == "request" && event.Operation == "submit" && event.ErrorClass == "rate_limited" {
+		m.Inc("chuzi_rate_limited_requests_total")
+	}
 	if event.Duration > 0 {
 		m.Observe("chuzi_event_duration_seconds", event.Duration, labels...)
 	}

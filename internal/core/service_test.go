@@ -29,6 +29,18 @@ func (viewServiceRequests) Cancel(string, string, string) (store.Request, error)
 	return store.Request{}, errors.New("not used")
 }
 
+type rateLimitedServiceRequests struct{}
+
+func (rateLimitedServiceRequests) Submit(request.SubmitInput) (store.Request, bool, error) {
+	return store.Request{}, false, request.ErrRateLimited
+}
+func (rateLimitedServiceRequests) Status(string) (store.Request, error) {
+	return store.Request{}, errors.New("not used")
+}
+func (rateLimitedServiceRequests) Cancel(string, string, string) (store.Request, error) {
+	return store.Request{}, errors.New("not used")
+}
+
 type viewServiceStore struct{}
 
 func (viewServiceStore) GetAccount(string) (account.Snapshot, error) { return account.Snapshot{}, nil }
@@ -98,6 +110,22 @@ func TestSubmitDiagnosticReportUsesOptionalPort(t *testing.T) {
 	status, err := service.SubmitDiagnosticReport(context.Background(), coreapi.DiagnosticReport{Severity: "error", Category: "core", Summary: "Core unavailable"})
 	if err != nil || status.ID != "diag-1" || status.State != "queued" {
 		t.Fatalf("status = %#v, err=%v", status, err)
+	}
+}
+
+func TestSubmitRequestMapsRateLimitToStableCoreCode(t *testing.T) {
+	service, err := New(Dependencies{Requests: rateLimitedServiceRequests{}, Store: viewServiceStore{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = service.SubmitRequest(context.Background(), coreapi.SubmitRequest{
+		RequestID: "request-1", AccountID: "account-1", IdempotencyKey: "idempotency-1",
+	})
+	if got := coreapi.CodeOf(err); got != coreapi.CodeRateLimited {
+		t.Fatalf("error code = %q, want %q", got, coreapi.CodeRateLimited)
+	}
+	if err.Error() != "chuzi core: rate_limited" {
+		t.Fatalf("error text = %q", err)
 	}
 }
 

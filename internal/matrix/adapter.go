@@ -23,6 +23,7 @@ var (
 	ErrInvalidCommand = errors.New("matrix: invalid command")
 	ErrNotAuthorized  = errors.New("matrix: user or room is not authorized")
 	ErrNotVisible     = errors.New("matrix: request is not visible in this room")
+	ErrRateLimited    = requestservice.ErrRateLimited
 )
 
 // CommandKind is the small command set exposed by the initial adapter.
@@ -319,6 +320,8 @@ func classifyError(err error) string {
 		return "account_busy"
 	case errors.Is(err, ErrNotVisible), errors.Is(err, ErrNotAuthorized):
 		return "not_authorized"
+	case errors.Is(err, ErrRateLimited):
+		return "rate_limited"
 	default:
 		return "operation_failed"
 	}

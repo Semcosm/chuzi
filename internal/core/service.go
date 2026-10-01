@@ -545,6 +545,8 @@ func classify(err error) error {
 		code = coreapi.CodeInvalidArgument
 	case errors.Is(err, requestservice.ErrNotAllowed):
 		code = coreapi.CodeForbidden
+	case errors.Is(err, requestservice.ErrRateLimited):
+		code = coreapi.CodeRateLimited
 	case errors.Is(err, store.ErrAccountNotFound), errors.Is(err, store.ErrRequestNotFound),
 		errors.Is(err, store.ErrLeaseNotFound):
 		code = coreapi.CodeNotFound
@@ -582,6 +584,8 @@ func stableMessage(code coreapi.Code) string {
 		return "operation was cancelled"
 	case coreapi.CodeDeadline:
 		return "operation deadline exceeded"
+	case coreapi.CodeRateLimited:
+		return "request rate limit exceeded"
 	default:
 		return "core operation failed"
 	}

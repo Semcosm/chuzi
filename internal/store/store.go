@@ -909,6 +909,31 @@ func (s *Store) GetRequest(requestID string) (Request, error) {
 	return result, err
 }
 
+// GetRequestByIdempotencyKey returns the durable request associated with a
+// submission key. Request Service uses this read to avoid charging identical
+// retries against a new-request rate limit; the write transaction remains the
+// authority for conflict detection.
+func (s *Store) GetRequestByIdempotencyKey(idempotencyKey string) (Request, error) {
+	if strings.TrimSpace(idempotencyKey) == "" {
+		return Request{}, ErrInvalidRequest
+	}
+	var result Request
+	err := s.view(func(tx *bbolt.Tx) error {
+		index := tx.Bucket([]byte(migrations.RequestIdempotencyBucket))
+		if index == nil {
+			return ErrCorruptData
+		}
+		requestID := index.Get([]byte(idempotencyKey))
+		if requestID == nil {
+			return ErrRequestNotFound
+		}
+		var err error
+		result, err = requestFromTx(tx, string(requestID))
+		return err
+	})
+	return result, err
+}
+
 // IsRequestCancelled exposes only the cancellation fact needed by a running
 // session. It avoids making browser code depend on the complete request
 // projection or on the concrete Store type.

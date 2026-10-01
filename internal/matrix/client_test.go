@@ -108,3 +108,50 @@ func TestGatewayHandlesSyncMessageAndUsesStableReplyEvent(t *testing.T) {
 		t.Fatalf("gateway did not send stable reply: sent=%t path=%q", sent.Load(), replyPath)
 	}
 }
+
+func TestGatewayContinuesAfterRateLimitedEvent(t *testing.T) {
+	harness := newRateLimitedMatrixHarness(t)
+	var syncCalls atomic.Int32
+	replyDone := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/_matrix/client/v3/sync":
+			if syncCalls.Add(1) == 1 {
+				_, _ = writer.Write([]byte("{\"next_batch\":\"batch-1\",\"rooms\":{\"join\":{\"!ops:example.org\":{\"timeline\":{\"events\":[{\"type\":\"m.room.message\",\"event_id\":\"$first\",\"sender\":\"@alice:example.org\",\"content\":{\"msgtype\":\"m.text\",\"body\":\"!ugs request account-1\"}},{\"type\":\"m.room.message\",\"event_id\":\"$limited\",\"sender\":\"@alice:example.org\",\"content\":{\"msgtype\":\"m.text\",\"body\":\"!ugs request account-2\"}}]}}}}}"))
+				return
+			}
+			_, _ = writer.Write([]byte("{\"next_batch\":\"batch-2\",\"rooms\":{\"join\":{\"!ops:example.org\":{\"timeline\":{\"events\":[{\"type\":\"m.room.message\",\"event_id\":\"$help\",\"sender\":\"@alice:example.org\",\"content\":{\"msgtype\":\"m.text\",\"body\":\"!ugs help\"}}]}}}}}"))
+		default:
+			if strings.Contains(request.URL.Path, "/send/") {
+				close(replyDone)
+				writer.WriteHeader(http.StatusOK)
+				_, _ = writer.Write([]byte("{\"event_id\":\"$reply\"}"))
+				return
+			}
+			t.Errorf("unexpected Matrix request: %s %s", request.Method, request.URL.Path)
+			writer.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	client, err := NewHTTPClient(HTTPClientConfig{HomeserverURL: server.URL, AccessToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, SyncTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- gateway.Run(ctx) }()
+	select {
+	case <-replyDone:
+		cancel()
+	case <-time.After(2 * time.Second):
+		t.Fatal("gateway did not process event after rate limit")
+	}
+	if err := <-runDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("gateway error after rate-limited event = %v", err)
+	}
+}

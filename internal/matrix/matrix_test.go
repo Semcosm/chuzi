@@ -58,6 +58,40 @@ func newMatrixHarness(t *testing.T) matrixHarness {
 	return matrixHarness{store: database, service: service, clock: &now, adapter: adapter}
 }
 
+func newRateLimitedMatrixHarness(t *testing.T) matrixHarness {
+	t.Helper()
+	cfg, err := config.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	for _, accountID := range []string{"account-1", "account-2"} {
+		if _, err := database.CreateAccount(accountID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	now := matrixTestTime
+	counter := 0
+	service, err := requestservice.NewWithConfig(database, func() time.Time { return now }, func(kind string) string {
+		counter++
+		return fmt.Sprintf("%s-%d", kind, counter)
+	}, "request-service", requestservice.Config{RateLimit: requestservice.RateLimitConfig{GlobalLimit: 1, GlobalWindow: time.Minute}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adapter, err := NewAdapter(service, Policy{Rooms: map[string]map[string]Role{
+		"!ops:example.org": {"@alice:example.org": RoleUser},
+	}}, Config{Clock: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return matrixHarness{store: database, service: service, clock: &now, adapter: adapter}
+}
+
 func TestParseCommandRejectsAmbiguousArguments(t *testing.T) {
 	command, err := ParseCommand("!ugs request account-1")
 	if err != nil || command.Kind != CommandRequest || command.Value != "account-1" {
@@ -115,6 +149,54 @@ func TestAdapterAuthorizesScopesAndDeduplicatesMatrixEvents(t *testing.T) {
 	notifications, err = harness.store.ListNotifications()
 	if err != nil || len(notifications) != 2 {
 		t.Fatalf("state notifications = %#v, %v", notifications, err)
+	}
+}
+
+func TestAdapterReturnsStableRateLimitedErrorForNewRequests(t *testing.T) {
+	now := matrixTestTime
+	cfg, err := config.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	for _, accountID := range []string{"account-1", "account-2"} {
+		if _, err := database.CreateAccount(accountID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service, err := requestservice.NewWithConfig(database, func() time.Time { return now }, func(kind string) string { return kind + "-1" }, "service", requestservice.Config{
+		RateLimit: requestservice.RateLimitConfig{GlobalLimit: 1, GlobalWindow: time.Minute},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []observability.Event
+	adapter, err := NewAdapter(service, Policy{Rooms: map[string]map[string]Role{
+		"!ops:example.org": {"@alice:example.org": RoleUser},
+	}}, Config{Clock: func() time.Time { return now }, Sink: observability.FuncSink(func(event observability.Event) { events = append(events, event) })})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := adapter.Handle(IncomingEvent{EventID: "$first", RoomID: "!ops:example.org", UserID: "@alice:example.org", Body: "!ugs request account-1"})
+	if err != nil || first.RequestID == "" {
+		t.Fatalf("first request = %#v, %v", first, err)
+	}
+	_, err = adapter.Handle(IncomingEvent{EventID: "$second", RoomID: "!ops:example.org", UserID: "@alice:example.org", Body: "!ugs request account-2"})
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("second request error = %v, want ErrRateLimited", err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Operation == string(CommandRequest) && event.ErrorClass == "rate_limited" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("rate-limited Matrix event was not recorded: %#v", events)
 	}
 }
 

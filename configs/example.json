@@ -14,6 +14,14 @@
     "log_max_bytes": 10485760,
     "log_max_files": 5
   },
+  "rate_limit": {
+    "global_limit": 30,
+    "global_window_seconds": 60,
+    "actor_limit": 10,
+    "actor_window_seconds": 60,
+    "room_limit": 20,
+    "room_window_seconds": 60
+  },
   "diagnostics": {
     "enabled": true,
     "endpoint": "",
