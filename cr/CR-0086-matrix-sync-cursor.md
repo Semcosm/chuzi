@@ -1,17 +1,17 @@
 # CR-0086: persist the Matrix sync cursor across restarts
 
 Base: main
-Head or Range: 5cfdc93dec54573331a3cf81293cd3335ea720ba
+Head or Range: ec2690a48d0893abf4c21fb2cc8e7721b4d04771
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(matrix): persist sync cursor and replay incomplete batches
-Revision: 2
-Status: pending
-Decision: pending
+Revision: 3
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 5cfdc93dec54573331a3cf81293cd3335ea720ba
-Head OID: 5cfdc93dec54573331a3cf81293cd3335ea720ba
-Integrated Result: pending
+Base OID: ec2690a48d0893abf4c21fb2cc8e7721b4d04771
+Head OID: ec2690a48d0893abf4c21fb2cc8e7721b4d04771
+Integrated Result: main@ec2690a48d0893abf4c21fb2cc8e7721b4d04771
 
 ## Summary
 
