@@ -34,7 +34,8 @@ from browser facts or read bbolt, credentials, Profiles, or named pipes
 The active main window contains Sessions and a Settings destination. Sessions
 provides Core install/start recovery actions when needed, while Settings groups
 appearance, Core lifecycle, launcher update behavior, startup, and diagnostic
-privacy guidance. Launcher behavior settings are read and saved through the
+privacy guidance. Settings can start an already installed Core service when
+the application launches; installation remains an explicit action. Launcher behavior settings are read and saved through the
 launcher; the UI theme remains a UI-local preference. The old Overview,
 Accounts, Tasks, Adapters, and RDP login pages and their compatibility routes
 remain removed. Future screens must be implemented in the current shell.

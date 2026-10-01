@@ -13,7 +13,9 @@ removed from the application. Do not recreate them as hidden pages or fallback
 routes. Later screens must use the shared shell and current object patterns.
 
 Settings is a current-shell destination. It presents appearance, Core
-lifecycle, launcher update behavior, startup, and diagnostic privacy controls;
+lifecycle, launcher update behavior, startup, and diagnostic privacy controls.
+The Core section can opt into starting an already installed Core service when
+the application launches; it never installs Core implicitly.
 launcher behavior settings remain separate from the UI-local theme preference.
 
 ## Sessions

@@ -25,12 +25,13 @@ func TestFileSettingsStoreDefaultsRoundTripAndAtomicPermissions(t *testing.T) {
 		t.Fatalf("missing settings = %#v, want %#v", got, defaults)
 	}
 	want := BehaviorSettings{
-		AutoCheckUpdates: true,
-		AutoRepair:       true,
-		UpdateChannel:    ChannelStable,
-		LaunchOnLogin:    true,
-		CloseToTray:      true,
-		CheckInterval:    15 * time.Minute,
+		AutoCheckUpdates:  true,
+		AutoRepair:        true,
+		UpdateChannel:     ChannelStable,
+		LaunchOnLogin:     true,
+		CloseToTray:       true,
+		StartCoreOnLaunch: true,
+		CheckInterval:     15 * time.Minute,
 	}
 	if err := store.Save(context.Background(), want); err != nil {
 		t.Fatal(err)
@@ -76,5 +77,23 @@ func TestFileSettingsStoreRejectsTrailingAndUnknownData(t *testing.T) {
 	cancel()
 	if _, err := store.Load(ctx); !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled load = %v, want context.Canceled", err)
+	}
+}
+
+func TestFileSettingsStoreAcceptsSettingsWrittenBeforeCoreLaunchOption(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	store, err := NewFileSettingsStore(path, DefaultBehaviorSettings())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"update_channel":"nightly"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StartCoreOnLaunch {
+		t.Fatal("missing start_core_on_launch must default to false")
 	}
 }

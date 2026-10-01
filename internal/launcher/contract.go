@@ -559,12 +559,13 @@ type PluginManager interface {
 }
 
 type BehaviorSettings struct {
-	AutoCheckUpdates bool          `json:"auto_check_updates"`
-	AutoRepair       bool          `json:"auto_repair"`
-	UpdateChannel    string        `json:"update_channel"`
-	LaunchOnLogin    bool          `json:"launch_on_login"`
-	CloseToTray      bool          `json:"close_to_tray"`
-	CheckInterval    time.Duration `json:"check_interval"`
+	AutoCheckUpdates  bool          `json:"auto_check_updates"`
+	AutoRepair        bool          `json:"auto_repair"`
+	UpdateChannel     string        `json:"update_channel"`
+	LaunchOnLogin     bool          `json:"launch_on_login"`
+	CloseToTray       bool          `json:"close_to_tray"`
+	StartCoreOnLaunch bool          `json:"start_core_on_launch"`
+	CheckInterval     time.Duration `json:"check_interval"`
 }
 
 func (s BehaviorSettings) Validate() error {
