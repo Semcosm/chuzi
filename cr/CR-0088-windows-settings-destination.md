@@ -5,7 +5,7 @@ Head or Range: 7ce4ca1ad611aef8fa1fa897063f928274a3b24d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): redesign Windows Settings destination
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
