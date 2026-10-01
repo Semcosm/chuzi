@@ -19,31 +19,35 @@ const (
 	ProtocolVersion = coreapi.APIVersion
 	DefaultMaxFrame = 1 << 20
 
-	methodHello             = "hello"
-	methodCancel            = "cancel"
-	methodSubmitRequest     = "submit_request"
-	methodGetRequest        = "get_request"
-	methodGetAccount        = "get_account"
-	methodCancelRequest     = "cancel_request"
-	methodGetResult         = "get_result"
-	methodListEvents        = "list_events"
-	methodListNotifications = "list_notifications"
-	methodGetBrowserView    = "get_browser_view"
-	methodSubmitDiagnostic  = "submit_diagnostic_report"
+	methodHello              = "hello"
+	methodCancel             = "cancel"
+	methodSubmitRequest      = "submit_request"
+	methodGetRequest         = "get_request"
+	methodListRequests       = "list_requests"
+	methodGetAccount         = "get_account"
+	methodCancelRequest      = "cancel_request"
+	methodGetResult          = "get_result"
+	methodListEvents         = "list_events"
+	methodListNotifications  = "list_notifications"
+	methodGetBrowserView     = "get_browser_view"
+	methodIssueRDPCapability = "issue_rdp_capability"
+	methodSubmitDiagnostic   = "submit_diagnostic_report"
 )
 
 const (
-	MethodHello             = methodHello
-	MethodCancel            = methodCancel
-	MethodSubmitRequest     = methodSubmitRequest
-	MethodGetRequest        = methodGetRequest
-	MethodGetAccount        = methodGetAccount
-	MethodCancelRequest     = methodCancelRequest
-	MethodGetResult         = methodGetResult
-	MethodListEvents        = methodListEvents
-	MethodListNotifications = methodListNotifications
-	MethodGetBrowserView    = methodGetBrowserView
-	MethodSubmitDiagnostic  = methodSubmitDiagnostic
+	MethodHello              = methodHello
+	MethodCancel             = methodCancel
+	MethodSubmitRequest      = methodSubmitRequest
+	MethodGetRequest         = methodGetRequest
+	MethodListRequests       = methodListRequests
+	MethodGetAccount         = methodGetAccount
+	MethodCancelRequest      = methodCancelRequest
+	MethodGetResult          = methodGetResult
+	MethodListEvents         = methodListEvents
+	MethodListNotifications  = methodListNotifications
+	MethodGetBrowserView     = methodGetBrowserView
+	MethodIssueRDPCapability = methodIssueRDPCapability
+	MethodSubmitDiagnostic   = methodSubmitDiagnostic
 )
 
 var (
@@ -94,6 +98,10 @@ type SubmitResult struct {
 	Idempotent bool            `json:"idempotent"`
 }
 
+type RequestsResult struct {
+	Requests []coreapi.Request `json:"requests"`
+}
+
 type EventsResult struct {
 	Events []coreapi.Event `json:"events"`
 }
@@ -103,8 +111,8 @@ type NotificationsResult struct {
 }
 
 func methodList() []string {
-	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodSubmitDiagnostic}
+	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodListRequests, methodGetAccount,
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic}
 }
 
 func marshalRequest(id, method string, params any) ([]byte, error) {

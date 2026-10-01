@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -14,6 +15,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/account"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/coreapi"
+	"github.com/Semcosm/chuzi/internal/credential"
 	"github.com/Semcosm/chuzi/internal/diagnostics"
 	"github.com/Semcosm/chuzi/internal/observability"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
@@ -42,12 +44,17 @@ type RequestPort interface {
 // behind the Core facade and cannot leak through coreapi DTOs.
 type StoreReader interface {
 	GetAccount(string) (account.Snapshot, error)
+	ListRequests() ([]store.Request, error)
 	ListAuditEntries(store.AuditQuery) ([]store.AuditEntry, error)
 	QueryNotifications(store.NotificationQuery) ([]store.Notification, error)
 }
 
 type BrowserViewPort interface {
 	Snapshot(context.Context, string, int, int) (browser.ViewSnapshot, error)
+}
+
+type RDPCapabilityPort interface {
+	Issue(context.Context, string, string, string) (coreapi.RDPCapability, error)
 }
 
 type DiagnosticsPort interface {
@@ -58,6 +65,7 @@ type Dependencies struct {
 	Requests    RequestPort
 	Store       StoreReader
 	Views       BrowserViewPort
+	RDP         RDPCapabilityPort
 	Diagnostics DiagnosticsPort
 }
 
@@ -65,6 +73,7 @@ type Service struct {
 	requests    RequestPort
 	store       StoreReader
 	views       BrowserViewPort
+	rdp         RDPCapabilityPort
 	diagnostics DiagnosticsPort
 }
 
@@ -74,7 +83,7 @@ func New(dependencies Dependencies) (*Service, error) {
 	if dependencies.Requests == nil || dependencies.Store == nil {
 		return nil, ErrInvalidService
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, diagnostics: dependencies.Diagnostics}, nil
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics}, nil
 }
 
 func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
@@ -144,6 +153,39 @@ func (s *Service) GetBrowserView(ctx context.Context, input coreapi.BrowserViewR
 	}, nil
 }
 
+// IssueRDPCapability authorizes an interactive session without exposing the
+// durable account identifier or connection material to the caller.
+func (s *Service) IssueRDPCapability(ctx context.Context, input coreapi.RDPCapabilityRequest) (coreapi.RDPCapability, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.RDPCapability{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.RDPCapability{}, err
+	}
+	if !validToken(input.RequestID) || !validToken(input.Actor) {
+		return coreapi.RDPCapability{}, classify(requestservice.ErrInvalidInput)
+	}
+	if s.rdp == nil {
+		return coreapi.RDPCapability{}, coreapi.NewError(coreapi.CodeUnavailable, "interactive RDP is unavailable")
+	}
+	request, err := s.requests.Status(input.RequestID)
+	if err != nil {
+		return coreapi.RDPCapability{}, classify(err)
+	}
+	switch request.State {
+	case account.Starting, account.LoggingIn, account.LoginSucceeded:
+		// Interactive access is limited to a request with an active or
+		// successfully established session.
+	default:
+		return coreapi.RDPCapability{}, coreapi.NewError(coreapi.CodeForbidden, "interactive RDP is not authorized for this request")
+	}
+	capability, err := s.rdp.Issue(ctx, request.AccountID, request.RequestID, input.Actor)
+	if err != nil {
+		return coreapi.RDPCapability{}, classify(err)
+	}
+	return capability, nil
+}
+
 func (s *Service) SubmitRequest(ctx context.Context, input coreapi.SubmitRequest) (coreapi.Request, bool, error) {
 	if err := s.ready(); err != nil {
 		return coreapi.Request{}, false, err
@@ -179,6 +221,54 @@ func (s *Service) GetRequest(ctx context.Context, requestID string) (coreapi.Req
 		return coreapi.Request{}, classify(err)
 	}
 	return projectRequest(request), nil
+}
+
+// ListRequests returns a bounded, deterministic page of safe request
+// projections. Store ordering is creation time plus request ID; filtering and
+// pagination happen before projection so callers never receive internal
+// request records or an unbounded response. The current Store reader scans
+// the durable request set to preserve this global ordering.
+func (s *Service) ListRequests(ctx context.Context, query coreapi.RequestQuery) ([]coreapi.Request, error) {
+	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	if err := validateRequestQuery(query); err != nil {
+		return nil, classify(err)
+	}
+	limit := normalizedLimit(query.Limit)
+	requests, err := s.store.ListRequests()
+	if err != nil {
+		return nil, classify(err)
+	}
+	// Store.ListRequests already guarantees this ordering. Keep the Core
+	// projection deterministic even when a test double or future reader does
+	// not preserve that implementation detail.
+	sort.SliceStable(requests, func(i, j int) bool {
+		if requests[i].CreatedAt.Equal(requests[j].CreatedAt) {
+			return requests[i].RequestID < requests[j].RequestID
+		}
+		return requests[i].CreatedAt.Before(requests[j].CreatedAt)
+	})
+	result := make([]coreapi.Request, 0, min(limit, len(requests)))
+	matched := 0
+	for _, request := range requests {
+		if query.State != "" && string(request.State) != query.State {
+			continue
+		}
+		if matched < query.Offset {
+			matched++
+			continue
+		}
+		result = append(result, projectRequest(request))
+		matched++
+		if len(result) == limit {
+			break
+		}
+	}
+	return result, nil
 }
 
 func (s *Service) GetAccount(ctx context.Context, accountID string) (coreapi.Account, error) {
@@ -337,6 +427,16 @@ func validateQuery(accountID, requestID string, since, until time.Time, offset, 
 	return nil
 }
 
+func validateRequestQuery(query coreapi.RequestQuery) error {
+	if query.State != "" && !account.Status(query.State).Valid() {
+		return ErrInvalidQuery
+	}
+	if query.Offset < 0 || query.Offset > maxQueryOffset || query.Limit < 0 || query.Limit > maxQueryLimit {
+		return ErrInvalidQuery
+	}
+	return nil
+}
+
 func validToken(value string) bool {
 	if strings.TrimSpace(value) != value || value == "" || len(value) > 512 {
 		return false
@@ -458,6 +558,10 @@ func classify(err error) error {
 		code = coreapi.CodeUnavailable
 	case errors.Is(err, browser.ErrViewUnavailable):
 		code = coreapi.CodeUnavailable
+	case errors.Is(err, credential.ErrRDPUnauthorized), errors.Is(err, credential.ErrRDPRevoked):
+		code = coreapi.CodeForbidden
+	case errors.Is(err, credential.ErrRDPExpired), errors.Is(err, credential.ErrRDPCapability):
+		code = coreapi.CodeConflict
 	}
 	return coreapi.NewError(code, stableMessage(code))
 }

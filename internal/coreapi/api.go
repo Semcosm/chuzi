@@ -88,6 +88,23 @@ type Request struct {
 	Deadline    time.Time `json:"deadline,omitempty"`
 }
 
+// RequestQuery bounds a read-only request list. State is an optional request
+// business-state filter; offsets and limits are applied after filtering and
+// before the redacted projections are returned. The current implementation
+// scans the durable request set to preserve global creation-time ordering.
+type RequestQuery struct {
+	State  string `json:"state,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	Limit  int    `json:"limit,omitempty"`
+}
+
+// RequestListAPI is an additive capability. Keeping it optional preserves
+// source compatibility for older in-process API implementations while the
+// transport advertises the method for feature detection.
+type RequestListAPI interface {
+	ListRequests(context.Context, RequestQuery) ([]Request, error)
+}
+
 type Account struct {
 	Account   string `json:"account"`
 	State     string `json:"state"`
@@ -173,6 +190,24 @@ type BrowserView struct {
 // additive method when the implementation supports it.
 type BrowserViewAPI interface {
 	GetBrowserView(context.Context, BrowserViewRequest) (BrowserView, error)
+}
+
+type RDPCapabilityRequest struct {
+	RequestID string `json:"request_id"`
+	Actor     string `json:"actor,omitempty"`
+}
+
+// RDPCapability is an opaque, short-lived bearer capability. It contains no
+// endpoint, credentials, Profile path, or certificate information.
+type RDPCapability struct {
+	ID        string    `json:"id"`
+	Token     string    `json:"token"`
+	RequestID string    `json:"request_id"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type RDPCapabilityAPI interface {
+	IssueRDPCapability(context.Context, RDPCapabilityRequest) (RDPCapability, error)
 }
 
 // DiagnosticReport is a user-consented, redaction-safe support submission.
