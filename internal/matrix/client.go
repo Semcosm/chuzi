@@ -220,7 +220,7 @@ func (g *Gateway) Run(ctx context.Context) error {
 				}
 				reply, handleErr := g.adapter.Handle(IncomingEvent{EventID: event.EventID, RoomID: roomID, UserID: event.Sender, Body: event.Content.Body})
 				if handleErr != nil {
-					if errors.Is(handleErr, ErrNotAuthorized) || errors.Is(handleErr, ErrInvalidCommand) || errors.Is(handleErr, ErrNotVisible) {
+					if errors.Is(handleErr, ErrNotAuthorized) || errors.Is(handleErr, ErrInvalidCommand) || errors.Is(handleErr, ErrNotVisible) || errors.Is(handleErr, ErrRateLimited) {
 						continue
 					}
 					return handleErr

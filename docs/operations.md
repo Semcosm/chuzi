@@ -3,12 +3,12 @@
 ## 配置分类
 
 - 普通配置：`data_dir`、Matrix homeserver/user/policy、同步时序、凭证 key 环境变量
-  名称和健康监听地址。`configs/example.json` 不包含任何 Secret 值。
+  名称、健康监听地址和新请求限流窗口。`configs/example.json` 不包含任何 Secret 值。
 - Secret 配置：Matrix access token、凭证加密主密钥（只由环境/Secret manager 注入）。
 - 运行数据：数据库、浏览器 Profile、审计日志、待发送事件和用户同意后的诊断队列。
 
-普通配置示例位于 `configs/example.json`，包含数据目录、凭证环境变量名称和本地
-健康监听地址；Matrix 网络配置按需添加。数据库路径固定由存储层派生为
+普通配置示例位于 `configs/example.json`，包含数据目录、凭证环境变量名称、本地
+健康监听地址和默认请求限流值；Matrix 网络配置按需添加。数据库路径固定由存储层派生为
 `<data_dir>/chuzi.db`，备份目录固定为 `<data_dir>/backups/`；请求和账号
 输入不能覆盖这些路径。`cmd/service` 普通启动默认加载该文件，也可通过 `-config`
 指定路径；Store、Profile 和队列都从同一 `data_dir` 派生。Secret 不进入 Git。
@@ -246,6 +246,9 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
   homeserver、测试凭证和本地 Worker。受控环境可在提供 disposable Matrix
   homeserver 的 `CHUZI_MATRIX_TEST_*` 变量后额外设置
   `CHUZI_RUN_CONTROLLED_MATRIX=1`，验证真实 `whoami`、sync、send 和网关/通知链路。
+- `rate_limit` 下的 `global_*`、`actor_*`、`room_*` 和 `account_*` 字段分别限制
+  全局、调用方、Matrix 房间和账号的新请求提交；每个 `*_limit` 为 0 时关闭该维度，
+  非零上限必须配置正的 `*_window_seconds`，窗口最长 24 小时。
 - `observability.metrics_listen` 提供本地 Prometheus 文本端点；`log_path` 启用
   0600 JSONL 日志并按 `log_max_bytes`/`log_max_files` 轮转。两个端点都必须限制在
   loopback 或受保护管理网络。

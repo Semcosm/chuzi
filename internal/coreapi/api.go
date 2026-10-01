@@ -22,6 +22,7 @@ const (
 	CodeUnavailable     Code = "unavailable"
 	CodeCancelled       Code = "cancelled"
 	CodeDeadline        Code = "deadline_exceeded"
+	CodeRateLimited     Code = "rate_limited"
 	CodeInternal        Code = "internal"
 )
 

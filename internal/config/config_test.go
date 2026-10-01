@@ -109,3 +109,18 @@ func TestConfigAcceptsRedactionSafeObservabilitySettings(t *testing.T) {
 		t.Fatal("invalid metrics listener was accepted")
 	}
 }
+
+func TestConfigValidatesRequestRateLimits(t *testing.T) {
+	cfg, err := New(filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.RateLimit = RateLimitConfig{GlobalLimit: 30, GlobalWindowSeconds: 60, ActorLimit: 10, ActorWindowSeconds: 60}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.RateLimit.GlobalWindowSeconds = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("enabled rate limit without a window was accepted")
+	}
+}

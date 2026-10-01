@@ -153,7 +153,7 @@ never returned.
 The only public error codes are:
 
 `invalid_argument`, `not_found`, `conflict`, `forbidden`, `unavailable`,
-`cancelled`, `deadline_exceeded`, and `internal`.
+`cancelled`, `deadline_exceeded`, `rate_limited`, and `internal`.
 
 Error messages are generic, stable descriptions selected by the code. Store,
 bbolt, worker, adapter, credential and filesystem error text never crosses the

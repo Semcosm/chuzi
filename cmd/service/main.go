@@ -307,6 +307,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		{Name: "chuzi_events_total", Help: "Classified chuzi operational events", Kind: observability.Counter},
 		{Name: "chuzi_event_duration_seconds", Help: "Duration of classified chuzi operations", Kind: observability.Histogram},
 		{Name: "chuzi_operational_errors_total", Help: "Operational snapshot failures", Kind: observability.Counter},
+		{Name: "chuzi_rate_limited_requests_total", Help: "New request submissions rejected by service rate limits", Kind: observability.Counter},
 		{Name: "chuzi_database_bytes", Help: "Active database file size", Kind: observability.Gauge},
 		{Name: "chuzi_accounts", Help: "Accounts in the active store", Kind: observability.Gauge},
 		{Name: "chuzi_requests", Help: "Requests in the active store", Kind: observability.Gauge},
@@ -376,7 +377,15 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		return closeOnError(err)
 	}
 	viewRegistry := browser.NewViewRegistry()
-	requestService, err := requestservice.New(database, now, requestservice.IDGenerator(newID), options.owner)
+	requestService, err := requestservice.NewWithConfig(database, now, requestservice.IDGenerator(newID), options.owner, requestservice.Config{
+		RateLimit: requestservice.RateLimitConfig{
+			GlobalLimit: cfg.RateLimit.GlobalLimit, GlobalWindow: time.Duration(cfg.RateLimit.GlobalWindowSeconds) * time.Second,
+			ActorLimit: cfg.RateLimit.ActorLimit, ActorWindow: time.Duration(cfg.RateLimit.ActorWindowSeconds) * time.Second,
+			RoomLimit: cfg.RateLimit.RoomLimit, RoomWindow: time.Duration(cfg.RateLimit.RoomWindowSeconds) * time.Second,
+			AccountLimit: cfg.RateLimit.AccountLimit, AccountWindow: time.Duration(cfg.RateLimit.AccountWindowSeconds) * time.Second,
+		},
+		Sink: sink,
+	})
 	if err != nil {
 		return closeOnError(err)
 	}
@@ -501,7 +510,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 					policy.Rooms[room][user] = matrix.Role(role)
 				}
 			}
-			adapter, adapterErr := matrix.NewAdapter(requestService, policy, matrix.Config{UserID: cfg.Matrix.UserID})
+			adapter, adapterErr := matrix.NewAdapter(requestService, policy, matrix.Config{UserID: cfg.Matrix.UserID, Clock: now, Sink: sink})
 			if adapterErr != nil {
 				return closeOnError(adapterErr)
 			}

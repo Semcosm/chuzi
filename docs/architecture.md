@@ -16,8 +16,9 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
   Request Service。
 - **Request Service**：创建请求、幂等检查、结果查询和取消；房间/用户授权由
   外部适配器执行。
-- **Queue/Scheduler**：按全局并发上限和账号级租约分配工作，处理超时与重试；
-  服务级限流尚未实现。
+- **Queue/Scheduler**：按全局并发上限和账号级租约分配工作，处理超时与重试。
+- **Request rate limiter**：在 Request Service 提交新请求前按全局、调用方、Matrix 房间和账号
+  维度执行可配置的滑动窗口限流；查询和取消不占用额度。
 - **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
 - **Browser Worker**：运行在独立进程中，负责浏览器运行时和自动化适配边界；不能直接决定账号业务状态。
   当前 Node.js Worker 提供 deferred 生命周期替身和可配置的 headed/headless-CDP runtime adapter；原生

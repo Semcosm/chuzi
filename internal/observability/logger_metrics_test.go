@@ -119,6 +119,15 @@ func TestMetricsExposeStableLabelsWithoutIdentifiers(t *testing.T) {
 	}
 }
 
+func TestMetricsCountRateLimitedSubmissionsSeparately(t *testing.T) {
+	metrics := NewMetrics()
+	metrics.Record(Event{Component: "request", Operation: "submit", Outcome: "denied", ErrorClass: "rate_limited"})
+	text := metrics.Prometheus()
+	if !strings.Contains(text, "chuzi_rate_limited_requests_total 1") {
+		t.Fatalf("rate limit counter = %s", text)
+	}
+}
+
 func TestMetricsRejectInvalidHistogramAndLabelDefinitions(t *testing.T) {
 	metrics := NewMetrics()
 	if err := metrics.Register(MetricDefinition{Name: "invalid_histogram", Kind: Histogram, Buckets: []float64{0.1, math.Inf(1)}}); !errors.Is(err, ErrInvalidMetric) {
