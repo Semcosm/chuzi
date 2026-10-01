@@ -227,6 +227,17 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return s.api.GetRequest(ctx, params.RequestID)
+	case methodListRequests:
+		listAPI, ok := s.api.(coreapi.RequestListAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "request list is unavailable")
+		}
+		var params coreapi.RequestQuery
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		items, err := listAPI.ListRequests(ctx, params)
+		return RequestsResult{Requests: items}, err
 	case methodGetAccount:
 		var params struct {
 			AccountID string `json:"account_id"`
@@ -273,6 +284,16 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return viewAPI.GetBrowserView(ctx, params)
+	case methodIssueRDPCapability:
+		capabilityAPI, ok := s.api.(coreapi.RDPCapabilityAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "interactive RDP is unavailable")
+		}
+		var params coreapi.RDPCapabilityRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		return capabilityAPI.IssueRDPCapability(ctx, params)
 	case methodSubmitDiagnostic:
 		diagnosticsAPI, ok := s.api.(coreapi.DiagnosticsAPI)
 		if !ok {

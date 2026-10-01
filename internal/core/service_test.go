@@ -3,7 +3,9 @@ package core
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,10 +32,27 @@ func (viewServiceRequests) Cancel(string, string, string) (store.Request, error)
 type viewServiceStore struct{}
 
 func (viewServiceStore) GetAccount(string) (account.Snapshot, error) { return account.Snapshot{}, nil }
+func (viewServiceStore) ListRequests() ([]store.Request, error)      { return nil, nil }
 func (viewServiceStore) ListAuditEntries(store.AuditQuery) ([]store.AuditEntry, error) {
 	return nil, nil
 }
 func (viewServiceStore) QueryNotifications(store.NotificationQuery) ([]store.Notification, error) {
+	return nil, nil
+}
+
+type listServiceStore struct {
+	requests []store.Request
+	err      error
+}
+
+func (s listServiceStore) GetAccount(string) (account.Snapshot, error) {
+	return account.Snapshot{}, nil
+}
+func (s listServiceStore) ListRequests() ([]store.Request, error) { return s.requests, s.err }
+func (listServiceStore) ListAuditEntries(store.AuditQuery) ([]store.AuditEntry, error) {
+	return nil, nil
+}
+func (listServiceStore) QueryNotifications(store.NotificationQuery) ([]store.Notification, error) {
 	return nil, nil
 }
 
@@ -47,6 +66,22 @@ type failedViewServicePort struct{}
 
 func (failedViewServicePort) Snapshot(context.Context, string, int, int) (browser.ViewSnapshot, error) {
 	return browser.ViewSnapshot{}, errors.New("adapter details must stay behind the Core boundary")
+}
+
+type rdpRequestPort struct{ request store.Request }
+
+func (rdpRequestPort) Submit(request.SubmitInput) (store.Request, bool, error) {
+	return store.Request{}, false, nil
+}
+func (p rdpRequestPort) Status(string) (store.Request, error) { return p.request, nil }
+func (rdpRequestPort) Cancel(string, string, string) (store.Request, error) {
+	return store.Request{}, nil
+}
+
+type rdpCapabilityPort struct{}
+
+func (rdpCapabilityPort) Issue(context.Context, string, string, string) (coreapi.RDPCapability, error) {
+	return coreapi.RDPCapability{ID: "rdp_abc", Token: "opaque-token", RequestID: "request-1", ExpiresAt: time.Now().Add(time.Minute)}, nil
 }
 
 type testDiagnosticsPort struct{}
@@ -106,5 +141,98 @@ func TestGetBrowserViewMapsAdapterFailureToUnavailable(t *testing.T) {
 	_, err = service.GetBrowserView(context.Background(), coreapi.BrowserViewRequest{RequestID: "request-1"})
 	if got := coreapi.CodeOf(err); got != coreapi.CodeUnavailable {
 		t.Fatalf("error code = %q, want %q", got, coreapi.CodeUnavailable)
+	}
+}
+
+func TestIssueRDPCapabilityRequiresAuthorizedRequestAndReturnsOpaqueProjection(t *testing.T) {
+	request := store.Request{RequestID: "request-1", AccountID: "account-secret", State: account.LoginSucceeded}
+	service, err := New(Dependencies{Requests: rdpRequestPort{request: request}, Store: viewServiceStore{}, RDP: rdpCapabilityPort{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability, err := service.IssueRDPCapability(context.Background(), coreapi.RDPCapabilityRequest{RequestID: "request-1", Actor: "windows-ui"})
+	if err != nil || capability.Token != "opaque-token" || capability.RequestID != "request-1" {
+		t.Fatalf("capability = %#v, err=%v", capability, err)
+	}
+	if strings.Contains(capability.Token, "account-secret") {
+		t.Fatal("capability token contains account material")
+	}
+
+	request.State = account.Queued
+	service, _ = New(Dependencies{Requests: rdpRequestPort{request: request}, Store: viewServiceStore{}, RDP: rdpCapabilityPort{}})
+	if _, err := service.IssueRDPCapability(context.Background(), coreapi.RDPCapabilityRequest{RequestID: "request-1", Actor: "windows-ui"}); coreapi.CodeOf(err) != coreapi.CodeForbidden {
+		t.Fatalf("queued request error = %v, code=%q", err, coreapi.CodeOf(err))
+	}
+}
+
+func TestListRequestsOrdersPaginatesAndRedacts(t *testing.T) {
+	created := time.Date(2026, time.September, 8, 12, 0, 0, 0, time.UTC)
+	service, err := New(Dependencies{
+		Requests: viewServiceRequests{},
+		Store: listServiceStore{requests: []store.Request{
+			{RequestID: "request-b", AccountID: "account-private-b", IdempotencyKey: "idem-private-b", NotificationRoomID: "!room-private-b", State: account.Queued, CreatedAt: created, UpdatedAt: created},
+			{RequestID: "request-a", AccountID: "account-private-a", IdempotencyKey: "idem-private-a", NotificationRoomID: "!room-private-a", State: account.Starting, CreatedAt: created, UpdatedAt: created},
+			{RequestID: "request-c", AccountID: "account-private-c", IdempotencyKey: "idem-private-c", NotificationRoomID: "!room-private-c", State: account.LoginFailed, CreatedAt: created.Add(time.Second), UpdatedAt: created.Add(time.Second)},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := service.ListRequests(context.Background(), coreapi.RequestQuery{Offset: 1, Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].RequestID != "request-b" || items[1].RequestID != "request-c" {
+		t.Fatalf("items = %#v", items)
+	}
+	if !strings.HasPrefix(items[0].Account, "id_") || strings.Contains(items[0].Account, "private") {
+		t.Fatalf("account was not redacted: %#v", items[0])
+	}
+	raw, marshalErr := json.Marshal(items)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	for _, forbidden := range []string{"idem-private", "room-private", "notification_room_id", "idempotency_key"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("sensitive field %q crossed projection: %s", forbidden, raw)
+		}
+	}
+}
+
+func TestListRequestsFiltersStateAndReturnsEmptyList(t *testing.T) {
+	created := time.Date(2026, time.September, 8, 12, 0, 0, 0, time.UTC)
+	service, err := New(Dependencies{
+		Requests: viewServiceRequests{},
+		Store:    listServiceStore{requests: []store.Request{{RequestID: "request-a", AccountID: "account-a", State: account.Queued, CreatedAt: created, UpdatedAt: created}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := service.ListRequests(context.Background(), coreapi.RequestQuery{State: string(account.LoginFailed), Limit: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if items == nil || len(items) != 0 {
+		t.Fatalf("empty list = %#v, want non-nil empty list", items)
+	}
+}
+
+func TestListRequestsRejectsInvalidQueryAndRedactsReaderError(t *testing.T) {
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: listServiceStore{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, query := range []coreapi.RequestQuery{{Limit: maxQueryLimit + 1}, {State: "not-a-state"}} {
+		if _, err := service.ListRequests(context.Background(), query); coreapi.CodeOf(err) != coreapi.CodeInvalidArgument {
+			t.Fatalf("query %#v error = %v, code=%q", query, err, coreapi.CodeOf(err))
+		}
+	}
+	failing, err := New(Dependencies{Requests: viewServiceRequests{}, Store: listServiceStore{err: errors.New("bbolt /secret/path must not leak")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = failing.ListRequests(context.Background(), coreapi.RequestQuery{})
+	if coreapi.CodeOf(err) != coreapi.CodeInternal || strings.Contains(err.Error(), "/secret/path") {
+		t.Fatalf("reader error = %v, code=%q", err, coreapi.CodeOf(err))
 	}
 }

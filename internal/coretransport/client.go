@@ -208,6 +208,12 @@ func (c *Client) GetRequest(ctx context.Context, id string) (coreapi.Request, er
 	return result, err
 }
 
+func (c *Client) ListRequests(ctx context.Context, query coreapi.RequestQuery) ([]coreapi.Request, error) {
+	var result RequestsResult
+	err := c.Call(ctx, methodListRequests, query, &result)
+	return result.Requests, err
+}
+
 func (c *Client) GetAccount(ctx context.Context, id string) (coreapi.Account, error) {
 	var result coreapi.Account
 	err := c.Call(ctx, methodGetAccount, struct {
@@ -245,6 +251,12 @@ func (c *Client) ListNotifications(ctx context.Context, query coreapi.Notificati
 func (c *Client) GetBrowserView(ctx context.Context, input coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
 	var result coreapi.BrowserView
 	err := c.Call(ctx, methodGetBrowserView, input, &result)
+	return result, err
+}
+
+func (c *Client) IssueRDPCapability(ctx context.Context, input coreapi.RDPCapabilityRequest) (coreapi.RDPCapability, error) {
+	var result coreapi.RDPCapability
+	err := c.Call(ctx, methodIssueRDPCapability, input, &result)
 	return result, err
 }
 

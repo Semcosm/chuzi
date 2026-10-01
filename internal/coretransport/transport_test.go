@@ -47,6 +47,9 @@ func (a *testAPI) GetRequest(ctx context.Context, id string) (coreapi.Request, e
 	}
 	return coreapi.Request{RequestID: id, Account: "id_account", State: "QUEUED"}, nil
 }
+func (a *testAPI) ListRequests(context.Context, coreapi.RequestQuery) ([]coreapi.Request, error) {
+	return []coreapi.Request{{RequestID: "listed-1", Account: "id_account", State: "QUEUED"}}, nil
+}
 func (a *testAPI) GetAccount(context.Context, string) (coreapi.Account, error) {
 	return coreapi.Account{Account: "id_account", State: "NO_REQUEST"}, nil
 }
@@ -96,6 +99,9 @@ func TestUnixContractHandshakeAndCoreCall(t *testing.T) {
 	if _, err := client.GetRequest(context.Background(), "req-2"); err != nil {
 		t.Fatal(err)
 	}
+	if requests, err := client.ListRequests(context.Background(), coreapi.RequestQuery{Limit: 1}); err != nil || len(requests) != 1 || requests[0].RequestID != "listed-1" {
+		t.Fatalf("requests = %#v, err=%v", requests, err)
+	}
 	if account, err := client.GetAccount(context.Background(), "account-1"); err != nil || account.State != "NO_REQUEST" {
 		t.Fatalf("account = %#v, err=%v", account, err)
 	}
@@ -111,6 +117,31 @@ func TestUnixContractHandshakeAndCoreCall(t *testing.T) {
 	cancelled, err := client.CancelRequest(context.Background(), coreapi.CancelRequest{RequestID: "req-1", Reason: "test"})
 	if err != nil || cancelled.State != "CANCELLED" {
 		t.Fatalf("cancel = %#v, err=%v", cancelled, err)
+	}
+}
+
+func TestHelloAdvertisesListRequests(t *testing.T) {
+	api := &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	hello, err := client.Hello(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, method := range hello.Methods {
+		if method == MethodListRequests {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("hello methods = %#v", hello.Methods)
 	}
 }
 

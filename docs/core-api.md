@@ -45,7 +45,7 @@ The first request on a connection must be:
 The result contains the negotiated version and supported method names:
 
 ```json
-{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","submit_diagnostic_report"]}
+{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report"]}
 ```
 
 An unsupported protocol or version is reported as `unavailable`. Calls before
@@ -57,13 +57,51 @@ successful negotiation are rejected as `invalid_argument`.
 | --- | --- | --- |
 | `submit_request` | `coreapi.SubmitRequest` | `{request, idempotent}` |
 | `get_request` | `{request_id}` | `coreapi.Request` |
+| `list_requests` | `coreapi.RequestQuery` | `{requests}` |
 | `get_account` | `{account_id}` | `coreapi.Account` |
 | `cancel_request` | `coreapi.CancelRequest` | `coreapi.Request` |
 | `get_result` | `{request_id}` | `coreapi.Result` |
 | `list_events` | `coreapi.EventQuery` | `{events}` |
 | `list_notifications` | `coreapi.NotificationQuery` | `{notifications}` |
 | `get_browser_view` | `{request_id, width?, height?}` | `coreapi.BrowserView` |
+| `issue_rdp_capability` | `coreapi.RDPCapabilityRequest` | `coreapi.RDPCapability` |
 | `submit_diagnostic_report` | `coreapi.DiagnosticReport` | `coreapi.DiagnosticStatus` |
+
+`list_requests` returns a bounded, read-only request projection. It lists
+persisted request records; it does not enumerate accounts without requests or
+assert that a browser session is still running. The optional `state` filter is
+an exact match against the request business-state values
+(`NO_REQUEST`, `QUEUED`, `STARTING`, `LOGGING_IN`, `LOGIN_SUCCEEDED`,
+`LOGIN_FAILED`, `EXPIRED`, `CANCELLED`, and `BLOCKED`). `offset` skips matching
+rows and `limit` bounds the returned rows. Both are non-negative; an omitted or
+zero `limit` uses the default of 100, the maximum `limit` is 1000, and the
+maximum `offset` is 100000. Invalid state, offset, or limit values return
+`invalid_argument`.
+
+Rows are ordered by ascending `created_at`, then ascending `request_id` as the
+stable tie-breaker. The current Store implementation reads and sorts the
+durable request set before Core applies the state filter and page window; the
+response is bounded, though the backing scan is proportional to all persisted
+requests. An empty page succeeds with an empty `requests` array. Account identifiers are returned
+only as stable redacted labels (`id_` plus 12 lowercase SHA-256 hex characters);
+request IDs remain opaque action keys so clients can call `get_request`, while
+idempotency keys, room IDs, raw account IDs, actors, and other internal fields
+are omitted. For example:
+
+```json
+{
+  "protocol":"chuzi.core/v1",
+  "id":"c-2",
+  "method":"list_requests",
+  "params":{"state":"QUEUED","offset":0,"limit":25}
+}
+```
+
+The result envelope is:
+
+```json
+{"protocol":"chuzi.core/v1","id":"c-2","type":"result","result":{"requests":[{"request_id":"req-1","account":"id_0123456789ab","state":"QUEUED","attempt":0,"created_at":"2026-09-29T00:00:00Z","updated_at":"2026-09-29T00:00:00Z"}]}}
+```
 
 `list_notifications` accepts optional `account_id`, `request_id`, `since`,
 `until`, `offset`, and `limit` filters. Filtering, stable creation-time
@@ -77,6 +115,18 @@ accepts only the request ID; it never accepts a URL, CDP endpoint, Profile path,
 mouse input, or keyboard input. If the request has no active browser session,
 the method returns `unavailable`. Frames are not persisted, logged, audited, or
 sent through Matrix.
+
+`issue_rdp_capability` is an optional, authorization-gated handoff for an
+interactive RDP workspace. The request contains only a request ID and actor;
+Core checks that the request has an active or successful session and delegates
+authorization to the credential boundary. The result is an opaque, short-lived
+bearer token with an expiry. It contains no host, endpoint, username, password,
+certificate, Profile path, or pixel data. The token is never written to logs;
+clients must discard it after the session ends. When the capability provider is
+absent, revoked, expired, or unauthorized, Core returns `unavailable`,
+`conflict`, or `forbidden` and the client must not show an interactive Open
+action.
+
 
 `submit_diagnostic_report` is available only after an explicit user consent
 action in the native client. The request contains a bounded severity, category,
