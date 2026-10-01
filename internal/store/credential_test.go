@@ -107,6 +107,60 @@ func TestStoreCredentialMutationIsIdempotentAndRejectsAuditConflict(t *testing.T
 	if err := service.ApplyCredentialMutation(credential.Mutation{AccountID: "account-1", Record: &next, Audit: nextAudit}); !errors.Is(err, credential.ErrVersionConflict) {
 		t.Fatalf("version conflict = %v", err)
 	}
+	revokedAt := at.Add(time.Minute)
+	revoked := record
+	revoked.Version = 2
+	revoked.UpdatedAt = revokedAt
+	revoked.RevokedAt = &revokedAt
+	revoked.Nonce = nil
+	revoked.Ciphertext = nil
+	deletionAudit := credential.Audit{AuditID: "audit-delete", AccountID: "account-1", DeletionID: "deletion-1", Operation: credential.OperationRevokeForDeletion, Actor: "operator", Version: 2, KeyID: key.ID(), OccurredAt: revokedAt}
+	deletionMutation := credential.Mutation{AccountID: "account-1", Record: &revoked, Audit: deletionAudit}
+	if err := service.ApplyCredentialMutation(deletionMutation); err != nil {
+		t.Fatal(err)
+	}
+	conflictingDeletion := deletionMutation
+	conflictingDeletion.Audit.DeletionID = "deletion-2"
+	if err := service.ApplyCredentialMutation(conflictingDeletion); !errors.Is(err, credential.ErrAuditConflict) {
+		t.Fatalf("deletion audit conflict = %v", err)
+	}
+}
+
+func TestStoreCredentialDeletionRevokeWipesMaterial(t *testing.T) {
+	service, _ := openTestStore(t)
+	if _, err := service.CreateAccount("account-1"); err != nil {
+		t.Fatal(err)
+	}
+	key, err := credential.NewKey("key-1", bytesForStore(0x51, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyring, err := credential.NewStaticKeyring(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	credentials, err := credential.New(service, keyring)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, time.September, 10, 15, 0, 0, 0, time.UTC)
+	if _, err := credentials.Put(context.Background(), "account-1", []byte("secret-value"), "operator", at); err != nil {
+		t.Fatal(err)
+	}
+	if err := credentials.RevokeForDeletion(context.Background(), "account-1", "deletion-1", "operator", true, at.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	record, found, err := service.GetCredential("account-1")
+	if err != nil || !found || record.RevokedAt == nil || len(record.Nonce) != 0 || len(record.Ciphertext) != 0 {
+		t.Fatalf("deleted credential = %#v/%t: %v", record, found, err)
+	}
+	if err := credentials.RevokeForDeletion(context.Background(), "account-1", "deletion-1", "operator", true, at.Add(2*time.Minute)); err != nil {
+		t.Fatalf("idempotent deletion revoke = %v", err)
+	}
+	audits, err := credentials.Audits(context.Background(), "account-1")
+	if err != nil || len(audits) != 2 || audits[1].Operation != credential.OperationRevokeForDeletion || audits[1].DeletionID != "deletion-1" {
+		t.Fatalf("deletion audits = %#v, %v", audits, err)
+	}
 }
 
 func bytesForStore(value byte, length int) []byte {

@@ -70,7 +70,7 @@ func validateDB(database *bbolt.DB) error {
 			migrations.RequestIdempotencyBucket, migrations.AuditsBucket,
 			migrations.EventsBucket, migrations.LeasesBucket, migrations.QueueBucket,
 			migrations.CredentialsBucket, migrations.CredentialAuditsBucket,
-			migrations.MatrixNotificationsBucket,
+			migrations.MatrixNotificationsBucket, migrations.AccountDeletionsBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				return fmt.Errorf("%w: required bucket %q is missing", ErrCorruptData, name)
@@ -97,7 +97,32 @@ func validateDB(database *bbolt.DB) error {
 		if err := validateNotificationsTx(tx); err != nil {
 			return err
 		}
+		if err := validateDeletionsTx(tx); err != nil {
+			return err
+		}
 		return validateEventsTx(tx)
+	})
+}
+
+func validateDeletionsTx(tx *bbolt.Tx) error {
+	return tx.Bucket([]byte(migrations.AccountDeletionsBucket)).ForEach(func(key, value []byte) error {
+		if value == nil {
+			return fmt.Errorf("%w: deletion bucket contains nested bucket", ErrCorruptData)
+		}
+		var deletion account.DeletionSnapshot
+		if err := decode(value, &deletion); err != nil {
+			return err
+		}
+		if string(key) != deletion.AccountID {
+			return fmt.Errorf("%w: deletion account key mismatch", ErrCorruptData)
+		}
+		if err := deletion.Validate(); err != nil {
+			return fmt.Errorf("%w: invalid deletion record", ErrCorruptData)
+		}
+		if tx.Bucket([]byte(migrations.AccountsBucket)).Get(key) == nil {
+			return fmt.Errorf("%w: deletion references missing account", ErrCorruptData)
+		}
+		return nil
 	})
 }
 

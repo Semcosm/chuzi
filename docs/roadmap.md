@@ -120,7 +120,10 @@ Playwright/Chromium 下载不属于本阶段。
 - 加密数据与密钥分离保存，密钥缺失或轮换失败会安全失败。
 - 业务调用方无法默认读取长期明文凭证。
 - 日志、错误、审计和通知都有脱敏测试。
-- 撤销和会话失效的顺序有明确测试覆盖；账号删除流程尚未实现。
+- 撤销和会话失效的顺序有明确测试覆盖；CR-0084 增加了账号删除状态机、v5
+  Store 记录、删除前会话停止门槛、凭证擦除和 Profile purge/retain 边界。
+  Session Runner 的 lease fence、Matrix/Core 双确认、统一编排和 tombstone/outbox
+  联动仍待后续实现 CR。
 
 ### 阶段六：Matrix 适配器与状态通知
 

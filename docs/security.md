@@ -5,7 +5,8 @@
 - 数据库存储密文，密钥通过部署环境的 Secret 管理，不与代码或示例配置一起提交。
 - 业务代码通过最小权限接口获取短时使用句柄；默认不返回明文凭证。
 - 支持凭证轮换、撤销和审计；撤销时可先调用可选的会话失效边界。账号删除
-  流程当前尚未实现。
+  使用独立的删除 ID 和 checkpoint，只有显式确认会话已停止后才允许擦除凭证。
+  Session Runner 的停止/lease fence、Matrix/Core 双确认和统一编排仍需后续接入。
 - 日志、错误堆栈、截图和 Matrix 消息均需脱敏。
 
 安装后的诊断上报必须由用户逐次同意。客户端弹窗只说明收集范围；同意
@@ -36,7 +37,7 @@ Matrix command/notification 边界只允许固定命令和显式白名单房间/
 
 ## 浏览器 Profile
 
-每个账号绑定独立 Profile 目录和互斥租约，避免 Cookie、缓存和 LocalStorage 串号。Profile 路径只能由服务生成，禁止把任意用户输入直接拼接为文件路径。当前 `Profiles.Prepare/Acquire` 会保留目录供后续尝试复用，清理和保留策略仍是显式的后续运维层；持久会话数据应加密或置于受限目录。
+每个账号绑定独立 Profile 目录和互斥租约，避免 Cookie、缓存和 LocalStorage 串号。Profile 路径只能由服务生成，禁止把任意用户输入直接拼接为文件路径。`Profiles.Remove` 和 `Profiles.Retain` 只接受服务派生的账号目录；Remove 在目录已不存在时幂等，并拒绝忙碌 Profile、符号链接和越界目标。删除编排选择 purge 或 retain 后仍必须由 Session Runner 确认 worker 已停止；持久会话数据应加密或置于受限目录。
 
 本项目支持“每线程独立会话标识”和正常的浏览器配置隔离；不把伪造设备信息、规避风控或绕过验证码作为需求。
 

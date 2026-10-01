@@ -440,6 +440,19 @@ func createRequestTx(tx *bbolt.Tx, request Request) (Request, bool, error) {
 	if err != nil {
 		return Request{}, false, err
 	}
+	if deletionRaw := tx.Bucket([]byte(migrations.AccountDeletionsBucket)).Get([]byte(request.AccountID)); deletionRaw != nil {
+		var deletion account.DeletionSnapshot
+		if err := decode(deletionRaw, &deletion); err != nil {
+			return Request{}, false, fmt.Errorf("%w: decode deletion: %v", ErrCorruptData, err)
+		}
+		if err := deletion.Validate(); err != nil {
+			return Request{}, false, fmt.Errorf("%w: invalid deletion: %v", ErrCorruptData, err)
+		}
+		if deletion.Stage == account.DeletionTombstoned {
+			return Request{}, false, ErrAccountDeleted
+		}
+		return Request{}, false, ErrDeletionInProgress
+	}
 	if state.Status != account.NoRequest {
 		return Request{}, false, ErrAccountBusy
 	}

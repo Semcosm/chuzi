@@ -76,6 +76,9 @@ func (p *Profiles) Prepare(accountID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if err := p.validateTarget(path); err != nil {
+		return "", err
+	}
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return "", fmt.Errorf("create browser profile: %w", err)
 	}
@@ -106,6 +109,71 @@ func (p *Profiles) Acquire(accountID string) (string, func(), error) {
 		return "", nil, err
 	}
 	return path, func() { p.release(accountID) }, nil
+}
+
+// Remove purges the service-derived profile for an account. It is idempotent
+// when the directory is already absent and rejects symlinked targets.
+func (p *Profiles) Remove(accountID string) error {
+	path, err := p.Path(accountID)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, exists := p.active[accountID]; exists {
+		return ErrProfileBusy
+	}
+	if err := p.validateTarget(path); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(path); err != nil {
+		return fmt.Errorf("remove browser profile: %w", err)
+	}
+	return nil
+}
+
+// Retain validates the service-derived profile without changing it. The
+// deletion aggregate records the retain decision; this boundary only ensures
+// a caller cannot turn it into an arbitrary filesystem path.
+func (p *Profiles) Retain(accountID string) error {
+	path, err := p.Path(accountID)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if _, exists := p.active[accountID]; exists {
+		return ErrProfileBusy
+	}
+	return p.validateTarget(path)
+}
+
+func (p *Profiles) validateTarget(path string) error {
+	if p == nil || path == "" {
+		return ErrInvalidProfile
+	}
+	rootInfo, err := os.Lstat(p.root)
+	if err == nil && rootInfo.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidProfile
+	}
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect browser profile root: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect browser profile: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return ErrInvalidProfile
+	}
+	relative, err := filepath.Rel(p.root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) || filepath.IsAbs(relative) || relative == "." {
+		return ErrInvalidProfile
+	}
+	return nil
 }
 
 func (p *Profiles) release(accountID string) {

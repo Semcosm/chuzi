@@ -21,22 +21,24 @@ const (
 	// storage of page contents or other unbounded data.
 	MaxPayloadSize = 64 * 1024
 
-	OperationStore  = "store"
-	OperationAccess = "access"
-	OperationRotate = "rotate"
-	OperationRevoke = "revoke"
+	OperationStore             = "store"
+	OperationAccess            = "access"
+	OperationRotate            = "rotate"
+	OperationRevoke            = "revoke"
+	OperationRevokeForDeletion = "revoke_for_deletion"
 )
 
 var (
-	ErrInvalidService     = errors.New("credential: invalid service")
-	ErrInvalidKey         = errors.New("credential: invalid key")
-	ErrInvalidCredential  = errors.New("credential: invalid credential")
-	ErrInvalidAudit       = errors.New("credential: invalid audit")
-	ErrCredentialNotFound = errors.New("credential: not found")
-	ErrCredentialRevoked  = errors.New("credential: revoked")
-	ErrKeyUnavailable     = errors.New("credential: key unavailable")
-	ErrAuthentication     = errors.New("credential: authentication failed")
+	ErrInvalidService      = errors.New("credential: invalid service")
+	ErrInvalidKey          = errors.New("credential: invalid key")
+	ErrInvalidCredential   = errors.New("credential: invalid credential")
+	ErrInvalidAudit        = errors.New("credential: invalid audit")
+	ErrCredentialNotFound  = errors.New("credential: not found")
+	ErrCredentialRevoked   = errors.New("credential: revoked")
+	ErrKeyUnavailable      = errors.New("credential: key unavailable")
+	ErrAuthentication      = errors.New("credential: authentication failed")
 	ErrSessionInvalidation = errors.New("credential: session invalidation failed")
+	ErrSessionsNotStopped  = errors.New("credential: sessions are not stopped")
 	ErrAuditConflict       = errors.New("credential: audit conflict")
 	ErrVersionConflict     = errors.New("credential: version conflict")
 	ErrAlreadyCurrentKey   = errors.New("credential: already uses current key")
@@ -144,6 +146,7 @@ func metadataFromRecord(record Record) Metadata {
 type Audit struct {
 	AuditID    string    `json:"audit_id"`
 	AccountID  string    `json:"account_id"`
+	DeletionID string    `json:"deletion_id,omitempty"`
 	Operation  string    `json:"operation"`
 	Actor      string    `json:"actor"`
 	Version    uint64    `json:"version"`
@@ -159,8 +162,19 @@ func (a Audit) Validate() error {
 		a.Version == 0 || a.OccurredAt.IsZero() {
 		return ErrInvalidAudit
 	}
+	if a.DeletionID != "" && validateIdentifier(a.DeletionID, "deletion id") != nil {
+		return ErrInvalidAudit
+	}
 	switch a.Operation {
 	case OperationStore, OperationAccess, OperationRotate, OperationRevoke:
+		if a.DeletionID != "" {
+			return ErrInvalidAudit
+		}
+		return nil
+	case OperationRevokeForDeletion:
+		if a.DeletionID == "" {
+			return ErrInvalidAudit
+		}
 		return nil
 	default:
 		return ErrInvalidAudit
@@ -209,8 +223,8 @@ type SessionInvalidator interface {
 // Service provides encrypted credential operations over a Backend and
 // deployment-owned Keyring.
 type Service struct {
-	backend    Backend
-	keys       Keyring
+	backend     Backend
+	keys        Keyring
 	invalidator SessionInvalidator
 }
 
@@ -451,6 +465,48 @@ func (s *Service) Revoke(ctx context.Context, accountID, actor string, at time.T
 	if err != nil {
 		return err
 	}
+	return s.backend.ApplyCredentialMutation(Mutation{AccountID: accountID, Record: &revoked, Audit: audit})
+}
+
+// RevokeForDeletion wipes encrypted material only after the caller has durably confirmed that all account sessions are stopped.
+func (s *Service) RevokeForDeletion(ctx context.Context, accountID, deletionID, actor string, sessionsStopped bool, at time.Time) error {
+	if err := s.validateCall(ctx, accountID, actor, at); err != nil {
+		return err
+	}
+	if !sessionsStopped {
+		return ErrSessionsNotStopped
+	}
+	if err := validateIdentifier(deletionID, "deletion id"); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidCredential, err)
+	}
+	record, found, err := s.backend.GetCredential(accountID)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return nil
+	}
+	if err := record.Validate(); err != nil {
+		return err
+	}
+	if at.Before(record.UpdatedAt) {
+		return ErrInvalidCredential
+	}
+	if record.RevokedAt != nil {
+		return nil
+	}
+	revokedAt := at
+	revoked := record
+	revoked.UpdatedAt = at
+	revoked.RevokedAt = &revokedAt
+	revoked.Nonce = nil
+	revoked.Ciphertext = nil
+	audit, err := newAudit(accountID, OperationRevoke, actor, record.Version, record.KeyID, at)
+	if err != nil {
+		return err
+	}
+	audit.Operation = OperationRevokeForDeletion
+	audit.DeletionID = deletionID
 	return s.backend.ApplyCredentialMutation(Mutation{AccountID: accountID, Record: &revoked, Audit: audit})
 }
 

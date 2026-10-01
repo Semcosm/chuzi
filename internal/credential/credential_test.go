@@ -236,6 +236,44 @@ func TestRevokeFailsClosedWhenSessionsCannotBeInvalidated(t *testing.T) {
 	}
 }
 
+func TestRevokeForDeletionRequiresStoppedSessionsAndWipesMaterial(t *testing.T) {
+	service, backend, _ := testService(t)
+	if _, err := service.Put(context.Background(), "account-1", []byte("deletion-secret"), "operator", credentialTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RevokeForDeletion(context.Background(), "account-1", "deletion-1", "admin", false, credentialTestTime.Add(time.Minute)); !errors.Is(err, ErrSessionsNotStopped) {
+		t.Fatalf("revoke before stop = %v", err)
+	}
+	if len(backend.audits) != 1 || len(backend.record.Ciphertext) == 0 {
+		t.Fatalf("failed deletion revoke changed credential: audits=%d record=%#v", len(backend.audits), backend.record)
+	}
+	if err := service.RevokeForDeletion(context.Background(), "account-1", "deletion-1", "admin", true, credentialTestTime.Add(2*time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	if len(backend.record.Nonce) != 0 || len(backend.record.Ciphertext) != 0 || backend.record.RevokedAt == nil {
+		t.Fatalf("deletion revoke retained material: %#v", backend.record)
+	}
+	if len(backend.audits) != 2 || backend.audits[1].Operation != OperationRevokeForDeletion || backend.audits[1].DeletionID != "deletion-1" {
+		t.Fatalf("deletion audit = %#v", backend.audits)
+	}
+	if err := service.RevokeForDeletion(context.Background(), "account-1", "deletion-1", "admin", true, credentialTestTime.Add(3*time.Minute)); err != nil {
+		t.Fatalf("idempotent deletion revoke = %v", err)
+	}
+	if len(backend.audits) != 2 {
+		t.Fatalf("idempotent deletion revoke added audit: %#v", backend.audits)
+	}
+}
+
+func TestRevokeForDeletionTreatsMissingCredentialAsCleared(t *testing.T) {
+	service, backend, _ := testService(t)
+	if err := service.RevokeForDeletion(context.Background(), "account-1", "deletion-1", "admin", true, credentialTestTime); err != nil {
+		t.Fatalf("missing credential revoke = %v", err)
+	}
+	if backend.found || len(backend.audits) != 0 {
+		t.Fatalf("missing credential gained durable state: %#v audits=%d", backend.record, len(backend.audits))
+	}
+}
+
 func TestEnvKeyringUsesDeploymentVariablesOnly(t *testing.T) {
 	t.Setenv("TEST_CREDENTIAL_KEY_ID", "env-key")
 	t.Setenv("TEST_CREDENTIAL_KEY", "ERERERERERERERERERERERERERERERERERERERERERE=")

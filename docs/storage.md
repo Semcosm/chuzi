@@ -28,7 +28,7 @@ Darwin arm64 的构建契约。
 自行创建账号或请求，因此已有的排队请求可在重启后由 Scheduler 按租约状态恢复。
 迁移、事务、恢复和备份契约仍由 `internal/store` 库层及其测试作为事实来源。
 
-## Schema v4
+## Schema v5
 
 迁移在数据库的 `meta/version` 中记录当前版本，并可重复执行。v1 建立
 以下 bbolt bucket：
@@ -73,6 +73,18 @@ v4 增加 Matrix 状态通知 outbox：
 账号投影不是第二套业务状态来源。读取账号时，存储层加载账号投影并回放关联
 审计记录，构造并执行 `account.Snapshot` 的完整性校验；状态机仍负责判断转换
 是否合法。
+
+v5 增加账号删除生命周期记录：
+
+| Bucket | 内容 |
+| --- | --- |
+| `account_deletions` | 按账号保存删除 ID、单调 checkpoint、重试/阻断信息、幂等事件索引和脱敏账号标签 |
+
+删除记录与账号投影在同一个数据库中持久化。创建删除记录后，Store 拒绝该账号的新请求；
+记录推进使用期望 revision 和稳定 event ID，重复事件不会增加 revision，冲突事件会失败。
+删除记录不会保存凭证、Profile 路径、worker handle、Matrix 原始房间 ID 或命令文本。
+当前实现提供状态机、持久化和恢复边界；Session Runner、Matrix/Core 双确认以及最终 tombstone/outbox
+编排仍需后续实现 CR 接入。
 
 ## 事务边界与幂等
 
