@@ -1,0 +1,114 @@
+{
+  "format": "chuzi-release/v1",
+  "channel": "test",
+  "version": "test-532-d41dbb41b4f2",
+  "commit": "d41dbb41b4f27d1573001fcc59baf5c8330eb316",
+  "target": "darwin-arm64",
+  "generated_at": "2026-10-01T04:27:22.575892Z",
+  "components": [
+    {
+      "id": "launcher",
+      "version": "test-532-d41dbb41b4f2",
+      "required": true,
+      "dependencies": [],
+      "artifact": "chuzi-test-532-d41dbb41b4f2-darwin-arm64-launcher.tar.gz",
+      "resources": [
+        {
+          "path": "chuzi-launcher",
+          "sha256": "808011e81266b27dd9b587799d36e9087bc62583ca6adcf0f7899b440c55d075",
+          "size": 6590050
+        }
+      ]
+    },
+    {
+      "id": "service",
+      "version": "test-532-d41dbb41b4f2",
+      "required": false,
+      "dependencies": [
+        "browser-worker"
+      ],
+      "artifact": "chuzi-test-532-d41dbb41b4f2-darwin-arm64-service.tar.gz",
+      "resources": [
+        {
+          "path": "chuzi",
+          "sha256": "e69e2c0a557db80ae16af85528e267cde856110730cef0427c0d2ba1557a947f",
+          "size": 7458850
+        }
+      ]
+    },
+    {
+      "id": "browser-worker",
+      "version": "test-532-d41dbb41b4f2",
+      "required": false,
+      "dependencies": [],
+      "artifact": "chuzi-test-532-d41dbb41b4f2-darwin-arm64-browser-worker.tar.gz",
+      "resources": [
+        {
+          "path": "browser-worker/src/cdp-runtime.mjs",
+          "sha256": "0cbf8bca821e05499db6125aef265ac5f90bc283f36e787f6ec311fe35749165",
+          "size": 10614
+        },
+        {
+          "path": "browser-worker/src/headless-adapter.mjs",
+          "sha256": "626e8145b237af9d4fab9c6b9bee9e29fe39e6f3d196b8d89fc260e99c5c0e50",
+          "size": 28201
+        },
+        {
+          "path": "browser-worker/src/headless.mjs",
+          "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+          "size": 14202
+        },
+        {
+          "path": "browser-worker/src/local-test-page.html",
+          "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+          "size": 397
+        },
+        {
+          "path": "browser-worker/src/worker.mjs",
+          "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+          "size": 3421
+        },
+        {
+          "path": "browser-worker/worker-manifest.json",
+          "sha256": "b514d60399b3a8865ae004a0e6195bc6d8436f629df74373ee246c078478f17f",
+          "size": 434
+        }
+      ]
+    }
+  ],
+  "plugins": [
+    {
+      "id": "chuzi.headless-cdp",
+      "version": "test-532-d41dbb41b4f2",
+      "api": "chuzi.adapter/v1",
+      "distribution": "builtin",
+      "source_component": "browser-worker",
+      "capabilities": [
+        "cdp@1",
+        "headless-cdp@1",
+        "headed-cdp@1",
+        "browser-view@1",
+        "local.test-page@1"
+      ],
+      "installable": false
+    },
+    {
+      "id": "genshin-cloudgame",
+      "version": "test-532-d41dbb41b4f2",
+      "api": "chuzi.adapter/v1",
+      "entry": "adapter.mjs",
+      "distribution": "package",
+      "target": "darwin-arm64",
+      "archive": "chuzi-test-532-d41dbb41b4f2-darwin-arm64-genshin-cloudgame.tar.gz",
+      "sha256": "6d8dfba8b2479ff3c99b4f23a9e5f0c0a706844d5b535b3b725f17866d1d1015",
+      "capabilities": [
+        "genshin-cloudgame@1"
+      ],
+      "permissions": [
+        "browser.cdp.loopback"
+      ],
+      "signed_by": "chuzi-release",
+      "installable": true
+    }
+  ]
+}
