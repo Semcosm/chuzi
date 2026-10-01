@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -63,6 +64,24 @@ func TestHTTPClientRejectsUnauthorizedWithoutLeakingToken(t *testing.T) {
 	}
 }
 
+func TestHTTPClientRejectsInvalidSyncCursor(t *testing.T) {
+	for _, nextBatch := range []string{"", " leading", "trailing ", "bad\x00cursor"} {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, _ = writer.Write([]byte(`{"next_batch":` + strconv.Quote(nextBatch) + `,"rooms":{"join":{}}}`))
+		}))
+		client, err := NewHTTPClient(HTTPClientConfig{HomeserverURL: server.URL, AccessToken: "token"})
+		if err != nil {
+			server.Close()
+			t.Fatal(err)
+		}
+		_, err = client.Sync(context.Background(), "", time.Second)
+		server.Close()
+		if !errors.Is(err, ErrSyncProtocol) {
+			t.Fatalf("Sync next_batch %q = %v, want ErrSyncProtocol", nextBatch, err)
+		}
+	}
+}
+
 func TestGatewayHandlesSyncMessageAndUsesStableReplyEvent(t *testing.T) {
 	harness := newMatrixHarness(t)
 	var sent atomic.Bool
@@ -89,7 +108,7 @@ func TestGatewayHandlesSyncMessageAndUsesStableReplyEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, SyncTimeout: time.Second})
+	gateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, CursorStore: harness.store, SyncTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +158,7 @@ func TestGatewayContinuesAfterRateLimitedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, SyncTimeout: time.Second})
+	gateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, CursorStore: harness.store, SyncTimeout: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,5 +172,160 @@ func TestGatewayContinuesAfterRateLimitedEvent(t *testing.T) {
 	}
 	if err := <-runDone; !errors.Is(err, context.Canceled) {
 		t.Fatalf("gateway error after rate-limited event = %v", err)
+	}
+}
+
+func TestGatewayLoadsPersistedCursorAfterRestart(t *testing.T) {
+	harness := newMatrixHarness(t)
+	if err := harness.store.SetMatrixSyncCursor("batch-before-restart"); err != nil {
+		t.Fatal(err)
+	}
+	seenSince := make(chan string, 1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path != "/_matrix/client/v3/sync" {
+			t.Fatalf("unexpected request %s %s", request.Method, request.URL.String())
+		}
+		seenSince <- request.URL.Query().Get("since")
+		_, _ = writer.Write([]byte(`{"next_batch":"batch-after-restart","rooms":{"join":{}}}`))
+	}))
+	defer server.Close()
+	client, err := NewHTTPClient(HTTPClientConfig{HomeserverURL: server.URL, AccessToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, CursorStore: harness.store, SyncTimeout: time.Second, PollInterval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- gateway.Run(ctx) }()
+	select {
+	case since := <-seenSince:
+		if since != "batch-before-restart" {
+			t.Fatalf("sync since = %q, want persisted cursor", since)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("gateway did not issue sync")
+	}
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		cursor, cursorErr := harness.store.GetMatrixSyncCursor()
+		if cursorErr == nil && cursor == "batch-after-restart" {
+			cancel()
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := <-runDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("gateway error = %v", err)
+	}
+}
+
+func TestGatewayDoesNotAdvanceCursorWhenReplySendFails(t *testing.T) {
+	harness := newMatrixHarness(t)
+	var failSend atomic.Bool
+	failSend.Store(true)
+	var sendAttempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/_matrix/client/v3/sync":
+			_, _ = writer.Write([]byte(`{"next_batch":"batch-send","rooms":{"join":{"!ops:example.org":{"timeline":{"events":[{"type":"m.room.message","event_id":"$send-failure","sender":"@alice:example.org","content":{"msgtype":"m.text","body":"!ugs request account-1"}}]}}}}}}`))
+		default:
+			if failSend.Load() {
+				sendAttempts.Add(1)
+				writer.WriteHeader(http.StatusBadGateway)
+				return
+			}
+			sendAttempts.Add(1)
+			writer.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+	client, err := NewHTTPClient(HTTPClientConfig{HomeserverURL: server.URL, AccessToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstGateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, CursorStore: harness.store, SyncTimeout: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := firstGateway.Run(context.Background()); !errors.Is(err, ErrHTTPFailure) {
+		t.Fatalf("failed gateway error = %v", err)
+	}
+	cursor, err := harness.store.GetMatrixSyncCursor()
+	if err != nil || cursor != "" {
+		t.Fatalf("cursor after failed send = %q, %v", cursor, err)
+	}
+	failSend.Store(false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	secondGateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, CursorStore: harness.store, SyncTimeout: time.Second, PollInterval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- secondGateway.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		cursor, cursorErr := harness.store.GetMatrixSyncCursor()
+		if cursorErr == nil && cursor == "batch-send" {
+			cancel()
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := <-runDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("recovery gateway error = %v", err)
+	}
+	if sendAttempts.Load() != 2 {
+		t.Fatalf("send attempts = %d, want failed send plus retry", sendAttempts.Load())
+	}
+}
+
+func TestGatewayDeduplicatesRepeatedEventsBeforeCommittingBatch(t *testing.T) {
+	harness := newMatrixHarness(t)
+	var sends atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/_matrix/client/v3/sync":
+			_, _ = writer.Write([]byte(`{"next_batch":"batch-duplicate","rooms":{"join":{"!ops:example.org":{"timeline":{"events":[{"type":"m.room.message","event_id":"$duplicate","sender":"@alice:example.org","content":{"msgtype":"m.text","body":"!ugs request account-1"}},{"type":"m.room.message","event_id":"$duplicate","sender":"@alice:example.org","content":{"msgtype":"m.text","body":"!ugs request account-1"}}]}}}}}}`))
+		default:
+			sends.Add(1)
+			writer.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer server.Close()
+	client, err := NewHTTPClient(HTTPClientConfig{HomeserverURL: server.URL, AccessToken: "token"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	gateway, err := NewGateway(GatewayConfig{Client: client, Adapter: harness.adapter, CursorStore: harness.store, SyncTimeout: time.Second, PollInterval: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runDone := make(chan error, 1)
+	go func() { runDone <- gateway.Run(ctx) }()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		cursor, cursorErr := harness.store.GetMatrixSyncCursor()
+		if sends.Load() == 1 && cursorErr == nil && cursor == "batch-duplicate" {
+			cancel()
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := <-runDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("gateway error = %v", err)
+	}
+	if sends.Load() != 1 {
+		t.Fatalf("send attempts = %d, want one send for duplicate event IDs", sends.Load())
+	}
+	notifications, err := harness.store.ListNotifications()
+	if err != nil || len(notifications) != 1 {
+		t.Fatalf("notifications after duplicate events = %#v, %v", notifications, err)
 	}
 }

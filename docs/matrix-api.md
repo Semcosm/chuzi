@@ -43,4 +43,6 @@ Matrix 连接断开时，事件写入待发送队列；恢复后按事件 ID 去
 每个 domain event 在状态事务内至多生成一条记录；Notifier claim 后调用注入的
 `Sender`，发送参数包含稳定 event ID；失败会按退避重试，重启可回收过期 claim。
 HTTP Client 只实现必要的 Client-Server `sync`、`send` 和 `whoami` 调用；access
-token 从配置指定的环境变量注入，fake Sender 集成测试仍不访问外部服务。
+token 从配置指定的环境变量注入，fake Sender 集成测试仍不访问外部服务。同步网关
+把最后一个完整处理批次的 `next_batch` 保存在 `matrix_sync_cursors`；批次中任一
+有效回复发送失败时不推进游标，重启后按稳定事件 ID 重放该批次。
