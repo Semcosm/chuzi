@@ -1221,15 +1221,115 @@ impl SharedState {
     }
 }
 
-pub struct DesktopRdpController {
-    _window: DesktopRdpWindow,
+/// Host-neutral ownership for one interactive RDP session.
+///
+/// The runtime owns the worker, input channel, framebuffer state, and optional
+/// performance collector. A UI host may attach its own frame pump without
+/// creating another FreeRDP connection.
+pub struct RdpSessionRuntime {
     shared: Arc<SharedState>,
     worker: Option<JoinHandle<()>>,
-    frame_timer: Timer,
     #[cfg_attr(not(windows), allow(dead_code))]
     input_tx: Sender<RdpInput>,
+    host: Arc<Mutex<RdpHost>>,
+    worker_start_count: AtomicU64,
     #[cfg(windows)]
     presentmon: Option<Rc<RefCell<PresentMonCapture>>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RdpHost {
+    Docked,
+    Floating,
+    Hidden,
+    Stopped,
+}
+
+impl Default for RdpHost {
+    fn default() -> Self {
+        Self::Docked
+    }
+}
+
+impl RdpHost {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Docked => "docked",
+            Self::Floating => "floating",
+            Self::Hidden => "hidden",
+            Self::Stopped => "stopped",
+        }
+    }
+}
+
+impl RdpSessionRuntime {
+    pub fn status_snapshot(&self) -> (String, String) {
+        self.shared.status_snapshot()
+    }
+
+    pub fn request_stop(&self) {
+        self.shared.stop.store(true, Ordering::SeqCst);
+        if let Ok(mut host) = self.host.lock() {
+            *host = RdpHost::Stopped;
+        }
+    }
+
+    /// Explicit Stop releases the worker and performance capture. Host
+    /// changes call only the presentation methods above.
+    pub fn stop(&mut self) {
+        self.request_stop();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+        self.shared.perf.report_if_due(true);
+        #[cfg(windows)]
+        if let Some(presentmon) = self.presentmon.take() {
+            presentmon.borrow_mut().finish();
+        }
+    }
+
+    pub fn host(&self) -> RdpHost {
+        self.host
+            .lock()
+            .map(|host| *host)
+            .unwrap_or(RdpHost::Stopped)
+    }
+
+    /// Switches presentation hosts without touching the FreeRDP worker.
+    pub fn dock(&self) {
+        self.set_host(RdpHost::Docked);
+    }
+    pub fn float(&self) {
+        self.set_host(RdpHost::Floating);
+    }
+    pub fn hide(&self) {
+        self.set_host(RdpHost::Hidden);
+    }
+    pub fn close_floating_host(&self) {
+        self.hide();
+    }
+
+    pub fn worker_start_count(&self) -> u64 {
+        self.worker_start_count.load(Ordering::Acquire)
+    }
+
+    fn set_host(&self, next: RdpHost) {
+        if let Ok(mut host) = self.host.lock() {
+            if *host != RdpHost::Stopped {
+                *host = next;
+            }
+        }
+    }
+
+    fn shared(&self) -> Arc<SharedState> {
+        Arc::clone(&self.shared)
+    }
+}
+
+pub struct DesktopRdpController {
+    _window: DesktopRdpWindow,
+    runtime: RdpSessionRuntime,
+    frame_timer: Timer,
 }
 
 impl DesktopRdpController {
@@ -1298,6 +1398,7 @@ impl DesktopRdpController {
             });
         }
 
+        let host_state = Arc::new(Mutex::new(RdpHost::Floating));
         let weak = window.as_weak();
         window.on_hide_window(move || {
             if let Some(window) = weak.upgrade() {
@@ -1305,9 +1406,15 @@ impl DesktopRdpController {
             }
         });
 
-        window
-            .window()
-            .on_close_requested(move || CloseRequestResponse::HideWindow);
+        let close_host_state = Arc::clone(&host_state);
+        window.window().on_close_requested(move || {
+            if let Ok(mut host) = close_host_state.lock() {
+                if *host != RdpHost::Stopped {
+                    *host = RdpHost::Hidden;
+                }
+            }
+            CloseRequestResponse::HideWindow
+        });
 
         let perf_enabled = options.show_hud || options.record || emit_perf_stderr;
         if (options.show_hud || options.record) && options.data_dir.as_os_str().is_empty() {
@@ -1558,34 +1665,37 @@ impl DesktopRdpController {
             }
         }
 
-        Ok(Self {
-            _window: window,
+        let runtime = RdpSessionRuntime {
             shared,
             worker,
-            frame_timer,
             input_tx,
+            host: host_state,
+            worker_start_count: AtomicU64::new(1),
             #[cfg(windows)]
             presentmon,
+        };
+
+        Ok(Self {
+            _window: window,
+            runtime,
+            frame_timer,
         })
     }
 
     pub fn status_snapshot(&self) -> (String, String) {
-        self.shared.status_snapshot()
+        self.runtime.status_snapshot()
+    }
+}
+
+impl Drop for RdpSessionRuntime {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
 impl Drop for DesktopRdpController {
     fn drop(&mut self) {
-        self.shared.stop.store(true, Ordering::SeqCst);
         self.frame_timer.stop();
-        if let Some(worker) = self.worker.take() {
-            let _ = worker.join();
-        }
-        self.shared.perf.report_if_due(true);
-        #[cfg(windows)]
-        if let Some(presentmon) = self.presentmon.take() {
-            presentmon.borrow_mut().finish();
-        }
     }
 }
 
@@ -2729,7 +2839,7 @@ mod tests {
     use super::{
         coalesce_dirty_rects, read_available_csv_records, special_key_virtual_code,
         take_pressed_key, wheel_delta_to_rdp, DirtyFrameMode, DirtyRect, Framebuffers, RdpFrame,
-        RdpPerfStats, RemoteKey, SharedState,
+        RdpHost, RdpPerfStats, RdpSessionRuntime, RemoteKey, SharedState,
     };
     use std::collections::HashMap;
     use std::fs::{File, OpenOptions};
@@ -2765,6 +2875,35 @@ mod tests {
         (0..width * height * super::BYTES_PER_PIXEL)
             .map(|index| seed.wrapping_add(index as u8))
             .collect()
+    }
+
+    #[test]
+    fn switching_hosts_keeps_one_runtime_and_worker() {
+        let shared = std::sync::Arc::new(SharedState::with_performance(
+            DirtyFrameMode::Legacy,
+            false,
+            None,
+            false,
+        ));
+        let (input_tx, _input_rx) = std::sync::mpsc::channel();
+        let runtime = RdpSessionRuntime {
+            shared,
+            worker: None,
+            input_tx,
+            host: std::sync::Arc::new(std::sync::Mutex::new(RdpHost::Docked)),
+            worker_start_count: std::sync::atomic::AtomicU64::new(1),
+            #[cfg(windows)]
+            presentmon: None,
+        };
+        runtime.float();
+        runtime.dock();
+        runtime.close_floating_host();
+        assert_eq!(runtime.host(), RdpHost::Hidden);
+        assert_eq!(runtime.worker_start_count(), 1);
+        runtime.request_stop();
+        assert_eq!(runtime.host(), RdpHost::Stopped);
+        runtime.dock();
+        assert_eq!(runtime.host(), RdpHost::Stopped);
     }
 
     #[test]
