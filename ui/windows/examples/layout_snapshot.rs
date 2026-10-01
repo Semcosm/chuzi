@@ -45,6 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 window.set_update_channel("stable".into());
                 window.set_launch_on_login(false);
                 window.set_close_to_tray(true);
+                window.set_start_core_on_launch(true);
                 window.set_update_interval(60);
             }
             window.window().set_size(PhysicalSize::new(width, height));

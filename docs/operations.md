@@ -153,6 +153,7 @@ Test 允许新代码带有未知问题，只能发布 test catalog。Nightly 只
 版本、组件资源 SHA-256/大小、适配器描述和更新 channel。`cmd/launcher` 提供 manifest
 展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
 的更新检查、资源修复、组件启停、适配器安装/更新/信任/启停/移除和 `settings`/`settings-save` CLI。
+`start_core_on_launch` 只允许客户端在应用启动时启动已经安装的 Core，不会隐式安装或修改组件。
 修改安装目录或设置前会取得 `.chuzi/launcher.lock`，`-progress` 可将脱敏的阶段事件
 写到 stderr，Ctrl-C 会通过 context 取消当前操作。显式 `-release-index` 时，下载器
 只接受 HTTPS（本地测试可显式允许 loopback HTTP）、同源归档，并校验目标平台、版本、

@@ -46,7 +46,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_theme(initial_theme.into());
 
     connect_callbacks(&ui, Arc::clone(&state));
-    refresh_core(&ui.as_weak(), Arc::clone(&state));
     load_launcher_settings(&ui, Arc::clone(&state));
     ui.run()?;
     Ok(())
@@ -83,6 +82,7 @@ impl AppState {
                 update_channel: "nightly".to_owned(),
                 launch_on_login: false,
                 close_to_tray: false,
+                start_core_on_launch: false,
                 check_interval: 60 * 60 * 1_000_000_000,
             },
             session_view_model: SessionViewModel::default(),
@@ -270,6 +270,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             },
             launch_on_login: window.get_launch_on_login(),
             close_to_tray: window.get_close_to_tray(),
+            start_core_on_launch: window.get_start_core_on_launch(),
             check_interval: i64::from(window.get_update_interval().max(5)) * 60 * 1_000_000_000,
         };
         window.set_settings_phase("saving".into());
@@ -854,8 +855,16 @@ fn load_launcher_settings(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                         window.set_update_channel(settings.update_channel.clone().into());
                         window.set_launch_on_login(settings.launch_on_login);
                         window.set_close_to_tray(settings.close_to_tray);
+                        window.set_start_core_on_launch(settings.start_core_on_launch);
                         window.set_update_interval(interval.min(i64::from(i32::MAX)) as i32);
                         window.set_settings_phase("ready".into());
+                        let start_core = settings.start_core_on_launch;
+                        state.lock().unwrap().settings = settings;
+                        if start_core {
+                            start_core_on_launch(&window.as_weak(), Arc::clone(&state));
+                        } else {
+                            refresh_core(&window.as_weak(), Arc::clone(&state));
+                        }
                     }
                     Err(error) => {
                         window.set_settings_phase("error".into());
@@ -873,10 +882,39 @@ fn load_launcher_settings(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                     );
                     window.set_message_kind("warning".into());
                     let _ = error;
+                    refresh_core(&window.as_weak(), Arc::clone(&state));
                 }
             }
         });
     });
+}
+
+fn start_core_on_launch(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    let refresh_state = Arc::clone(&state);
+    let failure_refresh_state = Arc::clone(&state);
+    run_background_with_failure(
+        ui,
+        state,
+        |state| {
+            let status = core_status(state)?;
+            if !status.installed {
+                return Ok((
+                    "Core is not installed; automatic start was skipped.".to_owned(),
+                    (),
+                ));
+            }
+            if !status.ready {
+                state.run_launcher("core-start", &[])?;
+            }
+            Ok(("Core started automatically.".to_owned(), ()))
+        },
+        move |window, _| {
+            refresh_core(&window.as_weak(), refresh_state);
+        },
+        move |window, _| {
+            refresh_core(&window.as_weak(), failure_refresh_state);
+        },
+    );
 }
 
 fn run_background_status<F>(

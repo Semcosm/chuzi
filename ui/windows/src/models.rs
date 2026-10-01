@@ -48,6 +48,8 @@ pub(crate) struct BehaviorSettings {
     pub(crate) update_channel: String,
     pub(crate) launch_on_login: bool,
     pub(crate) close_to_tray: bool,
+    #[serde(default)]
+    pub(crate) start_core_on_launch: bool,
     pub(crate) check_interval: i64,
 }
 

@@ -12,7 +12,9 @@ requests, with local search and All/Running/Queued/Failed filters, selection,
 a contextual Inspector, and on-demand read-only browser previews. Core
 installation/start recovery controls appear in the Sessions view when needed.
 Settings groups appearance, Core lifecycle, launcher update behavior, startup,
-and diagnostic privacy guidance. Launcher behavior settings are loaded and
+and diagnostic privacy guidance. The Core section can start an already
+installed Core service automatically when Chuzi launches, while installation
+remains explicit. Launcher behavior settings are loaded and
 saved through the launcher settings commands; the titlebar and Settings appearance
 control save only the UI-local theme. Diagnostic consent is shown only before
 submitting a report.

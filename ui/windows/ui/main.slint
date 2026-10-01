@@ -90,6 +90,7 @@ export component MainWindow inherits Window {
     in-out property <string> update-channel: "nightly";
     in-out property <bool> launch-on-login: false;
     in-out property <bool> close-to-tray: false;
+    in-out property <bool> start-core-on-launch: false;
     in-out property <int> update-interval: 60;
     in-out property <string> settings-phase: "loading";
 
@@ -538,6 +539,7 @@ export component MainWindow inherits Window {
                         Text { text: "Core service"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
                         Text { text: root.core-status; color: root.core-ready ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-body; font-weight: 600; vertical-stretch: 0; }
                         Text { text: "Core data is managed in the application data location."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        CheckBox { text: "Start Core automatically when Chuzi launches"; checked: root.start-core-on-launch; toggled => { root.start-core-on-launch = self.checked; } }
                         HorizontalBox {
                             spacing: ChuziTheme.space-2;
                             height: ChuziTheme.control-height;
