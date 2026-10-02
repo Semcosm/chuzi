@@ -1,7 +1,7 @@
 # CR-0093: add Core and Launcher job-pool operations control plane
 
 Base: main
-Head or Range: a2b0934
+Head or Range: 0782270
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Core Launcher job pool phase 5 control plane
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: a2b0934e2b93b125f37477c0eecb8d73f825c5d3
+Head OID: 0782270be10fdd2881b1161052b6eb688b20ab5f
 Integrated Result: pending
 
 ## Summary
