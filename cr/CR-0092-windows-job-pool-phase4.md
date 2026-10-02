@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: c501287c722fa8b43ae1dae4d8c2f9007329fdf0
+Head or Range: 88287aee7c6f9265ce7f2aab6cc0034eb2e0df5c
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 6
+Revision: 8
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: c501287c722fa8b43ae1dae4d8c2f9007329fdf0
+Head OID: 88287aee7c6f9265ce7f2aab6cc0034eb2e0df5c
 Integrated Result: pending
 
 ## Summary
@@ -72,6 +72,16 @@ ACL contract, ownership state machine, bounded stop wait, restart refusal, and a
 adapter remain deployment-owned dependencies. Until the real-machine smoke and
 production RDP authorizer pass, this CR remains PARTIAL and must not be merged as
 native acceptance.
+The opt-in -LocalRdp mode can validate a host with multiple local RDP sessions
+without a second device: the smoke script creates the disposable standard user,
+stores a random password in the current interactive user's session-scoped
+Credential Manager, starts a loopback RDP client, and the Windows test confirms
+the exact managed SID has an active WTS session. It then exercises the native
+agent, profile ACL, worker lifecycle, and retirement cleanup. This diagnostic
+does not validate the session broker listener, pipe ACL, broker ownership
+lifecycle, or production RDP authorizer. It has not yet run on the target host;
+CR-0092 remains pending.
+
 Cross-platform tests cover unknown fields/operations/versions, identity and
 generation validation, credential omission, narrow ACL identities, duplicate
 start/stop, stale generation, wrong owner, broker restart adoption refusal, and
@@ -95,6 +105,22 @@ USER_PRIV_GUEST for this disposable account while UF_NORMAL_ACCOUNT is set;
 the verifier now accepts only privilege levels 0 or 1 together with the normal-account,
 enabled, SID, marker, group, and non-Administrator fences, and continues to reject
 USER_PRIV_ADMIN.
+
+Revision 8 adds an opt-in `-LocalRdp` path for a local administrator console:
+the script creates the one-run marked user with a random password, keeps the
+credential only in the current logon session's Credential Manager, starts the
+fixed loopback `mstsc.exe` client, and waits for an active WTS session. The Go
+test independently checks the exact SID, local account marker, group and
+active-session state before provisioning the agent. Session enumeration and
+cleanup use WTS APIs and numeric session states, so they do not depend on the
+Windows display language. The Windows hosted preflight now invokes
+`-ValidateOnly` to parse the script and compile its native helpers without
+creating OS resources. This revision has passed Go tests/race/vet, Windows
+cross-build/vet, browser-worker tests, repository validators, build contract,
+and `git diff --check`; the current Linux host has no PowerShell, so the
+Windows helper compilation and local RDP/native smoke are still pending.
+`-LocalRdp` remains diagnostic evidence only; broker, pipe ACL, ownership
+lifecycle and production RDP authorizer gates are unchanged.
 
 ## Risk
 
