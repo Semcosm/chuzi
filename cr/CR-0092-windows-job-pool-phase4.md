@@ -1,7 +1,7 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: a7c9108fe41858dc6e3a68aefa04acc15a4ba894
+Head or Range: 52f1cd0457c52db0e66b4d2b32fa7dfa0cc822aa
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: a7c9108fe41858dc6e3a68aefa04acc15a4ba894
+Head OID: 52f1cd0457c52db0e66b4d2b32fa7dfa0cc822aa
 Integrated Result: pending
 
 ## Summary
