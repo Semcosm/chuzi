@@ -53,7 +53,7 @@ var (
 )
 
 var (
-	managedSIDPattern = regexp.MustCompile(`^S-[0-9]+-[0-9]+(?:-[0-9]+)+$`)
+	managedSIDPattern = regexp.MustCompile(`^S-1-[0-9]+(?:-[0-9]+)+$`)
 	ownerPattern      = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$`)
 )
 
