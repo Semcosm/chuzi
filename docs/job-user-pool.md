@@ -146,8 +146,9 @@ scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和
 agent 链路。该模式创建本轮随机命名的普通本地用户，
 用系统随机密码，并仅将凭据短暂写入当前交互用户的 session-scoped Windows Credential
 Manager；随后选择本机默认路由对应的非回环 IPv4 地址启动 mstsc.exe，等待该用户
-对应的真实 active WTS session，再运行原生 provisioner 测试。使用非回环地址避免
-Windows/RDPWrap 将 loopback 请求解释为当前 console 重连。测试按 SID、slot ownership 和 active session
+对应的真实 active WTS session，再运行原生 provisioner 测试。RDP 配置显式指定
+本轮随机用户并关闭 administrative session，使用非回环地址避免 Windows/RDPWrap 将
+loopback 请求解释为当前 console 重连。测试按 SID、slot ownership 和 active session
 重新校验身份；结束后注销 session、回收用户、profile、运行目录和临时 Credential
 Manager 凭据。session 查询使用 WTS API 和数值状态，不依赖系统显示语言。密码不进入
 命令行、环境变量、文件、Core、测试日志或输出。

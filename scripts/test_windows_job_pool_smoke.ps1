@@ -28,6 +28,7 @@ $script:unownedSmokeUsers = 0
 $script:remainingSmokeUsers = -1
 $script:rdpCredentialOwned = $false
 $script:rdpCredentialTarget = $null
+$script:rdpProfilePath = $null
 $script:rdpClientProcess = $null
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
@@ -299,10 +300,18 @@ function Start-LocalRdpSession([string] $Name) {
         $password.Dispose()
     }
 
+    $rdpProfile = Join-Path $runRoot 'local-rdp.rdp'
+    @("full address:s:$targetHost",
+      "username:s:$env:COMPUTERNAME\$Name",
+      'prompt for credentials:i:0',
+      'administrative session:i:0') |
+        Set-Content -LiteralPath $rdpProfile -Encoding ASCII
+    $script:rdpProfilePath = $rdpProfile
+
     Write-Host ('Opening a local RDP session for the disposable smoke user at ' + $targetHost + '.')
     Write-Host 'If Windows shows a first-connection certificate prompt, verify the local target and accept it.'
     $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
-    $client = Start-Process -FilePath $mstsc -ArgumentList @('/v:' + $targetHost) -PassThru -ErrorAction Stop
+    $client = Start-Process -FilePath $mstsc -ArgumentList @($rdpProfile) -PassThru -ErrorAction Stop
     $script:rdpClientProcess = $client
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -578,6 +587,10 @@ try {
     }
     if ($null -ne $script:rdpClientProcess -and -not $script:rdpClientProcess.HasExited) {
         Stop-Process -InputObject $script:rdpClientProcess -Force -ErrorAction SilentlyContinue
+    }
+    if ($null -ne $script:rdpProfilePath) {
+        Remove-Item -LiteralPath $script:rdpProfilePath -Force -ErrorAction SilentlyContinue
+        $script:rdpProfilePath = $null
     }
     $cleanupResult = Stop-SmokeResources
     Write-Host ('RemainingSmokeUsers = ' + $script:remainingSmokeUsers)
