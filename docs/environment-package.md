@@ -35,14 +35,6 @@ entrypoints for the browser worker. Node and `chuzi-user-agent.exe` remain
 fixed service-owned binaries; a package cannot select an executable or an
 adapter command.
 
-The Core/Launcher environment control surface accepts only an opaque package
-reference, never a filesystem path. Lifecycle gate operations are durable and
-idempotent and produce metadata-only audit events. The existing service
-maintenance command remains the package executor for signed local sources;
-until a deployment-owned catalog resolver is configured, Core records
-install/upgrade/rollback requests as `package_unavailable` rather than
-guessing a source or weakening the package trust boundary.
-
 Slots use the persisted environment record as their trusted target when the
 lifecycle reconciler is configured with the store authority. Pool requirements
 can narrow capabilities but cannot replace the pool environment, version,

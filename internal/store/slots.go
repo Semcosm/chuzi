@@ -25,14 +25,9 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 	if now.IsZero() {
 		return ErrInvalidQueueOptions
 	}
-	config = config.Normalized()
 	config.UpdatedAt = now.UTC()
 	if err := config.Validate(); err != nil {
 		return err
-	}
-	targetSlots := config.DesiredSlots
-	if config.DesiredState == "draining" || config.DesiredState == "disabled" {
-		targetSlots = 0
 	}
 	return s.update(func(tx *bbolt.Tx) error {
 		if err := putJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), config.PoolID, config); err != nil {
@@ -46,7 +41,7 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 		for _, current := range slots {
 			byOrdinal[current.Ordinal] = current
 		}
-		for ordinal := 1; ordinal <= targetSlots; ordinal++ {
+		for ordinal := 1; ordinal <= config.DesiredSlots; ordinal++ {
 			current, ok := byOrdinal[ordinal]
 			if ok {
 				if current.Status == slot.Deleted {
@@ -87,7 +82,7 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 		}
 		leaseBucket := tx.Bucket([]byte(migrations.SlotLeasesBucket))
 		for _, current := range slots {
-			if current.Ordinal <= targetSlots || current.Status == slot.Deleted {
+			if current.Ordinal <= config.DesiredSlots || current.Status == slot.Deleted {
 				continue
 			}
 			if (current.Status == slot.Leased || current.Status == slot.Draining) && leaseBucket.Get([]byte(current.SlotID)) != nil {
@@ -213,11 +208,7 @@ func normalizeSlotCapabilities(values []string) ([]string, error) {
 func (s *Store) GetJobPool(poolID string) (slot.PoolConfig, error) {
 	var result slot.PoolConfig
 	err := s.view(func(tx *bbolt.Tx) error {
-		if err := getJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), poolID, &result, slot.ErrPoolNotFound); err != nil {
-			return err
-		}
-		result = result.Normalized()
-		return nil
+		return getJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), poolID, &result, slot.ErrPoolNotFound)
 	})
 	return result, err
 }
@@ -236,7 +227,6 @@ func (s *Store) ListJobPools() ([]slot.PoolConfig, error) {
 			if err := config.Validate(); err != nil {
 				return fmt.Errorf("%w: invalid pool %q", ErrCorruptData, string(key))
 			}
-			config = config.Normalized()
 			result = append(result, config)
 			return nil
 		})

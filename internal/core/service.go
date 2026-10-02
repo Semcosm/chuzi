@@ -17,7 +17,6 @@ import (
 	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/credential"
 	"github.com/Semcosm/chuzi/internal/diagnostics"
-	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/observability"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
 	"github.com/Semcosm/chuzi/internal/slot"
@@ -81,25 +80,6 @@ type JobPoolStatusPort interface {
 	SlotPoolStatus(string, time.Time) (slot.StatusCounts, error)
 }
 
-type JobPoolControlPort interface {
-	ListJobPoolProjections(time.Time) ([]store.JobPoolProjection, error)
-	GetJobPoolProjection(string, time.Time) (store.JobPoolProjection, error)
-	ApplyJobPool(store.JobPoolMutation) (store.JobPoolOperation, bool, error)
-	ScaleJobPool(string, int, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error)
-	DrainJobPool(string, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error)
-	ResumeJobPool(string, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error)
-	GetJobPoolOperation(string) (store.JobPoolOperation, error)
-	ReconcileJobPoolControl(string, time.Time) (store.JobPoolProjection, error)
-}
-
-type EnvironmentControlPort interface {
-	ListEnvironmentRecords() ([]environment.Record, error)
-	ApplyEnvironmentOperation(store.EnvironmentMutation) (store.EnvironmentOperationRecord, bool, error)
-	GetEnvironmentOperation(string) (store.EnvironmentOperationRecord, error)
-	UpdateEnvironmentOperation(string, string, string, time.Time) (store.EnvironmentOperationRecord, error)
-	ApplyEnvironmentGate(string, string, string, time.Time) (environment.Record, error)
-}
-
 type Dependencies struct {
 	Requests       RequestPort
 	Store          StoreReader
@@ -107,8 +87,6 @@ type Dependencies struct {
 	RDP            RDPCapabilityPort
 	Diagnostics    DiagnosticsPort
 	JobPools       JobPoolStatusPort
-	JobPoolControl JobPoolControlPort
-	Environments   EnvironmentControlPort
 	JobPoolID      string
 	MaxConcurrency int
 	Clock          func() time.Time
@@ -121,16 +99,12 @@ type Service struct {
 	rdp            RDPCapabilityPort
 	diagnostics    DiagnosticsPort
 	jobPools       JobPoolStatusPort
-	jobPoolControl JobPoolControlPort
-	environments   EnvironmentControlPort
 	jobPoolID      string
 	maxConcurrency int
 	clock          func() time.Time
 }
 
 var _ coreapi.API = (*Service)(nil)
-var _ coreapi.JobPoolAPI = (*Service)(nil)
-var _ coreapi.EnvironmentAPI = (*Service)(nil)
 
 func New(dependencies Dependencies) (*Service, error) {
 	if dependencies.Requests == nil || dependencies.Store == nil {
@@ -140,7 +114,7 @@ func New(dependencies Dependencies) (*Service, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, environments: dependencies.Environments, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
 }
 
 func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
@@ -153,22 +127,12 @@ func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.
 	if strings.TrimSpace(poolID) == "" {
 		poolID = s.jobPoolID
 	}
-	if !validToken(poolID) {
-		return coreapi.JobPoolStatus{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	if s.jobPools == nil && s.jobPoolControl == nil {
+	if !validToken(poolID) || s.jobPools == nil {
 		return coreapi.JobPoolStatus{}, coreapi.NewError(coreapi.CodeUnavailable, "job pool status is unavailable")
 	}
 	now := s.clock()
 	if now.IsZero() {
 		return coreapi.JobPoolStatus{}, coreapi.NewError(coreapi.CodeInternal, "job pool status is unavailable")
-	}
-	if s.jobPoolControl != nil {
-		projection, err := s.jobPoolControl.GetJobPoolProjection(poolID, now)
-		if err != nil {
-			return coreapi.JobPoolStatus{}, classify(err)
-		}
-		return projectJobPoolStatus(projection), nil
 	}
 	status, err := s.jobPools.SlotPoolStatus(poolID, now)
 	if err != nil {
@@ -179,215 +143,6 @@ func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.
 		effective = s.maxConcurrency
 	}
 	return coreapi.JobPoolStatus{PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, EffectiveCapacity: effective}, nil
-}
-
-func (s *Service) ListJobPools(ctx context.Context) ([]coreapi.JobPool, error) {
-	if err := s.ready(); err != nil {
-		return nil, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-	if s.jobPoolControl == nil {
-		return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
-	}
-	items, err := s.jobPoolControl.ListJobPoolProjections(s.clock())
-	if err != nil {
-		return nil, classify(err)
-	}
-	if len(items) > maxQueryLimit {
-		items = items[:maxQueryLimit]
-	}
-	result := make([]coreapi.JobPool, 0, len(items))
-	for _, item := range items {
-		result = append(result, projectJobPool(item))
-	}
-	return result, nil
-}
-
-func (s *Service) GetJobPool(ctx context.Context, poolID string) (coreapi.JobPool, error) {
-	if err := s.ready(); err != nil {
-		return coreapi.JobPool{}, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return coreapi.JobPool{}, err
-	}
-	if !validToken(poolID) {
-		return coreapi.JobPool{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	if s.jobPoolControl == nil {
-		return coreapi.JobPool{}, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
-	}
-	item, err := s.jobPoolControl.GetJobPoolProjection(poolID, s.clock())
-	if err != nil {
-		return coreapi.JobPool{}, classify(err)
-	}
-	return projectJobPool(item), nil
-}
-
-func (s *Service) ApplyJobPool(ctx context.Context, input coreapi.JobPoolApplyRequest) (coreapi.JobPoolOperation, error) {
-	if err := s.ready(); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if s.jobPoolControl == nil || !validToken(input.Config.PoolID) || !validToken(input.Config.EnvironmentID) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) || input.Config.DesiredSlots < 0 || input.Config.MaxConcurrency < 0 {
-		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	value, _, err := s.jobPoolControl.ApplyJobPool(store.JobPoolMutation{Config: unprojectJobPoolConfig(input.Config), ExpectedRevision: input.ExpectedRevision, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, RequestedAt: input.RequestedAt})
-	if err != nil {
-		return coreapi.JobPoolOperation{}, classify(err)
-	}
-	_, _ = s.jobPoolControl.ReconcileJobPoolControl(input.Config.PoolID, s.clock())
-	if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
-		value = current
-	}
-	return projectJobPoolOperation(value), nil
-}
-
-func (s *Service) ScaleJobPool(ctx context.Context, input coreapi.JobPoolScaleRequest) (coreapi.JobPoolOperation, error) {
-	if err := s.ready(); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if s.jobPoolControl == nil || !validToken(input.PoolID) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) || input.DesiredSlots < 0 {
-		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	value, _, err := s.jobPoolControl.ScaleJobPool(input.PoolID, input.DesiredSlots, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
-	if err != nil {
-		return coreapi.JobPoolOperation{}, classify(err)
-	}
-	_, _ = s.jobPoolControl.ReconcileJobPoolControl(input.PoolID, s.clock())
-	if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
-		value = current
-	}
-	return projectJobPoolOperation(value), nil
-}
-
-func (s *Service) DrainJobPool(ctx context.Context, input coreapi.JobPoolActionRequest) (coreapi.JobPoolOperation, error) {
-	return s.jobPoolAction(ctx, input, true)
-}
-
-func (s *Service) ResumeJobPool(ctx context.Context, input coreapi.JobPoolActionRequest) (coreapi.JobPoolOperation, error) {
-	return s.jobPoolAction(ctx, input, false)
-}
-
-func (s *Service) jobPoolAction(ctx context.Context, input coreapi.JobPoolActionRequest, drain bool) (coreapi.JobPoolOperation, error) {
-	if err := s.ready(); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if s.jobPoolControl == nil || !validToken(input.PoolID) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) {
-		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	var value store.JobPoolOperation
-	var err error
-	if drain {
-		value, _, err = s.jobPoolControl.DrainJobPool(input.PoolID, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
-	} else {
-		value, _, err = s.jobPoolControl.ResumeJobPool(input.PoolID, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
-	}
-	if err != nil {
-		return coreapi.JobPoolOperation{}, classify(err)
-	}
-	_, _ = s.jobPoolControl.ReconcileJobPoolControl(input.PoolID, s.clock())
-	if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
-		value = current
-	}
-	return projectJobPoolOperation(value), nil
-}
-
-func (s *Service) GetJobPoolOperation(ctx context.Context, operationID string) (coreapi.JobPoolOperation, error) {
-	if err := s.ready(); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return coreapi.JobPoolOperation{}, err
-	}
-	if s.jobPoolControl == nil || !validToken(operationID) {
-		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	value, err := s.jobPoolControl.GetJobPoolOperation(operationID)
-	if err != nil {
-		return coreapi.JobPoolOperation{}, classify(err)
-	}
-	return projectJobPoolOperation(value), nil
-}
-
-func (s *Service) ListEnvironments(ctx context.Context) ([]coreapi.Environment, error) {
-	if err := s.ready(); err != nil {
-		return nil, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return nil, err
-	}
-	if s.environments == nil {
-		return nil, coreapi.NewError(coreapi.CodeUnavailable, "environment control is unavailable")
-	}
-	items, err := s.environments.ListEnvironmentRecords()
-	if err != nil {
-		return nil, classify(err)
-	}
-	if len(items) > maxQueryLimit {
-		items = items[:maxQueryLimit]
-	}
-	result := make([]coreapi.Environment, 0, len(items))
-	for _, item := range items {
-		result = append(result, projectEnvironment(item))
-	}
-	return result, nil
-}
-
-func (s *Service) EnvironmentOperation(ctx context.Context, input coreapi.EnvironmentOperationRequest) (coreapi.EnvironmentOperation, error) {
-	if err := s.ready(); err != nil {
-		return coreapi.EnvironmentOperation{}, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return coreapi.EnvironmentOperation{}, err
-	}
-	if s.environments == nil || !validToken(input.EnvironmentID) || !validToken(input.Version) || !validToken(input.Operation) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) || (input.PackageRef != "" && (!validToken(input.PackageRef) || strings.ContainsAny(input.PackageRef, "/\\"))) || !validEnvironmentOperation(input.Operation) {
-		return coreapi.EnvironmentOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	value, idempotent, err := s.environments.ApplyEnvironmentOperation(store.EnvironmentMutation{EnvironmentID: input.EnvironmentID, Version: input.Version, Operation: input.Operation, PackageRef: input.PackageRef, ExpectedRevision: input.ExpectedRevision, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, RequestedAt: input.RequestedAt})
-	if err != nil {
-		return coreapi.EnvironmentOperation{}, classify(err)
-	}
-	if idempotent {
-		return projectEnvironmentOperation(value), nil
-	}
-	state, failure := "applied", ""
-	if input.Operation == "install" || input.Operation == "upgrade" || input.Operation == "rollback" {
-		state, failure = "failed", "package_unavailable"
-	} else if _, gateErr := s.environments.ApplyEnvironmentGate(input.EnvironmentID, input.Version, input.Operation, s.clock()); gateErr != nil {
-		state, failure = "failed", environmentFailureCode(gateErr)
-	}
-	updated, updateErr := s.environments.UpdateEnvironmentOperation(value.OperationID, state, failure, s.clock())
-	if updateErr == nil {
-		value = updated
-	}
-	return projectEnvironmentOperation(value), nil
-}
-
-func (s *Service) GetEnvironmentOperation(ctx context.Context, operationID string) (coreapi.EnvironmentOperation, error) {
-	if err := s.ready(); err != nil {
-		return coreapi.EnvironmentOperation{}, err
-	}
-	if err := checkContext(ctx); err != nil {
-		return coreapi.EnvironmentOperation{}, err
-	}
-	if s.environments == nil || !validToken(operationID) {
-		return coreapi.EnvironmentOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
-	}
-	value, err := s.environments.GetEnvironmentOperation(operationID)
-	if err != nil {
-		return coreapi.EnvironmentOperation{}, classify(err)
-	}
-	return projectEnvironmentOperation(value), nil
 }
 
 func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
@@ -857,69 +612,6 @@ func projectNotification(notification store.Notification) coreapi.Notification {
 	}
 }
 
-func projectJobPoolConfig(value slot.PoolConfig) coreapi.JobPoolConfig {
-	value = value.Normalized()
-	return coreapi.JobPoolConfig{PoolID: value.PoolID, DesiredSlots: value.DesiredSlots, MaxConcurrency: value.MaxConcurrency, EnvironmentID: value.EnvironmentID, EnvironmentVersion: value.EnvironmentVersion, ManifestDigest: value.ManifestDigest, Signer: value.Signer, Capabilities: append([]string(nil), value.Capabilities...), RequireTrusted: value.RequireTrusted, DesiredState: value.DesiredState, Enabled: value.Enabled(), ConfigRevision: value.ConfigRevision, UpdatedAt: value.UpdatedAt, UpdatedBy: observability.RedactIdentifier(value.UpdatedBy)}
-}
-
-func projectJobPoolStatus(value store.JobPoolProjection) coreapi.JobPoolStatus {
-	status := value.Status
-	max := value.Config.MaxConcurrency
-	effective := status.Ready
-	if max > 0 && effective > max {
-		effective = max
-	}
-	return coreapi.JobPoolStatus{PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, EffectiveCapacity: effective, MaxConcurrency: max, DesiredState: value.Config.DesiredState, Enabled: value.Config.Enabled(), EnvironmentReady: value.EnvironmentReady, EnvironmentReadiness: value.EnvironmentReadiness, ReconcileState: string(value.ReconcileState), OperationID: value.OperationID, LastFailureCode: value.LastFailureCode, LastSuccessfulReconcileAt: value.LastSuccessfulReconcileAt, ConfigRevision: value.Config.ConfigRevision}
-}
-
-func projectJobPool(value store.JobPoolProjection) coreapi.JobPool {
-	return coreapi.JobPool{Config: projectJobPoolConfig(value.Config), Status: projectJobPoolStatus(value)}
-}
-
-func unprojectJobPoolConfig(value coreapi.JobPoolConfig) slot.PoolConfig {
-	state := value.DesiredState
-	if state == "" {
-		state = "enabled"
-	}
-	return slot.PoolConfig{PoolID: value.PoolID, DesiredSlots: value.DesiredSlots, MaxConcurrency: value.MaxConcurrency, EnvironmentID: value.EnvironmentID, EnvironmentVersion: value.EnvironmentVersion, ManifestDigest: value.ManifestDigest, Signer: value.Signer, Capabilities: append([]string(nil), value.Capabilities...), RequireTrusted: value.RequireTrusted, DesiredState: state}
-}
-
-func projectJobPoolOperation(value store.JobPoolOperation) coreapi.JobPoolOperation {
-	return coreapi.JobPoolOperation{OperationID: value.OperationID, PoolID: value.PoolID, Operation: value.Operation, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ConfigRevision: value.ConfigRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, Result: value.Result, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, LastSuccessfulAt: value.LastSuccessfulAt}
-}
-
-func projectEnvironment(value environment.Record) coreapi.Environment {
-	return coreapi.Environment{EnvironmentID: value.EnvironmentID, Version: value.Version, Capabilities: append([]string(nil), value.Capabilities...), ManifestDigest: value.ManifestDigest, Signer: value.Signer, Installed: value.Installed, Verified: value.Verified, Trusted: value.Trusted, Enabled: value.Enabled, Healthy: value.Healthy, Ready: value.Ready, Generation: value.Generation, UpdatedAt: value.UpdatedAt}
-}
-
-func projectEnvironmentOperation(value store.EnvironmentOperationRecord) coreapi.EnvironmentOperation {
-	return coreapi.EnvironmentOperation{OperationID: value.OperationID, EnvironmentID: value.EnvironmentID, Version: value.Version, Operation: value.Operation, State: value.State, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt}
-}
-
-func environmentFailureCode(err error) string {
-	switch {
-	case errors.Is(err, environment.ErrNotTrusted):
-		return "environment_untrusted"
-	case errors.Is(err, environment.ErrNotVerified):
-		return "environment_unverified"
-	case errors.Is(err, environment.ErrNotHealthy):
-		return "environment_unhealthy"
-	case errors.Is(err, environment.ErrNotInstalled):
-		return "package_unavailable"
-	default:
-		return "environment_operation_failed"
-	}
-}
-
-func validEnvironmentOperation(value string) bool {
-	switch value {
-	case "install", "upgrade", "verify", "trust", "enable", "disable", "health", "rollback":
-		return true
-	default:
-		return false
-	}
-}
-
 func outcome(state string) string {
 	switch account.Status(state) {
 	case account.LoginSucceeded:
@@ -955,8 +647,6 @@ func classify(err error) error {
 	case errors.Is(err, requestservice.ErrInvalidInput), errors.Is(err, ErrInvalidQuery),
 		errors.Is(err, store.ErrInvalidAccount), errors.Is(err, store.ErrInvalidRequest),
 		errors.Is(err, store.ErrInvalidNotification), errors.Is(err, account.ErrInvalidEvent),
-		errors.Is(err, slot.ErrInvalidConfig), errors.Is(err, slot.ErrInvalidRequest),
-		errors.Is(err, environment.ErrInvalidManifest),
 		errors.Is(err, account.ErrInvalidSnapshot):
 		code = coreapi.CodeInvalidArgument
 	case errors.Is(err, requestservice.ErrNotAllowed):
@@ -964,12 +654,10 @@ func classify(err error) error {
 	case errors.Is(err, requestservice.ErrRateLimited):
 		code = coreapi.CodeRateLimited
 	case errors.Is(err, store.ErrAccountNotFound), errors.Is(err, store.ErrRequestNotFound),
-		errors.Is(err, store.ErrLeaseNotFound), errors.Is(err, store.ErrJobPoolNotFound), errors.Is(err, store.ErrJobPoolOperationNotFound), errors.Is(err, store.ErrEnvironmentOperationNotFound), errors.Is(err, slot.ErrPoolNotFound):
+		errors.Is(err, store.ErrLeaseNotFound):
 		code = coreapi.CodeNotFound
 	case errors.Is(err, store.ErrAccountExists), errors.Is(err, store.ErrRequestExists),
 		errors.Is(err, store.ErrRequestConflict), errors.Is(err, store.ErrIdempotencyConflict),
-		errors.Is(err, store.ErrJobPoolStaleRevision), errors.Is(err, store.ErrJobPoolConflict), errors.Is(err, store.ErrJobPoolIdempotencyConflict),
-		errors.Is(err, store.ErrEnvironmentIdempotencyConflict), errors.Is(err, store.ErrEnvironmentStaleRevision),
 		errors.Is(err, store.ErrRequestStateMismatch), errors.Is(err, store.ErrAccountBusy),
 		errors.Is(err, account.ErrEventConflict), errors.Is(err, account.ErrStaleEvent),
 		errors.Is(err, account.ErrInvalidTransition):

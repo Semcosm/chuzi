@@ -2,11 +2,6 @@
 
 ## 逻辑资源模型
 
-Job pool 的运维配置由 Core/Launcher 持久化，包括 `desired_slots`、
-`max_concurrency`、environment ID/version、manifest digest、signer、capabilities、
-`require_trusted`、`desired_state`、`config_revision` 和更新时间。配置变更先创建
-operation，再由 reconcile 驱动 slot 生命周期；不会直接覆盖运行中的 leased slot。
-
 阶段 1 引入逻辑 `Execution Slot` / `SlotPool`，把业务账号、队列并发和
 执行资源解耦。slot 是可以复用的执行资源，不代表一个固定 account，也不保存
 业务账号凭据。逻辑层只持久化槽位和环境元数据；Windows-only provisioner 负责
@@ -62,9 +57,6 @@ runner 只接收内部的 slot ID、环境 generation 和可选 agent handle。C
 `draining` 是运行状态计数。有效槽位容量为 `min(max_concurrency, ready)`。
 Core 的 `get_job_pool_status`、运维快照和 `chuzi_slots_*` metrics 只包含这些
 计数；不返回 Windows 用户名、SID、密码、Profile 路径、RDP endpoint 或命令行。
-`list_job_pools` 和 `get_job_pool` 还返回 environment readiness、reconcile state、
-operation ID、last failure code 和 last successful reconcile time。扩缩容、排空、恢复和
-环境目标变化都要求乐观 revision 校验；同一 idempotency key 重放不会重复创建 operation。
 
 这一阶段刻意不声明多节点协调，也不改变现有 launcher、browser、credential、
 Core 或生产 RDP 边界。Windows provisioner 和 agent 只在本机受控边界内运行，
