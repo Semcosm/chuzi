@@ -65,7 +65,7 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 	if options.backend == backendHeadless || options.backend == backendHeaded {
 		browserMode, browserCommand = options.backend, options.headlessBrowserCommand
 	}
-	provisionOptions := slotwindows.Options{DataDir: cfg.DataDir, UserPrefix: cfg.WindowsJobPool.UserPrefix, EnvironmentID: pool.EnvironmentID, Version: pool.EnvironmentVersion, ManifestDigest: pool.ManifestDigest, Signer: pool.Signer, RequireTrusted: pool.RequireTrusted, RDPEnabled: cfg.WindowsJobPool.RDPEnabled, AgentPath: filepath.Join(runtimeRoot, "chuzi-user-agent.exe"), RuntimePath: environmentRuntime.Root, WorkerRuntimeRoot: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, BrowserMode: browserMode, BrowserCommand: browserCommand, SessionIdleTimeout: time.Duration(cfg.WindowsJobPool.SessionIdleTimeoutSeconds) * time.Second, CapabilityRevoker: revoker}
+	provisionOptions := slotwindows.Options{DataDir: cfg.DataDir, UserPrefix: cfg.WindowsJobPool.UserPrefix, EnvironmentID: pool.EnvironmentID, Version: pool.EnvironmentVersion, ManifestDigest: pool.ManifestDigest, Signer: pool.Signer, RequireTrusted: pool.RequireTrusted, RDPEnabled: cfg.WindowsJobPool.RDPEnabled, AgentPath: filepath.Join(runtimeRoot, "chuzi-user-agent.exe"), RuntimePath: environmentRuntime.Root, WorkerRuntimeRoot: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, BrowserMode: browserMode, BrowserCommand: browserCommand, SessionIdleTimeout: time.Duration(cfg.WindowsJobPool.SessionIdleTimeoutSeconds) * time.Second, CapabilityRevoker: revoker, RuntimeResolver: environmentRuntime.RuntimeResolver}
 	provisioner, err := slotwindows.New(provisionOptions)
 	if err != nil {
 		return nil, nil, err

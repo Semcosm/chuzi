@@ -379,6 +379,12 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return nil, err
 		}
 	}
+	// A crash can leave a package operation in requested/provisioning. Resolve
+	// that durable state before exposing the Core endpoint on restart.
+	if err := database.RecoverEnvironmentOperations(now()); err != nil {
+		_ = database.Close()
+		return nil, err
+	}
 	if cfg.JobPool.Enabled() {
 		existing, getErr := database.GetJobPool(poolConfig.PoolID)
 		if getErr == nil {

@@ -77,3 +77,45 @@ func TestEnvironmentOperationCarriesGeneration(t *testing.T) {
 		t.Fatalf("audit = %#v, err=%v", audit, err)
 	}
 }
+
+func TestRecoverEnvironmentOperationAfterRestart(t *testing.T) {
+	database, _ := openTestStore(t)
+	digest := strings.Repeat("f", 64)
+	operation, _, err := database.ApplyEnvironmentOperation(EnvironmentMutation{EnvironmentID: "env/v1", Version: "1.0.0", Operation: "install", PackageRef: "catalog-v1", IdempotencyKey: "restart-key", Actor: "operator", RequestedAt: storeTestTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.UpdateEnvironmentOperation(operation.OperationID, "provisioning", "", storeTestTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.PutEnvironmentRecord(environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: digest, Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: storeTestTime.Add(2 * time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RecoverEnvironmentOperations(storeTestTime.Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := database.GetEnvironmentOperation(operation.OperationID)
+	if err != nil || recovered.State != "applied" || recovered.FailureCode != "" {
+		t.Fatalf("recovered operation = %#v, err=%v", recovered, err)
+	}
+}
+
+func TestCompleteEnvironmentOperationCommitsRecordAndAuditTogether(t *testing.T) {
+	database, _ := openTestStore(t)
+	operation, _, err := database.ApplyEnvironmentOperation(EnvironmentMutation{EnvironmentID: "env/v1", Version: "1.0.0", Operation: "trust", IdempotencyKey: "atomic-key", Actor: "operator", RequestedAt: storeTestTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: strings.Repeat("1", 64), Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 2, UpdatedAt: storeTestTime.Add(time.Second)}
+	if _, err := database.CompleteEnvironmentOperation(operation.OperationID, "applied", "", record, storeTestTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := database.GetEnvironmentRecord(record.EnvironmentID, record.Version)
+	if err != nil || stored.Generation != 2 {
+		t.Fatalf("record = %#v, err=%v", stored, err)
+	}
+	audit, err := database.ListEnvironmentAudit(record.EnvironmentID, record.Version, 10)
+	if err != nil || len(audit) != 2 || audit[1].ToState != "applied" || audit[1].EnvironmentGeneration != 2 {
+		t.Fatalf("audit = %#v, err=%v", audit, err)
+	}
+}

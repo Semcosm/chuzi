@@ -160,11 +160,15 @@ and stable failure code only.
 
 Environment operations use the same durable operation and idempotency boundary.
 trust, enable, disable, verify, and health update lifecycle gates through the
-Store. install, upgrade, and rollback are recorded as package_unavailable until
-a service-owned package catalog executor is configured; Core never accepts a
-local path. Launcher package-ref values are opaque catalog references and reject
-separators. Environment DTOs omit package paths, raw errors, credentials, and
-runtime handles.
+signed environment manager and Store projection. install, upgrade, and rollback
+resolve only service-owned catalog references and execute signed package-tree
+validation through the manager; unavailable references receive the stable
+`package_unavailable` classification. Core never accepts a local path. Launcher
+package-ref values are opaque catalog references and reject separators.
+Environment DTOs omit package paths, raw errors, credentials, and runtime
+handles. Incomplete package operations are recovered on service restart with a
+stable `service_restarted` result unless a newer ready generation proves the
+operation committed.
 
 `cancel` is a transport operation, not a business-state command. Its
 parameters are `{id}` and its result is `{cancelled}`. A client context

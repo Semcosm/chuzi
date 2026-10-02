@@ -18,10 +18,11 @@ const environmentTrustStoreName = "environment-trust.json"
 // the signed package manager into platform provisioners. It contains resolved
 // service-owned paths, never caller-provided paths or credentials.
 type serviceEnvironmentRuntime struct {
-	Root         string
-	WorkerScript string
-	Manifest     environment.Manifest
-	Record       environment.Record
+	Root            string
+	WorkerScript    string
+	Manifest        environment.Manifest
+	Record          environment.Record
+	RuntimeResolver func(context.Context, slot.EnvironmentRequirement) (string, string, error)
 }
 
 func environmentInstallRoot(cfg config.Config) string {
@@ -82,7 +83,14 @@ func resolveServiceEnvironment(cfg config.Config, manager *environment.Manager, 
 	if !filepath.IsAbs(entryPath) || filepath.Clean(entryPath) == packageValue.Root {
 		return nil, fmt.Errorf("service: invalid environment entrypoint")
 	}
-	return &serviceEnvironmentRuntime{Root: packageValue.Root, WorkerScript: entryPath, Manifest: packageValue.Manifest, Record: packageValue.Record}, nil
+	resolver := func(ctx context.Context, requirement slot.EnvironmentRequirement) (string, string, error) {
+		resolved, selected, resolveErr := manager.ResolveEntrypoint(requirement.EnvironmentID, requirement.Version, entryName, "browser-worker")
+		if resolveErr != nil {
+			return "", "", resolveErr
+		}
+		return resolved.Root, filepath.Join(resolved.Root, filepath.FromSlash(selected.Path)), nil
+	}
+	return &serviceEnvironmentRuntime{Root: packageValue.Root, WorkerScript: entryPath, Manifest: packageValue.Manifest, Record: packageValue.Record, RuntimeResolver: resolver}, nil
 }
 
 func environmentHealthCheck(ctx context.Context, manifest environment.Manifest, root string) error {

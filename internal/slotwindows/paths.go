@@ -49,6 +49,10 @@ type Options struct {
 	BrowserCommand     string
 	SessionIdleTimeout time.Duration
 	CapabilityRevoker  CapabilityRevoker
+	// RuntimeResolver revalidates the signed package selected by a durable pool
+	// update. It returns only service-owned runtime paths; control-plane input
+	// cannot supply an executable or filesystem path.
+	RuntimeResolver func(context.Context, slot.EnvironmentRequirement) (string, string, error)
 	// SessionBootstrapper is intentionally optional. When nil, Provision keeps
 	// the existing external-session prerequisite and fails closed if FindSession
 	// cannot locate the managed SID.

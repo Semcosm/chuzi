@@ -54,6 +54,13 @@ type PoolConfigSource interface {
 	GetJobPool(string) (slot.PoolConfig, error)
 }
 
+// PoolRuntimeUpdater refreshes service-owned runtime paths after a durable
+// environment change. Implementations must resolve only signed package
+// metadata and must never accept caller paths or commands.
+type PoolRuntimeUpdater interface {
+	UpdatePoolRuntime(context.Context, slot.PoolConfig) error
+}
+
 // slotTargetUpdater is optional so focused lifecycle fakes do not need to
 // persist target metadata. The durable store implements it to record the
 // generation fence before provisioning starts.
@@ -154,6 +161,11 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		record, authorityErr := r.authority.GetEnvironmentRecord(pool.EnvironmentID, pool.EnvironmentVersion)
 		if authorityErr != nil || !record.IsReady() || record.EnvironmentID != pool.EnvironmentID || record.Version != pool.EnvironmentVersion || pool.ManifestDigest == "" || !strings.EqualFold(record.ManifestDigest, pool.ManifestDigest) || pool.Signer == "" || record.Signer != pool.Signer || !containsAll(record.Capabilities, pool.Capabilities) {
 			return errors.New("slotlifecycle: trusted environment unavailable")
+		}
+	}
+	if updater, ok := r.provisioner.(PoolRuntimeUpdater); ok {
+		if err := updater.UpdatePoolRuntime(ctx, pool); err != nil {
+			return errors.New("slotlifecycle: trusted environment runtime unavailable")
 		}
 	}
 	slots, err := r.store.ListSlots(pool.PoolID)

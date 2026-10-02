@@ -62,6 +62,10 @@ type EnvironmentAuditEvent struct {
 	OccurredAt            time.Time
 }
 
+func terminalEnvironmentOperation(state string) bool {
+	return state == "applied" || state == "failed" || state == "rolled_back" || state == "cancelled"
+}
+
 func (e EnvironmentAuditEvent) Validate() error {
 	if e.EventID == "" || e.OperationID == "" || e.EnvironmentID == "" || e.Version == "" || e.Operation == "" || e.ToState == "" || e.OccurredAt.IsZero() {
 		return ErrCorruptData
@@ -162,6 +166,9 @@ func (s *Store) UpdateEnvironmentOperation(id, state, failureCode string, at tim
 		if err := getJSON(bucket, id, &result, ErrEnvironmentOperationNotFound); err != nil {
 			return err
 		}
+		if terminalEnvironmentOperation(result.State) {
+			return nil
+		}
 		previous := result.State
 		if raw := tx.Bucket([]byte(migrations.EnvironmentPackagesBucket)).Get([]byte(environmentKey(result.EnvironmentID, result.Version))); raw != nil {
 			var record environment.Record
@@ -176,6 +183,79 @@ func (s *Store) UpdateEnvironmentOperation(id, state, failureCode string, at tim
 		return putEnvironmentAuditTx(tx, EnvironmentAuditEvent{EventID: nextEnvironmentAuditID(tx, id, at), OperationID: id, EnvironmentID: result.EnvironmentID, Version: result.Version, Operation: result.Operation, Actor: result.Actor, FromState: previous, ToState: state, Outcome: state, FailureCode: failureCode, ConfigRevision: result.ExpectedRevision, EnvironmentGeneration: result.EnvironmentGeneration, OccurredAt: at})
 	})
 	return result, err
+}
+
+// CompleteEnvironmentOperation commits a manager-validated lifecycle record,
+// operation state, and metadata-only audit event in one bbolt transaction.
+func (s *Store) CompleteEnvironmentOperation(id, state, failureCode string, record environment.Record, at time.Time) (EnvironmentOperationRecord, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	if err := record.Validate(); err != nil {
+		return EnvironmentOperationRecord{}, err
+	}
+	var result EnvironmentOperationRecord
+	err := s.update(func(tx *bbolt.Tx) error {
+		operations := tx.Bucket([]byte(migrations.EnvironmentOperationsBucket))
+		if err := getJSON(operations, id, &result, ErrEnvironmentOperationNotFound); err != nil {
+			return err
+		}
+		if terminalEnvironmentOperation(result.State) {
+			return nil
+		}
+		if record.EnvironmentID != result.EnvironmentID || record.Version != result.Version {
+			return ErrInvalidRequest
+		}
+		previous := result.State
+		result.State, result.FailureCode, result.EnvironmentGeneration, result.UpdatedAt = state, failureCode, record.Generation, at.UTC()
+		if err := putJSON(tx.Bucket([]byte(migrations.EnvironmentPackagesBucket)), environmentKey(record.EnvironmentID, record.Version), record); err != nil {
+			return err
+		}
+		if err := putJSON(operations, id, result); err != nil {
+			return err
+		}
+		return putEnvironmentAuditTx(tx, EnvironmentAuditEvent{EventID: nextEnvironmentAuditID(tx, id, at), OperationID: id, EnvironmentID: result.EnvironmentID, Version: result.Version, Operation: result.Operation, Actor: result.Actor, FromState: previous, ToState: state, Outcome: state, FailureCode: failureCode, ConfigRevision: result.ExpectedRevision, EnvironmentGeneration: result.EnvironmentGeneration, OccurredAt: at})
+	})
+	return result, err
+}
+
+// RecoverEnvironmentOperations closes operations left in requested or
+// provisioning state by a process crash. A newer ready generation proves a
+// package lifecycle operation completed before the crash; all other records
+// receive the stable service_restarted failure classification.
+func (s *Store) RecoverEnvironmentOperations(at time.Time) error {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	return s.update(func(tx *bbolt.Tx) error {
+		return tx.Bucket([]byte(migrations.EnvironmentOperationsBucket)).ForEach(func(key, raw []byte) error {
+			if raw == nil {
+				return nil
+			}
+			var operation EnvironmentOperationRecord
+			if err := decode(raw, &operation); err != nil {
+				return err
+			}
+			if terminalEnvironmentOperation(operation.State) || (operation.State != "requested" && operation.State != "provisioning") {
+				return nil
+			}
+			state, failure := "failed", "service_restarted"
+			if operation.Operation == "install" || operation.Operation == "upgrade" || operation.Operation == "rollback" {
+				if packageRaw := tx.Bucket([]byte(migrations.EnvironmentPackagesBucket)).Get([]byte(environmentKey(operation.EnvironmentID, operation.Version))); packageRaw != nil {
+					var record environment.Record
+					if decode(packageRaw, &record) == nil && record.IsReady() && record.Generation > operation.EnvironmentGeneration {
+						state, failure = "applied", ""
+					}
+				}
+			}
+			previous := operation.State
+			operation.State, operation.FailureCode, operation.UpdatedAt = state, failure, at.UTC()
+			if err := putJSON(tx.Bucket([]byte(migrations.EnvironmentOperationsBucket)), string(key), operation); err != nil {
+				return err
+			}
+			return putEnvironmentAuditTx(tx, EnvironmentAuditEvent{EventID: nextEnvironmentAuditID(tx, operation.OperationID, at), OperationID: operation.OperationID, EnvironmentID: operation.EnvironmentID, Version: operation.Version, Operation: operation.Operation, Actor: operation.Actor, FromState: previous, ToState: state, Outcome: state, FailureCode: failure, ConfigRevision: operation.ExpectedRevision, EnvironmentGeneration: operation.EnvironmentGeneration, OccurredAt: at})
+		})
+	})
 }
 
 func nextEnvironmentAuditID(tx *bbolt.Tx, operationID string, at time.Time) string {

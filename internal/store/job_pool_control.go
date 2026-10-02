@@ -63,6 +63,10 @@ type JobPoolOperation struct {
 	EnvironmentGeneration uint64
 	LastSuccessfulAt      time.Time
 	ConfigDigest          string
+	// PreviousConfig and PreviousSlots make a failed reconcile reversible.
+	// They are internal persistence data and are never projected through Core.
+	PreviousConfig *slot.PoolConfig `json:"previous_config,omitempty"`
+	PreviousSlots  []slot.Slot      `json:"previous_slots,omitempty"`
 }
 
 type JobPoolAuditEvent struct {
@@ -134,6 +138,17 @@ func jobPoolConfigDigest(config slot.PoolConfig) string {
 	return hex.EncodeToString(hash[:])
 }
 
+func jobPoolEnvironmentChanged(previous, next slot.PoolConfig) bool {
+	return previous.EnvironmentID != next.EnvironmentID || previous.EnvironmentVersion != next.EnvironmentVersion ||
+		!strings.EqualFold(previous.ManifestDigest, next.ManifestDigest) || previous.Signer != next.Signer ||
+		previous.RequireTrusted != next.RequireTrusted || !containsCapabilities(previous.Capabilities, next.Capabilities) ||
+		!containsCapabilities(next.Capabilities, previous.Capabilities)
+}
+
+func terminalJobPoolOperation(state JobPoolOperationState) bool {
+	return state == JobPoolApplied || state == JobPoolFailed || state == JobPoolRolledBack || state == JobPoolCancelled
+}
+
 func (s *Store) ApplyJobPool(mutation JobPoolMutation) (JobPoolOperation, bool, error) {
 	now := mutation.RequestedAt
 	if now.IsZero() {
@@ -176,6 +191,10 @@ func (s *Store) ApplyJobPool(mutation JobPoolMutation) (JobPoolOperation, bool, 
 		if mutation.ExpectedRevision != currentRevision {
 			return ErrJobPoolStaleRevision
 		}
+		previousSlots, err := slotsForPoolTx(tx, mutation.Config.PoolID)
+		if err != nil {
+			return err
+		}
 		environmentGeneration := environmentGenerationTx(tx, mutation.Config.EnvironmentID, mutation.Config.EnvironmentVersion)
 		mutation.Config.ConfigRevision = currentRevision + 1
 		mutation.Config.UpdatedAt = mutation.RequestedAt
@@ -183,11 +202,23 @@ func (s *Store) ApplyJobPool(mutation JobPoolMutation) (JobPoolOperation, bool, 
 		if err := putJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), mutation.Config.PoolID, mutation.Config); err != nil {
 			return err
 		}
-		if err := reconcilePoolSlotsTx(tx, mutation.Config, mutation.RequestedAt); err != nil {
-			return err
+		// Environment identity changes are committed as durable desired state
+		// first. ReconcileJobPoolControl validates the new signed environment
+		// before touching the old ready generation. This keeps a failed update
+		// from making the only usable generation unavailable. Capacity-only and
+		// lifecycle changes can update logical slot targets immediately.
+		if !hasCurrent || !jobPoolEnvironmentChanged(current, mutation.Config) {
+			if err := reconcilePoolSlotsTx(tx, mutation.Config, mutation.RequestedAt); err != nil {
+				return err
+			}
 		}
 		operationID := newJobPoolOperationID(mutation, tx)
-		result = JobPoolOperation{OperationID: operationID, PoolID: mutation.Config.PoolID, Operation: mutation.Operation, State: JobPoolRequested, Actor: mutation.Actor, ExpectedRevision: mutation.ExpectedRevision, ConfigRevision: mutation.Config.ConfigRevision, EnvironmentGeneration: environmentGeneration, RequestedAt: mutation.RequestedAt, UpdatedAt: mutation.RequestedAt, ConfigDigest: configDigest}
+		var previousConfig *slot.PoolConfig
+		if hasCurrent {
+			copy := current
+			previousConfig = &copy
+		}
+		result = JobPoolOperation{OperationID: operationID, PoolID: mutation.Config.PoolID, Operation: mutation.Operation, State: JobPoolRequested, Actor: mutation.Actor, ExpectedRevision: mutation.ExpectedRevision, ConfigRevision: mutation.Config.ConfigRevision, EnvironmentGeneration: environmentGeneration, RequestedAt: mutation.RequestedAt, UpdatedAt: mutation.RequestedAt, ConfigDigest: configDigest, PreviousConfig: previousConfig, PreviousSlots: previousSlots}
 		if err := putJSON(operations, operationID, result); err != nil {
 			return err
 		}
@@ -320,6 +351,121 @@ func (s *Store) UpdateJobPoolOperation(operationID string, state JobPoolOperatio
 		return nil
 	})
 	return updated, err
+}
+
+// RollbackJobPoolOperation restores the last committed pool configuration and
+// slot generation captured when the operation was requested. It is atomic with
+// the terminal audit event and never exposes the snapshot through Core.
+func (s *Store) RollbackJobPoolOperation(operationID, failureCode string, at time.Time) (JobPoolOperation, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	var updated JobPoolOperation
+	err := s.update(func(tx *bbolt.Tx) error {
+		operations := tx.Bucket([]byte(migrations.JobPoolOperationsBucket))
+		if err := getJSON(operations, operationID, &updated, ErrJobPoolOperationNotFound); err != nil {
+			return err
+		}
+		if terminalJobPoolOperation(updated.State) {
+			return nil
+		}
+		if updated.PreviousConfig == nil {
+			if err := tx.Bucket([]byte(migrations.JobPoolsBucket)).Delete([]byte(updated.PoolID)); err != nil {
+				return err
+			}
+		} else if err := putJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), updated.PoolID, *updated.PreviousConfig); err != nil {
+			return err
+		}
+		previousByID := make(map[string]slot.Slot, len(updated.PreviousSlots))
+		for _, value := range updated.PreviousSlots {
+			previousByID[value.SlotID] = value
+		}
+		slots, err := slotsForPoolTx(tx, updated.PoolID)
+		if err != nil {
+			return err
+		}
+		leases := tx.Bucket([]byte(migrations.SlotLeasesBucket))
+		seen := make(map[string]struct{}, len(slots))
+		for _, current := range slots {
+			seen[current.SlotID] = struct{}{}
+			previous, existed := previousByID[current.SlotID]
+			if !existed {
+				if leases.Get([]byte(current.SlotID)) != nil {
+					current.Status = slot.Draining
+					current.UpdatedAt = at.UTC()
+					if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
+						return err
+					}
+					continue
+				}
+				if err := tx.Bucket([]byte(migrations.ExecutionSlotsBucket)).Delete([]byte(current.SlotID)); err != nil {
+					return err
+				}
+				continue
+			}
+			if leases.Get([]byte(current.SlotID)) != nil && current.EnvironmentGeneration != previous.EnvironmentGeneration {
+				current.Status = slot.Draining
+				current.UpdatedAt = at.UTC()
+				if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
+					return err
+				}
+				continue
+			}
+			previous.UpdatedAt = at.UTC()
+			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), previous.SlotID, previous); err != nil {
+				return err
+			}
+		}
+		for _, previous := range updated.PreviousSlots {
+			if _, ok := seen[previous.SlotID]; ok || leases.Get([]byte(previous.SlotID)) != nil {
+				continue
+			}
+			previous.UpdatedAt = at.UTC()
+			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), previous.SlotID, previous); err != nil {
+				return err
+			}
+		}
+		previousState := updated.State
+		updated.State, updated.Result, updated.FailureCode, updated.UpdatedAt, updated.CompletedAt = JobPoolRolledBack, "rolled_back", failureCode, at.UTC(), at.UTC()
+		if err := putJSON(operations, operationID, updated); err != nil {
+			return err
+		}
+		return putJobPoolAuditTx(tx, JobPoolAuditEvent{EventID: nextJobPoolAuditID(tx, operationID, at), OperationID: operationID, Actor: updated.Actor, PoolID: updated.PoolID, Operation: updated.Operation, FromState: previousState, ToState: JobPoolRolledBack, ConfigRevision: updated.ConfigRevision, EnvironmentGeneration: updated.EnvironmentGeneration, Outcome: "rolled_back", FailureCode: failureCode, OccurredAt: at})
+	})
+	return updated, err
+}
+
+// RecoverStaleJobPoolOperations closes abandoned operations superseded by a
+// newer durable config revision. The latest revision remains for reconciliation
+// after a process restart.
+func (s *Store) RecoverStaleJobPoolOperations(poolID string, at time.Time) error {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	return s.update(func(tx *bbolt.Tx) error {
+		var config slot.PoolConfig
+		if err := getJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), poolID, &config, ErrJobPoolNotFound); err != nil {
+			return err
+		}
+		return tx.Bucket([]byte(migrations.JobPoolOperationsBucket)).ForEach(func(key, raw []byte) error {
+			if raw == nil {
+				return nil
+			}
+			var operation JobPoolOperation
+			if err := decode(raw, &operation); err != nil {
+				return err
+			}
+			if operation.PoolID != poolID || terminalJobPoolOperation(operation.State) || operation.ConfigRevision >= config.ConfigRevision {
+				return nil
+			}
+			previous := operation.State
+			operation.State, operation.Result, operation.FailureCode, operation.UpdatedAt, operation.CompletedAt = JobPoolCancelled, "superseded", "superseded", at.UTC(), at.UTC()
+			if err := putJSON(tx.Bucket([]byte(migrations.JobPoolOperationsBucket)), string(key), operation); err != nil {
+				return err
+			}
+			return putJobPoolAuditTx(tx, JobPoolAuditEvent{EventID: nextJobPoolAuditID(tx, operation.OperationID, at), OperationID: operation.OperationID, Actor: operation.Actor, PoolID: operation.PoolID, Operation: operation.Operation, FromState: previous, ToState: JobPoolCancelled, ConfigRevision: operation.ConfigRevision, EnvironmentGeneration: operation.EnvironmentGeneration, Outcome: "superseded", FailureCode: "superseded", OccurredAt: at})
+		})
+	})
 }
 
 func environmentGenerationTx(tx *bbolt.Tx, environmentID, version string) uint64 {
@@ -529,14 +675,51 @@ func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolPro
 	if err != nil {
 		return JobPoolProjection{}, err
 	}
-	if err := s.ReconcileJobPool(config, at); err != nil {
+	if err := s.RecoverStaleJobPoolOperations(poolID, at); err != nil && !errors.Is(err, ErrJobPoolNotFound) {
 		return JobPoolProjection{}, err
+	}
+	operations, err := s.ListJobPoolOperations(poolID, 1000)
+	if err != nil {
+		return JobPoolProjection{}, err
+	}
+	var operation JobPoolOperation
+	if len(operations) > 0 {
+		operation = operations[len(operations)-1]
+	}
+	ready, readiness, _ := s.environmentReadiness(config)
+	needsEnvironment := config.DesiredState != "draining" && config.DesiredState != "disabled"
+	if !terminalJobPoolOperation(operation.State) && needsEnvironment && !ready {
+		updated, rollbackErr := s.RollbackJobPoolOperation(operation.OperationID, readiness, at)
+		if rollbackErr != nil {
+			return JobPoolProjection{}, rollbackErr
+		}
+		if updated.PreviousConfig == nil {
+			return JobPoolProjection{ReconcileState: updated.State, OperationID: updated.OperationID, LastFailureCode: updated.FailureCode}, nil
+		}
+		return s.GetJobPoolProjection(poolID, at)
+	}
+	if !terminalJobPoolOperation(operation.State) {
+		if err := s.ReconcileJobPool(config, at); err != nil {
+			return JobPoolProjection{}, err
+		}
 	}
 	projection, err := s.GetJobPoolProjection(poolID, at)
 	if err != nil {
 		return JobPoolProjection{}, err
 	}
 	if projection.OperationID == "" {
+		return projection, nil
+	}
+	if !terminalJobPoolOperation(operation.State) && projection.Status.Quarantined > 0 {
+		updated, rollbackErr := s.RollbackJobPoolOperation(operation.OperationID, "slot_quarantined", at)
+		if rollbackErr != nil {
+			return JobPoolProjection{}, rollbackErr
+		}
+		projection, err = s.GetJobPoolProjection(poolID, at)
+		if err != nil {
+			return JobPoolProjection{}, err
+		}
+		projection.ReconcileState, projection.LastFailureCode, projection.LastSuccessfulReconcileAt = updated.State, updated.FailureCode, updated.LastSuccessfulAt
 		return projection, nil
 	}
 	// Persist each visible reconcile phase in order. This keeps the operation

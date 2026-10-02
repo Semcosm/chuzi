@@ -100,6 +100,10 @@ type EnvironmentControlPort interface {
 	ApplyEnvironmentGate(string, string, string, time.Time) (environment.Record, error)
 }
 
+type EnvironmentOperationFinalizer interface {
+	CompleteEnvironmentOperation(string, string, string, environment.Record, time.Time) (store.EnvironmentOperationRecord, error)
+}
+
 // EnvironmentExecutor is the controlled package lifecycle boundary. Core
 // receives only an opaque catalog reference and never resolves filesystem
 // paths itself.
@@ -406,8 +410,17 @@ func (s *Service) EnvironmentOperation(ctx context.Context, input coreapi.Enviro
 				state, failure = "failed", environmentFailureCode(executeErr)
 			}
 		}
-	} else if _, gateErr := s.environments.ApplyEnvironmentGate(input.EnvironmentID, input.Version, input.Operation, s.clock()); gateErr != nil {
-		state, failure = "failed", environmentFailureCode(gateErr)
+	} else {
+		record, gateErr := s.environments.ApplyEnvironmentGate(input.EnvironmentID, input.Version, input.Operation, s.clock())
+		if gateErr != nil {
+			state, failure = "failed", environmentFailureCode(gateErr)
+		} else if finalizer, ok := s.environments.(EnvironmentOperationFinalizer); ok {
+			updated, finalizeErr := finalizer.CompleteEnvironmentOperation(value.OperationID, state, failure, record, s.clock())
+			if finalizeErr != nil {
+				return coreapi.EnvironmentOperation{}, classify(finalizeErr)
+			}
+			return projectEnvironmentOperation(updated, false), nil
+		}
 	}
 	updated, updateErr := s.environments.UpdateEnvironmentOperation(value.OperationID, state, failure, s.clock())
 	if updateErr != nil {

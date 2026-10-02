@@ -39,6 +39,10 @@ func (c serviceEnvironmentControl) UpdateEnvironmentOperation(id, state, failure
 	return c.store.UpdateEnvironmentOperation(id, state, failureCode, at)
 }
 
+func (c serviceEnvironmentControl) CompleteEnvironmentOperation(id, state, failureCode string, record environment.Record, at time.Time) (store.EnvironmentOperationRecord, error) {
+	return c.store.CompleteEnvironmentOperation(id, state, failureCode, record, at)
+}
+
 func (c serviceEnvironmentControl) ApplyEnvironmentGate(id, version, operation string, at time.Time) (environment.Record, error) {
 	if c.manager == nil {
 		return c.store.ApplyEnvironmentGate(id, version, operation, at)
@@ -60,9 +64,6 @@ func (c serviceEnvironmentControl) ApplyEnvironmentGate(id, version, operation s
 		return c.store.ApplyEnvironmentGate(id, version, operation, at)
 	}
 	if err != nil {
-		return environment.Record{}, err
-	}
-	if err := c.manager.SyncRecords(c.store); err != nil {
 		return environment.Record{}, err
 	}
 	return record, nil

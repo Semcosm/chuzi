@@ -112,7 +112,10 @@ func run(ctx context.Context, options serviceOptions) error {
 					if _, healthErr := runtime.environment.HealthCheck(workerCtx, environmentID, environmentVersion); healthErr != nil {
 						err = healthErr
 					}
-					if syncErr := runtime.environment.SyncRecords(runtime.store); err == nil && syncErr != nil {
+					// HealthCheck may downgrade a tampered or missing package. Always
+					// mirror that result before the next control reconcile so a pending
+					// pool operation can roll back instead of remaining provisioning.
+					if syncErr := runtime.environment.SyncRecords(runtime.store); syncErr != nil && err == nil {
 						err = syncErr
 					}
 				}

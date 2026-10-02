@@ -90,3 +90,67 @@ func TestJobPoolDrainRetainsLeasedSlotUntilRelease(t *testing.T) {
 		t.Fatalf("draining projection = %#v, err=%v", projection, err)
 	}
 }
+
+func TestFailedEnvironmentReconcileRestoresPreviousReadyGeneration(t *testing.T) {
+	database, _ := openTestStore(t)
+	digest := strings.Repeat("a", 64)
+	readyRecord := environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", Capabilities: []string{"desktop"}, ManifestDigest: digest, Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 3, UpdatedAt: storeTestTime}
+	if err := database.PutEnvironmentRecord(readyRecord); err != nil {
+		t.Fatal(err)
+	}
+	config := slot.PoolConfig{PoolID: "pool-rollback", EnvironmentID: readyRecord.EnvironmentID, EnvironmentVersion: readyRecord.Version, DesiredSlots: 1, Capabilities: readyRecord.Capabilities, ManifestDigest: digest, Signer: readyRecord.Signer, RequireTrusted: true}
+	if _, _, err := database.ApplyJobPool(JobPoolMutation{Config: config, ExpectedRevision: 0, IdempotencyKey: "rollback-initial", Actor: "operator", RequestedAt: storeTestTime}); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkSlotReady("pool-rollback-001", slot.EnvironmentSummary{EnvironmentID: config.EnvironmentID, Version: config.EnvironmentVersion, Generation: 1, Capabilities: config.Capabilities, ManifestDigest: digest, Signer: config.Signer, Trusted: true, AgentVersion: "agent", SessionState: "ready", DesktopReady: true, UpdatedAt: storeTestTime}, storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	changed := config
+	changed.EnvironmentID, changed.EnvironmentVersion = "env/v2", "2.0.0"
+	changed.ManifestDigest = strings.Repeat("b", 64)
+	operation, _, err := database.ApplyJobPool(JobPoolMutation{Config: changed, ExpectedRevision: 1, IdempotencyKey: "rollback-change", Actor: "operator", RequestedAt: storeTestTime.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projection, err := database.ReconcileJobPoolControl(config.PoolID, storeTestTime.Add(2*time.Second))
+	if err != nil || projection.ReconcileState != JobPoolRolledBack || projection.LastFailureCode != "environment_unavailable" {
+		t.Fatalf("rollback projection = %#v, err=%v", projection, err)
+	}
+	stored, err := database.GetJobPool(config.PoolID)
+	if err != nil || stored.EnvironmentID != config.EnvironmentID || stored.ConfigRevision != 1 {
+		t.Fatalf("restored config = %#v, err=%v", stored, err)
+	}
+	slots, err := database.ListSlots(config.PoolID)
+	if err != nil || len(slots) != 1 || slots[0].Status != slot.Ready || slots[0].EnvironmentGeneration != 1 {
+		t.Fatalf("restored slots = %#v, err=%v", slots, err)
+	}
+	recovered, err := database.GetJobPoolOperation(operation.OperationID)
+	if err != nil || recovered.State != JobPoolRolledBack {
+		t.Fatalf("operation = %#v, err=%v", recovered, err)
+	}
+}
+
+func TestRecoverStaleJobPoolOperation(t *testing.T) {
+	database, _ := openTestStore(t)
+	config := slot.PoolConfig{PoolID: "pool-recover", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: "digest", Signer: "signer"}
+	first, _, err := database.ApplyJobPool(JobPoolMutation{Config: config, ExpectedRevision: 0, IdempotencyKey: "recover-one", Actor: "operator", RequestedAt: storeTestTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	config.DesiredSlots = 2
+	second, _, err := database.ApplyJobPool(JobPoolMutation{Config: config, ExpectedRevision: 1, IdempotencyKey: "recover-two", Actor: "operator", RequestedAt: storeTestTime.Add(time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.RecoverStaleJobPoolOperations(config.PoolID, storeTestTime.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := database.GetJobPoolOperation(first.OperationID)
+	if err != nil || recovered.State != JobPoolCancelled || recovered.FailureCode != "superseded" {
+		t.Fatalf("stale operation = %#v, err=%v", recovered, err)
+	}
+	current, err := database.GetJobPoolOperation(second.OperationID)
+	if err != nil || current.State == JobPoolCancelled {
+		t.Fatalf("current operation = %#v, err=%v", current, err)
+	}
+}
