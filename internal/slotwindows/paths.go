@@ -57,6 +57,10 @@ type Options struct {
 	// the existing external-session prerequisite and fails closed if FindSession
 	// cannot locate the managed SID.
 	SessionBootstrapper SessionBootstrapper
+	// SessionLoginAdapter is the deployment-owned credential boundary for
+	// adapters that establish a real WTS session using a short-lived password
+	// buffer. It is never serialized onto the broker protocol.
+	SessionLoginAdapter SessionLoginAdapter
 }
 
 type Paths struct {

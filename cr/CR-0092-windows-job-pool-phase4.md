@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: bffd97e3b25b0de4da2fbbd64b55246156707a8b
+Head or Range: c501287c722fa8b43ae1dae4d8c2f9007329fdf0
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 5
+Revision: 6
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: bffd97e3b25b0de4da2fbbd64b55246156707a8b
+Head OID: c501287c722fa8b43ae1dae4d8c2f9007329fdf0
 Integrated Result: pending
 
 ## Summary
@@ -35,8 +35,10 @@ user session.
 The new `scripts/test_windows_job_pool_smoke.ps1` requires a Windows
 administrator runner, creates a unique temporary root, builds the fixed
 `chuzi-user-agent.exe`, copies the runner's `node.exe` and the versioned worker
-entrypoint, applies a read/execute runtime ACL, and removes only users bearing
-the current CHUZI ownership marker. Revision 2 adds the `SessionBootstrapper`
+entrypoint, applies a read/execute runtime ACL, and removes only the current run's exact random-prefix user
+after validating run-root and user ownership markers. Historical marker users are counted and reported,
+but are never removed by a later run. The script still validates the current
+CHUZI ownership marker. Revision 2 adds the SessionBootstrapper
 contract: a runner-owned provider may establish the disposable user's WTS
 session, but `Provision` always re-runs `FindSession(managed SID)` before
 starting the agent. No password crosses the contract or enters Core, logs,
@@ -61,11 +63,22 @@ Linux host, the deterministic checks passed: `go test ./...`, `go test -race
 ./...`, `go vet ./...`, `GOOS=windows GOARCH=amd64 go build ./...`,
 `GOOS=windows GOARCH=amd64 go vet ./...`, browser-worker tests (22), all
 repository validators, `scripts/test_build_contract.sh`, and `git diff --check`.
-The native smoke has not run in this checkout because no Windows job-pool runner
-with the controlled session provider is attached. Until the real-machine smoke
-passes, this CR remains PARTIAL and must not be merged as native acceptance. The
-production RDP bridge remains deny-by-default pending a deployment-owned
-authorizer and broker.
+The native smoke has not run at this revision. The fixed session-broker pipe was
+checked on the target Windows host and was not listening; no managed-user active
+WTS session or deployment-owned RDP/Winlogon authorizer was available. The
+implementation now provides a strict cross-platform protocol decoder, fixed-pipe
+ACL contract, ownership state machine, bounded stop wait, restart refusal, and a
+`SessionLoginAdapter` credential boundary. The broker listener and real login
+adapter remain deployment-owned dependencies. Until the real-machine smoke and
+production RDP authorizer pass, this CR remains PARTIAL and must not be merged as
+native acceptance.
+Cross-platform tests cover unknown fields/operations/versions, identity and
+generation validation, credential omission, narrow ACL identities, duplicate
+start/stop, stale generation, wrong owner, broker restart adoption refusal, and
+bounded stop waiting. `go test ./...`, `go test -race ./...`, `go vet ./...`,
+Windows cross-build/vet, browser-worker tests (22), repository validators,
+`scripts/test_build_contract.sh`, and this CR validator pass at the recorded
+Head OID.
 The first Windows checkout invocation after the hotfix fast-forward reached the
 setup stage but the previous script exposed only the generic `setup` label; the
 follow-up test commit now reports stable setup classifications such as
@@ -77,6 +90,11 @@ The elevated rerun reached the native provision path and returned
 the next native run identifies the exact rollback boundary.
 The hosted preflight is covered by `scripts/test_windows_job_pool_hosted_preflight.ps1`;
 its first remote result is pending at this revision.
+The Windows runner diagnostic showed that NetUserGetInfo(USER_INFO_1) can report
+USER_PRIV_GUEST for this disposable account while UF_NORMAL_ACCOUNT is set;
+the verifier now accepts only privilege levels 0 or 1 together with the normal-account,
+enabled, SID, marker, group, and non-Administrator fences, and continues to reject
+USER_PRIV_ADMIN.
 
 ## Risk
 

@@ -19,12 +19,8 @@ import (
 )
 
 var (
-	ErrSessionUnavailable  = errors.New("slotwindows: session unavailable")
-	ErrSessionDisconnected = errors.New("slotwindows: session disconnected")
-	ErrSessionChanged      = errors.New("slotwindows: session changed")
-	ErrSessionIdentity     = errors.New("slotwindows: session identity mismatch")
-	ErrProcessStart        = errors.New("slotwindows: process start failed")
-	ErrProcessTerminate    = errors.New("slotwindows: process tree termination failed")
+	ErrProcessStart     = errors.New("slotwindows: process start failed")
+	ErrProcessTerminate = errors.New("slotwindows: process tree termination failed")
 )
 
 var managedDesktopPattern = regexp.MustCompile(`^winsta0\\ChuziSlot[0-9a-f]{16}$`)

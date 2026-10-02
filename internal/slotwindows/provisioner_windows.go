@@ -23,26 +23,35 @@ import (
 )
 
 var (
-	ErrOwnership            = errors.New("slotwindows: managed user ownership check failed")
-	ErrACLDrift             = errors.New("slotwindows: managed ACL check failed")
-	ErrCleanup              = errors.New("slotwindows: managed resource cleanup failed")
-	ErrCleanupAgent         = errors.New("slotwindows: agent cleanup failed")
-	ErrCleanupSession       = errors.New("slotwindows: session cleanup failed")
-	ErrCleanupRoot          = errors.New("slotwindows: root cleanup failed")
-	ErrCleanupUser          = errors.New("slotwindows: user cleanup failed")
-	ErrCleanupUserInspect   = errors.New("slotwindows: user cleanup inspection failed")
-	ErrCleanupUserOwnership = errors.New("slotwindows: user cleanup ownership mismatch")
-	ErrCleanupUserDelete    = errors.New("slotwindows: user deletion failed")
-	ErrCleanupUserMarker    = errors.New("slotwindows: user cleanup marker mismatch")
-	ErrCleanupUserPrivilege = errors.New("slotwindows: user cleanup privilege mismatch")
-	ErrCleanupUserDisabled  = errors.New("slotwindows: user cleanup disabled")
-	ErrCleanupUserAdmin     = errors.New("slotwindows: user cleanup administrator membership")
-	ErrCleanupUserSID       = errors.New("slotwindows: user cleanup SID mismatch")
-	ErrSessionGroupLookup   = errors.New("slotwindows: remote desktop group lookup failed")
-	ErrSessionGroupAdd      = errors.New("slotwindows: remote desktop group add failed")
-	ErrSessionGroupVerify   = errors.New("slotwindows: remote desktop group membership failed")
-	ErrSessionPolicy        = errors.New("slotwindows: remote interactive policy failed")
-	ErrSessionUserLookup    = errors.New("slotwindows: managed user SID lookup failed")
+	ErrOwnership              = errors.New("slotwindows: managed user ownership check failed")
+	ErrACLDrift               = errors.New("slotwindows: managed ACL check failed")
+	ErrACLSlotDirectories     = errors.New("slotwindows: slot directory ACL check failed")
+	ErrACLRuntime             = errors.New("slotwindows: runtime ACL check failed")
+	ErrACLProfile             = errors.New("slotwindows: profile ACL check failed")
+	ErrCleanup                = errors.New("slotwindows: managed resource cleanup failed")
+	ErrCleanupAgent           = errors.New("slotwindows: agent cleanup failed")
+	ErrCleanupSession         = errors.New("slotwindows: session cleanup failed")
+	ErrCleanupRoot            = errors.New("slotwindows: root cleanup failed")
+	ErrCleanupUser            = errors.New("slotwindows: user cleanup failed")
+	ErrCleanupUserInspect     = errors.New("slotwindows: user cleanup inspection failed")
+	ErrCleanupUserOwnership   = errors.New("slotwindows: user cleanup ownership mismatch")
+	ErrCleanupUserDelete      = errors.New("slotwindows: user deletion failed")
+	ErrCleanupUserMarker      = errors.New("slotwindows: user cleanup marker mismatch")
+	ErrCleanupUserPrivilege   = errors.New("slotwindows: user cleanup privilege mismatch")
+	ErrCleanupUserDisabled    = errors.New("slotwindows: user cleanup disabled")
+	ErrCleanupUserAdmin       = errors.New("slotwindows: user cleanup administrator membership")
+	ErrCleanupUserSID         = errors.New("slotwindows: user cleanup SID mismatch")
+	ErrSessionGroupLookup     = errors.New("slotwindows: remote desktop group lookup failed")
+	ErrSessionGroupAdd        = errors.New("slotwindows: remote desktop group add failed")
+	ErrSessionGroupVerify     = errors.New("slotwindows: remote desktop group membership failed")
+	ErrSessionPolicy          = errors.New("slotwindows: remote interactive policy failed")
+	ErrSessionPolicyLookup    = errors.New("slotwindows: remote interactive policy lookup failed")
+	ErrSessionPolicyOpen      = errors.New("slotwindows: remote interactive policy open failed")
+	ErrSessionPolicyEnumerate = errors.New("slotwindows: remote interactive policy enumerate failed")
+	ErrSessionPolicyMissing   = errors.New("slotwindows: remote interactive policy allow missing")
+	ErrSessionPolicyDenied    = errors.New("slotwindows: remote interactive policy denied")
+	ErrSessionUserLookup      = errors.New("slotwindows: managed user SID lookup failed")
+	ErrManagedUserSID         = errors.New("slotwindows: managed user SID unavailable")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -58,6 +67,7 @@ func (e retryableSessionFailure) Unwrap() error   { return e.cause }
 func (e retryableSessionFailure) Retryable() bool { return true }
 
 const (
+	userPrivGuest                  = 0
 	userPrivUser                   = 1
 	userFlagScript                 = 0x0001
 	userFlagNormalAccount          = 0x0200
@@ -81,6 +91,14 @@ const (
 	fileReadExecuteMask            = 0x001200a9
 	fileTraverseMask               = 0x00120020
 )
+
+// Windows local SAM can report USER_PRIV_GUEST for a disposable account
+// created with UF_NORMAL_ACCOUNT. The managed identity is still constrained
+// by its normal-account flag, disabled flag, group membership, SID, and
+// ownership marker; only the administrator privilege level is forbidden.
+func managedUserPrivilegeAllowed(priv uint32) bool {
+	return priv == userPrivGuest || priv == userPrivUser
+}
 
 type userInfo1 struct {
 	Name        *uint16
@@ -447,24 +465,30 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	sid = managed.SID
 	if p.options.RDPEnabled {
 		if err := ensureRemoteDesktopMembership(paths.UserName); err != nil {
-			return slot.ProvisionResult{}, ErrSessionIdentity
+			return slot.ProvisionResult{}, err
 		}
 		// Group membership alone is insufficient: local policy may deny remote
 		// interactive logon or omit the effective allow right.
 		if err := verifyRemoteDesktopMembership(paths.UserName); err != nil {
-			return slot.ProvisionResult{}, ErrSessionIdentity
+			return slot.ProvisionResult{}, err
 		}
 	}
 	if err := ensureSlotDirectories(paths, sid); err != nil {
-		return slot.ProvisionResult{}, ErrACLDrift
+		return slot.ProvisionResult{}, errors.Join(ErrACLDrift, ErrACLSlotDirectories)
 	}
 	if err := p.ensureSessionBootstrap(ctx, request, paths.UserName, managed); err != nil {
 		return slot.ProvisionResult{}, err
 	}
 	if err := p.ensureAgent(ctx, paths, request, sid); err != nil {
+		if errors.Is(err, ErrACLDrift) {
+			return slot.ProvisionResult{}, errors.Join(err, ErrACLRuntime)
+		}
 		return slot.ProvisionResult{}, err
 	}
 	if err := p.verifyProfileGrant(paths, sid); err != nil {
+		if errors.Is(err, ErrACLDrift) {
+			return slot.ProvisionResult{}, errors.Join(err, ErrACLProfile)
+		}
 		return slot.ProvisionResult{}, err
 	}
 	cleanupOnFailure = false
@@ -807,7 +831,7 @@ func (p *windowsProvisioner) summary(request slot.ProvisionRequest, sid string) 
 }
 
 func (p *windowsProvisioner) managedIdentity(request slot.ProvisionRequest, sid string) (ManagedIdentity, error) {
-	identity := ManagedIdentity{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.EnvironmentGeneration, SID: sid}
+	identity := ManagedIdentity{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.EnvironmentGeneration, SID: sid, Owner: request.Owner}
 	if err := identity.validate(); err != nil {
 		return ManagedIdentity{}, err
 	}
@@ -829,7 +853,8 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 		return nil
 	}
 	provider := p.options.SessionBootstrapper
-	if provider == nil {
+	loginAdapter := p.options.SessionLoginAdapter
+	if provider == nil && loginAdapter == nil {
 		return retryableProvisionFailure{cause: ErrSessionUnavailable}
 	}
 
@@ -842,25 +867,31 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 		}
 		_ = p.stopSessionBootstrap(ctx, request.SlotID)
 	}
-	started, startErr := startManagedSession(ctx, provider, identity, username, managed.password)
+	var started BootstrapSession
+	var startErr error
+	if loginAdapter != nil {
+		started, startErr = startManagedLoginSession(ctx, loginAdapter, identity, username, managed.password)
+	} else {
+		started, startErr = startManagedSession(ctx, provider, identity, username, managed.password)
+	}
 	if startErr != nil {
 		return retryableProvisionFailure{cause: classifySessionBootstrapError(startErr)}
 	}
 	if started.ID == 0 || started.State != "active" {
-		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
 			return ErrCleanup
 		}
 		return retryableProvisionFailure{cause: ErrSessionUnavailable}
 	}
 	current, findErr := FindSession(managed.SID)
 	if findErr != nil {
-		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
 			return ErrCleanup
 		}
 		return retryableProvisionFailure{cause: classifySessionBootstrapError(findErr)}
 	}
 	if current.ID != started.ID || current.State != "active" {
-		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
 			return ErrCleanup
 		}
 		return retryableProvisionFailure{cause: ErrSessionChanged}
@@ -890,7 +921,7 @@ func classifySessionBootstrapError(err error) error {
 }
 
 func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID string) error {
-	if p == nil || p.options.SessionBootstrapper == nil {
+	if p == nil || (p.options.SessionBootstrapper == nil && p.options.SessionLoginAdapter == nil) {
 		return nil
 	}
 	p.mu.Lock()
@@ -899,7 +930,7 @@ func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID st
 	if !ok {
 		return nil
 	}
-	if err := p.options.SessionBootstrapper.Stop(ctx, state.identity, state.session); err != nil {
+	if err := p.stopManagedSession(ctx, state.identity, state.session); err != nil {
 		return ErrCleanup
 	}
 	if err := waitForSessionGone(ctx, state.identity.SID); err != nil {
@@ -913,9 +944,30 @@ func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID st
 	return nil
 }
 
+func (p *windowsProvisioner) stopManagedSession(ctx context.Context, identity ManagedIdentity, session BootstrapSession) error {
+	if p == nil {
+		return ErrCleanup
+	}
+	if p.options.SessionLoginAdapter != nil {
+		return p.options.SessionLoginAdapter.Stop(ctx, identity, session)
+	}
+	if p.options.SessionBootstrapper != nil {
+		return p.options.SessionBootstrapper.Stop(ctx, identity, session)
+	}
+	return ErrSessionBootstrapUnavailable
+}
+
 func waitForSessionGone(ctx context.Context, sid string) error {
 	if sid == "" {
 		return ErrSessionIdentity
+	}
+	if ctx == nil {
+		return ErrCleanup
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
 	}
 	for {
 		if err := ctx.Err(); err != nil {
@@ -1215,6 +1267,8 @@ func runtimeACLMask(rights string) (uint32, bool) {
 	switch strings.ToUpper(rights) {
 	case "RX", "GRGX":
 		return uint32(fileReadExecuteMask), true
+	case "FA":
+		return 0x001f01ff, true
 	default:
 		return 0, false
 	}
@@ -1291,7 +1345,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 	marker := fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal)
 	if sid, err := lookupSID(paths.UserName); err == nil {
 		info, infoErr := getUserInfo(paths.UserName)
-		if infoErr != nil || info.comment != marker || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
+		if infoErr != nil || info.comment != marker || !managedUserPrivilegeAllowed(info.priv) || info.flags&userFlagNormalAccount == 0 || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
 			return managedUserCredentials{}, ErrOwnership
 		}
 		record, recordErr := readOwnership(paths.Metadata)
@@ -1361,7 +1415,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 			return managedUserCredentials{}, ErrOwnership
 		}
 		infoSnapshot, infoErr := getUserInfo(paths.UserName)
-		if infoErr != nil || infoSnapshot.comment != marker || infoSnapshot.priv != userPrivUser || infoSnapshot.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
+		if infoErr != nil || infoSnapshot.comment != marker || !managedUserPrivilegeAllowed(infoSnapshot.priv) || infoSnapshot.flags&userFlagNormalAccount == 0 || infoSnapshot.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
 			return managedUserCredentials{}, ErrOwnership
 		}
 		record, recordErr := readOwnership(paths.Metadata)
@@ -1385,9 +1439,9 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 	if status != 0 {
 		return managedUserCredentials{}, ErrOwnership
 	}
-	sid, err := lookupSID(paths.UserName)
+	sid, err := lookupSIDEventually(paths.UserName)
 	if err != nil {
-		return managedUserCredentials{}, ErrSessionIdentity
+		return managedUserCredentials{}, ErrManagedUserSID
 	}
 	if recordErr == nil {
 		// Recreating a missing user would produce a new SID. Preserve the old
@@ -1470,7 +1524,7 @@ func managedPathExists(path string) (bool, error) {
 
 func validateManagedUser(paths Paths, request slot.ProvisionRequest, expectedSID string) (string, error) {
 	info, err := getUserInfo(paths.UserName)
-	if err != nil || info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal) || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 {
+	if err != nil || info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal) || !managedUserPrivilegeAllowed(info.priv) || info.flags&userFlagNormalAccount == 0 || info.flags&userFlagDisabled != 0 {
 		return "", ErrOwnership
 	}
 	sid, err := lookupSID(paths.UserName)
@@ -1737,21 +1791,53 @@ func verifyDirectoryACL(path, sid, serviceSID, scope string) error {
 	if err != nil {
 		return ErrACLDrift
 	}
-	expected := "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
-	if serviceSID != "S-1-5-18" {
-		expected += "(A;OICI;FA;;;" + serviceSID + ")"
+	sddl := sd.String()
+	if !sddlHasAllowACE(sddl, "SY", "OICI", 0x001f01ff) || !sddlHasAllowACE(sddl, "BA", "OICI", 0x001f01ff) {
+		return ErrACLDrift
 	}
+	if serviceSID != "S-1-5-18" && !sddlHasAllowACE(sddl, serviceSID, "OICI", 0x001f01ff) {
+		return ErrACLDrift
+	}
+	inheritance := "OICI"
+	mask := uint32(fileModifyMask)
 	if scope == "root" {
-		expected += "(A;;0x00120020;;;" + sid + ")"
+		inheritance = ""
+		mask = uint32(fileTraverseMask)
 	} else if scope == "generation" {
-		expected += "(A;OICI;0x001200a9;;;" + sid + ")"
-	} else {
-		expected += "(A;OICI;0x001301bf;;;" + sid + ")"
+		mask = uint32(fileReadExecuteMask)
 	}
-	if !strings.Contains(sd.String(), expected) {
+	if !sddlHasAllowACE(sddl, sid, inheritance, mask) {
 		return ErrACLDrift
 	}
 	return nil
+}
+
+func sddlHasAllowACE(sddl, account, inheritance string, expectedMask uint32) bool {
+	for start := strings.IndexByte(sddl, '('); start >= 0; {
+		end := strings.IndexByte(sddl[start+1:], ')')
+		if end < 0 {
+			return false
+		}
+		end += start + 1
+		fields := strings.Split(sddl[start+1:end], ";")
+		if len(fields) == 6 && fields[0] == "A" && fields[1] == inheritance && strings.EqualFold(fields[5], account) {
+			mask, ok := runtimeACLMask(fields[2])
+			if ok && mask == expectedMask {
+				return true
+			}
+		}
+		next := end + 1
+		if next >= len(sddl) {
+			break
+		}
+		remaining := sddl[next:]
+		index := strings.IndexByte(remaining, '(')
+		if index < 0 {
+			break
+		}
+		start = next + index
+	}
+	return false
 }
 
 func ensureNoReparseDirectory(path string) error {
@@ -1966,7 +2052,7 @@ func deleteManagedUser(username, slotID string, ordinal int, expectedSID string)
 	if info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", slotID, ordinal) {
 		return ErrCleanupUserMarker
 	}
-	if info.priv != userPrivUser {
+	if !managedUserPrivilegeAllowed(info.priv) {
 		return ErrCleanupUserPrivilege
 	}
 	if info.flags&userFlagDisabled != 0 {
@@ -2104,6 +2190,27 @@ func lookupSID(account string) (string, error) {
 	return sid.String(), nil
 }
 
+// lookupSIDEventually covers the short interval after NetUserAdd during
+// which the local account is visible to NetAPI but not yet resolvable through
+// LookupAccountName. The bounded retry keeps the identity fence fail-closed.
+func lookupSIDEventually(account string) (string, error) {
+	const attempts = 6
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		sid, err := lookupSID(account)
+		if err == nil {
+			return sid, nil
+		}
+		lastErr = err
+		if attempt == attempts-1 {
+			break
+		}
+		timer := time.NewTimer(time.Duration(100*(1<<attempt)) * time.Millisecond)
+		<-timer.C
+	}
+	return "", lastErr
+}
+
 func currentProcessSID() (string, error) {
 	token, err := windows.OpenCurrentProcessToken()
 	if err != nil {
@@ -2213,7 +2320,7 @@ func verifyRemoteDesktopMembership(username string) error {
 		return ErrSessionGroupVerify
 	}
 	if err := verifyRemoteInteractiveRight(userSID, "S-1-5-32-555", principals...); err != nil {
-		return ErrSessionPolicy
+		return err
 	}
 	return nil
 }
@@ -2236,6 +2343,7 @@ type lsaUnicodeString struct {
 type lsaObjectAttributes struct {
 	Length                   uint32
 	RootDirectory            uintptr
+	ObjectName               uintptr
 	Attributes               uint32
 	SecurityDescriptor       uintptr
 	SecurityQualityOfService uintptr
@@ -2246,41 +2354,95 @@ type lsaEnumerationInformation struct {
 }
 
 func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...string) error {
-	allowed, err := lsaRightSIDs("SeRemoteInteractiveLogonRight")
-	if err != nil {
-		return ErrSessionIdentity
-	}
 	principals := append([]string{userSID, groupSID}, additionalGroups...)
 	allow := false
 	for _, principal := range principals {
-		if allowed[principal] {
+		hasRight, err := lsaAccountHasRight(principal, "SeRemoteInteractiveLogonRight")
+		if err != nil {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
+		}
+		if hasRight {
 			allow = true
 			break
 		}
 	}
 	if !allow {
-		return ErrSessionIdentity
-	}
-	denied, err := lsaRightSIDs("SeDenyRemoteInteractiveLogonRight")
-	if err != nil {
-		return ErrSessionIdentity
+		return errors.Join(ErrSessionPolicy, ErrSessionPolicyMissing)
 	}
 	// An explicit deny for the managed user, any local group, or Everyone
 	// must never be masked by membership in Remote Desktop Users.
 	for _, principal := range principals {
-		if denied[principal] {
-			return ErrSessionIdentity
+		hasDeny, err := lsaAccountHasRight(principal, "SeDenyRemoteInteractiveLogonRight")
+		if err != nil {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
+		}
+		if hasDeny {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyDenied)
 		}
 	}
 	for _, everyone := range []string{"S-1-1-0", "S-1-5-11"} {
-		if denied[everyone] {
-			return ErrSessionIdentity
+		hasDeny, err := lsaAccountHasRight(everyone, "SeDenyRemoteInteractiveLogonRight")
+		if err != nil {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
+		}
+		if hasDeny {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyDenied)
 		}
 	}
 	return nil
 }
 
-const statusObjectNameNotFound = 0xC0000034
+// lsaAccountHasRight checks one SID directly. Enumerating accounts by right
+// is inconsistent across Windows policy providers; account-right enumeration
+// keeps the check scoped to the exact managed identity and its validated
+// local groups.
+func lsaAccountHasRight(sidText, rightName string) (bool, error) {
+	sid, err := windows.StringToSid(sidText)
+	if err != nil {
+		return false, ErrSessionPolicyLookup
+	}
+	attrs := lsaObjectAttributes{Length: uint32(unsafe.Sizeof(lsaObjectAttributes{}))}
+	open := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaOpenPolicy")
+	enumerate := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaEnumerateAccountRights")
+	free := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaFreeMemory")
+	close := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaClose")
+	var policy uintptr
+	status, _, _ := open.Call(0, uintptr(unsafe.Pointer(&attrs)), 0x00000800, uintptr(unsafe.Pointer(&policy)))
+	if status != 0 || policy == 0 {
+		return false, ErrSessionPolicyOpen
+	}
+	defer close.Call(policy)
+	var rights *lsaUnicodeString
+	var count uint32
+	status, _, _ = enumerate.Call(policy, uintptr(unsafe.Pointer(sid)), uintptr(unsafe.Pointer(&rights)), uintptr(unsafe.Pointer(&count)))
+	if status == statusObjectNameNotFound || status == statusObjectPathNotFound || status == statusNoMoreEntries || status == statusNoSuchPrivilege {
+		return false, nil
+	}
+	if status != 0 {
+		return false, ErrSessionPolicyEnumerate
+	}
+	if rights == nil || count == 0 {
+		return false, nil
+	}
+	defer free.Call(uintptr(unsafe.Pointer(rights)))
+	for _, right := range unsafe.Slice(rights, count) {
+		if right.Buffer == nil || right.Length == 0 {
+			continue
+		}
+		value := windows.UTF16ToString(unsafe.Slice(right.Buffer, int(right.Length/2)))
+		if value == rightName {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+const (
+	statusObjectNameNotFound = 0xC0000034
+	statusNoMoreEntries      = 0x8000001A
+	statusObjectPathNotFound = 0xC000003A
+	statusNoSuchPrivilege    = 0xC0000060
+)
 
 func lsaRightSIDs(name string) (map[string]bool, error) {
 	rightText, err := windows.UTF16FromString(name)
@@ -2296,17 +2458,20 @@ func lsaRightSIDs(name string) (map[string]bool, error) {
 	var policy uintptr
 	status, _, _ := open.Call(0, uintptr(unsafe.Pointer(&attrs)), 0x00000800, uintptr(unsafe.Pointer(&policy)))
 	if status != 0 || policy == 0 {
-		return nil, ErrSessionIdentity
+		return nil, ErrSessionPolicyOpen
 	}
 	defer close.Call(policy)
 	var entries *lsaEnumerationInformation
 	var count uint32
 	status, _, _ = enumerate.Call(policy, uintptr(unsafe.Pointer(&right)), uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&count)))
-	if status == statusObjectNameNotFound {
+	if status == statusObjectNameNotFound || status == statusNoMoreEntries || status == statusObjectPathNotFound || status == statusNoSuchPrivilege {
 		return map[string]bool{}, nil
 	}
-	if status != 0 || entries == nil {
-		return nil, ErrSessionIdentity
+	if status != 0 {
+		return nil, ErrSessionPolicyEnumerate
+	}
+	if entries == nil || count == 0 {
+		return map[string]bool{}, nil
 	}
 	defer free.Call(uintptr(unsafe.Pointer(entries)))
 	result := make(map[string]bool, count)

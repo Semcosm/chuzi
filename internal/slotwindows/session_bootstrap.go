@@ -5,6 +5,15 @@ import (
 	"errors"
 )
 
+var (
+	// These classifications are shared by the protocol/state-machine tests and
+	// the Windows WTS implementation.  Callers must not expose provider text.
+	ErrSessionUnavailable  = errors.New("slotwindows: session unavailable")
+	ErrSessionDisconnected = errors.New("slotwindows: session disconnected")
+	ErrSessionChanged      = errors.New("slotwindows: session changed")
+	ErrSessionIdentity     = errors.New("slotwindows: session identity mismatch")
+)
+
 // ManagedIdentity is the narrow identity contract passed to a session
 // bootstrapper. It deliberately contains no password, endpoint, executable,
 // profile path, or command text. The provisioner derives every field from the
@@ -14,6 +23,7 @@ type ManagedIdentity struct {
 	Ordinal    int
 	Generation uint64
 	SID        string
+	Owner      string
 }
 
 // BootstrapSession is the opaque result of a controlled session provider. A
@@ -31,6 +41,16 @@ type BootstrapSession struct {
 // accept arbitrary user, endpoint, command, or executable input.
 type SessionBootstrapper interface {
 	Start(context.Context, ManagedIdentity) (BootstrapSession, error)
+	Stop(context.Context, ManagedIdentity, BootstrapSession) error
+}
+
+// SessionLoginAdapter is a deployment-owned, in-process credential boundary.
+// A real adapter may use RDP/Winlogon or a controlled login service to create a
+// WTS session. The password is only an in-memory UTF-16 buffer and must never
+// be serialized, logged, persisted, or returned to Core/UI/Matrix. The caller
+// always revalidates the resulting session with FindSession on Windows.
+type SessionLoginAdapter interface {
+	Start(context.Context, ManagedIdentity, string, []uint16) (BootstrapSession, error)
 	Stop(context.Context, ManagedIdentity, BootstrapSession) error
 }
 
@@ -58,8 +78,20 @@ func startManagedSession(ctx context.Context, provider SessionBootstrapper, iden
 }
 
 func (i ManagedIdentity) validate() error {
-	if !slotIDPattern.MatchString(i.SlotID) || i.Ordinal < 1 || i.Ordinal > 256 || i.Generation == 0 || i.SID == "" {
+	if !slotIDPattern.MatchString(i.SlotID) || i.Ordinal < 1 || i.Ordinal > 256 || i.Generation == 0 || !managedSIDPattern.MatchString(i.SID) || !ownerPattern.MatchString(i.Owner) {
 		return ErrInvalidOptions
 	}
 	return nil
+}
+
+func startManagedLoginSession(ctx context.Context, adapter SessionLoginAdapter, identity ManagedIdentity, username string, password []uint16) (BootstrapSession, error) {
+	if adapter == nil {
+		return BootstrapSession{}, ErrSessionBootstrapUnavailable
+	}
+	if username == "" || len(password) == 0 {
+		return BootstrapSession{}, ErrSessionIdentity
+	}
+	copyPassword := append([]uint16(nil), password...)
+	defer clear(copyPassword)
+	return adapter.Start(ctx, identity, username, copyPassword)
 }
