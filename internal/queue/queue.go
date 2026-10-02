@@ -212,6 +212,9 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		if err != nil {
 			return Outcome{}, err
 		}
+		if runtimeConfig.MaxGlobalConcurrency == 0 {
+			runtimeConfig.MaxGlobalConcurrency = s.config.MaxGlobalConcurrency
+		}
 		if runtimeConfig.MaxGlobalConcurrency < 1 {
 			return Outcome{}, ErrInvalidConfig
 		}
