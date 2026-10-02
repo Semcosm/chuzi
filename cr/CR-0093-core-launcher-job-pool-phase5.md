@@ -1,7 +1,7 @@
 # CR-0093: add Core and Launcher job-pool operations control plane
 
 Base: main
-Head or Range: ee66ef5
+Head or Range: 840b152
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Core Launcher job pool phase 5 control plane
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: ee66ef5c589be52df293a42d3b180030d91c7797
+Head OID: 840b152bc11f32a0a30addd919a206e011116170
 Integrated Result: pending
 
 ## Summary
@@ -23,11 +23,16 @@ Launcher provides the typed job-pool and environment commands through Core.
 The Store adds durable pool/environment operation, idempotency, and metadata-only
 audit buckets. Pool configuration revisions are optimistic-concurrency checked,
 reconciled into logical slot state, and projected with capacity and stable
-failure classifications. The running scheduler and slot lifecycle refresh their
-inputs from the durable pool projection, so restart and later Core updates do not
-silently fall back to static deployment values. Signed package install, upgrade,
-and rollback use an opaque service-owned catalog reference when an executor is
-available; missing references fail with `package_unavailable`.
+failure classifications. A pending operation captures the prior config and slot
+generation so failed environment validation or provisioning restores the old
+ready generation atomically; stale operations are closed as superseded. The
+running scheduler and slot lifecycle refresh their inputs from the durable pool
+projection, so restart and later Core updates do not silently fall back to
+static deployment values. Signed package install, upgrade, and rollback use an
+opaque service-owned catalog reference when an executor is available; missing
+references fail with `package_unavailable`. Gate completion commits the signed
+environment record, operation state, and audit event in one Store transaction,
+and restart recovery classifies incomplete package operations deterministically.
 
 ## Motivation
 
@@ -46,9 +51,11 @@ Passed locally: `go test ./...`, `go test -race ./...`, `go vet ./...`,
 the policy, quality, supply-chain, action-pinning, repository-shape, and
 build-contract validators. Focused tests cover revision conflicts, changed
 idempotency payloads, pool projection redaction/capacity, drain retaining a
-leased slot, environment operation audit/idempotency, invalid catalog refs,
-live scheduler and slot lifecycle refresh, controlled package execution, Core
-error classification, and additive hello method negotiation.
+leased slot, failed reconcile restoring a ready generation, stale operation
+cleanup, environment operation audit/idempotency and atomic completion,
+restart recovery, invalid catalog refs, live scheduler and slot lifecycle
+refresh, controlled package execution, Core error classification, and additive
+hello method negotiation.
 
 The native Windows smoke gate and real RDP authorizer were not run here. Linux
 cross-build and hosted preflight evidence do not constitute native Windows
@@ -61,10 +68,11 @@ The single-node bbolt topology remains authoritative. Pool operations create
 logical slot records and rely on the slot lifecycle reconciler for Windows-backed
 provisioning, lease fencing, generation checks, health, and retirement. Catalog
 execution remains service-owned and validates signed trees before Store sync; a
-missing catalog reference receives the stable `package_unavailable` classification.
-RDP remains opaque and deny-by-default. Audit and projections use stable
-metadata only; production deployments still need Windows native smoke and an
-authorized RDP broker.
+missing catalog reference receives the stable `package_unavailable`
+classification. Dynamic Windows runtime selection is resolved through the signed
+environment manager and never accepts Core paths or commands. RDP remains opaque
+and deny-by-default. Audit and projections use stable metadata only; production
+deployments still need Windows native smoke and an authorized RDP broker.
 
 ## Rollback
 
