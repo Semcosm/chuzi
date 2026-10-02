@@ -67,6 +67,7 @@ func (e retryableSessionFailure) Unwrap() error   { return e.cause }
 func (e retryableSessionFailure) Retryable() bool { return true }
 
 const (
+	userPrivGuest                  = 0
 	userPrivUser                   = 1
 	userFlagScript                 = 0x0001
 	userFlagNormalAccount          = 0x0200
@@ -90,6 +91,14 @@ const (
 	fileReadExecuteMask            = 0x001200a9
 	fileTraverseMask               = 0x00120020
 )
+
+// Windows local SAM can report USER_PRIV_GUEST for a disposable account
+// created with UF_NORMAL_ACCOUNT. The managed identity is still constrained
+// by its normal-account flag, disabled flag, group membership, SID, and
+// ownership marker; only the administrator privilege level is forbidden.
+func managedUserPrivilegeAllowed(priv uint32) bool {
+	return priv == userPrivGuest || priv == userPrivUser
+}
 
 type userInfo1 struct {
 	Name        *uint16
@@ -1308,7 +1317,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 	marker := fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal)
 	if sid, err := lookupSID(paths.UserName); err == nil {
 		info, infoErr := getUserInfo(paths.UserName)
-		if infoErr != nil || info.comment != marker || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
+		if infoErr != nil || info.comment != marker || !managedUserPrivilegeAllowed(info.priv) || info.flags&userFlagNormalAccount == 0 || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
 			return managedUserCredentials{}, ErrOwnership
 		}
 		record, recordErr := readOwnership(paths.Metadata)
@@ -1378,7 +1387,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 			return managedUserCredentials{}, ErrOwnership
 		}
 		infoSnapshot, infoErr := getUserInfo(paths.UserName)
-		if infoErr != nil || infoSnapshot.comment != marker || infoSnapshot.priv != userPrivUser || infoSnapshot.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
+		if infoErr != nil || infoSnapshot.comment != marker || !managedUserPrivilegeAllowed(infoSnapshot.priv) || infoSnapshot.flags&userFlagNormalAccount == 0 || infoSnapshot.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
 			return managedUserCredentials{}, ErrOwnership
 		}
 		record, recordErr := readOwnership(paths.Metadata)
@@ -1487,7 +1496,7 @@ func managedPathExists(path string) (bool, error) {
 
 func validateManagedUser(paths Paths, request slot.ProvisionRequest, expectedSID string) (string, error) {
 	info, err := getUserInfo(paths.UserName)
-	if err != nil || info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal) || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 {
+	if err != nil || info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal) || !managedUserPrivilegeAllowed(info.priv) || info.flags&userFlagNormalAccount == 0 || info.flags&userFlagDisabled != 0 {
 		return "", ErrOwnership
 	}
 	sid, err := lookupSID(paths.UserName)
@@ -2015,7 +2024,7 @@ func deleteManagedUser(username, slotID string, ordinal int, expectedSID string)
 	if info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", slotID, ordinal) {
 		return ErrCleanupUserMarker
 	}
-	if info.priv != userPrivUser {
+	if !managedUserPrivilegeAllowed(info.priv) {
 		return ErrCleanupUserPrivilege
 	}
 	if info.flags&userFlagDisabled != 0 {

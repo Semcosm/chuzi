@@ -68,7 +68,7 @@ Windows 构建包含 `chuzi-user-agent.exe`。服务在 Windows-only provisioner
 `data_dir/job-slots/<slot-id>/generation-<generation>` 派生目录和本地用户；用户备注
 保存 `CHUZI-MANAGED:<slot-id>:<ordinal>` 标记，SID 与该标记一起写入受保护的
 `ownership.json`。创建使用每次随机生成的密码，密码只在 `NetUserAdd` 调用期间存在，
-不会进入配置、命令行、Core、Matrix 或日志。未知用户、SID 漂移、禁用用户、
+不会进入配置、命令行、Core、Matrix 或日志。未知用户、SID 漂移、非 normal-account 标记、禁用用户、
 Administrators 成员和 reparse point 都会使 provision 失败。
 
 服务只为受管目录授予最小 ACL；每个 slot 的 Win32 desktop 由 `slot_id` 的

@@ -9,6 +9,17 @@ import (
 	"testing"
 )
 
+func TestManagedUserPrivilegeAllowed(t *testing.T) {
+	for _, privilege := range []uint32{userPrivGuest, userPrivUser} {
+		if !managedUserPrivilegeAllowed(privilege) {
+			t.Fatalf("managed privilege %d was rejected", privilege)
+		}
+	}
+	if managedUserPrivilegeAllowed(2) {
+		t.Fatal("administrator privilege was accepted")
+	}
+}
+
 func TestValidateOwnedTreeShapeAllowsManagedEntries(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "job-slot")
 	for _, name := range []string{"work", "tmp", "logs"} {

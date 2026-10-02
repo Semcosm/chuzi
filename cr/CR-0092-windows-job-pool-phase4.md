@@ -79,6 +79,11 @@ The elevated rerun reached the native provision path and returned
 the next native run identifies the exact rollback boundary.
 The hosted preflight is covered by `scripts/test_windows_job_pool_hosted_preflight.ps1`;
 its first remote result is pending at this revision.
+The Windows runner diagnostic showed that NetUserGetInfo(USER_INFO_1) can report
+USER_PRIV_GUEST for this disposable account while UF_NORMAL_ACCOUNT is set;
+the verifier now accepts only privilege levels 0 or 1 together with the normal-account,
+enabled, SID, marker, group, and non-Administrator fences, and continues to reject
+USER_PRIV_ADMIN.
 
 ## Risk
 
