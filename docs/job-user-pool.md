@@ -141,6 +141,23 @@ ownership 派生的 slot、ordinal、generation 和 SID；接口不接收密码�
 interactive session，找不到 session 时保持 `session_unavailable`/quarantine 的
 fail-closed 行为。
 
+Windows 实验机可在仓库根目录以管理员 PowerShell 执行
+scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和 slot
+agent 链路。该模式创建本轮随机命名的普通本地用户，
+用系统随机密码，并仅将凭据短暂写入当前交互用户的 session-scoped Windows Credential
+Manager；随后启动固定的 mstsc.exe /v:127.0.0.1，等待该用户对应的真实 active WTS
+session，再运行原生 provisioner 测试。测试按 SID、slot ownership 和 active session
+重新校验身份；结束后注销 session、回收用户、profile、运行目录和临时 Credential
+Manager 凭据。session 查询使用 WTS API 和数值状态，不依赖系统显示语言。密码不进入
+命令行、环境变量、文件、Core、测试日志或输出。
+
+Windows hosted preflight 使用 -ValidateOnly 解析 smoke 脚本并编译 Credential Manager
+与 WTS API helper，不创建用户、session 或临时目录。
+
+-LocalRdp 是本机诊断路径，不启动或模拟 session broker，也不验证 broker pipe
+ACL、协议 ownership 生命周期或生产 RDP authorizer；不能单独作为阶段 4 生产验收。
+默认 smoke 路径仍使用固定 session broker pipe。
+
 bootstrap 退出时先停止 worker 和 agent，再调用 provider 的幂等 `Stop`，等待
 `FindSession` 不再发现该 SID，最后由 provisioner 执行 logoff、Profile/ACL、目录和用户
 回收。smoke harness 的 user cleanup 与 root cleanup 分阶段重试并分别报告。user cleanup 只处理本轮

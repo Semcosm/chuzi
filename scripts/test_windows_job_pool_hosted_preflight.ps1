@@ -37,6 +37,10 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw 'Windows Go vet failed'
 }
+& (Join-Path $env:GITHUB_WORKSPACE 'scripts/test_windows_job_pool_smoke.ps1') -ValidateOnly
+if ($LASTEXITCODE -ne 0) {
+    throw 'Windows job-pool smoke script validation failed'
+}
 & $go test -count=1 -run '^TestWindowsJobPoolNativeSmoke$' ./internal/slotwindows
 if ($LASTEXITCODE -ne 0) {
     throw 'Windows native smoke test entrypoint failed to compile'

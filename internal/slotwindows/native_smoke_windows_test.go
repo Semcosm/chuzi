@@ -44,22 +44,25 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 		t.Fatal("native smoke setup failed")
 	}
 
+	localRDP := os.Getenv("CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP") == "1"
 	options := Options{
-		DataDir:             dataDir,
-		UserPrefix:          userPrefix,
-		EnvironmentID:       "chuzi-environment/v1",
-		Version:             "smoke-1",
-		ManifestDigest:      strings.Repeat("a", 64),
-		Signer:              "smoke-signer",
-		RequireTrusted:      true,
-		RDPEnabled:          true,
-		AgentPath:           agentPath,
-		RuntimePath:         runtimeRoot,
-		WorkerRuntimeRoot:   runtimeRoot,
-		WorkerCommand:       nodePath,
-		WorkerScript:        workerPath,
-		SessionIdleTimeout:  5 * time.Second,
-		SessionBootstrapper: NewRunnerSessionBootstrapper(),
+		DataDir:            dataDir,
+		UserPrefix:         userPrefix,
+		EnvironmentID:      "chuzi-environment/v1",
+		Version:            "smoke-1",
+		ManifestDigest:     strings.Repeat("a", 64),
+		Signer:             "smoke-signer",
+		RequireTrusted:     true,
+		RDPEnabled:         true,
+		AgentPath:          agentPath,
+		RuntimePath:        runtimeRoot,
+		WorkerRuntimeRoot:  runtimeRoot,
+		WorkerCommand:      nodePath,
+		WorkerScript:       workerPath,
+		SessionIdleTimeout: 5 * time.Second,
+	}
+	if !localRDP {
+		options.SessionBootstrapper = NewRunnerSessionBootstrapper()
 	}
 	provisionerValue, err := New(options)
 	if err != nil {
@@ -86,6 +89,9 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	if localRDP {
+		prepareLocalRDPTestSession(t, root, options, request, userPrefix)
+	}
 
 	result, err := provisioner.Provision(ctx, request)
 	if err != nil {
@@ -211,6 +217,45 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 		t.Fatal("native managed resource retirement failed")
 	}
 	retired = true
+}
+
+func prepareLocalRDPTestSession(t *testing.T, root string, options Options, request slot.ProvisionRequest, userPrefix string) {
+	t.Helper()
+	runID := strings.TrimSpace(os.Getenv("CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID"))
+	runBytes, runErr := hex.DecodeString(runID)
+	if runErr != nil || len(runBytes) != 16 || runID != strings.ToLower(runID) {
+		t.Fatal("local RDP smoke run identity unavailable")
+	}
+	markerPath := filepath.Join(root, ".chuzi-smoke-user-ownership")
+	marker, err := os.ReadFile(markerPath)
+	if err != nil || strings.TrimSpace(string(marker)) != "CHUZI-SMOKE-USER-OWNERSHIP:"+runID+":"+userPrefix {
+		t.Fatal("local RDP smoke user ownership marker mismatch")
+	}
+	paths, err := options.DerivePaths(request.SlotID, request.Ordinal, request.EnvironmentGeneration)
+	if err != nil {
+		t.Fatal("local RDP smoke path derivation failed")
+	}
+	sid, err := lookupSID(paths.UserName)
+	if err != nil {
+		t.Fatal("local RDP smoke user identity unavailable")
+	}
+	info, err := getUserInfo(paths.UserName)
+	if err != nil || info.comment != "CHUZI-MANAGED:"+request.SlotID+":1" || !managedUserPrivilegeAllowed(info.priv) || info.flags&userFlagNormalAccount == 0 || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
+		t.Fatal("local RDP smoke user ownership validation failed")
+	}
+	if err := verifyRemoteDesktopMembership(paths.UserName); err != nil {
+		t.Fatal("local RDP smoke user is not authorized for Remote Desktop Users")
+	}
+	session, err := FindSession(sid)
+	if err != nil || session.State != "active" {
+		t.Fatal("local RDP smoke requires an active WTS session for the managed user")
+	}
+	if exists, err := managedPathExists(paths.Root); err != nil || exists {
+		t.Fatal("local RDP smoke ownership root is not fresh")
+	}
+	if err := writeOwnership(paths.Metadata, ownershipRecord{Version: 1, SlotID: request.SlotID, Ordinal: request.Ordinal, SID: sid, Generation: request.EnvironmentGeneration}); err != nil {
+		t.Fatal("local RDP smoke ownership record setup failed")
+	}
 }
 
 func nativeSmokeFailureClass(err error) string {

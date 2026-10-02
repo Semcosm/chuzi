@@ -1,5 +1,8 @@
 [CmdletBinding()]
-param()
+param(
+    [switch] $LocalRdp,
+    [switch] $ValidateOnly
+)
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -23,6 +26,9 @@ $smokePassed = $false
 $script:rootPreserved = $false
 $script:unownedSmokeUsers = 0
 $script:remainingSmokeUsers = -1
+$script:rdpCredentialOwned = $false
+$script:rdpCredentialTarget = 'TERMSRV/127.0.0.1'
+$script:rdpClientProcess = $null
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
 $preservedLog = Join-Path $tempRoot 'chuzi-job-pool-smoke-test-output.log'
@@ -42,6 +48,254 @@ function Invoke-SmokeRetry([scriptblock] $Action, [int] $Attempts = 6) {
     return $false
 }
 
+function New-SmokePassword {
+    $alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%+='
+    $secure = [System.Security.SecureString]::new()
+    $random = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    [byte[]] $sample = @(0)
+    $limit = [int]([Math]::Floor(256.0 / $alphabet.Length) * $alphabet.Length)
+    try {
+        $position = 0
+        while ($position -lt 48) {
+            $random.GetBytes($sample)
+            if ([int]$sample[0] -ge $limit) {
+                continue
+            }
+            $index = [int]$sample[0] % $alphabet.Length
+            $secure.AppendChar([char]$alphabet[$index])
+            $position++
+        }
+        $secure.MakeReadOnly()
+        return $secure
+    } catch {
+        $secure.Dispose()
+        throw
+    } finally {
+        [Array]::Clear($sample, 0, $sample.Length)
+        $random.Dispose()
+    }
+}
+
+function Initialize-SmokeNativeHelpers {
+    if ('ChuziSmokeCredentialStore' -as [type]) {
+        return
+    }
+    Add-Type -TypeDefinition @'
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security;
+
+public static class ChuziSmokeCredentialStore
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NativeCredential
+    {
+        public uint Flags;
+        public uint Type;
+        public IntPtr TargetName;
+        public IntPtr Comment;
+        public long LastWritten;
+        public uint CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public uint Persist;
+        public uint AttributeCount;
+        public IntPtr Attributes;
+        public IntPtr TargetAlias;
+        public IntPtr UserName;
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredRead(string targetName, uint type, uint flags, out IntPtr credential);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredWrite(ref NativeCredential credential, uint flags);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredDelete(string targetName, uint type, uint flags);
+
+    [DllImport("advapi32.dll")]
+    private static extern void CredFree(IntPtr credential);
+
+    public static bool Exists(string targetName)
+    {
+        IntPtr credential;
+        if (CredRead(targetName, 2, 0, out credential))
+        {
+            CredFree(credential);
+            return true;
+        }
+        int error = Marshal.GetLastWin32Error();
+        if (error == 1168)
+            return false;
+        throw new Win32Exception(error);
+    }
+
+    public static void Write(string targetName, string userName, SecureString password)
+    {
+        IntPtr target = IntPtr.Zero;
+        IntPtr user = IntPtr.Zero;
+        IntPtr blob = IntPtr.Zero;
+        try
+        {
+            target = Marshal.StringToHGlobalUni(targetName);
+            user = Marshal.StringToHGlobalUni(userName);
+            blob = Marshal.SecureStringToGlobalAllocUnicode(password);
+            NativeCredential credential = new NativeCredential
+            {
+                Type = 2,
+                TargetName = target,
+                CredentialBlob = blob,
+                CredentialBlobSize = checked((uint)(password.Length * 2)),
+                Persist = 1,
+                UserName = user
+            };
+            if (!CredWrite(ref credential, 0))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        finally
+        {
+            if (blob != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(blob);
+            if (user != IntPtr.Zero) Marshal.FreeHGlobal(user);
+            if (target != IntPtr.Zero) Marshal.FreeHGlobal(target);
+        }
+    }
+
+    public static void Delete(string targetName)
+    {
+        if (!CredDelete(targetName, 2, 0))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error != 1168)
+                throw new Win32Exception(error);
+        }
+    }
+}
+
+public sealed class ChuziSmokeSession
+{
+    public int SessionId { get; set; }
+    public string UserName { get; set; }
+    public int State { get; set; }
+}
+
+public static class ChuziSmokeSessionQuery
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NativeSessionInfo
+    {
+        public int SessionId;
+        public IntPtr StationName;
+        public int State;
+    }
+
+    [DllImport("wtsapi32.dll", EntryPoint = "WTSEnumerateSessionsW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool WTSEnumerateSessions(IntPtr server, int reserved, int version, out IntPtr sessions, out int count);
+
+    [DllImport("wtsapi32.dll", EntryPoint = "WTSQuerySessionInformationW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool WTSQuerySessionInformation(IntPtr server, int sessionId, int infoClass, out IntPtr buffer, out int bytesReturned);
+
+    [DllImport("wtsapi32.dll")]
+    private static extern void WTSFreeMemory(IntPtr memory);
+
+    public static ChuziSmokeSession[] GetSessions()
+    {
+        IntPtr buffer;
+        int count;
+        if (!WTSEnumerateSessions(IntPtr.Zero, 0, 1, out buffer, out count))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        try
+        {
+            List<ChuziSmokeSession> result = new List<ChuziSmokeSession>();
+            int itemSize = Marshal.SizeOf(typeof(NativeSessionInfo));
+            for (int i = 0; i < count; i++)
+            {
+                IntPtr item = new IntPtr(buffer.ToInt64() + ((long)i * itemSize));
+                NativeSessionInfo session = (NativeSessionInfo)Marshal.PtrToStructure(item, typeof(NativeSessionInfo));
+                if (session.SessionId == 0 || session.State == 6 || session.State == 8 || session.State == 9)
+                    continue;
+                string userName = QueryString(session.SessionId, 5);
+                if (!String.IsNullOrWhiteSpace(userName))
+                    result.Add(new ChuziSmokeSession { SessionId = session.SessionId, UserName = userName, State = session.State });
+            }
+            return result.ToArray();
+        }
+        finally
+        {
+            WTSFreeMemory(buffer);
+        }
+    }
+
+    private static string QueryString(int sessionId, int infoClass)
+    {
+        IntPtr buffer;
+        int bytesReturned;
+        if (!WTSQuerySessionInformation(IntPtr.Zero, sessionId, infoClass, out buffer, out bytesReturned))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        try
+        {
+            return buffer == IntPtr.Zero ? String.Empty : (Marshal.PtrToStringUni(buffer) ?? String.Empty);
+        }
+        finally
+        {
+            if (buffer != IntPtr.Zero)
+                WTSFreeMemory(buffer);
+        }
+    }
+}
+'@
+}
+
+function Test-ActiveManagedSession([string] $Name) {
+    foreach ($line in @(Get-MarkedUserSessions $Name)) {
+        if ($line.State -eq 0) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Start-LocalRdpSession([string] $Name) {
+    if (-not [Environment]::UserInteractive) {
+        throw 'interactive smoke console required'
+    }
+    Initialize-SmokeNativeHelpers
+    if ([ChuziSmokeCredentialStore]::Exists($script:rdpCredentialTarget)) {
+        throw 'local RDP credential target already exists'
+    }
+
+    $password = New-SmokePassword
+    try {
+        if (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue) {
+            throw 'temporary smoke user already exists'
+        }
+        New-LocalUser -Name $Name -Password $password -Description $marker -PasswordNeverExpires -ErrorAction Stop | Out-Null
+        $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
+        Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
+        [ChuziSmokeCredentialStore]::Write($script:rdpCredentialTarget, ($env:COMPUTERNAME + '\' + $Name), $password)
+        $script:rdpCredentialOwned = $true
+    } finally {
+        $password.Dispose()
+    }
+
+    Write-Host 'Opening a local RDP session for the disposable smoke user.'
+    Write-Host 'If Windows shows a first-connection certificate prompt, verify the local target and accept it.'
+    $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
+    $client = Start-Process -FilePath $mstsc -ArgumentList @('/v:127.0.0.1') -PassThru -ErrorAction Stop
+    $script:rdpClientProcess = $client
+    $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        if (Test-ActiveManagedSession $Name) {
+            [ChuziSmokeCredentialStore]::Delete($script:rdpCredentialTarget)
+            $script:rdpCredentialOwned = $false
+            return
+        }
+        Start-Sleep -Seconds 1
+    }
+    throw 'local RDP session did not become active'
+}
+
 function Get-MarkedUsers([switch] $CurrentRunOnly) {
     $pattern = $smokeUserPattern
     if ($CurrentRunOnly) {
@@ -54,12 +308,8 @@ function Get-MarkedUsers([switch] $CurrentRunOnly) {
 }
 
 function Get-MarkedUserSessions([string] $Name) {
-    # quser returns a non-zero exit code and writes an error when the account
-    # has no session. That is the normal cleanup state, not a cleanup failure.
-    @(
-        & cmd.exe /d /c ('quser.exe "{0}" 2>nul' -f $Name) 2>$null |
-        Select-String '\s[0-9]+\s+(Active|Disc)\s'
-    )
+    Initialize-SmokeNativeHelpers
+    @([ChuziSmokeSessionQuery]::GetSessions() | Where-Object { $_.UserName -ieq $Name })
 }
 
 function Remove-MarkedUserProfile([object] $user) {
@@ -79,14 +329,12 @@ function Remove-MarkedUserProfile([object] $user) {
 function Stop-MarkedUserSessions([string] $name) {
     $lines = @(Get-MarkedUserSessions $name)
     foreach ($line in $lines) {
-        if ($line -match '\s(?<sessionId>[0-9]+)\s+(Active|Disc)') {
-            $sessionID = $Matches['sessionId']
-            if (-not (Invoke-SmokeRetry {
-                & logoff.exe $sessionID 2>$null 1>$null
-                if ($LASTEXITCODE -ne 0) { throw 'session logoff failed' }
-            })) {
-                throw 'session logoff failed'
-            }
+        $sessionID = $line.SessionId
+        if (-not (Invoke-SmokeRetry {
+            & logoff.exe $sessionID 2>$null 1>$null
+            if ($LASTEXITCODE -ne 0) { throw 'session logoff failed' }
+        })) {
+            throw 'session logoff failed'
         }
     }
     if ((Get-MarkedUserSessions $name).Count -ne 0) {
@@ -195,6 +443,15 @@ function Invoke-Icacls([string] $path) {
     }
 }
 
+if ($ValidateOnly) {
+    if ($env:OS -ne 'Windows_NT') {
+        throw 'Windows smoke validation requires Windows'
+    }
+    Initialize-SmokeNativeHelpers
+    Write-Host 'Windows job-pool smoke script validation passed'
+    return
+}
+
 try {
     if ($env:OS -ne 'Windows_NT') {
         $failureStage = 'windows_required'
@@ -241,6 +498,12 @@ try {
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_NODE = $nodePath
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_WORKER = $workerPath
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_USER_PREFIX = $userPrefix
+    $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID = $runID
+    if ($LocalRdp) {
+        $failureStage = 'local_rdp_session'
+        Start-LocalRdpSession ($userPrefix + '0001')
+        $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP = '1'
+    }
 
     $failureStage = 'native_smoke'
     New-Item -ItemType File -Path $testLog -Force | Out-Null
@@ -273,6 +536,19 @@ try {
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_NODE -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_WORKER -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_USER_PREFIX -ErrorAction SilentlyContinue
+    Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID -ErrorAction SilentlyContinue
+    Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP -ErrorAction SilentlyContinue
+    if ($script:rdpCredentialOwned) {
+        try {
+            [ChuziSmokeCredentialStore]::Delete($script:rdpCredentialTarget)
+            $script:rdpCredentialOwned = $false
+        } catch {
+            $cleanupErrors.Add('rdp_credential_cleanup_failed')
+        }
+    }
+    if ($null -ne $script:rdpClientProcess -and -not $script:rdpClientProcess.HasExited) {
+        Stop-Process -InputObject $script:rdpClientProcess -Force -ErrorAction SilentlyContinue
+    }
     $cleanupResult = Stop-SmokeResources
     Write-Host ('RemainingSmokeUsers = ' + $script:remainingSmokeUsers)
     Write-Host ('UnownedSmokeUsers = ' + $script:unownedSmokeUsers)
