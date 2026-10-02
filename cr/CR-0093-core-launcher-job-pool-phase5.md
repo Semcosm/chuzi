@@ -1,7 +1,7 @@
 # CR-0093: add Core and Launcher job-pool operations control plane
 
 Base: main
-Head or Range: 0782270
+Head or Range: 21cb1e1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Core Launcher job pool phase 5 control plane
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: 0782270050a966670af4bae47c0f3d837eba5891
+Head OID: 21cb1e15ee8b79947c409fe3cfc903df401aedb9
 Integrated Result: pending
 
 ## Summary
@@ -23,9 +23,11 @@ Launcher provides the typed job-pool and environment commands through Core.
 The Store adds durable pool/environment operation, idempotency, and metadata-only
 audit buckets. Pool configuration revisions are optimistic-concurrency checked,
 reconciled into logical slot state, and projected with capacity and stable
-failure classifications. Environment gate operations are durable; package
-install/upgrade/rollback remain explicitly unavailable from Core until a
-service-owned catalog executor is deployed.
+failure classifications. The running scheduler and slot lifecycle refresh their
+inputs from the durable pool projection, so restart and later Core updates do not
+silently fall back to static deployment values. Signed package install, upgrade,
+and rollback use an opaque service-owned catalog reference when an executor is
+available; missing references fail with `package_unavailable`.
 
 ## Motivation
 
@@ -45,7 +47,8 @@ the policy, quality, supply-chain, action-pinning, repository-shape, and
 build-contract validators. Focused tests cover revision conflicts, changed
 idempotency payloads, pool projection redaction/capacity, drain retaining a
 leased slot, environment operation audit/idempotency, invalid catalog refs,
-Core error classification, and additive hello method negotiation.
+live scheduler and slot lifecycle refresh, controlled package execution, Core
+error classification, and additive hello method negotiation.
 
 The native Windows smoke gate and real RDP authorizer were not run here. Linux
 cross-build and hosted preflight evidence do not constitute native Windows
@@ -55,14 +58,13 @@ external blocker.
 ## Risk
 
 The single-node bbolt topology remains authoritative. Pool operations create
-logical slot records and rely on the existing slot lifecycle reconciler for
-Windows-backed provisioning, lease fencing, generation checks, health, and
-retirement. Core install/upgrade/rollback requests fail closed with the stable
-`package_unavailable` classification when no catalog executor is injected;
-existing service maintenance commands remain the signed package executor.
+logical slot records and rely on the slot lifecycle reconciler for Windows-backed
+provisioning, lease fencing, generation checks, health, and retirement. Catalog
+execution remains service-owned and validates signed trees before Store sync; a
+missing catalog reference receives the stable `package_unavailable` classification.
 RDP remains opaque and deny-by-default. Audit and projections use stable
-metadata only, but production deployments still need a catalog resolver,
-Windows native smoke, and an authorized RDP broker.
+metadata only; production deployments still need Windows native smoke and an
+authorized RDP broker.
 
 ## Rollback
 
