@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 9a8a35c97a90f606d365511284a87c34dd86a894
+Head or Range: 7ac91bc3b63a5043884310205ae7e06a0d2e5760
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 11
+Revision: 12
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 9a8a35c97a90f606d365511284a87c34dd86a894
+Head OID: 7ac91bc3b63a5043884310205ae7e06a0d2e5760
 Integrated Result: pending
 
 ## Summary
@@ -149,6 +149,13 @@ removed during cleanup; Credential Manager remains the only password boundary.
 This prevents the client from falling back to the interactive console identity.
 The qwinsta/RDP client evidence from the target host showed no managed-user
 session was created before this change, so native acceptance remains pending.
+
+Revision 12 adds pre-connect identity diagnostics. The script prints the
+interactive runner username and session ID, target host, exact target username
+and SID, Credential Manager target, temporary RDP profile path, and an explicit
+password-not-printed marker. The same redacted summary is preserved in the
+failure log when the RDP session cannot be established. No credential material
+is written to the summary or output.
 
 ## Risk
 
