@@ -83,6 +83,7 @@ type serviceRuntime struct {
 	environment        *environment.Manager
 	environmentID      string
 	environmentVersion string
+	jobPoolID          string
 	requests           *requestservice.Service
 	credentials        *credential.Service
 	runner             queue.Runner
@@ -354,6 +355,19 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	}
 	var environmentManager *environment.Manager
 	var environmentRuntime *serviceEnvironmentRuntime
+	var poolConfig slot.PoolConfig
+	if cfg.JobPool.Enabled() {
+		poolConfig = slot.PoolConfig{
+			PoolID:             cfg.JobPool.PoolID,
+			EnvironmentID:      cfg.JobPool.EnvironmentID,
+			EnvironmentVersion: cfg.JobPool.EnvironmentVersion,
+			DesiredSlots:       cfg.JobPool.DesiredSlots,
+			Capabilities:       append([]string(nil), cfg.JobPool.Capabilities...),
+			ManifestDigest:     cfg.JobPool.ManifestDigest,
+			Signer:             cfg.JobPool.Signer,
+			RequireTrusted:     cfg.JobPool.RequireTrusted,
+		}
+	}
 	if cfg.WindowsJobPool.Enabled {
 		environmentManager, err = newConfiguredEnvironmentManager(cfg, serviceTarget())
 		if err != nil {
@@ -364,28 +378,30 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			_ = database.Close()
 			return nil, err
 		}
+	}
+	if cfg.JobPool.Enabled() {
+		existing, getErr := database.GetJobPool(poolConfig.PoolID)
+		if getErr == nil {
+			// The durable control-plane revision is authoritative after the first
+			// boot. A restart must not overwrite it from deployment config.
+			poolConfig = existing
+		} else if errors.Is(getErr, slot.ErrPoolNotFound) {
+			if err := database.ReconcileTrustedJobPool(poolConfig, now()); err != nil {
+				_ = database.Close()
+				return nil, err
+			}
+		} else {
+			_ = database.Close()
+			return nil, getErr
+		}
+	}
+	if cfg.WindowsJobPool.Enabled {
 		entryName := "headless"
 		if options.backend == backendNode {
 			entryName = "worker"
 		}
-		environmentRuntime, err = resolveServiceEnvironment(cfg, environmentManager, entryName)
+		environmentRuntime, err = resolveServiceEnvironment(cfg, environmentManager, poolConfig, entryName)
 		if err != nil {
-			_ = database.Close()
-			return nil, err
-		}
-	}
-	if cfg.JobPool.Enabled() {
-		poolConfig := slot.PoolConfig{
-			PoolID:             cfg.JobPool.PoolID,
-			EnvironmentID:      cfg.JobPool.EnvironmentID,
-			EnvironmentVersion: cfg.JobPool.EnvironmentVersion,
-			DesiredSlots:       cfg.JobPool.DesiredSlots,
-			Capabilities:       append([]string(nil), cfg.JobPool.Capabilities...),
-			ManifestDigest:     cfg.JobPool.ManifestDigest,
-			Signer:             cfg.JobPool.Signer,
-			RequireTrusted:     cfg.JobPool.RequireTrusted,
-		}
-		if err := database.ReconcileTrustedJobPool(poolConfig, now()); err != nil {
 			_ = database.Close()
 			return nil, err
 		}
@@ -401,7 +417,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return nil, err
 		}
 	}
-	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge, environmentRuntime)
+	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge, environmentRuntime, poolConfig)
 	if err != nil {
 		_ = database.Close()
 		return nil, err
@@ -590,6 +606,21 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if candidate, ok := slotProfileAccess.(queue.SlotLeaseStopper); ok {
 		slotLeaseStopper = candidate
 	}
+	staticRuntimeConfig := queue.RuntimeConfig{SlotPoolID: poolConfig.PoolID, SlotRequirement: poolConfig.Requirement(), MaxGlobalConcurrency: options.maxConcurrency}
+	runtimeConfig := func() (queue.RuntimeConfig, error) {
+		if staticRuntimeConfig.SlotPoolID == "" {
+			return staticRuntimeConfig, nil
+		}
+		current, getErr := database.GetJobPool(staticRuntimeConfig.SlotPoolID)
+		if getErr != nil {
+			return queue.RuntimeConfig{}, getErr
+		}
+		maxConcurrency := current.MaxConcurrency
+		if maxConcurrency < 1 {
+			maxConcurrency = options.maxConcurrency
+		}
+		return queue.RuntimeConfig{SlotPoolID: current.PoolID, SlotRequirement: current.Requirement(), MaxGlobalConcurrency: maxConcurrency}, nil
+	}
 	scheduler, err := queue.New(database, sessionRunner, queue.Config{
 		Owner:                options.owner,
 		LeaseTTL:             options.leaseTTL,
@@ -600,33 +631,30 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			BaseDelay:   options.retryBaseDelay,
 			MaxDelay:    options.retryMaxDelay,
 		},
-		Clock: now,
-		NewID: newID,
-		Sink:  sink,
-		SlotPoolID: func() string {
-			if cfg.JobPool.Enabled() {
-				return cfg.JobPool.PoolID
-			}
-			return ""
-		}(),
-		SlotRequirement: func() slot.EnvironmentRequirement {
-			if cfg.JobPool.Enabled() {
-				return slot.EnvironmentRequirement{EnvironmentID: cfg.JobPool.EnvironmentID, Version: cfg.JobPool.EnvironmentVersion, Capabilities: append([]string(nil), cfg.JobPool.Capabilities...), ManifestDigest: cfg.JobPool.ManifestDigest, Signer: cfg.JobPool.Signer, RequireTrusted: cfg.JobPool.RequireTrusted}
-			}
-			return slot.EnvironmentRequirement{}
-		}(),
+		Clock:            now,
+		NewID:            newID,
+		Sink:             sink,
+		SlotPoolID:       staticRuntimeConfig.SlotPoolID,
+		SlotRequirement:  staticRuntimeConfig.SlotRequirement,
+		RuntimeConfig:    runtimeConfig,
 		Capabilities:     rdpBridge,
 		SlotLeaseStopper: slotLeaseStopper,
 	})
 	if err != nil {
 		return closeOnError(err)
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, Environments: database, JobPoolID: cfg.JobPool.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
+	var environmentExecutor core.EnvironmentExecutor
+	var environmentControl core.EnvironmentControlPort = database
+	if environmentManager != nil {
+		environmentExecutor = serviceEnvironmentExecutor{manager: environmentManager, store: database}
+		environmentControl = serviceEnvironmentControl{manager: environmentManager, store: database}
+	}
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}
 	runtime := &serviceRuntime{
-		store: database, environment: environmentManager, environmentID: cfg.JobPool.EnvironmentID, environmentVersion: cfg.JobPool.EnvironmentVersion, requests: requestService, credentials: credentials,
+		store: database, environment: environmentManager, environmentID: poolConfig.EnvironmentID, environmentVersion: poolConfig.EnvironmentVersion, jobPoolID: poolConfig.PoolID, requests: requestService, credentials: credentials,
 		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, diagnostics: diagnosticService, eventBuffer: eventBuffer, coreAPI: coreAPI,
 		rdp: rdpBridge,
 	}

@@ -179,6 +179,19 @@ func TestManagerLifecycleGatesAndRestart(t *testing.T) {
 	}
 }
 
+func TestManagerCatalogReferenceIsOpaqueAndServiceOwned(t *testing.T) {
+	manager, err := NewManager(Options{InstallRoot: t.TempDir(), CatalogRoot: t.TempDir(), Target: "linux-amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.InstallReference(context.Background(), "../outside"); !errors.Is(err, ErrPackageReference) {
+		t.Fatalf("traversal reference error = %v", err)
+	}
+	if _, err := manager.InstallReference(context.Background(), "missing-package"); !errors.Is(err, ErrPackageReference) {
+		t.Fatalf("missing reference error = %v", err)
+	}
+}
+
 func TestManagerResolvesClosedRuntimeEntrypoint(t *testing.T) {
 	content := []byte("runtime data")
 	m, priv := testManifest(t, content)

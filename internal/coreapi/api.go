@@ -374,6 +374,7 @@ type EnvironmentOperation struct {
 	EnvironmentGeneration uint64    `json:"environment_generation,omitempty"`
 	RequestedAt           time.Time `json:"requested_at"`
 	UpdatedAt             time.Time `json:"updated_at"`
+	Idempotent            bool      `json:"idempotent,omitempty"`
 }
 
 type EnvironmentAPI interface {

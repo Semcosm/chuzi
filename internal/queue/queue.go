@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
@@ -119,9 +120,23 @@ type Config struct {
 	Sink                 observability.Sink
 	SlotPoolID           string
 	SlotRequirement      slot.EnvironmentRequirement
+	RuntimeConfig        RuntimeConfigProvider
 	Capabilities         CapabilityRevoker
 	SlotLeaseStopper     SlotLeaseStopper
 }
+
+// RuntimeConfig is the scheduler-owned projection of control-plane settings.
+// It is deliberately limited to scheduling inputs; callers cannot mutate the
+// Scheduler's durable state through this callback.
+type RuntimeConfig struct {
+	SlotPoolID           string
+	SlotRequirement      slot.EnvironmentRequirement
+	MaxGlobalConcurrency int
+}
+
+// RuntimeConfigProvider supplies the current control-plane scheduling
+// projection before each scheduling pass.
+type RuntimeConfigProvider func() (RuntimeConfig, error)
 
 func (s *Scheduler) revokeRequest(requestID string) error {
 	if s == nil || s.config.Capabilities == nil || requestID == "" {
@@ -151,6 +166,7 @@ func (s *Scheduler) revokeAccountLease(leaseID string) error {
 // Scheduler claims and processes at most one request per RunOnce call. A
 // caller can invoke it from a worker loop or use it in deterministic tests.
 type Scheduler struct {
+	mu     sync.Mutex
 	store  StorePort
 	runner Runner
 	config Config
@@ -186,8 +202,22 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	if s == nil || ctx == nil {
 		return Outcome{}, ErrInvalidConfig
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return Outcome{}, err
+	}
+	if s.config.RuntimeConfig != nil {
+		runtimeConfig, err := s.config.RuntimeConfig()
+		if err != nil {
+			return Outcome{}, err
+		}
+		if runtimeConfig.MaxGlobalConcurrency < 1 {
+			return Outcome{}, ErrInvalidConfig
+		}
+		s.config.SlotPoolID = runtimeConfig.SlotPoolID
+		s.config.SlotRequirement = runtimeConfig.SlotRequirement
+		s.config.MaxGlobalConcurrency = runtimeConfig.MaxGlobalConcurrency
 	}
 	now := s.config.Clock()
 	if now.IsZero() {

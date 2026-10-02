@@ -163,6 +163,41 @@ func TestAssembleRuntimeRequiresDurableReadyEnvironmentForPool(t *testing.T) {
 	}
 }
 
+func TestAssembleRuntimePreservesDurablePoolAfterRestart(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg, err := config.New(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("f", 64)
+	cfg.JobPool = config.JobPoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	if err := database.PutEnvironmentRecord(environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: digest, Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: now}); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.ReconcileJobPool(slot.PoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 3, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}, now); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), func() time.Time { return now.Add(time.Minute) }, testFactory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.store.Close()
+	current, err := runtime.store.GetJobPool("pool")
+	if err != nil || current.DesiredSlots != 3 {
+		t.Fatalf("durable pool after restart = %#v, err=%v", current, err)
+	}
+}
+
 func openStoreForTest(cfg config.Config) (*store.Store, error) {
 	return store.Open(cfg)
 }

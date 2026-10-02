@@ -100,32 +100,41 @@ type EnvironmentControlPort interface {
 	ApplyEnvironmentGate(string, string, string, time.Time) (environment.Record, error)
 }
 
+// EnvironmentExecutor is the controlled package lifecycle boundary. Core
+// receives only an opaque catalog reference and never resolves filesystem
+// paths itself.
+type EnvironmentExecutor interface {
+	Execute(context.Context, store.EnvironmentMutation) error
+}
+
 type Dependencies struct {
-	Requests       RequestPort
-	Store          StoreReader
-	Views          BrowserViewPort
-	RDP            RDPCapabilityPort
-	Diagnostics    DiagnosticsPort
-	JobPools       JobPoolStatusPort
-	JobPoolControl JobPoolControlPort
-	Environments   EnvironmentControlPort
-	JobPoolID      string
-	MaxConcurrency int
-	Clock          func() time.Time
+	Requests            RequestPort
+	Store               StoreReader
+	Views               BrowserViewPort
+	RDP                 RDPCapabilityPort
+	Diagnostics         DiagnosticsPort
+	JobPools            JobPoolStatusPort
+	JobPoolControl      JobPoolControlPort
+	Environments        EnvironmentControlPort
+	EnvironmentExecutor EnvironmentExecutor
+	JobPoolID           string
+	MaxConcurrency      int
+	Clock               func() time.Time
 }
 
 type Service struct {
-	requests       RequestPort
-	store          StoreReader
-	views          BrowserViewPort
-	rdp            RDPCapabilityPort
-	diagnostics    DiagnosticsPort
-	jobPools       JobPoolStatusPort
-	jobPoolControl JobPoolControlPort
-	environments   EnvironmentControlPort
-	jobPoolID      string
-	maxConcurrency int
-	clock          func() time.Time
+	requests            RequestPort
+	store               StoreReader
+	views               BrowserViewPort
+	rdp                 RDPCapabilityPort
+	diagnostics         DiagnosticsPort
+	jobPools            JobPoolStatusPort
+	jobPoolControl      JobPoolControlPort
+	environments        EnvironmentControlPort
+	environmentExecutor EnvironmentExecutor
+	jobPoolID           string
+	maxConcurrency      int
+	clock               func() time.Time
 }
 
 var _ coreapi.API = (*Service)(nil)
@@ -140,7 +149,7 @@ func New(dependencies Dependencies) (*Service, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, environments: dependencies.Environments, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
 }
 
 func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
@@ -235,15 +244,20 @@ func (s *Service) ApplyJobPool(ctx context.Context, input coreapi.JobPoolApplyRe
 	if s.jobPoolControl == nil || !validToken(input.Config.PoolID) || !validToken(input.Config.EnvironmentID) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) || input.Config.DesiredSlots < 0 || input.Config.MaxConcurrency < 0 {
 		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
 	}
-	value, _, err := s.jobPoolControl.ApplyJobPool(store.JobPoolMutation{Config: unprojectJobPoolConfig(input.Config), ExpectedRevision: input.ExpectedRevision, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, RequestedAt: input.RequestedAt})
+	value, idempotent, err := s.jobPoolControl.ApplyJobPool(store.JobPoolMutation{Config: unprojectJobPoolConfig(input.Config), ExpectedRevision: input.ExpectedRevision, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, RequestedAt: input.RequestedAt})
 	if err != nil {
 		return coreapi.JobPoolOperation{}, classify(err)
 	}
-	_, _ = s.jobPoolControl.ReconcileJobPoolControl(input.Config.PoolID, s.clock())
+	if reconcileErr := s.reconcileJobPool(input.Config.PoolID); reconcileErr != nil {
+		if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
+			value = current
+		}
+		return projectJobPoolOperation(value, idempotent), reconcileErr
+	}
 	if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
 		value = current
 	}
-	return projectJobPoolOperation(value), nil
+	return projectJobPoolOperation(value, idempotent), nil
 }
 
 func (s *Service) ScaleJobPool(ctx context.Context, input coreapi.JobPoolScaleRequest) (coreapi.JobPoolOperation, error) {
@@ -256,15 +270,20 @@ func (s *Service) ScaleJobPool(ctx context.Context, input coreapi.JobPoolScaleRe
 	if s.jobPoolControl == nil || !validToken(input.PoolID) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) || input.DesiredSlots < 0 {
 		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
 	}
-	value, _, err := s.jobPoolControl.ScaleJobPool(input.PoolID, input.DesiredSlots, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
+	value, idempotent, err := s.jobPoolControl.ScaleJobPool(input.PoolID, input.DesiredSlots, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
 	if err != nil {
 		return coreapi.JobPoolOperation{}, classify(err)
 	}
-	_, _ = s.jobPoolControl.ReconcileJobPoolControl(input.PoolID, s.clock())
+	if reconcileErr := s.reconcileJobPool(input.PoolID); reconcileErr != nil {
+		if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
+			value = current
+		}
+		return projectJobPoolOperation(value, idempotent), reconcileErr
+	}
 	if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
 		value = current
 	}
-	return projectJobPoolOperation(value), nil
+	return projectJobPoolOperation(value, idempotent), nil
 }
 
 func (s *Service) DrainJobPool(ctx context.Context, input coreapi.JobPoolActionRequest) (coreapi.JobPoolOperation, error) {
@@ -286,20 +305,34 @@ func (s *Service) jobPoolAction(ctx context.Context, input coreapi.JobPoolAction
 		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
 	}
 	var value store.JobPoolOperation
+	var idempotent bool
 	var err error
 	if drain {
-		value, _, err = s.jobPoolControl.DrainJobPool(input.PoolID, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
+		value, idempotent, err = s.jobPoolControl.DrainJobPool(input.PoolID, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
 	} else {
-		value, _, err = s.jobPoolControl.ResumeJobPool(input.PoolID, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
+		value, idempotent, err = s.jobPoolControl.ResumeJobPool(input.PoolID, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
 	}
 	if err != nil {
 		return coreapi.JobPoolOperation{}, classify(err)
 	}
-	_, _ = s.jobPoolControl.ReconcileJobPoolControl(input.PoolID, s.clock())
+	if reconcileErr := s.reconcileJobPool(input.PoolID); reconcileErr != nil {
+		if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
+			value = current
+		}
+		return projectJobPoolOperation(value, idempotent), reconcileErr
+	}
 	if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
 		value = current
 	}
-	return projectJobPoolOperation(value), nil
+	return projectJobPoolOperation(value, idempotent), nil
+}
+
+func (s *Service) reconcileJobPool(poolID string) error {
+	_, err := s.jobPoolControl.ReconcileJobPoolControl(poolID, s.clock())
+	if err != nil {
+		return classify(err)
+	}
+	return nil
 }
 
 func (s *Service) GetJobPoolOperation(ctx context.Context, operationID string) (coreapi.JobPoolOperation, error) {
@@ -316,7 +349,7 @@ func (s *Service) GetJobPoolOperation(ctx context.Context, operationID string) (
 	if err != nil {
 		return coreapi.JobPoolOperation{}, classify(err)
 	}
-	return projectJobPoolOperation(value), nil
+	return projectJobPoolOperation(value, false), nil
 }
 
 func (s *Service) ListEnvironments(ctx context.Context) ([]coreapi.Environment, error) {
@@ -353,24 +386,35 @@ func (s *Service) EnvironmentOperation(ctx context.Context, input coreapi.Enviro
 	if s.environments == nil || !validToken(input.EnvironmentID) || !validToken(input.Version) || !validToken(input.Operation) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) || (input.PackageRef != "" && (!validToken(input.PackageRef) || strings.ContainsAny(input.PackageRef, "/\\"))) || !validEnvironmentOperation(input.Operation) {
 		return coreapi.EnvironmentOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
 	}
-	value, idempotent, err := s.environments.ApplyEnvironmentOperation(store.EnvironmentMutation{EnvironmentID: input.EnvironmentID, Version: input.Version, Operation: input.Operation, PackageRef: input.PackageRef, ExpectedRevision: input.ExpectedRevision, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, RequestedAt: input.RequestedAt})
+	mutation := store.EnvironmentMutation{EnvironmentID: input.EnvironmentID, Version: input.Version, Operation: input.Operation, PackageRef: input.PackageRef, ExpectedRevision: input.ExpectedRevision, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, RequestedAt: input.RequestedAt}
+	value, idempotent, err := s.environments.ApplyEnvironmentOperation(mutation)
 	if err != nil {
 		return coreapi.EnvironmentOperation{}, classify(err)
 	}
 	if idempotent {
-		return projectEnvironmentOperation(value), nil
+		return projectEnvironmentOperation(value, true), nil
 	}
 	state, failure := "applied", ""
 	if input.Operation == "install" || input.Operation == "upgrade" || input.Operation == "rollback" {
-		state, failure = "failed", "package_unavailable"
+		if s.environmentExecutor == nil {
+			state, failure = "failed", "package_unavailable"
+		} else {
+			if _, updateErr := s.environments.UpdateEnvironmentOperation(value.OperationID, "provisioning", "", s.clock()); updateErr != nil {
+				return coreapi.EnvironmentOperation{}, classify(updateErr)
+			}
+			if executeErr := s.environmentExecutor.Execute(ctx, mutation); executeErr != nil {
+				state, failure = "failed", environmentFailureCode(executeErr)
+			}
+		}
 	} else if _, gateErr := s.environments.ApplyEnvironmentGate(input.EnvironmentID, input.Version, input.Operation, s.clock()); gateErr != nil {
 		state, failure = "failed", environmentFailureCode(gateErr)
 	}
 	updated, updateErr := s.environments.UpdateEnvironmentOperation(value.OperationID, state, failure, s.clock())
-	if updateErr == nil {
-		value = updated
+	if updateErr != nil {
+		return coreapi.EnvironmentOperation{}, classify(updateErr)
 	}
-	return projectEnvironmentOperation(value), nil
+	value = updated
+	return projectEnvironmentOperation(value, false), nil
 }
 
 func (s *Service) GetEnvironmentOperation(ctx context.Context, operationID string) (coreapi.EnvironmentOperation, error) {
@@ -387,7 +431,7 @@ func (s *Service) GetEnvironmentOperation(ctx context.Context, operationID strin
 	if err != nil {
 		return coreapi.EnvironmentOperation{}, classify(err)
 	}
-	return projectEnvironmentOperation(value), nil
+	return projectEnvironmentOperation(value, false), nil
 }
 
 func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
@@ -884,20 +928,28 @@ func unprojectJobPoolConfig(value coreapi.JobPoolConfig) slot.PoolConfig {
 	return slot.PoolConfig{PoolID: value.PoolID, DesiredSlots: value.DesiredSlots, MaxConcurrency: value.MaxConcurrency, EnvironmentID: value.EnvironmentID, EnvironmentVersion: value.EnvironmentVersion, ManifestDigest: value.ManifestDigest, Signer: value.Signer, Capabilities: append([]string(nil), value.Capabilities...), RequireTrusted: value.RequireTrusted, DesiredState: state}
 }
 
-func projectJobPoolOperation(value store.JobPoolOperation) coreapi.JobPoolOperation {
-	return coreapi.JobPoolOperation{OperationID: value.OperationID, PoolID: value.PoolID, Operation: value.Operation, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ConfigRevision: value.ConfigRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, Result: value.Result, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, LastSuccessfulAt: value.LastSuccessfulAt}
+func projectJobPoolOperation(value store.JobPoolOperation, idempotent bool) coreapi.JobPoolOperation {
+	return coreapi.JobPoolOperation{OperationID: value.OperationID, PoolID: value.PoolID, Operation: value.Operation, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ConfigRevision: value.ConfigRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, Result: value.Result, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, LastSuccessfulAt: value.LastSuccessfulAt, Idempotent: idempotent}
 }
 
 func projectEnvironment(value environment.Record) coreapi.Environment {
 	return coreapi.Environment{EnvironmentID: value.EnvironmentID, Version: value.Version, Capabilities: append([]string(nil), value.Capabilities...), ManifestDigest: value.ManifestDigest, Signer: value.Signer, Installed: value.Installed, Verified: value.Verified, Trusted: value.Trusted, Enabled: value.Enabled, Healthy: value.Healthy, Ready: value.Ready, Generation: value.Generation, UpdatedAt: value.UpdatedAt}
 }
 
-func projectEnvironmentOperation(value store.EnvironmentOperationRecord) coreapi.EnvironmentOperation {
-	return coreapi.EnvironmentOperation{OperationID: value.OperationID, EnvironmentID: value.EnvironmentID, Version: value.Version, Operation: value.Operation, State: value.State, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt}
+func projectEnvironmentOperation(value store.EnvironmentOperationRecord, idempotent bool) coreapi.EnvironmentOperation {
+	return coreapi.EnvironmentOperation{OperationID: value.OperationID, EnvironmentID: value.EnvironmentID, Version: value.Version, Operation: value.Operation, State: value.State, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, Idempotent: idempotent}
 }
 
 func environmentFailureCode(err error) string {
 	switch {
+	case errors.Is(err, environment.ErrPackageReference), errors.Is(err, environment.ErrNotInstalled), errors.Is(err, environment.ErrRollbackUnavailable):
+		return "package_unavailable"
+	case errors.Is(err, environment.ErrExternalModification):
+		return "environment_untrusted"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
 	case errors.Is(err, environment.ErrNotTrusted):
 		return "environment_untrusted"
 	case errors.Is(err, environment.ErrNotVerified):

@@ -200,10 +200,12 @@ Core/Launcher 投影只允许稳定 ID、计数、状态、时间、revision、o
 不会包含 actor 原文、SID、用户名、Profile、pipe、RDP endpoint、package 本地路径、
 命令、Cookie、token 或密码。
 
-环境 package 操作只能引用服务拥有的 catalog entry。当前没有注入 catalog executor 时，
-Core 仍会持久化 install/upgrade/rollback 请求并以 `package_unavailable` 完成失败；既有
-`cmd/service -environment-install` 等维护入口继续调用签名 `environment.Manager`，并要求
-受控本地 source。该限制不会把任意路径暴露给 Core 或 Launcher。
+环境 package 操作只能引用服务拥有的 catalog entry。长期运行的 service 将
+`PackageRef` 解析为 `<data_dir>/.chuzi/environment-catalog/<ref>`，再由签名
+`environment.Manager` 执行 install/upgrade/rollback 和 Store 同步；缺失 catalog entry
+时以稳定的 `package_unavailable` 完成失败。既有 `cmd/service -environment-install`
+等维护入口继续调用签名 `environment.Manager`，并要求受控本地 source。Core 或 Launcher
+不会接收任意路径。
 
 首个 Windows Slint 客户端在 `ui/windows`，构建脚本为
 `scripts/build_windows_slint.ps1`，Actions 任务 `chuzi-build-windows-slint` 生成并上传

@@ -92,22 +92,31 @@ func run(ctx context.Context, options serviceOptions) error {
 			}
 		})
 	}
-	if runtime.slotReconciler != nil {
+	if runtime.slotReconciler != nil || runtime.jobPoolID != "" {
 		startBackground("slot lifecycle", func(workerCtx context.Context) error {
 			reconcile := func() {
 				var err error
+				environmentID, environmentVersion := runtime.environmentID, runtime.environmentVersion
+				if runtime.jobPoolID != "" {
+					if current, getErr := runtime.store.GetJobPool(runtime.jobPoolID); getErr == nil {
+						environmentID, environmentVersion = current.EnvironmentID, current.EnvironmentVersion
+					}
+					if _, controlErr := runtime.store.ReconcileJobPoolControl(runtime.jobPoolID, time.Now().UTC()); controlErr != nil {
+						err = controlErr
+					}
+				}
 				if runtime.environment != nil {
 					// Revalidate the signed tree before each slot pass. Store remains
 					// the projection used by claims and capacity, so an external
 					// package edit immediately removes readiness from both views.
-					if _, healthErr := runtime.environment.HealthCheck(workerCtx, runtime.environmentID, runtime.environmentVersion); healthErr != nil {
+					if _, healthErr := runtime.environment.HealthCheck(workerCtx, environmentID, environmentVersion); healthErr != nil {
 						err = healthErr
 					}
 					if syncErr := runtime.environment.SyncRecords(runtime.store); err == nil && syncErr != nil {
 						err = syncErr
 					}
 				}
-				if err == nil {
+				if err == nil && runtime.slotReconciler != nil {
 					err = runtime.slotReconciler.Reconcile(workerCtx)
 				}
 				runtime.recordSlotReconcile(time.Now().UTC(), err)

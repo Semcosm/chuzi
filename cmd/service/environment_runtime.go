@@ -9,6 +9,7 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/environment"
+	"github.com/Semcosm/chuzi/internal/slot"
 )
 
 const environmentTrustStoreName = "environment-trust.json"
@@ -52,6 +53,7 @@ func newConfiguredEnvironmentManager(cfg config.Config, target string) (*environ
 	manager, err := environment.NewManager(environment.Options{
 		InstallRoot: environmentInstallRoot(cfg),
 		StatePath:   environmentStatePath(cfg),
+		CatalogRoot: filepath.Join(cfg.DataDir, ".chuzi", "environment-catalog"),
 		Target:      target,
 		Trust:       trust,
 		Health:      environmentHealthCheck,
@@ -65,14 +67,14 @@ func newConfiguredEnvironmentManager(cfg config.Config, target string) (*environ
 // resolveServiceEnvironment proves the manager state and package tree again at
 // startup. A Store record alone cannot turn an edited or missing package into
 // a runnable Windows environment.
-func resolveServiceEnvironment(cfg config.Config, manager *environment.Manager, entryName string) (*serviceEnvironmentRuntime, error) {
+func resolveServiceEnvironment(cfg config.Config, manager *environment.Manager, pool slot.PoolConfig, entryName string) (*serviceEnvironmentRuntime, error) {
 	if !cfg.WindowsJobPool.Enabled {
 		return nil, nil
 	}
 	if manager == nil {
 		return nil, fmt.Errorf("service: environment manager unavailable")
 	}
-	packageValue, entry, err := manager.ResolveEntrypoint(cfg.JobPool.EnvironmentID, cfg.JobPool.EnvironmentVersion, entryName, "browser-worker")
+	packageValue, entry, err := manager.ResolveEntrypoint(pool.EnvironmentID, pool.EnvironmentVersion, entryName, "browser-worker")
 	if err != nil {
 		return nil, fmt.Errorf("service: trusted browser-worker entrypoint unavailable")
 	}

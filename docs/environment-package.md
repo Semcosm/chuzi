@@ -37,11 +37,13 @@ adapter command.
 
 The Core/Launcher environment control surface accepts only an opaque package
 reference, never a filesystem path. Lifecycle gate operations are durable and
-idempotent and produce metadata-only audit events. The existing service
-maintenance command remains the package executor for signed local sources;
-until a deployment-owned catalog resolver is configured, Core records
-install/upgrade/rollback requests as `package_unavailable` rather than
-guessing a source or weakening the package trust boundary.
+idempotent and produce metadata-only audit events. The long-lived service
+resolves install and upgrade references below
+`<data_dir>/.chuzi/environment-catalog`, then delegates signature, digest, and
+tree validation to `environment.Manager`; rollback uses the manager's verified
+rollback tree. A missing catalog entry completes the operation with the stable
+`package_unavailable` failure classification. The existing maintenance command
+remains available for signed local sources outside the Core/Launcher boundary.
 
 Slots use the persisted environment record as their trusted target when the
 lifecycle reconciler is configured with the store authority. Pool requirements

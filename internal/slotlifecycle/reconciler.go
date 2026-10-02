@@ -48,6 +48,12 @@ type EnvironmentAuthority interface {
 	GetEnvironmentRecord(string, string) (environment.Record, error)
 }
 
+// PoolConfigSource lets a long-lived reconciler follow the durable desired
+// pool after a Core update instead of retaining startup configuration.
+type PoolConfigSource interface {
+	GetJobPool(string) (slot.PoolConfig, error)
+}
+
 // slotTargetUpdater is optional so focused lifecycle fakes do not need to
 // persist target metadata. The durable store implements it to record the
 // generation fence before provisioning starts.
@@ -78,6 +84,7 @@ type Reconciler struct {
 	cleanupTimeout   time.Duration
 	revoker          CapabilityRevoker
 	authority        EnvironmentAuthority
+	poolSource       PoolConfigSource
 	owner            string
 }
 
@@ -87,6 +94,7 @@ func New(database Store, provisioner Provisioner, pool slot.PoolConfig, clock fu
 	}
 	var revoker CapabilityRevoker
 	var authority EnvironmentAuthority
+	var poolSource PoolConfigSource
 	owner := "service"
 	ownerSet := false
 	for _, extra := range extras {
@@ -103,6 +111,11 @@ func New(database Store, provisioner Provisioner, pool slot.PoolConfig, clock fu
 				return nil, ErrInvalidConfig
 			}
 			authority = value
+		case PoolConfigSource:
+			if poolSource != nil {
+				return nil, ErrInvalidConfig
+			}
+			poolSource = value
 		case string:
 			if ownerSet || strings.TrimSpace(value) != value || value == "" || len(value) > 160 || strings.ContainsAny(value, "\x00\r\n\t/\\") {
 				return nil, ErrInvalidConfig
@@ -112,8 +125,13 @@ func New(database Store, provisioner Provisioner, pool slot.PoolConfig, clock fu
 		default:
 			return nil, ErrInvalidConfig
 		}
+		if candidate, ok := extra.(PoolConfigSource); ok {
+			if poolSource == nil {
+				poolSource = candidate
+			}
+		}
 	}
-	return &Reconciler{store: database, provisioner: provisioner, pool: pool, clock: clock, provisionTimeout: provisionTimeout, cleanupTimeout: cleanupTimeout, revoker: revoker, authority: authority, owner: owner}, nil
+	return &Reconciler{store: database, provisioner: provisioner, pool: pool, clock: clock, provisionTimeout: provisionTimeout, cleanupTimeout: cleanupTimeout, revoker: revoker, authority: authority, poolSource: poolSource, owner: owner}, nil
 }
 
 // Reconcile processes one pass. Failures are returned as a stable category;
@@ -124,13 +142,21 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	pool := r.pool
+	if r.poolSource != nil {
+		current, sourceErr := r.poolSource.GetJobPool(pool.PoolID)
+		if sourceErr != nil {
+			return errors.New("slotlifecycle: pool configuration unavailable")
+		}
+		pool = current
+	}
 	if r.authority != nil {
-		record, authorityErr := r.authority.GetEnvironmentRecord(r.pool.EnvironmentID, r.pool.EnvironmentVersion)
-		if authorityErr != nil || !record.IsReady() || record.EnvironmentID != r.pool.EnvironmentID || record.Version != r.pool.EnvironmentVersion || r.pool.ManifestDigest == "" || !strings.EqualFold(record.ManifestDigest, r.pool.ManifestDigest) || r.pool.Signer == "" || record.Signer != r.pool.Signer || !containsAll(record.Capabilities, r.pool.Capabilities) {
+		record, authorityErr := r.authority.GetEnvironmentRecord(pool.EnvironmentID, pool.EnvironmentVersion)
+		if authorityErr != nil || !record.IsReady() || record.EnvironmentID != pool.EnvironmentID || record.Version != pool.EnvironmentVersion || pool.ManifestDigest == "" || !strings.EqualFold(record.ManifestDigest, pool.ManifestDigest) || pool.Signer == "" || record.Signer != pool.Signer || !containsAll(record.Capabilities, pool.Capabilities) {
 			return errors.New("slotlifecycle: trusted environment unavailable")
 		}
 	}
-	slots, err := r.store.ListSlots(r.pool.PoolID)
+	slots, err := r.store.ListSlots(pool.PoolID)
 	if err != nil {
 		return err
 	}
@@ -149,13 +175,13 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		environmentChanged := !matchesSlotTarget(value, r.pool)
+		environmentChanged := !matchesSlotTarget(value, pool)
 		generation := value.EnvironmentGeneration
 		if generation == 0 {
 			// A newly created logical slot has no runtime generation yet. The
 			// first provision is generation one.
 			generation = 1
-		} else if environmentChanged && value.Ordinal <= r.pool.DesiredSlots {
+		} else if environmentChanged && value.Ordinal <= pool.DesiredSlots {
 			if generation == ^uint64(0) {
 				if first == nil {
 					first = errors.New("slotlifecycle: environment generation exhausted")
@@ -164,8 +190,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			}
 			generation++
 		}
-		request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: generation, Requirement: r.pool.Requirement()}
-		if value.Ordinal > r.pool.DesiredSlots {
+		request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: generation, Requirement: pool.Requirement()}
+		if value.Ordinal > pool.DesiredSlots {
 			if leased {
 				if value.Status != slot.Draining {
 					if err := r.store.SetSlotStatus(value.SlotID, slot.Draining, r.clock().UTC()); err != nil && first == nil {
@@ -233,7 +259,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			}
 			if checker, ok := r.provisioner.(LeaseHealthChecker); ok {
 				healthCtx, cancel := context.WithTimeout(ctx, r.provisionTimeout)
-				healthErr := checker.Health(healthCtx, slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: value.EnvironmentGeneration, Requirement: r.pool.Requirement()}, lease)
+				healthErr := checker.Health(healthCtx, slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: value.EnvironmentGeneration, Requirement: pool.Requirement()}, lease)
 				cancel()
 				if healthErr != nil {
 					if retryable, retryableOK := healthErr.(interface{ Retryable() bool }); retryableOK && retryable.Retryable() {
@@ -273,7 +299,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			healthCtx, cancel := context.WithTimeout(ctx, r.provisionTimeout)
 			summary, inspectErr := r.provisioner.Inspect(healthCtx, request)
 			cancel()
-			if !environmentChanged && inspectErr == nil && matches(summary, r.pool, value.EnvironmentGeneration) {
+			if !environmentChanged && inspectErr == nil && matches(summary, pool, value.EnvironmentGeneration) {
 				continue
 			}
 		}
@@ -288,12 +314,12 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		if environmentChanged || value.EnvironmentGeneration == 0 {
 			if updater, ok := r.store.(slotTargetUpdater); ok {
 				value.Status = slot.Provisioning
-				value.EnvironmentID = r.pool.EnvironmentID
-				value.EnvironmentVersion = r.pool.EnvironmentVersion
+				value.EnvironmentID = pool.EnvironmentID
+				value.EnvironmentVersion = pool.EnvironmentVersion
 				value.EnvironmentGeneration = generation
-				value.Capabilities = append([]string(nil), r.pool.Capabilities...)
-				value.ManifestDigest = r.pool.ManifestDigest
-				value.Signer = r.pool.Signer
+				value.Capabilities = append([]string(nil), pool.Capabilities...)
+				value.ManifestDigest = pool.ManifestDigest
+				value.Signer = pool.Signer
 				value.Trusted = false
 				value.AgentHandle = ""
 				value.HealthAt = time.Time{}
@@ -309,7 +335,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		provisionCtx, cancel := context.WithTimeout(ctx, r.provisionTimeout)
 		result, provisionErr := r.provisioner.Provision(provisionCtx, request)
 		cancel()
-		if provisionErr != nil || result.AgentHandle == "" || !matches(result.Summary, r.pool, generation) {
+		if provisionErr != nil || result.AgentHandle == "" || !matches(result.Summary, pool, generation) {
 			// A transient session boundary (for example an RDP disconnect)
 			// remains provisioning so the next pass can retry. Runtime,
 			// identity, and ACL failures isolate the slot before it can be
@@ -332,7 +358,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		inspectCtx, inspectCancel := context.WithTimeout(ctx, r.provisionTimeout)
 		inspected, inspectErr := r.provisioner.Inspect(inspectCtx, request)
 		inspectCancel()
-		if inspectErr != nil || !matches(inspected, r.pool, generation) {
+		if inspectErr != nil || !matches(inspected, pool, generation) {
 			if retryable, ok := inspectErr.(interface{ Retryable() bool }); !ok || !retryable.Retryable() {
 				_ = r.store.SetSlotStatus(value.SlotID, slot.Quarantined, r.clock().UTC())
 			}

@@ -175,6 +175,28 @@ func newSlotTestScheduler(t *testing.T, database *store.Store, runner Runner, cl
 	return scheduler
 }
 
+func TestSchedulerRefreshesRuntimeControlProjection(t *testing.T) {
+	database := openQueueTestStore(t)
+	clock := &testClock{now: schedulerTestTime}
+	called := 0
+	scheduler, err := New(database, &fakeRunner{}, Config{
+		Owner: "queue-test", LeaseTTL: time.Minute, RunTimeout: time.Minute,
+		MaxGlobalConcurrency: 1, RetryPolicy: account.RetryPolicy{MaxAttempts: 1},
+		Clock: clock.Now, NewID: newTestIDs(),
+		RuntimeConfig: func() (RuntimeConfig, error) {
+			called++
+			return RuntimeConfig{MaxGlobalConcurrency: 3}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := scheduler.RunOnce(context.Background())
+	if err != nil || !outcome.Idle || called != 1 || scheduler.config.MaxGlobalConcurrency != 3 {
+		t.Fatalf("outcome=%#v err=%v calls=%d config=%#v", outcome, err, called, scheduler.config)
+	}
+}
+
 func configureTestSlotPool(t *testing.T, database *store.Store, now time.Time, ready bool) {
 	t.Helper()
 	pool := slot.PoolConfig{PoolID: "pool-test", EnvironmentID: "chuzi-environment/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, Capabilities: []string{"windows-desktop", "cdp"}, RequireTrusted: true}

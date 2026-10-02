@@ -23,6 +23,10 @@ type environmentAuthority struct {
 	err    error
 }
 
+type mutablePoolSource struct{ pool slot.PoolConfig }
+
+func (s mutablePoolSource) GetJobPool(string) (slot.PoolConfig, error) { return s.pool, nil }
+
 func (a environmentAuthority) GetEnvironmentRecord(string, string) (environment.Record, error) {
 	return a.record, a.err
 }
@@ -175,6 +179,22 @@ func TestReconcileProvisionInspectAndRetire(t *testing.T) {
 	}
 	if db.items["pool-001"].Status != slot.Deleted || len(provisioner.calls) != 1 || provisioner.calls[0] != "retire" {
 		t.Fatalf("retirement state=%s calls=%v", db.items["pool-001"].Status, provisioner.calls)
+	}
+}
+
+func TestReconcileRefreshesDurablePoolConfiguration(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
+	provisioner := &fakeProvisioner{summary: validSummary(1)}
+	updated := validPool(1)
+	reconciler, err := New(db, provisioner, validPool(0), func() time.Time { return lifecycleNow }, time.Minute, time.Minute, mutablePoolSource{pool: updated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if db.items["pool-001"].Status != slot.Ready || len(provisioner.calls) != 2 {
+		t.Fatalf("durable pool projection was not applied: slot=%#v calls=%v", db.items["pool-001"], provisioner.calls)
 	}
 }
 

@@ -53,6 +53,16 @@ type controlEnvironments struct {
 	err    error
 }
 
+type recordingEnvironmentExecutor struct {
+	mutation store.EnvironmentMutation
+	err      error
+}
+
+func (e *recordingEnvironmentExecutor) Execute(_ context.Context, mutation store.EnvironmentMutation) error {
+	e.mutation = mutation
+	return e.err
+}
+
 func (e controlEnvironments) ListEnvironmentRecords() ([]environment.Record, error) {
 	return []environment.Record{e.record}, e.err
 }
@@ -69,7 +79,7 @@ func (e controlEnvironments) GetEnvironmentOperation(string) (store.EnvironmentO
 	return store.EnvironmentOperationRecord{}, e.err
 }
 func (e controlEnvironments) UpdateEnvironmentOperation(string, string, string, time.Time) (store.EnvironmentOperationRecord, error) {
-	return store.EnvironmentOperationRecord{}, e.err
+	return store.EnvironmentOperationRecord{OperationID: "envop-1", EnvironmentID: "env/v1", Version: "1.0.0", Operation: "install", State: "applied", RequestedAt: controlTestTime, UpdatedAt: controlTestTime}, e.err
 }
 func (e controlEnvironments) ApplyEnvironmentGate(string, string, string, time.Time) (environment.Record, error) {
 	return e.record, e.err
@@ -117,6 +127,21 @@ func TestEnvironmentOperationRejectsUncontrolledPackageRef(t *testing.T) {
 	_, err = service.EnvironmentOperation(context.Background(), coreapi.EnvironmentOperationRequest{EnvironmentID: "env/v1", Version: "1.0.0", Operation: "install", PackageRef: "../package", IdempotencyKey: "idem", Actor: "operator"})
 	if coreapi.CodeOf(err) != coreapi.CodeInvalidArgument {
 		t.Fatalf("package ref error = %v, code=%q", err, coreapi.CodeOf(err))
+	}
+}
+
+func TestEnvironmentPackageOperationUsesControlledExecutor(t *testing.T) {
+	executor := &recordingEnvironmentExecutor{}
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, Environments: controlEnvironments{}, EnvironmentExecutor: executor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := service.EnvironmentOperation(context.Background(), coreapi.EnvironmentOperationRequest{EnvironmentID: "env/v1", Version: "1.0.0", Operation: "install", PackageRef: "catalog-v1", IdempotencyKey: "idem", Actor: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.State != "applied" || executor.mutation.PackageRef != "catalog-v1" || executor.mutation.Operation != "install" {
+		t.Fatalf("operation = %#v, mutation = %#v", operation, executor.mutation)
 	}
 }
 

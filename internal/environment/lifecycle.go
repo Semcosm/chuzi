@@ -25,6 +25,7 @@ var (
 	ErrRollbackUnavailable  = errors.New("environment: rollback is unavailable")
 	ErrTransaction          = errors.New("environment: transaction rolled back")
 	ErrExternalModification = errors.New("environment: package was modified externally")
+	ErrPackageReference     = errors.New("environment: package reference is unavailable")
 )
 
 // Record is the durable lifecycle projection. A successful install never
@@ -98,6 +99,7 @@ type HealthChecker func(context.Context, Manifest, string) error
 type Options struct {
 	InstallRoot string
 	StatePath   string
+	CatalogRoot string
 	Target      string
 	Trust       TrustStore
 	Health      HealthChecker
@@ -105,13 +107,13 @@ type Options struct {
 }
 
 type Manager struct {
-	mu                      sync.Mutex
-	root, statePath, target string
-	trust                   TrustStore
-	health                  HealthChecker
-	clock                   func() time.Time
-	records                 map[string]Record
-	manifests               map[string]Manifest
+	mu                                   sync.Mutex
+	root, statePath, catalogRoot, target string
+	trust                                TrustStore
+	health                               HealthChecker
+	clock                                func() time.Time
+	records                              map[string]Record
+	manifests                            map[string]Manifest
 }
 
 type stateFile struct {
@@ -128,10 +130,16 @@ func NewManager(options Options) (*Manager, error) {
 	if !filepath.IsAbs(options.StatePath) {
 		return nil, ErrInvalidPath
 	}
+	if options.CatalogRoot == "" {
+		options.CatalogRoot = filepath.Join(filepath.Dir(options.StatePath), "environment-catalog")
+	}
+	if !filepath.IsAbs(options.CatalogRoot) {
+		return nil, ErrInvalidPath
+	}
 	if options.Clock == nil {
 		options.Clock = time.Now
 	}
-	m := &Manager{root: filepath.Clean(options.InstallRoot), statePath: filepath.Clean(options.StatePath), target: options.Target, trust: options.Trust, health: options.Health, clock: options.Clock, records: map[string]Record{}, manifests: map[string]Manifest{}}
+	m := &Manager{root: filepath.Clean(options.InstallRoot), statePath: filepath.Clean(options.StatePath), catalogRoot: filepath.Clean(options.CatalogRoot), target: options.Target, trust: options.Trust, health: options.Health, clock: options.Clock, records: map[string]Record{}, manifests: map[string]Manifest{}}
 	if err := m.load(); err != nil {
 		return nil, err
 	}
@@ -348,6 +356,44 @@ func (m *Manager) Install(ctx context.Context, source string) (Record, error) {
 // same upgrade is idempotent through Install.
 func (m *Manager) Upgrade(ctx context.Context, source string) (Record, error) {
 	return m.Install(ctx, source)
+}
+
+// InstallReference resolves an opaque, service-owned catalog key. Callers do
+// not provide filesystem paths to the lifecycle manager through the control
+// plane. Catalog entries are directories below the configured catalog root.
+func (m *Manager) InstallReference(ctx context.Context, reference string) (Record, error) {
+	source, err := m.catalogSource(reference)
+	if err != nil {
+		return Record{}, err
+	}
+	return m.Install(ctx, source)
+}
+
+// UpgradeReference is the catalog-bound upgrade form used by Core.
+func (m *Manager) UpgradeReference(ctx context.Context, reference string) (Record, error) {
+	source, err := m.catalogSource(reference)
+	if err != nil {
+		return Record{}, err
+	}
+	return m.Upgrade(ctx, source)
+}
+
+func (m *Manager) catalogSource(reference string) (string, error) {
+	reference = strings.TrimSpace(reference)
+	if reference == "" || len(reference) > 256 || strings.ContainsAny(reference, "\x00\r\n\t /\\") || reference == "." || reference == ".." {
+		return "", ErrPackageReference
+	}
+	root := filepath.Clean(m.catalogRoot)
+	source := filepath.Join(root, reference)
+	rel, err := filepath.Rel(root, source)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+		return "", ErrPackageReference
+	}
+	info, err := os.Stat(source)
+	if err != nil || !info.IsDir() {
+		return "", ErrPackageReference
+	}
+	return source, nil
 }
 func nextGeneration(records map[string]Record, id string) uint64 {
 	var n uint64
