@@ -123,15 +123,19 @@ function Invoke-Icacls([string] $path) {
 
 try {
     if ($env:OS -ne 'Windows_NT') {
+        $failureStage = 'windows_required'
         throw 'Windows native smoke requires Windows'
     }
+    $failureStage = 'administrator_required'
     $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
     if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw 'Windows native smoke requires an administrator runner'
     }
+    $failureStage = 'root_setup'
     New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $runRoot '.chuzi-smoke-ownership') -Value $ownershipMarker -NoNewline -Encoding ASCII
+    $failureStage = 'runtime_setup'
     $runtimeRoot = Join-Path $runRoot 'runtime'
     $workerRoot = Join-Path $runtimeRoot 'browser-worker/src'
     $dataRoot = Join-Path $runRoot 'data'
@@ -139,6 +143,7 @@ try {
     New-Item -ItemType Directory -Path (Join-Path $dataRoot 'profiles') -Force | Out-Null
     New-Item -ItemType Directory -Path (Join-Path $dataRoot 'backups') -Force | Out-Null
 
+    $failureStage = 'toolchain_required'
     $go = (Get-Command go.exe -CommandType Application -ErrorAction Stop).Source
     $node = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
     $agentPath = Join-Path $runtimeRoot 'chuzi-user-agent.exe'
@@ -152,6 +157,7 @@ try {
     }
     Copy-Item -LiteralPath $node -Destination $nodePath -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'browser-worker/src/worker.mjs') -Destination $workerPath -Force
+    $failureStage = 'runtime_acl'
     Invoke-Icacls $runtimeRoot
 
     $env:CHUZI_RUN_WINDOWS_JOB_POOL_SMOKE = '1'
@@ -175,6 +181,12 @@ try {
     if (Test-Path -LiteralPath $testLog -PathType Leaf) {
         try {
             Copy-Item -LiteralPath $testLog -Destination $preservedLog -Force
+        } catch {
+            $cleanupErrors.Add('test_log_preservation_failed')
+        }
+    } else {
+        try {
+            Set-Content -LiteralPath $preservedLog -Value ('failure_stage=' + $failureStage) -Encoding ASCII
         } catch {
             $cleanupErrors.Add('test_log_preservation_failed')
         }
