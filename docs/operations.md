@@ -99,7 +99,8 @@ scripts/test_windows_job_pool_smoke.ps1
 原生 smoke 覆盖受管用户创建/复用/删除、Remote Desktop Users 成员和
 Administrators 排除、ownership/SID 对账、Profile ACL、reparse/path traversal 拒绝、
 agent named pipe/token、session-aware worker 启动、browser worker handshake、worker
-停止、stale lease、未知 ownership 项保护和资源退休。发布 workflow 的
+停止、active session health、过期 lease fence、service shutdown agent cleanup、未知
+ownership 项保护和资源退休。发布 workflow 的
 `chuzi-build-windows-job-pool-smoke` job 使用专用 runner；该 job 失败或排队不可用时，
 `chuzi-build` 聚合检查失败或保持等待，发布不能继续。
 
