@@ -1,16 +1,16 @@
 # CR-0093: add Core and Launcher job-pool operations control plane
 
 Base: main
-Head or Range: 4597cbcab5dd7ecc18a7d961552fffdd3406d6d2
+Head or Range: 3c1bc71943b243536ad54ba36e74dbfbddebbc9e
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Core Launcher job pool phase 5 control plane
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: 4597cbcab5dd7ecc18a7d961552fffdd3406d6d2
+Head OID: 3c1bc71943b243536ad54ba36e74dbfbddebbc9e
 Integrated Result: pending
 
 ## Summary
@@ -28,17 +28,20 @@ generation so failed environment validation or provisioning restores the old
 ready generation atomically; stale operations are closed as superseded. The
 running scheduler and slot lifecycle refresh their inputs from the durable pool
 projection, so restart and later Core updates do not silently fall back to
-static deployment values. Signed package install, upgrade, and rollback use an
-opaque service-owned catalog reference when an executor is available; missing
-references fail with `package_unavailable`. Gate completion commits the signed
-environment record, operation state, and audit event in one Store transaction,
-and restart recovery classifies incomplete package operations deterministically.
+static deployment values. Signed package install and upgrade resolve only opaque
+service-owned catalog references; rollback swaps only the manager's verified
+service-owned rollback tree. No lifecycle operation accepts a filesystem path,
+shell, command, or executable, and missing catalog references fail with
+`package_unavailable`. Gate completion commits the signed environment record,
+operation state, and audit event in one Store transaction, and restart recovery
+classifies incomplete package operations deterministically.
 
 Successful same-version package upgrades retain one verified rollback tree; a
 later rollback swaps that tree only after validating both signed package trees.
-The current service instance remains bound to its configured startup pool: Core
-can persist multiple pool records, while automatic runtime takeover of a newly
-created pool is outside this change. The Windows client now renders read-only
+The current service instance is single-node and remains bound to the one pool
+selected at startup. Core can persist multiple pool records, while automatic
+runtime takeover or orchestration of a newly created second pool is outside
+this change and is follow-up work. The Windows client now renders read-only
 pool capacity and reconcile projections from `list_job_pools`; pool mutations
 remain Core/Launcher operations.
 
@@ -53,22 +56,46 @@ Windows identity, profile, agent, pipe, RDP, credential, or raw error data.
 
 ## Test Evidence
 
-Passed locally: `go test ./...`, `go test -race ./...`, `go vet ./...`,
-`GOOS=windows GOARCH=amd64 go build ./...`, `GOOS=windows GOARCH=amd64 go vet
-./...`, `npm --prefix browser-worker test` (22 tests), `git diff --check`, and
-the policy, quality, supply-chain, action-pinning, repository-shape, and
-build-contract validators. Focused tests cover revision conflicts, changed
-idempotency payloads, pool projection redaction/capacity, drain retaining a
-leased slot, failed reconcile restoring a ready generation, stale operation
-cleanup, environment operation audit/idempotency and atomic completion,
-restart recovery, invalid catalog refs, live scheduler and slot lifecycle
-refresh, controlled package execution, Core error classification, and additive
-hello method negotiation.
+Passed locally with the final implementation head:
 
-The native Windows smoke gate and real RDP authorizer were not run here. Linux
-cross-build and hosted preflight evidence do not constitute native Windows
-production acceptance. CR-0092 remains pending and its dedicated runner is an
-external blocker.
+```text
+go test ./...
+go test -race ./...
+go vet ./...
+GOOS=windows GOARCH=amd64 go build ./...
+GOOS=windows GOARCH=amd64 go vet ./...
+npm --prefix browser-worker test
+cargo test --manifest-path ui/windows/Cargo.toml
+git diff --check
+./scripts/validate_policy_manifest.sh
+./scripts/validate_quality_profile.sh
+./scripts/validate_supply_chain_profile.sh
+./scripts/validate_action_pinning.sh
+./scripts/validate_repository_shape.sh
+./scripts/test_build_contract.sh
+./scripts/validate_cr_record.sh cr/CR-0093-core-launcher-job-pool-phase5.md
+```
+
+The browser-worker suite passed 22 tests and the Windows UI suite passed 21
+tests. Focused tests cover revision
+conflicts, changed idempotency payloads, pool projection redaction/capacity,
+drain retaining a leased slot, failed reconcile restoring a ready generation,
+stale operation cleanup, environment operation audit/idempotency and atomic
+completion, restart recovery, invalid catalog refs, corrupt and failed
+rollbacks, consecutive upgrades, live scheduler and slot lifecycle refresh,
+controlled package execution, Core error classification, additive hello method
+negotiation, and Windows UI summary/redaction. These tests exercise Store,
+Core, Launcher, environment lifecycle, executor, and UI behavior beyond DTO
+serialization.
+
+The Phase 5 logical control-plane and single-startup-pool runtime scope is
+covered; runtime orchestration for multiple pools remains future work. Windows
+UI Settings is currently a read-only status display from `list_job_pools`, with
+mutations performed through Core/Launcher. The Phase 4 native Windows smoke
+gate, a deployment-owned real RDP authorizer/broker, and Windows end-to-end
+catalog acceptance were not run here. Linux cross-build and hosted preflight
+evidence do not constitute those production gates. CR-0092 remains pending and
+the real RDP and Windows E2E checks remain external blockers.
 
 ## Risk
 
