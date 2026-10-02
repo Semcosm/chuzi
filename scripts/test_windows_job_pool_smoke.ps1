@@ -13,6 +13,7 @@ $tempRoot = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
 $runID = [Guid]::NewGuid().ToString('N')
 $runRoot = Join-Path $tempRoot ('chuzi-job-pool-smoke-' + $runID)
 $userPrefix = 'Cz' + $runID.Substring(0, 9)
+$smokeUserPattern = '^Cz[0-9a-f]{9}0001$'
 $marker = 'CHUZI-MANAGED:smoke-001:1'
 $ownershipMarker = 'CHUZI-SMOKE-OWNERSHIP:' + $runID
 $cleanupErrors = [System.Collections.Generic.List[string]]::new()
@@ -39,9 +40,26 @@ function Invoke-SmokeRetry([scriptblock] $Action, [int] $Attempts = 6) {
 
 function Get-MarkedUsers {
     @(Get-LocalUser -ErrorAction Stop | Where-Object {
-        $_.Name.StartsWith($userPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+        # The prefix is deliberately random per run. Match every disposable
+        # smoke identity so a failed earlier run cannot accumulate accounts,
+        # while the exact name shape and marker exclude ordinary local users.
+        $_.Name -match $smokeUserPattern -and
         $_.Description -eq $marker
     })
+}
+
+function Remove-MarkedUserProfile([object] $user) {
+    $sid = $user.SID.Value
+    if ([string]::IsNullOrWhiteSpace($sid)) {
+        throw 'managed profile identity unavailable'
+    }
+    $profiles = @(Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='" + $sid + "'") -ErrorAction Stop)
+    foreach ($profile in $profiles) {
+        if ($profile.Loaded) {
+            throw 'managed profile still loaded'
+        }
+        Remove-CimInstance -InputObject $profile -ErrorAction Stop
+    }
 }
 
 function Stop-MarkedUserSessions([string] $name) {
@@ -79,6 +97,13 @@ function Stop-SmokeResources {
         $markedUsers = Get-MarkedUsers
         foreach ($user in $markedUsers) {
             Stop-MarkedUserSessions $user.Name
+            $profileClean = Invoke-SmokeRetry {
+                Stop-MarkedUserSessions $user.Name
+                Remove-MarkedUserProfile $user
+            }
+            if (-not $profileClean) {
+                $usersClean = $false
+            }
             if (-not (Invoke-SmokeRetry {
                 Remove-LocalUser -Name $user.Name -Confirm:$false -ErrorAction Stop
             })) {

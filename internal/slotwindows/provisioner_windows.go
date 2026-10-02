@@ -460,31 +460,28 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 	agent, present := p.agents[request.SlotID]
 	p.mu.Unlock()
 	if present {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		err := p.terminateAgentWithRetry(cleanupCtx, request.SlotID, agent)
 		cancel()
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, ErrCleanupAgent)
 		}
 	}
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if err := p.stopSessionBootstrap(cleanupCtx, request.SlotID); err != nil {
-		cleanupErr = errors.Join(cleanupErr, ErrCleanupSession)
-	}
-	// The runner-owned broker may have returned before Winlogon released the
-	// profile token. Re-issue the SID-scoped logoff fence before deleting the
-	// disposable identity; NetUserDel otherwise commonly reports a transient
-	// busy/profile-in-use failure even though FindSession has disappeared.
-	if sid != "" {
-		if err := logoffManagedSessions(cleanupCtx, sid); err != nil {
+	{
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		if err := p.stopSessionBootstrap(cleanupCtx, request.SlotID); err != nil {
 			cleanupErr = errors.Join(cleanupErr, ErrCleanupSession)
 		}
-	}
-	if removeUser {
-		if err := deleteManagedProfileWithRetry(cleanupCtx, paths.UserName); err != nil {
-			cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
+		// The runner-owned broker may have returned before Winlogon released the
+		// profile token. Re-issue the SID-scoped logoff fence before deleting the
+		// disposable identity; NetUserDel otherwise commonly reports a transient
+		// busy/profile-in-use failure even though FindSession has disappeared.
+		if sid != "" {
+			if err := logoffManagedSessions(cleanupCtx, sid); err != nil {
+				cleanupErr = errors.Join(cleanupErr, ErrCleanupSession)
+			}
 		}
+		cancel()
 	}
 	if removeRoot {
 		if err := removeOwnedTree(paths.Root); err != nil {
@@ -502,9 +499,14 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 			}
 		}
 		if sid != "" {
+			cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			if err := deleteManagedProfileWithRetry(cleanupCtx, paths.UserName, sid); err != nil {
+				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
+			}
 			if err := deleteManagedUserWithRetry(cleanupCtx, paths.UserName, request.SlotID, request.Ordinal, sid); err != nil {
 				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
 			}
+			cancel()
 		}
 	}
 	return cleanupErr
@@ -619,7 +621,7 @@ func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionR
 	if err := logoffManagedSessions(ctx, record.SID); err != nil {
 		return ErrCleanup
 	}
-	if err := deleteManagedProfileWithRetry(ctx, paths.UserName); err != nil {
+	if err := deleteManagedProfileWithRetry(ctx, paths.UserName, record.SID); err != nil {
 		return ErrCleanup
 	}
 	if err := removeOwnedTree(paths.Root); err != nil {
@@ -1966,9 +1968,9 @@ func deleteManagedUserWithRetry(ctx context.Context, username, slotID string, or
 	})
 }
 
-func deleteManagedProfileWithRetry(ctx context.Context, username string) error {
+func deleteManagedProfileWithRetry(ctx context.Context, username, sid string) error {
 	return retryCleanup(ctx, func() error {
-		return deleteManagedProfile(username)
+		return deleteManagedProfile(username, sid)
 	})
 }
 
@@ -2388,7 +2390,13 @@ func wtsLogoffSession(sessionID uint32) error {
 	}
 	return nil
 }
-func deleteManagedProfile(username string) error {
+func deleteManagedProfile(username, sid string) error {
+	if sid == "" {
+		return ErrCleanup
+	}
+	if _, err := windows.StringToSid(sid); err != nil {
+		return ErrOwnership
+	}
 	drive := os.Getenv("SystemDrive")
 	if drive == "" || filepath.VolumeName(drive) == "" || strings.ContainsAny(username, "\\/:*?\"<>|") {
 		return ErrCleanup
@@ -2400,12 +2408,19 @@ func deleteManagedProfile(username string) error {
 		}
 		return ErrCleanup
 	}
-	wide, err := windows.UTF16PtrFromString(profile)
+	sidWide, err := windows.UTF16PtrFromString(sid)
+	if err != nil {
+		return ErrCleanup
+	}
+	profileWide, err := windows.UTF16PtrFromString(profile)
 	if err != nil {
 		return ErrCleanup
 	}
 	proc := windows.NewLazySystemDLL("userenv.dll").NewProc("DeleteProfileW")
-	r1, _, callErr := proc.Call(uintptr(unsafe.Pointer(wide)), 0, 0)
+	// DeleteProfileW takes the SID first and the optional profile path second.
+	// Passing the path as lpSidString leaves the profile loaded and makes the
+	// subsequent NetUserDel fail with a transient profile-in-use error.
+	r1, _, callErr := proc.Call(uintptr(unsafe.Pointer(sidWide)), uintptr(unsafe.Pointer(profileWide)), 0)
 	if r1 == 0 && !errors.Is(callErr, windows.ERROR_FILE_NOT_FOUND) {
 		return ErrCleanup
 	}
