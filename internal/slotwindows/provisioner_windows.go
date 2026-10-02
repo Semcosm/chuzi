@@ -1230,6 +1230,8 @@ func runtimeACLMask(rights string) (uint32, bool) {
 	switch strings.ToUpper(rights) {
 	case "RX", "GRGX":
 		return uint32(fileReadExecuteMask), true
+	case "FA":
+		return 0x001f01ff, true
 	default:
 		return 0, false
 	}
@@ -1752,21 +1754,53 @@ func verifyDirectoryACL(path, sid, serviceSID, scope string) error {
 	if err != nil {
 		return ErrACLDrift
 	}
-	expected := "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"
-	if serviceSID != "S-1-5-18" {
-		expected += "(A;OICI;FA;;;" + serviceSID + ")"
+	sddl := sd.String()
+	if !sddlHasAllowACE(sddl, "SY", "OICI", 0x001f01ff) || !sddlHasAllowACE(sddl, "BA", "OICI", 0x001f01ff) {
+		return ErrACLDrift
 	}
+	if serviceSID != "S-1-5-18" && !sddlHasAllowACE(sddl, serviceSID, "OICI", 0x001f01ff) {
+		return ErrACLDrift
+	}
+	inheritance := "OICI"
+	mask := uint32(fileModifyMask)
 	if scope == "root" {
-		expected += "(A;;0x00120020;;;" + sid + ")"
+		inheritance = ""
+		mask = uint32(fileTraverseMask)
 	} else if scope == "generation" {
-		expected += "(A;OICI;0x001200a9;;;" + sid + ")"
-	} else {
-		expected += "(A;OICI;0x001301bf;;;" + sid + ")"
+		mask = uint32(fileReadExecuteMask)
 	}
-	if !strings.Contains(sd.String(), expected) {
+	if !sddlHasAllowACE(sddl, sid, inheritance, mask) {
 		return ErrACLDrift
 	}
 	return nil
+}
+
+func sddlHasAllowACE(sddl, account, inheritance string, expectedMask uint32) bool {
+	for start := strings.IndexByte(sddl, '('); start >= 0; {
+		end := strings.IndexByte(sddl[start+1:], ')')
+		if end < 0 {
+			return false
+		}
+		end += start + 1
+		fields := strings.Split(sddl[start+1:end], ";")
+		if len(fields) == 6 && fields[0] == "A" && fields[1] == inheritance && strings.EqualFold(fields[5], account) {
+			mask, ok := runtimeACLMask(fields[2])
+			if ok && mask == expectedMask {
+				return true
+			}
+		}
+		next := end + 1
+		if next >= len(sddl) {
+			break
+		}
+		remaining := sddl[next:]
+		index := strings.IndexByte(remaining, '(')
+		if index < 0 {
+			break
+		}
+		start = next + index
+	}
+	return false
 }
 
 func ensureNoReparseDirectory(path string) error {
