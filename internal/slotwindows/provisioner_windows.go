@@ -43,6 +43,7 @@ var (
 	ErrSessionGroupVerify   = errors.New("slotwindows: remote desktop group membership failed")
 	ErrSessionPolicy        = errors.New("slotwindows: remote interactive policy failed")
 	ErrSessionUserLookup    = errors.New("slotwindows: managed user SID lookup failed")
+	ErrManagedUserSID       = errors.New("slotwindows: managed user SID unavailable")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -447,12 +448,12 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	sid = managed.SID
 	if p.options.RDPEnabled {
 		if err := ensureRemoteDesktopMembership(paths.UserName); err != nil {
-			return slot.ProvisionResult{}, ErrSessionIdentity
+			return slot.ProvisionResult{}, err
 		}
 		// Group membership alone is insufficient: local policy may deny remote
 		// interactive logon or omit the effective allow right.
 		if err := verifyRemoteDesktopMembership(paths.UserName); err != nil {
-			return slot.ProvisionResult{}, ErrSessionIdentity
+			return slot.ProvisionResult{}, err
 		}
 	}
 	if err := ensureSlotDirectories(paths, sid); err != nil {
@@ -1385,9 +1386,9 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 	if status != 0 {
 		return managedUserCredentials{}, ErrOwnership
 	}
-	sid, err := lookupSID(paths.UserName)
+	sid, err := lookupSIDEventually(paths.UserName)
 	if err != nil {
-		return managedUserCredentials{}, ErrSessionIdentity
+		return managedUserCredentials{}, ErrManagedUserSID
 	}
 	if recordErr == nil {
 		// Recreating a missing user would produce a new SID. Preserve the old
@@ -2104,6 +2105,27 @@ func lookupSID(account string) (string, error) {
 	return sid.String(), nil
 }
 
+// lookupSIDEventually covers the short interval after NetUserAdd during
+// which the local account is visible to NetAPI but not yet resolvable through
+// LookupAccountName. The bounded retry keeps the identity fence fail-closed.
+func lookupSIDEventually(account string) (string, error) {
+	const attempts = 6
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		sid, err := lookupSID(account)
+		if err == nil {
+			return sid, nil
+		}
+		lastErr = err
+		if attempt == attempts-1 {
+			break
+		}
+		timer := time.NewTimer(time.Duration(100*(1<<attempt)) * time.Millisecond)
+		<-timer.C
+	}
+	return "", lastErr
+}
+
 func currentProcessSID() (string, error) {
 	token, err := windows.OpenCurrentProcessToken()
 	if err != nil {
@@ -2248,7 +2270,7 @@ type lsaEnumerationInformation struct {
 func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...string) error {
 	allowed, err := lsaRightSIDs("SeRemoteInteractiveLogonRight")
 	if err != nil {
-		return ErrSessionIdentity
+		return ErrSessionPolicy
 	}
 	principals := append([]string{userSID, groupSID}, additionalGroups...)
 	allow := false
@@ -2259,22 +2281,22 @@ func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...
 		}
 	}
 	if !allow {
-		return ErrSessionIdentity
+		return ErrSessionPolicy
 	}
 	denied, err := lsaRightSIDs("SeDenyRemoteInteractiveLogonRight")
 	if err != nil {
-		return ErrSessionIdentity
+		return ErrSessionPolicy
 	}
 	// An explicit deny for the managed user, any local group, or Everyone
 	// must never be masked by membership in Remote Desktop Users.
 	for _, principal := range principals {
 		if denied[principal] {
-			return ErrSessionIdentity
+			return ErrSessionPolicy
 		}
 	}
 	for _, everyone := range []string{"S-1-1-0", "S-1-5-11"} {
 		if denied[everyone] {
-			return ErrSessionIdentity
+			return ErrSessionPolicy
 		}
 	}
 	return nil
