@@ -2113,9 +2113,14 @@ func groupNameForSID(value string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	name, domain := make([]uint16, 512), make([]uint16, 512)
-	nameSize, domainSize := uint32(len(name)), uint32(len(domain))
+	nameSize, domainSize := uint32(0), uint32(0)
 	var use uint32
+	err = windows.LookupAccountSid(nil, sid, nil, &nameSize, nil, &domainSize, &use)
+	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		return "", err
+	}
+	name := make([]uint16, nameSize+1)
+	domain := make([]uint16, domainSize+1)
 	if err := windows.LookupAccountSid(nil, sid, &name[0], &nameSize, &domain[0], &domainSize, &use); err != nil {
 		return "", err
 	}
@@ -2175,30 +2180,28 @@ func ensureRemoteDesktopMembership(username string) error {
 	return changeRemoteDesktopMembership(username, true)
 }
 func verifyRemoteDesktopMembership(username string) error {
-	group, err := groupNameForSID("S-1-5-32-555")
-	if err != nil {
-		return ErrSessionIdentity
-	}
 	groups, err := localGroupNames(username)
 	if err != nil {
 		return err
 	}
-	for _, value := range groups {
-		if strings.EqualFold(value, group) {
-			break
-		}
-	}
 	userSID, err := lookupSID(username)
-	if err != nil || !hasGroup(groups, group) {
+	if err != nil {
 		return ErrSessionIdentity
 	}
+	memberOfRDP := false
 	principals := make([]string, 0, len(groups))
 	for _, name := range groups {
 		groupSID, sidErr := lookupSID(name)
 		if sidErr != nil {
 			return ErrSessionIdentity
 		}
+		if groupSID == "S-1-5-32-555" {
+			memberOfRDP = true
+		}
 		principals = append(principals, groupSID)
+	}
+	if !memberOfRDP {
+		return ErrSessionIdentity
 	}
 	if err := verifyRemoteInteractiveRight(userSID, "S-1-5-32-555", principals...); err != nil {
 		return ErrSessionIdentity
