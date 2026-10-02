@@ -1,7 +1,7 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: bf890c4db1b41d91e3911f733a1693200f71796a
+Head or Range: a7c9108fe41858dc6e3a68aefa04acc15a4ba894
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: bf890c4db1b41d91e3911f733a1693200f71796a
+Head OID: a7c9108fe41858dc6e3a68aefa04acc15a4ba894
 Integrated Result: pending
 
 ## Summary
@@ -46,23 +46,31 @@ protection, and retirement. It never prints passwords, SIDs, usernames,
 Profile paths, pipe paths, or raw Win32 errors.
 
 The controlled runner job is present in `.github/workflows/chuzi-build.yml`
-with the `self-hosted`, `windows`, `chuzi-job-pool` labels and is included in
-the required `chuzi-build` aggregate. On this Linux host, the deterministic
-checks passed: `go test ./...`, `go test -race ./...`, `go vet ./...`,
-`GOOS=windows GOARCH=amd64 go build ./...`,
+with the `self-hosted`, `windows`, `chuzi-job-pool` labels and remains required
+for nightly and stable builds. A hosted `windows-2022` preflight now runs the
+Windows Go suite, `go vet`, fixed user-agent build, and terminal-session API
+check; the manual `test` channel uses that preflight and deliberately skips the
+session-dependent native job when no dedicated runner is registered. On this
+Linux host, the deterministic checks passed: `go test ./...`, `go test -race
+./...`, `go vet ./...`, `GOOS=windows GOARCH=amd64 go build ./...`,
 `GOOS=windows GOARCH=amd64 go vet ./...`, browser-worker tests (22), all
 repository validators, `scripts/test_build_contract.sh`, and `git diff --check`.
 The native smoke has not run because this checkout has no Windows job-pool
-runner with administrator rights and an interactive disposable user session.
-The production RDP bridge remains deny-by-default pending a deployment-owned
-authorizer and broker.
+runner with administrator rights and an interactive disposable user session; a
+successful test-channel package therefore still needs the user's real-machine
+native smoke. The production RDP bridge remains deny-by-default pending a
+deployment-owned authorizer and broker.
+The hosted preflight is covered by `scripts/test_windows_job_pool_hosted_preflight.ps1`;
+its first remote result is pending at this revision.
 
 ## Risk
 
-The native smoke job is intentionally required and will remain queued or fail
-when the designated runner is absent; this prevents a release from claiming
-Windows acceptance from Linux cross-build output. The current service still
-cannot issue interactive RDP capabilities because it constructs
+The native smoke job is intentionally required for nightly and stable builds
+and will remain queued or fail when the designated runner is absent; this
+prevents a release from claiming Windows acceptance from Linux cross-build
+output. The test channel is limited to hosted Windows preflight evidence and
+must not be treated as native acceptance. The current service still cannot
+issue interactive RDP capabilities because it constructs
 `credential.DenyRDPAuthorizer{}`. No production RDP endpoint, password, SID,
 Profile, or named-pipe material is introduced by this change.
 
