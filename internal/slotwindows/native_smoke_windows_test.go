@@ -214,48 +214,36 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 }
 
 func nativeSmokeFailureClass(err error) string {
-	switch {
-	case errors.Is(err, ErrSessionChanged):
-		return "session_changed"
-	case errors.Is(err, ErrSessionDisconnected):
-		return "session_disconnected"
-	case errors.Is(err, ErrSessionIdentity):
-		return "session_identity_mismatch"
-	case errors.Is(err, ErrSessionUnavailable), errors.Is(err, ErrSessionBootstrapUnavailable):
-		return "session_unavailable"
-	case errors.Is(err, ErrACLDrift):
-		return "acl_drift"
-	case errors.Is(err, ErrProcessStart):
-		return "process_start_failed"
-	case errors.Is(err, ErrCleanupAgent):
-		return "cleanup_agent_failed"
-	case errors.Is(err, ErrCleanupSession):
-		return "cleanup_session_failed"
-	case errors.Is(err, ErrCleanupRoot):
-		return "cleanup_root_failed"
-	case errors.Is(err, ErrCleanupUserOwnership):
-		return "cleanup_user_ownership_failed"
-	case errors.Is(err, ErrCleanupUserMarker):
-		return "cleanup_user_marker_failed"
-	case errors.Is(err, ErrCleanupUserPrivilege):
-		return "cleanup_user_privilege_failed"
-	case errors.Is(err, ErrCleanupUserDisabled):
-		return "cleanup_user_disabled"
-	case errors.Is(err, ErrCleanupUserAdmin):
-		return "cleanup_user_admin_membership"
-	case errors.Is(err, ErrCleanupUserSID):
-		return "cleanup_user_sid_failed"
-	case errors.Is(err, ErrCleanupUserInspect):
-		return "cleanup_user_inspect_failed"
-	case errors.Is(err, ErrCleanupUserDelete):
-		return "cleanup_user_delete_failed"
-	case errors.Is(err, ErrCleanupUser):
-		return "cleanup_user_failed"
-	case errors.Is(err, ErrCleanup):
-		return "cleanup_failed"
-	default:
+	classes := make([]string, 0, 4)
+	appendClass := func(match bool, value string) {
+		if match {
+			classes = append(classes, value)
+		}
+	}
+	appendClass(errors.Is(err, ErrSessionChanged), "session_changed")
+	appendClass(errors.Is(err, ErrSessionDisconnected), "session_disconnected")
+	appendClass(errors.Is(err, ErrSessionIdentity), "session_identity_mismatch")
+	appendClass(errors.Is(err, ErrSessionUnavailable) || errors.Is(err, ErrSessionBootstrapUnavailable), "session_unavailable")
+	appendClass(errors.Is(err, ErrACLDrift), "acl_drift")
+	appendClass(errors.Is(err, ErrProcessStart), "process_start_failed")
+	appendClass(errors.Is(err, ErrOwnership), "ownership_failed")
+	appendClass(errors.Is(err, ErrCleanupAgent), "cleanup_agent_failed")
+	appendClass(errors.Is(err, ErrCleanupSession), "cleanup_session_failed")
+	appendClass(errors.Is(err, ErrCleanupRoot), "cleanup_root_failed")
+	appendClass(errors.Is(err, ErrCleanupUserOwnership), "cleanup_user_ownership_failed")
+	appendClass(errors.Is(err, ErrCleanupUserMarker), "cleanup_user_marker_failed")
+	appendClass(errors.Is(err, ErrCleanupUserPrivilege), "cleanup_user_privilege_failed")
+	appendClass(errors.Is(err, ErrCleanupUserDisabled), "cleanup_user_disabled")
+	appendClass(errors.Is(err, ErrCleanupUserAdmin), "cleanup_user_admin_membership")
+	appendClass(errors.Is(err, ErrCleanupUserSID), "cleanup_user_sid_failed")
+	appendClass(errors.Is(err, ErrCleanupUserInspect), "cleanup_user_inspect_failed")
+	appendClass(errors.Is(err, ErrCleanupUserDelete), "cleanup_user_delete_failed")
+	appendClass(errors.Is(err, ErrCleanupUser), "cleanup_user_failed")
+	appendClass(errors.Is(err, ErrCleanup), "cleanup_failed")
+	if len(classes) == 0 {
 		return "provision_failed"
 	}
+	return strings.Join(classes, "+")
 }
 
 func requiredSmokeEnv(t *testing.T, name string) string {
