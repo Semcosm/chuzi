@@ -51,6 +51,11 @@ try {
     if ($env:OS -ne 'Windows_NT') {
         throw 'Windows native smoke requires Windows'
     }
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+    if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
+        throw 'Windows native smoke requires an administrator runner'
+    }
     New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
     $runtimeRoot = Join-Path $runRoot 'runtime'
     $workerRoot = Join-Path $runtimeRoot 'browser-worker/src'
