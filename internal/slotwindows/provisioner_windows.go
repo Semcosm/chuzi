@@ -2311,6 +2311,8 @@ func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...
 const (
 	statusObjectNameNotFound = 0xC0000034
 	statusNoMoreEntries      = 0x8000001A
+	statusObjectPathNotFound = 0xC000003A
+	statusNoSuchPrivilege    = 0xC0000060
 )
 
 func lsaRightSIDs(name string) (map[string]bool, error) {
@@ -2333,7 +2335,7 @@ func lsaRightSIDs(name string) (map[string]bool, error) {
 	var entries *lsaEnumerationInformation
 	var count uint32
 	status, _, _ = enumerate.Call(policy, uintptr(unsafe.Pointer(&right)), uintptr(unsafe.Pointer(&entries)), uintptr(unsafe.Pointer(&count)))
-	if status == statusObjectNameNotFound || status == statusNoMoreEntries {
+	if status == statusObjectNameNotFound || status == statusNoMoreEntries || status == statusObjectPathNotFound || status == statusNoSuchPrivilege {
 		return map[string]bool{}, nil
 	}
 	if status != 0 {
