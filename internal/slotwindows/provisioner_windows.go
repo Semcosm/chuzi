@@ -23,30 +23,32 @@ import (
 )
 
 var (
-	ErrOwnership            = errors.New("slotwindows: managed user ownership check failed")
-	ErrACLDrift             = errors.New("slotwindows: managed ACL check failed")
-	ErrCleanup              = errors.New("slotwindows: managed resource cleanup failed")
-	ErrCleanupAgent         = errors.New("slotwindows: agent cleanup failed")
-	ErrCleanupSession       = errors.New("slotwindows: session cleanup failed")
-	ErrCleanupRoot          = errors.New("slotwindows: root cleanup failed")
-	ErrCleanupUser          = errors.New("slotwindows: user cleanup failed")
-	ErrCleanupUserInspect   = errors.New("slotwindows: user cleanup inspection failed")
-	ErrCleanupUserOwnership = errors.New("slotwindows: user cleanup ownership mismatch")
-	ErrCleanupUserDelete    = errors.New("slotwindows: user deletion failed")
-	ErrCleanupUserMarker    = errors.New("slotwindows: user cleanup marker mismatch")
-	ErrCleanupUserPrivilege = errors.New("slotwindows: user cleanup privilege mismatch")
-	ErrCleanupUserDisabled  = errors.New("slotwindows: user cleanup disabled")
-	ErrCleanupUserAdmin     = errors.New("slotwindows: user cleanup administrator membership")
-	ErrCleanupUserSID       = errors.New("slotwindows: user cleanup SID mismatch")
-	ErrSessionGroupLookup   = errors.New("slotwindows: remote desktop group lookup failed")
-	ErrSessionGroupAdd      = errors.New("slotwindows: remote desktop group add failed")
-	ErrSessionGroupVerify   = errors.New("slotwindows: remote desktop group membership failed")
-	ErrSessionPolicy        = errors.New("slotwindows: remote interactive policy failed")
-	ErrSessionPolicyLookup  = errors.New("slotwindows: remote interactive policy lookup failed")
-	ErrSessionPolicyMissing = errors.New("slotwindows: remote interactive policy allow missing")
-	ErrSessionPolicyDenied  = errors.New("slotwindows: remote interactive policy denied")
-	ErrSessionUserLookup    = errors.New("slotwindows: managed user SID lookup failed")
-	ErrManagedUserSID       = errors.New("slotwindows: managed user SID unavailable")
+	ErrOwnership              = errors.New("slotwindows: managed user ownership check failed")
+	ErrACLDrift               = errors.New("slotwindows: managed ACL check failed")
+	ErrCleanup                = errors.New("slotwindows: managed resource cleanup failed")
+	ErrCleanupAgent           = errors.New("slotwindows: agent cleanup failed")
+	ErrCleanupSession         = errors.New("slotwindows: session cleanup failed")
+	ErrCleanupRoot            = errors.New("slotwindows: root cleanup failed")
+	ErrCleanupUser            = errors.New("slotwindows: user cleanup failed")
+	ErrCleanupUserInspect     = errors.New("slotwindows: user cleanup inspection failed")
+	ErrCleanupUserOwnership   = errors.New("slotwindows: user cleanup ownership mismatch")
+	ErrCleanupUserDelete      = errors.New("slotwindows: user deletion failed")
+	ErrCleanupUserMarker      = errors.New("slotwindows: user cleanup marker mismatch")
+	ErrCleanupUserPrivilege   = errors.New("slotwindows: user cleanup privilege mismatch")
+	ErrCleanupUserDisabled    = errors.New("slotwindows: user cleanup disabled")
+	ErrCleanupUserAdmin       = errors.New("slotwindows: user cleanup administrator membership")
+	ErrCleanupUserSID         = errors.New("slotwindows: user cleanup SID mismatch")
+	ErrSessionGroupLookup     = errors.New("slotwindows: remote desktop group lookup failed")
+	ErrSessionGroupAdd        = errors.New("slotwindows: remote desktop group add failed")
+	ErrSessionGroupVerify     = errors.New("slotwindows: remote desktop group membership failed")
+	ErrSessionPolicy          = errors.New("slotwindows: remote interactive policy failed")
+	ErrSessionPolicyLookup    = errors.New("slotwindows: remote interactive policy lookup failed")
+	ErrSessionPolicyOpen      = errors.New("slotwindows: remote interactive policy open failed")
+	ErrSessionPolicyEnumerate = errors.New("slotwindows: remote interactive policy enumerate failed")
+	ErrSessionPolicyMissing   = errors.New("slotwindows: remote interactive policy allow missing")
+	ErrSessionPolicyDenied    = errors.New("slotwindows: remote interactive policy denied")
+	ErrSessionUserLookup      = errors.New("slotwindows: managed user SID lookup failed")
+	ErrManagedUserSID         = errors.New("slotwindows: managed user SID unavailable")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -2274,7 +2276,7 @@ type lsaEnumerationInformation struct {
 func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...string) error {
 	allowed, err := lsaRightSIDs("SeRemoteInteractiveLogonRight")
 	if err != nil {
-		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup)
+		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
 	}
 	principals := append([]string{userSID, groupSID}, additionalGroups...)
 	allow := false
@@ -2289,7 +2291,7 @@ func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...
 	}
 	denied, err := lsaRightSIDs("SeDenyRemoteInteractiveLogonRight")
 	if err != nil {
-		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup)
+		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
 	}
 	// An explicit deny for the managed user, any local group, or Everyone
 	// must never be masked by membership in Remote Desktop Users.
@@ -2325,7 +2327,7 @@ func lsaRightSIDs(name string) (map[string]bool, error) {
 	var policy uintptr
 	status, _, _ := open.Call(0, uintptr(unsafe.Pointer(&attrs)), 0x00000800, uintptr(unsafe.Pointer(&policy)))
 	if status != 0 || policy == 0 {
-		return nil, ErrSessionIdentity
+		return nil, ErrSessionPolicyOpen
 	}
 	defer close.Call(policy)
 	var entries *lsaEnumerationInformation
@@ -2335,7 +2337,7 @@ func lsaRightSIDs(name string) (map[string]bool, error) {
 		return map[string]bool{}, nil
 	}
 	if status != 0 {
-		return nil, ErrSessionIdentity
+		return nil, ErrSessionPolicyEnumerate
 	}
 	if entries == nil || count == 0 {
 		return map[string]bool{}, nil
