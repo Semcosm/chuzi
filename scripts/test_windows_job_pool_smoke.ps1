@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
     [switch] $LocalRdp,
+    [switch] $ManualRdp,
     [switch] $ValidateOnly
 )
 
@@ -268,7 +269,7 @@ function Get-LocalRdpTarget {
     return '127.0.0.2'
 }
 
-function Start-LocalRdpSession([string] $Name) {
+function Start-LocalRdpSession([string] $Name, [switch] $Manual) {
     if (-not [Environment]::UserInteractive) {
         throw 'interactive smoke console required'
     }
@@ -279,7 +280,14 @@ function Start-LocalRdpSession([string] $Name) {
         throw 'local RDP credential target already exists'
     }
 
-    $password = New-SmokePassword
+    $targetUsername = $env:COMPUTERNAME + '\' + $Name
+    if ($Manual) {
+        Write-Host ('Manual RDP mode: enter a one-time password for ' + $targetUsername + '.')
+        Write-Host 'The password is not printed or written to the smoke log; use the same value in RDP_CnC.'
+        $password = Read-Host -AsSecureString -Prompt ('Password for ' + $targetUsername)
+    } else {
+        $password = New-SmokePassword
+    }
     try {
         if (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue) {
             throw 'temporary smoke user already exists'
@@ -287,14 +295,15 @@ function Start-LocalRdpSession([string] $Name) {
         New-LocalUser -Name $Name -Password $password -Description $marker -PasswordNeverExpires -ErrorAction Stop | Out-Null
         $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
-        [ChuziSmokeCredentialStore]::Write($script:rdpCredentialTarget, ($env:COMPUTERNAME + '\' + $Name), $password)
-        $script:rdpCredentialOwned = $true
+        if (-not $Manual) {
+            [ChuziSmokeCredentialStore]::Write($script:rdpCredentialTarget, $targetUsername, $password)
+            $script:rdpCredentialOwned = $true
+        }
     } finally {
         $password.Dispose()
     }
 
     $rdpProfile = Join-Path $runRoot 'local-rdp.rdp'
-    $targetUsername = $env:COMPUTERNAME + '\' + $Name
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
     $runnerIdentityObject = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $runnerIdentity = $runnerIdentityObject.Name
@@ -313,7 +322,7 @@ function Start-LocalRdpSession([string] $Name) {
         ('rdp_target_sid=' + $targetUser.SID.Value),
         ('rdp_credential_target=' + $script:rdpCredentialTarget),
         ('rdp_profile=' + $rdpProfile),
-        'rdp_password=not_printed'
+        (if ($Manual) { 'rdp_password=entered_interactively_not_printed' } else { 'rdp_password=not_printed' })
     )
     foreach ($line in $script:rdpDebugSummary) {
         Write-Host ('RDP DEBUG: ' + $line)
@@ -326,6 +335,23 @@ function Start-LocalRdpSession([string] $Name) {
       'promptcredentialonce:i:0') |
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
     $script:rdpProfilePath = $rdpProfile
+
+    if ($Manual) {
+        Write-Host 'Manual RDP mode: open RDP_CnC and start its mstsc test for 127.0.0.2.'
+        Write-Host ('Use username: ' + $targetUsername)
+        Write-Host ('Target SID: ' + $targetUser.SID.Value)
+        $confirmation = Read-Host 'After RDP_CnC shows the disposable user session, type YES to continue'
+        if ($confirmation -cne 'YES') {
+            throw 'manual RDP verification cancelled'
+        }
+        if (Test-UnexpectedRunnerSession) {
+            throw 'manual RDP authenticated as the interactive runner identity'
+        }
+        if (-not (Test-ActiveManagedSession $Name)) {
+            throw 'manual RDP session did not become active'
+        }
+        return
+    }
 
     Write-Host ('Opening a local RDP session for the disposable smoke user at ' + $targetHost + '.')
     Write-Host 'If Windows shows a first-connection certificate prompt, verify the local target and accept it.'
@@ -525,6 +551,9 @@ if ($ValidateOnly) {
 }
 
 try {
+    if ($ManualRdp -and -not $LocalRdp) {
+        throw '-ManualRdp requires -LocalRdp'
+    }
     if ($env:OS -ne 'Windows_NT') {
         $failureStage = 'windows_required'
         throw 'Windows native smoke requires Windows'
@@ -573,7 +602,7 @@ try {
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID = $runID
     if ($LocalRdp) {
         $failureStage = 'local_rdp_session'
-        Start-LocalRdpSession ($userPrefix + '0001')
+        Start-LocalRdpSession ($userPrefix + '0001') -Manual:$ManualRdp
         $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP = '1'
     }
 

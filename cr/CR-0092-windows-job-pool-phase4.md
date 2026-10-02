@@ -5,7 +5,7 @@ Head or Range: a8ea2aff141e970f3e1877fa20f9f5ce8efbd70f
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 15
+Revision: 16
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -179,6 +179,14 @@ default of `0`, which permits mstsc to reconnect an existing disconnected
 session. The explicit settings close that profile-level session-reuse path while
 the exact username, Credential Manager target, runner identity fence, and
 production WTS `FindSession` validation remain unchanged.
+
+Revision 16 adds an opt-in `-ManualRdp` diagnostic mode. It creates the same
+disposable local user but asks the operator for its one-time password through a
+SecureString prompt, without printing or logging the password. The script then
+prints the target username, SID, and `127.0.0.2` address and waits while the
+operator uses RDP_CnC to enter those credentials manually. After an explicit
+`YES` confirmation, the script requires the exact target user to have an active
+WTS session and rejects any runner-account session before native provisioning.
 
 ## Risk
 
