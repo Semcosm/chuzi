@@ -154,3 +154,27 @@ func TestRecoverStaleJobPoolOperation(t *testing.T) {
 		t.Fatalf("current operation = %#v, err=%v", current, err)
 	}
 }
+
+func TestPoolUpdateDoesNotUnquarantineSlot(t *testing.T) {
+	database, _ := openTestStore(t)
+	config := slot.PoolConfig{PoolID: "pool-quarantine", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: "digest", Signer: "signer"}
+	if err := database.ReconcileJobPool(config, storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkSlotReady("pool-quarantine-001", slot.EnvironmentSummary{EnvironmentID: config.EnvironmentID, Version: config.EnvironmentVersion, Generation: 1, ManifestDigest: config.ManifestDigest, Signer: config.Signer, Trusted: true, AgentVersion: "agent", SessionState: "ready", DesktopReady: true, UpdatedAt: storeTestTime}, storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QuarantineSlot("pool-quarantine-001", storeTestTime.Add(time.Second), "test failure"); err != nil {
+		t.Fatal(err)
+	}
+	changed := config
+	changed.EnvironmentID = "env/v2"
+	changed.EnvironmentVersion = "2.0.0"
+	if err := database.ReconcileJobPool(changed, storeTestTime.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	slots, err := database.ListSlots(config.PoolID)
+	if err != nil || len(slots) != 1 || slots[0].Status != slot.Quarantined {
+		t.Fatalf("quarantine after update = %#v, err=%v", slots, err)
+	}
+}

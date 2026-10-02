@@ -636,8 +636,13 @@ func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) e
 		if current.Status == slot.Deleted {
 			continue
 		}
-		targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || !containsCapabilities(current.Capabilities, config.Capabilities)
+		targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || !capabilitiesEqual(current.Capabilities, config.Capabilities)
 		if targetChanged {
+			if current.Status == slot.Quarantined {
+				// Quarantine is an explicit recovery boundary. A desired config
+				// update must not silently make the slot schedulable again.
+				continue
+			}
 			if current.Status == slot.Leased || current.Status == slot.Draining {
 				current.Status = slot.Draining
 			} else {

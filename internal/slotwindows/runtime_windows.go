@@ -4,7 +4,6 @@ package slotwindows
 
 import (
 	"context"
-	"errors"
 	"path/filepath"
 
 	"github.com/Semcosm/chuzi/internal/slot"
@@ -32,7 +31,7 @@ func (p *windowsProvisioner) UpdatePoolRuntime(ctx context.Context, pool slot.Po
 	}
 	runtimeRoot, workerScript, err := resolver(ctx, requirement)
 	if err != nil || runtimeRoot == "" || workerScript == "" || !filepath.IsAbs(runtimeRoot) || !filepath.IsAbs(workerScript) {
-		return errors.New("slotwindows: signed runtime unavailable")
+		return ErrInvalidOptions
 	}
 	p.mu.Lock()
 	p.options.EnvironmentID = pool.EnvironmentID

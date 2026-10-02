@@ -75,12 +75,20 @@ func (e serviceEnvironmentExecutor) Execute(ctx context.Context, mutation store.
 	}
 	switch mutation.Operation {
 	case "install":
-		if _, err := e.manager.InstallReference(ctx, mutation.PackageRef); err != nil {
+		record, err := e.manager.InstallReferenceFor(ctx, mutation.PackageRef, mutation.EnvironmentID, mutation.Version)
+		if err != nil {
 			return err
 		}
+		if record.EnvironmentID != mutation.EnvironmentID || record.Version != mutation.Version {
+			return environment.ErrInvalidManifest
+		}
 	case "upgrade":
-		if _, err := e.manager.UpgradeReference(ctx, mutation.PackageRef); err != nil {
+		record, err := e.manager.UpgradeReferenceFor(ctx, mutation.PackageRef, mutation.EnvironmentID, mutation.Version)
+		if err != nil {
 			return err
+		}
+		if record.EnvironmentID != mutation.EnvironmentID || record.Version != mutation.Version {
+			return environment.ErrInvalidManifest
 		}
 	case "rollback":
 		if err := e.manager.Rollback(mutation.EnvironmentID, mutation.Version); err != nil {

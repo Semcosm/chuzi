@@ -120,6 +120,14 @@ type stateFile struct {
 	Records map[string]Record `json:"records"`
 }
 
+func cloneTrustStore(source TrustStore) TrustStore {
+	copy := make(TrustStore, len(source))
+	for signer, key := range source {
+		copy[signer] = append([]byte(nil), key...)
+	}
+	return copy
+}
+
 func NewManager(options Options) (*Manager, error) {
 	if options.InstallRoot == "" || !filepath.IsAbs(options.InstallRoot) {
 		return nil, ErrInvalidPath
@@ -369,11 +377,45 @@ func (m *Manager) InstallReference(ctx context.Context, reference string) (Recor
 	return m.Install(ctx, source)
 }
 
+// InstallReferenceFor validates the catalog manifest identity before any
+// filesystem mutation. Core operation targets cannot be redirected to another
+// environment by a catalog entry.
+func (m *Manager) InstallReferenceFor(ctx context.Context, reference, environmentID, version string) (Record, error) {
+	source, err := m.catalogSource(reference)
+	if err != nil {
+		return Record{}, err
+	}
+	m.mu.Lock()
+	target, trust := m.target, cloneTrustStore(m.trust)
+	m.mu.Unlock()
+	manifest, err := ValidatePackage(source, target, trust)
+	if err != nil || manifest.EnvironmentID != environmentID || manifest.Version != version {
+		return Record{}, ErrInvalidManifest
+	}
+	return m.Install(ctx, source)
+}
+
 // UpgradeReference is the catalog-bound upgrade form used by Core.
 func (m *Manager) UpgradeReference(ctx context.Context, reference string) (Record, error) {
 	source, err := m.catalogSource(reference)
 	if err != nil {
 		return Record{}, err
+	}
+	return m.Upgrade(ctx, source)
+}
+
+// UpgradeReferenceFor is the identity-bound upgrade form used by Core.
+func (m *Manager) UpgradeReferenceFor(ctx context.Context, reference, environmentID, version string) (Record, error) {
+	source, err := m.catalogSource(reference)
+	if err != nil {
+		return Record{}, err
+	}
+	m.mu.Lock()
+	target, trust := m.target, cloneTrustStore(m.trust)
+	m.mu.Unlock()
+	manifest, err := ValidatePackage(source, target, trust)
+	if err != nil || manifest.EnvironmentID != environmentID || manifest.Version != version {
+		return Record{}, ErrInvalidManifest
 	}
 	return m.Upgrade(ctx, source)
 }

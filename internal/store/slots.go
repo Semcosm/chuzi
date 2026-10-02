@@ -54,8 +54,13 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 					// the pool target or desired capacity changed.
 					continue
 				}
-				targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || !containsCapabilities(current.Capabilities, config.Capabilities)
+				targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || !capabilitiesEqual(current.Capabilities, config.Capabilities)
 				if targetChanged {
+					if current.Status == slot.Quarantined {
+						// Quarantine requires an explicit recovery action; ordinary
+						// pool updates must not restore this slot.
+						continue
+					}
 					if current.Status == slot.Leased || current.Status == slot.Draining {
 						current.Status = slot.Draining
 					} else {
@@ -144,6 +149,10 @@ func containsCapabilities(available, required []string) bool {
 		}
 	}
 	return true
+}
+
+func capabilitiesEqual(left, right []string) bool {
+	return containsCapabilities(left, right) && containsCapabilities(right, left)
 }
 
 func slotMatchesPoolTarget(value slot.Slot, config slot.PoolConfig) bool {
@@ -325,7 +334,7 @@ func (s *Store) MarkSlotReady(slotID string, summary slot.EnvironmentSummary, no
 		if err := getJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), slotID, &value, slot.ErrSlotNotFound); err != nil {
 			return err
 		}
-		if value.Status == slot.Retiring || value.Status == slot.Deleted {
+		if value.Status == slot.Retiring || value.Status == slot.Deleted || value.Status == slot.Quarantined {
 			return slot.ErrInvalidStatus
 		}
 		if value.Status == slot.Leased || value.Status == slot.Draining {
@@ -773,7 +782,7 @@ func (s *Store) SlotPoolStatus(poolID string, now time.Time) (slot.StatusCounts,
 	environmentReady := true
 	if records, listErr := s.ListEnvironmentRecords(); listErr != nil {
 		return slot.StatusCounts{}, listErr
-	} else if len(records) > 0 {
+	} else if len(records) > 0 || (strings.TrimSpace(config.EnvironmentVersion) != "" && len(config.ManifestDigest) == 64 && strings.TrimSpace(config.Signer) != "") {
 		record, recordErr := s.GetEnvironmentRecord(config.EnvironmentID, config.EnvironmentVersion)
 		environmentReady = recordErr == nil && record.IsReady() && record.EnvironmentID == config.EnvironmentID && record.Version == config.EnvironmentVersion && strings.EqualFold(record.ManifestDigest, config.ManifestDigest) && record.Signer == config.Signer && containsCapabilities(record.Capabilities, config.Capabilities)
 	}

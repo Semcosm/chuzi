@@ -58,7 +58,8 @@ func (s *Store) GetEnvironmentRecord(environmentID, version string) (environment
 // resolve to a ready record before it can be selected.
 func validatePoolEnvironmentTx(tx *bbolt.Tx, config slot.PoolConfig) error {
 	bucket := tx.Bucket([]byte(migrations.EnvironmentPackagesBucket))
-	if bucket == nil || bucket.Stats().KeyN == 0 {
+	metadataRequired := strings.TrimSpace(config.EnvironmentVersion) != "" && len(config.ManifestDigest) == 64 && strings.TrimSpace(config.Signer) != ""
+	if bucket == nil || (bucket.Stats().KeyN == 0 && !metadataRequired) {
 		return nil
 	}
 	if strings.TrimSpace(config.EnvironmentVersion) == "" || strings.TrimSpace(config.ManifestDigest) == "" || strings.TrimSpace(config.Signer) == "" {
