@@ -82,7 +82,7 @@ ready。这样 OS 边界故障既会继续按固定间隔重试，也会出现�
 
 阶段 4 的原生 smoke 只能在受控 Windows runner 上运行。runner 必须使用管理员权限、
 可创建 disposable 本地用户、可查询 WTS session，并带有 `go.exe`、Node.js 20+ 和
-当前 checkout；runner 标签为 `self-hosted`, `windows`, `chuzi-job-pool`。测试脚本不接受
+当前 checkout；专用 runner 标签为 `self-hosted`, `windows`, `chuzi-job-pool`。测试脚本不接受
 用户名、路径、命令或 executable 参数：
 
 ```powershell
@@ -96,13 +96,20 @@ scripts/test_windows_job_pool_smoke.ps1
 已登录的受控用户 session 时，smoke 必须失败；不能将交叉编译或逻辑测试当作 Windows
 原生通过。
 
+`chuzi-build-windows-job-pool-preflight` 在 GitHub-hosted `windows-2022` 上运行完整
+Windows Go 测试、`go vet`、固定 user-agent 构建和终端 session API 检查。手动
+`test` 通道使用这个 preflight 完成可安装包的 CI 验证，并明确跳过需要受管用户真实 WTS
+session 的 native smoke；`nightly`、`stable` 和主分支构建仍要求专用 native runner。
+因此 test 包通过不代表 Windows 用户/session/desktop 已完成生产验收，安装后的真机 smoke
+仍是后续验收步骤。
+
 原生 smoke 覆盖受管用户创建/复用/删除、Remote Desktop Users 成员和
 Administrators 排除、ownership/SID 对账、Profile ACL、reparse/path traversal 拒绝、
 agent named pipe/token、session-aware worker 启动、browser worker handshake、worker
 停止、active session health、过期 lease fence、service shutdown agent cleanup、未知
 ownership 项保护和资源退休。发布 workflow 的
-`chuzi-build-windows-job-pool-smoke` job 使用专用 runner；该 job 失败或排队不可用时，
-`chuzi-build` 聚合检查失败或保持等待，发布不能继续。
+`chuzi-build-windows-job-pool-smoke` job 使用专用 runner；对 nightly/stable 该 job 失败或
+排队不可用时，`chuzi-build` 聚合检查失败或保持等待，发布不能继续。
 
 ## Windows readiness 和故障处理
 
