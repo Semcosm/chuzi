@@ -15,8 +15,8 @@ if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Adm
     throw 'Windows hosted preflight requires an administrator runner'
 }
 
-$go = (Get-Command go.exe -CommandType Application -ErrorAction Stop).Source
-$node = (Get-Command node.exe -CommandType Application -ErrorAction Stop).Source
+$go = (Get-Command go.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path
+$node = (Get-Command node.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Path
 $goVersion = & $go version
 if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($goVersion)) {
     throw 'Go toolchain is unavailable'
