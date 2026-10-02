@@ -1,16 +1,16 @@
 # CR-0091: implement signed environment packages and phase 3 runtime lifecycle
 
 Base: main
-Head or Range: working tree on fe43d880c57b38d6d7c44df95ef2b741efc8c77e
+Head or Range: 00edb9987b2917fc2340a6cd688450eb47fbbbda
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add signed environment package lifecycle
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: fe43d880c57b38d6d7c44df95ef2b741efc8c77e
+Head OID: 00edb9987b2917fc2340a6cd688450eb47fbbbda
 Integrated Result: pending
 
 ## Summary
@@ -25,7 +25,12 @@ The manager exposes explicit `Upgrade`, `Rollback`, and `PromoteReady`
 boundaries. `Upgrade` stages and revalidates a signed tree before an atomic
 rename, `Rollback` validates both package trees and advances the environment
 generation, and `PromoteReady` is the only path that copies a manager-ready
-record into the durable Store authority used by service startup.
+record into the durable Store authority used by service startup. Service-owned
+maintenance flags now install, trust, enable, health-check, disable, rollback,
+and promote records from the deployment trust store. Windows startup resolves
+only the signed manifest's closed worker entrypoint; the package root is passed
+to the slot agent while Node and the user-agent binary stay fixed service-owned
+runtime files.
 
 ## Motivation
 
@@ -51,7 +56,11 @@ Windows user, ACL, RDP, and smoke behavior remains unavailable on this Linux
 host; cross-compilation is not native Windows validation. The package manager's
 verified Record must still be promoted through the Store API before service
 startup; service assembly intentionally fails closed when that durable ready
-record is absent.
+record is absent. The service revalidates manager health and synchronizes the
+Store projection before every Windows slot reconcile, and capacity projections
+re-check durable environment readiness. Expired Windows leases require a
+confirmed agent fence before Store recovery; logical slots retain the direct
+recovery path.
 
 ## Risk
 
