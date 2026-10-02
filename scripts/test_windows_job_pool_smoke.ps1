@@ -337,7 +337,7 @@ function Stop-MarkedUserSessions([string] $name) {
             throw 'session logoff failed'
         }
     }
-    if ((Get-MarkedUserSessions $name).Count -ne 0) {
+    if (@(Get-MarkedUserSessions $name).Count -ne 0) {
         throw 'managed session remained after logoff'
     }
 }
@@ -393,13 +393,13 @@ function Stop-SmokeResources {
                     $usersClean = $false
                 }
             }
-            if ((Get-MarkedUsers -CurrentRunOnly).Count -ne 0) {
+            if (@(Get-MarkedUsers -CurrentRunOnly).Count -ne 0) {
                 $usersClean = $false
             }
         } catch {
             $usersClean = $false
         }
-    } elseif ((Get-MarkedUsers -CurrentRunOnly).Count -ne 0) {
+    } elseif (@(Get-MarkedUsers -CurrentRunOnly).Count -ne 0) {
         # Never delete a matching account when the run-owned marker is absent
         # or unreadable. Leave it for explicit operator review.
         $usersClean = $false
@@ -418,6 +418,10 @@ function Stop-SmokeResources {
     }
 
     if ($env:CHUZI_PRESERVE_WINDOWS_JOB_POOL_SMOKE_ROOT -eq '1') {
+        $script:rootPreserved = $true
+    } elseif (-not $usersClean -and (Test-RunOwnership)) {
+        # Keep the ownership marker and diagnostics when a managed account or
+        # session could not be removed.
         $script:rootPreserved = $true
     } elseif (Test-RunOwnership) {
         if (-not (Invoke-SmokeRetry {
@@ -446,6 +450,12 @@ function Invoke-Icacls([string] $path) {
 if ($ValidateOnly) {
     if ($env:OS -ne 'Windows_NT') {
         throw 'Windows smoke validation requires Windows'
+    }
+    $emptyResults = @(& {})
+    $singleResults = @(& { 'one' })
+    $multipleResults = @(& { 'one'; 'two'; 'three' })
+    if ($emptyResults.Count -ne 0 -or $singleResults.Count -ne 1 -or $multipleResults.Count -ne 3) {
+        throw 'PowerShell result collection validation failed'
     }
     Initialize-SmokeNativeHelpers
     Write-Host 'Windows job-pool smoke script validation passed'
@@ -552,6 +562,9 @@ try {
     $cleanupResult = Stop-SmokeResources
     Write-Host ('RemainingSmokeUsers = ' + $script:remainingSmokeUsers)
     Write-Host ('UnownedSmokeUsers = ' + $script:unownedSmokeUsers)
+    if (Test-RunOwnership) {
+        Write-Host ('SmokeRoot = ' + $runRoot)
+    }
     if ($smokePassed -and $script:remainingSmokeUsers -eq 0 -and $cleanupErrors.Count -eq 0 -and $cleanupResult.Users -and $cleanupResult.Root) {
         if ($script:rootPreserved) {
             Write-Host 'RemainingSmokeRoots = preserved'
