@@ -1,7 +1,7 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: cd770a547a984f0ff3f52e160cb8d0d0cbd6a7ff
+Head or Range: 56739acc7341edea75be1377dc345564412299e5
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: cd770a547a984f0ff3f52e160cb8d0d0cbd6a7ff
+Head OID: 56739acc7341edea75be1377dc345564412299e5
 Integrated Result: pending
 
 ## Summary
@@ -40,9 +40,10 @@ entrypoint, applies a read/execute runtime ACL, and removes only users bearing
 the fixed CHUZI ownership marker. The Windows-only test covers managed-user
 creation and reuse, Remote Desktop Users membership, Administrators exclusion,
 ownership metadata, Profile ACL grant/revoke, reparse/path traversal rejection,
-named-pipe token and stale-lease checks, worker handshake/start/stop,
-unknown-tree protection, and retirement. It never prints passwords, SIDs,
-usernames, Profile paths, pipe paths, or raw Win32 errors.
+named-pipe token and stale-lease checks, worker handshake/start/stop, active
+health and expired-lease fences, service-shutdown agent cleanup, unknown-tree
+protection, and retirement. It never prints passwords, SIDs, usernames,
+Profile paths, pipe paths, or raw Win32 errors.
 
 The controlled runner job is present in `.github/workflows/chuzi-build.yml`
 with the `self-hosted`, `windows`, `chuzi-job-pool` labels and is included in
