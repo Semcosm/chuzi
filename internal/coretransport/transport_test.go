@@ -139,22 +139,14 @@ func TestHelloAdvertisesListRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := false
-	wanted := map[string]bool{MethodListRequests: false, MethodListJobPools: false, MethodApplyJobPool: false, MethodEnvironmentOperation: false}
 	for _, method := range hello.Methods {
 		if method == MethodListRequests {
 			found = true
-		}
-		if _, ok := wanted[method]; ok {
-			wanted[method] = true
+			break
 		}
 	}
 	if !found {
 		t.Fatalf("hello methods = %#v", hello.Methods)
-	}
-	for method, present := range wanted {
-		if !present {
-			t.Fatalf("hello methods omitted additive capability %q: %#v", method, hello.Methods)
-		}
 	}
 }
 

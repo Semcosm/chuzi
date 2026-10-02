@@ -14,33 +14,27 @@ import (
 )
 
 const (
-	CurrentVersion uint64 = 9
+	CurrentVersion uint64 = 7
 
-	MetaBucket                   = "meta"
-	AccountsBucket               = "accounts"
-	RequestsBucket               = "requests"
-	RequestIdempotencyBucket     = "request_idempotency"
-	AuditsBucket                 = "audits"
-	EventsBucket                 = "events"
-	LeasesBucket                 = "leases"
-	QueueBucket                  = "queue"
-	CredentialsBucket            = "credentials"
-	CredentialAuditsBucket       = "credential_audits"
-	MatrixNotificationsBucket    = "matrix_notifications"
-	AccountDeletionsBucket       = "account_deletions"
-	MatrixSyncCursorsBucket      = "matrix_sync_cursors"
-	JobPoolsBucket               = "job_pools"
-	ExecutionSlotsBucket         = "execution_slots"
-	SlotLeasesBucket             = "slot_leases"
-	EnvironmentSummariesBucket   = "environment_summaries"
-	EnvironmentPackagesBucket    = "environment_packages"
-	JobPoolOperationsBucket      = "job_pool_operations"
-	JobPoolIdempotencyBucket     = "job_pool_idempotency"
-	JobPoolAuditBucket           = "job_pool_audit"
-	EnvironmentOperationsBucket  = "environment_operations"
-	EnvironmentIdempotencyBucket = "environment_idempotency"
-	EnvironmentAuditBucket       = "environment_audit"
-	VersionKey                   = "version"
+	MetaBucket                 = "meta"
+	AccountsBucket             = "accounts"
+	RequestsBucket             = "requests"
+	RequestIdempotencyBucket   = "request_idempotency"
+	AuditsBucket               = "audits"
+	EventsBucket               = "events"
+	LeasesBucket               = "leases"
+	QueueBucket                = "queue"
+	CredentialsBucket          = "credentials"
+	CredentialAuditsBucket     = "credential_audits"
+	MatrixNotificationsBucket  = "matrix_notifications"
+	AccountDeletionsBucket     = "account_deletions"
+	MatrixSyncCursorsBucket    = "matrix_sync_cursors"
+	JobPoolsBucket             = "job_pools"
+	ExecutionSlotsBucket       = "execution_slots"
+	SlotLeasesBucket           = "slot_leases"
+	EnvironmentSummariesBucket = "environment_summaries"
+	EnvironmentPackagesBucket  = "environment_packages"
+	VersionKey                 = "version"
 )
 
 var (
@@ -100,14 +94,6 @@ func Apply(db *bbolt.DB) error {
 				if err := createVersionSeven(tx); err != nil {
 					return err
 				}
-			case 8:
-				if err := createVersionEight(tx); err != nil {
-					return err
-				}
-			case 9:
-				if err := createVersionNine(tx); err != nil {
-					return err
-				}
 			default:
 				return fmt.Errorf("%w: migration %d", ErrUnsupportedVersion, version+1)
 			}
@@ -164,24 +150,6 @@ func createVersionSix(tx *bbolt.Tx) error {
 func createVersionSeven(tx *bbolt.Tx) error {
 	if _, err := tx.CreateBucketIfNotExists([]byte(EnvironmentPackagesBucket)); err != nil {
 		return fmt.Errorf("create %s bucket: %w", EnvironmentPackagesBucket, err)
-	}
-	return nil
-}
-
-func createVersionEight(tx *bbolt.Tx) error {
-	for _, name := range []string{JobPoolOperationsBucket, JobPoolIdempotencyBucket, JobPoolAuditBucket} {
-		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
-			return fmt.Errorf("create %s bucket: %w", name, err)
-		}
-	}
-	return nil
-}
-
-func createVersionNine(tx *bbolt.Tx) error {
-	for _, name := range []string{EnvironmentOperationsBucket, EnvironmentIdempotencyBucket, EnvironmentAuditBucket} {
-		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
-			return fmt.Errorf("create %s bucket: %w", name, err)
-		}
 	}
 	return nil
 }

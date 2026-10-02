@@ -235,151 +235,22 @@ type DiagnosticsAPI interface {
 // JobPoolStatus is a redaction-safe execution capacity projection. It never
 // contains Windows usernames, SIDs, Profile paths, endpoints, or commands.
 type JobPoolStatus struct {
-	PoolID                    string    `json:"pool_id"`
-	EnvironmentID             string    `json:"environment_id"`
-	EnvironmentVersion        string    `json:"environment_version"`
-	Desired                   int       `json:"desired"`
-	Ready                     int       `json:"ready"`
-	Leased                    int       `json:"leased"`
-	Quarantined               int       `json:"quarantined"`
-	Draining                  int       `json:"draining"`
-	Provisioning              int       `json:"provisioning"`
-	Retiring                  int       `json:"retiring"`
-	Unprovisioned             int       `json:"unprovisioned"`
-	EffectiveCapacity         int       `json:"effective_capacity"`
-	MaxConcurrency            int       `json:"max_concurrency,omitempty"`
-	DesiredState              string    `json:"desired_state"`
-	Enabled                   bool      `json:"enabled"`
-	EnvironmentReady          bool      `json:"environment_ready"`
-	EnvironmentReadiness      string    `json:"environment_readiness"`
-	ReconcileState            string    `json:"reconcile_state,omitempty"`
-	OperationID               string    `json:"operation_id,omitempty"`
-	LastFailureCode           string    `json:"last_failure_code,omitempty"`
-	LastSuccessfulReconcileAt time.Time `json:"last_successful_reconcile_time,omitempty"`
-	ConfigRevision            uint64    `json:"config_revision"`
+	PoolID             string `json:"pool_id"`
+	EnvironmentID      string `json:"environment_id"`
+	EnvironmentVersion string `json:"environment_version"`
+	Desired            int    `json:"desired"`
+	Ready              int    `json:"ready"`
+	Leased             int    `json:"leased"`
+	Quarantined        int    `json:"quarantined"`
+	Draining           int    `json:"draining"`
+	Provisioning       int    `json:"provisioning"`
+	Retiring           int    `json:"retiring"`
+	Unprovisioned      int    `json:"unprovisioned"`
+	EffectiveCapacity  int    `json:"effective_capacity"`
 }
 
 type JobPoolStatusAPI interface {
 	GetJobPoolStatus(context.Context, string) (JobPoolStatus, error)
-}
-
-type JobPoolConfig struct {
-	PoolID             string    `json:"pool_id"`
-	DesiredSlots       int       `json:"desired_slots"`
-	MaxConcurrency     int       `json:"max_concurrency,omitempty"`
-	EnvironmentID      string    `json:"environment_id"`
-	EnvironmentVersion string    `json:"environment_version"`
-	ManifestDigest     string    `json:"manifest_digest"`
-	Signer             string    `json:"signer"`
-	Capabilities       []string  `json:"capabilities,omitempty"`
-	RequireTrusted     bool      `json:"require_trusted"`
-	DesiredState       string    `json:"desired_state"`
-	Enabled            bool      `json:"enabled"`
-	ConfigRevision     uint64    `json:"config_revision"`
-	UpdatedAt          time.Time `json:"updated_at"`
-	UpdatedBy          string    `json:"updated_by,omitempty"`
-}
-
-type JobPool struct {
-	Config JobPoolConfig `json:"config"`
-	Status JobPoolStatus `json:"status"`
-}
-
-type JobPoolApplyRequest struct {
-	Config           JobPoolConfig `json:"config"`
-	ExpectedRevision uint64        `json:"expected_revision"`
-	IdempotencyKey   string        `json:"idempotency_key"`
-	Actor            string        `json:"actor"`
-	RequestedAt      time.Time     `json:"requested_at,omitempty"`
-}
-
-type JobPoolScaleRequest struct {
-	PoolID           string    `json:"pool_id"`
-	DesiredSlots     int       `json:"desired_slots"`
-	ExpectedRevision uint64    `json:"expected_revision"`
-	IdempotencyKey   string    `json:"idempotency_key"`
-	Actor            string    `json:"actor"`
-	RequestedAt      time.Time `json:"requested_at,omitempty"`
-}
-
-type JobPoolActionRequest struct {
-	PoolID           string    `json:"pool_id"`
-	ExpectedRevision uint64    `json:"expected_revision"`
-	IdempotencyKey   string    `json:"idempotency_key"`
-	Actor            string    `json:"actor"`
-	RequestedAt      time.Time `json:"requested_at,omitempty"`
-}
-
-type JobPoolOperation struct {
-	OperationID           string    `json:"operation_id"`
-	PoolID                string    `json:"pool_id"`
-	Operation             string    `json:"operation"`
-	State                 string    `json:"state"`
-	Actor                 string    `json:"actor,omitempty"`
-	ConfigRevision        uint64    `json:"config_revision"`
-	RequestedAt           time.Time `json:"requested_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
-	CompletedAt           time.Time `json:"completed_at,omitempty"`
-	Result                string    `json:"result,omitempty"`
-	FailureCode           string    `json:"failure_code,omitempty"`
-	EnvironmentGeneration uint64    `json:"environment_generation,omitempty"`
-	LastSuccessfulAt      time.Time `json:"last_successful_at,omitempty"`
-	Idempotent            bool      `json:"idempotent,omitempty"`
-}
-
-type JobPoolAPI interface {
-	ListJobPools(context.Context) ([]JobPool, error)
-	GetJobPool(context.Context, string) (JobPool, error)
-	ApplyJobPool(context.Context, JobPoolApplyRequest) (JobPoolOperation, error)
-	ScaleJobPool(context.Context, JobPoolScaleRequest) (JobPoolOperation, error)
-	DrainJobPool(context.Context, JobPoolActionRequest) (JobPoolOperation, error)
-	ResumeJobPool(context.Context, JobPoolActionRequest) (JobPoolOperation, error)
-	GetJobPoolOperation(context.Context, string) (JobPoolOperation, error)
-}
-
-type Environment struct {
-	EnvironmentID  string    `json:"environment_id"`
-	Version        string    `json:"version"`
-	Capabilities   []string  `json:"capabilities,omitempty"`
-	ManifestDigest string    `json:"manifest_digest"`
-	Signer         string    `json:"signer"`
-	Installed      bool      `json:"installed"`
-	Verified       bool      `json:"verified"`
-	Trusted        bool      `json:"trusted"`
-	Enabled        bool      `json:"enabled"`
-	Healthy        bool      `json:"healthy"`
-	Ready          bool      `json:"ready"`
-	Generation     uint64    `json:"generation"`
-	UpdatedAt      time.Time `json:"updated_at"`
-}
-
-type EnvironmentOperationRequest struct {
-	EnvironmentID    string    `json:"environment_id"`
-	Version          string    `json:"version"`
-	Operation        string    `json:"operation"`
-	PackageRef       string    `json:"package_ref,omitempty"`
-	ExpectedRevision uint64    `json:"expected_revision,omitempty"`
-	IdempotencyKey   string    `json:"idempotency_key"`
-	Actor            string    `json:"actor"`
-	RequestedAt      time.Time `json:"requested_at,omitempty"`
-}
-
-type EnvironmentOperation struct {
-	OperationID           string    `json:"operation_id"`
-	EnvironmentID         string    `json:"environment_id"`
-	Version               string    `json:"version"`
-	Operation             string    `json:"operation"`
-	State                 string    `json:"state"`
-	FailureCode           string    `json:"failure_code,omitempty"`
-	EnvironmentGeneration uint64    `json:"environment_generation,omitempty"`
-	RequestedAt           time.Time `json:"requested_at"`
-	UpdatedAt             time.Time `json:"updated_at"`
-}
-
-type EnvironmentAPI interface {
-	ListEnvironments(context.Context) ([]Environment, error)
-	EnvironmentOperation(context.Context, EnvironmentOperationRequest) (EnvironmentOperation, error)
-	GetEnvironmentOperation(context.Context, string) (EnvironmentOperation, error)
 }
 
 // API is the stable Core contract. Implementations may use any local IPC or

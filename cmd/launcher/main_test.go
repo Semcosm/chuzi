@@ -85,11 +85,3 @@ func TestReadSettingsInputUsesFileOrStdinMarker(t *testing.T) {
 		t.Fatalf("stdin settings = %q, err=%v", data, err)
 	}
 }
-
-func TestControlCommandRejectsPackagePathsBeforeCoreCall(t *testing.T) {
-	root := t.TempDir()
-	handled, err := runControlCommand(context.Background(), "environment-install", root, "", "", -1, 0, "idem", "operator", "", "env/v1", "1.0.0", "../package")
-	if !handled || err == nil || !bytes.Contains([]byte(err.Error()), []byte("controlled reference")) {
-		t.Fatalf("package path result = handled=%v err=%v", handled, err)
-	}
-}

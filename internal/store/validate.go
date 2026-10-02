@@ -77,9 +77,6 @@ func validateDB(database *bbolt.DB) error {
 			migrations.ExecutionSlotsBucket, migrations.SlotLeasesBucket,
 			migrations.EnvironmentSummariesBucket,
 			migrations.EnvironmentPackagesBucket,
-			migrations.JobPoolOperationsBucket, migrations.JobPoolIdempotencyBucket, migrations.JobPoolAuditBucket,
-			migrations.EnvironmentOperationsBucket, migrations.EnvironmentIdempotencyBucket,
-			migrations.EnvironmentAuditBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				return fmt.Errorf("%w: required bucket %q is missing", ErrCorruptData, name)
@@ -124,12 +121,6 @@ func validateDB(database *bbolt.DB) error {
 		if err := validateEnvironmentPackagesTx(tx); err != nil {
 			return err
 		}
-		if err := validateJobPoolControlTx(tx); err != nil {
-			return err
-		}
-		if err := validateEnvironmentOperationsTx(tx); err != nil {
-			return err
-		}
 		return validateEventsTx(tx)
 	})
 }
@@ -148,84 +139,6 @@ func validateEnvironmentPackagesTx(tx *bbolt.Tx) error {
 		}
 		if err := record.Validate(); err != nil {
 			return fmt.Errorf("%w: invalid environment package", ErrCorruptData)
-		}
-		return nil
-	})
-}
-
-func validateJobPoolControlTx(tx *bbolt.Tx) error {
-	if err := tx.Bucket([]byte(migrations.JobPoolOperationsBucket)).ForEach(func(key, value []byte) error {
-		if value == nil {
-			return fmt.Errorf("%w: job pool operation bucket contains nested bucket", ErrCorruptData)
-		}
-		var operation JobPoolOperation
-		if err := decode(value, &operation); err != nil {
-			return err
-		}
-		if string(key) != operation.OperationID || operation.Validate() != nil {
-			return fmt.Errorf("%w: invalid job pool operation", ErrCorruptData)
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	if err := tx.Bucket([]byte(migrations.JobPoolAuditBucket)).ForEach(func(key, value []byte) error {
-		if value == nil {
-			return fmt.Errorf("%w: job pool audit bucket contains nested bucket", ErrCorruptData)
-		}
-		var event JobPoolAuditEvent
-		if err := decode(value, &event); err != nil {
-			return err
-		}
-		if string(key) != event.EventID || event.Validate() != nil {
-			return fmt.Errorf("%w: invalid job pool audit", ErrCorruptData)
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	return tx.Bucket([]byte(migrations.JobPoolIdempotencyBucket)).ForEach(func(key, value []byte) error {
-		if value == nil || len(key) == 0 || len(value) == 0 || tx.Bucket([]byte(migrations.JobPoolOperationsBucket)).Get(value) == nil {
-			return fmt.Errorf("%w: invalid job pool idempotency index", ErrCorruptData)
-		}
-		return nil
-	})
-}
-
-func validateEnvironmentOperationsTx(tx *bbolt.Tx) error {
-	if err := tx.Bucket([]byte(migrations.EnvironmentOperationsBucket)).ForEach(func(key, value []byte) error {
-		if value == nil {
-			return fmt.Errorf("%w: environment operation bucket contains nested bucket", ErrCorruptData)
-		}
-		var operation EnvironmentOperationRecord
-		if err := decode(value, &operation); err != nil {
-			return err
-		}
-		if string(key) != operation.OperationID || operation.Validate() != nil {
-			return fmt.Errorf("%w: invalid environment operation", ErrCorruptData)
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	if err := tx.Bucket([]byte(migrations.EnvironmentAuditBucket)).ForEach(func(key, value []byte) error {
-		if value == nil {
-			return fmt.Errorf("%w: environment audit bucket contains nested bucket", ErrCorruptData)
-		}
-		var event EnvironmentAuditEvent
-		if err := decode(value, &event); err != nil {
-			return err
-		}
-		if string(key) != event.EventID || event.Validate() != nil {
-			return fmt.Errorf("%w: invalid environment audit", ErrCorruptData)
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	return tx.Bucket([]byte(migrations.EnvironmentIdempotencyBucket)).ForEach(func(key, value []byte) error {
-		if value == nil || len(key) == 0 || len(value) == 0 || tx.Bucket([]byte(migrations.EnvironmentOperationsBucket)).Get(value) == nil {
-			return fmt.Errorf("%w: invalid environment idempotency index", ErrCorruptData)
 		}
 		return nil
 	})
