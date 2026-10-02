@@ -166,6 +166,16 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	if response, err := client.WorkerCall(ctx, startSession); err != nil || response.Worker == nil || response.Worker.Type != protocol.SessionStarted {
 		t.Fatal("native browser worker session start failed")
 	}
+	leaseNow := time.Now().UTC()
+	durableLease := slot.Lease{LeaseID: lease.LeaseID, SlotID: request.SlotID, PoolID: request.PoolID, RequestID: lease.RequestID, AccountID: lease.AccountID, Owner: lease.Owner, EnvironmentGeneration: 1, AcquiredAt: leaseNow, LastHeartbeat: leaseNow, ExpiresAt: leaseNow.Add(time.Minute)}
+	if err := provisioner.Health(ctx, request, durableLease); err != nil {
+		t.Fatal("native session health check failed")
+	}
+	expiredLease := durableLease
+	expiredLease.ExpiresAt = leaseNow.Add(-time.Second)
+	if err := provisioner.Health(ctx, request, expiredLease); !errors.Is(err, slot.ErrLeaseExpired) {
+		t.Fatal("native expired lease was accepted")
+	}
 	stop := lease
 	stop.CommandID, stop.Command = "smoke-stop", slotagent.StopJob
 	if _, err := client.Call(ctx, stop); err != nil {
@@ -175,6 +185,12 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	stale.CommandID, stale.LeaseID, stale.Command, stale.AccountID = "smoke-stale", "stale-lease", slotagent.Health, ""
 	if _, err := client.Call(ctx, stale); !errors.Is(err, slotagent.ErrStaleLease) {
 		t.Fatal("native stale lease was accepted")
+	}
+	if err := provisioner.Shutdown(ctx); err != nil {
+		t.Fatal("native service shutdown did not fence the agent")
+	}
+	if _, _, err := provisioner.AgentEndpoint(request.SlotID, result.AgentHandle); !errors.Is(err, ErrSessionUnavailable) {
+		t.Fatal("native agent remained available after service shutdown")
 	}
 
 	// The provisioner must reject an ownership tree containing an unknown entry
