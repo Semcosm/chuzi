@@ -2151,19 +2151,20 @@ func hasAdministratorsMembership(username string) bool {
 }
 
 func administratorsMembership(username string) (bool, error) {
-	admins, err := groupNameForSID("S-1-5-32-544")
-	if err != nil {
-		return false, err
-	}
+	const administratorsSID = "S-1-5-32-544"
 	groups, err := localGroupNames(username)
 	if err != nil {
 		return false, err
 	}
 	for _, group := range groups {
-		if strings.EqualFold(group, admins) {
-			return true, nil
+		// Compare the well-known SID instead of the localized group name.
+		// LookupAccountSid can fail for a localized/buffered name even when
+		// local-group enumeration itself is valid.
+		sid, err := lookupSID(group)
+		if err != nil {
+			return false, err
 		}
-		if sid, err := lookupSID(group); err == nil && sid == "S-1-5-32-544" {
+		if sid == administratorsSID {
 			return true, nil
 		}
 	}
