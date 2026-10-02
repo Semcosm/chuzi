@@ -1850,7 +1850,7 @@ func fileAttributes(path string) (uint32, error) {
 func writeOwnership(path string, record ownershipRecord) error {
 	if _, err := fileAttributes(path); err == nil {
 		return ErrOwnership
-	} else if !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) {
+	} else if !errors.Is(err, windows.ERROR_FILE_NOT_FOUND) && !errors.Is(err, windows.ERROR_PATH_NOT_FOUND) {
 		return ErrOwnership
 	}
 	data, err := json.Marshal(record)
