@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 02d1b676fef0d61a2f8ad679ffc4229a645bbc94
+Head or Range: 7df03426fc42beb541ed5151159dafed63ebf26a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 02d1b676fef0d61a2f8ad679ffc4229a645bbc94
+Head OID: 7df03426fc42beb541ed5151159dafed63ebf26a
 Integrated Result: pending
 
 ## Summary
@@ -66,6 +66,11 @@ with the controlled session provider is attached. Until the real-machine smoke
 passes, this CR remains PARTIAL and must not be merged as native acceptance. The
 production RDP bridge remains deny-by-default pending a deployment-owned
 authorizer and broker.
+The first Windows checkout invocation after the hotfix fast-forward reached the
+setup stage but the previous script exposed only the generic `setup` label; the
+follow-up test commit now reports stable setup classifications such as
+`administrator_required`, `toolchain_required`, `runtime_acl`, or
+`session_unavailable` and preserves a redacted diagnostic log.
 The hosted preflight is covered by `scripts/test_windows_job_pool_hosted_preflight.ps1`;
 its first remote result is pending at this revision.
 
