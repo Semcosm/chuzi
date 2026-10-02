@@ -5,7 +5,7 @@ Head or Range: b73e444b139595f937843071001f8918bcb14b98
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 13
+Revision: 14
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -164,6 +164,12 @@ computer-local username remains pinned in the temporary profile and
 `administrative session:i:0` remains disabled. This is still only a diagnostic
 local-RDP path: the Go provisioner must observe the exact active WTS session,
 and no session, broker, or authorizer fence is bypassed.
+
+Revision 14 adds an explicit identity fence to the local-RDP wait. The target
+SID must differ from the interactive runner SID, and any newly observed active
+WTS session for the runner account causes `local RDP authenticated as the
+interactive runner identity` failure. The native smoke therefore cannot
+accept a runner-account session as evidence for the disposable target.
 
 ## Risk
 

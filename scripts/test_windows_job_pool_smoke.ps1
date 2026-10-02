@@ -31,6 +31,9 @@ $script:rdpCredentialTarget = $null
 $script:rdpProfilePath = $null
 $script:rdpDebugSummary = @()
 $script:rdpClientProcess = $null
+$script:runnerUserName = $null
+$script:runnerSessionID = -1
+$script:runnerSID = $null
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
 $preservedLog = Join-Path $tempRoot 'chuzi-job-pool-smoke-test-output.log'
@@ -293,11 +296,18 @@ function Start-LocalRdpSession([string] $Name) {
     $rdpProfile = Join-Path $runRoot 'local-rdp.rdp'
     $targetUsername = $env:COMPUTERNAME + '\' + $Name
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
-    $runnerIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $runnerSessionID = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+    $runnerIdentityObject = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $runnerIdentity = $runnerIdentityObject.Name
+    $script:runnerUserName = ($runnerIdentity -split '\\')[-1]
+    $script:runnerSID = $runnerIdentityObject.User.Value
+    $script:runnerSessionID = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+    if ($targetUser.SID.Value -eq $script:runnerSID) {
+        throw 'local RDP target resolves to the interactive runner identity'
+    }
     $script:rdpDebugSummary = @(
         ('smoke_runner_user=' + $runnerIdentity),
         ('smoke_runner_session_id=' + $runnerSessionID),
+        ('smoke_runner_sid=' + $script:runnerSID),
         ('rdp_target_host=' + $targetHost),
         ('rdp_target_user=' + $targetUsername),
         ('rdp_target_sid=' + $targetUser.SID.Value),
@@ -322,6 +332,9 @@ function Start-LocalRdpSession([string] $Name) {
     $script:rdpClientProcess = $client
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     while ([DateTime]::UtcNow -lt $deadline) {
+        if (Test-UnexpectedRunnerSession) {
+            throw 'local RDP authenticated as the interactive runner identity'
+        }
         if (Test-ActiveManagedSession $Name) {
             [ChuziSmokeCredentialStore]::Delete($script:rdpCredentialTarget)
             $script:rdpCredentialOwned = $false
@@ -346,6 +359,17 @@ function Get-MarkedUsers([switch] $CurrentRunOnly) {
 function Get-MarkedUserSessions([string] $Name) {
     Initialize-SmokeNativeHelpers
     @([ChuziSmokeSessionQuery]::GetSessions() | Where-Object { $_.UserName -ieq $Name })
+}
+
+function Test-UnexpectedRunnerSession {
+    if ([string]::IsNullOrWhiteSpace($script:runnerUserName) -or
+        $script:runnerSessionID -lt 0) {
+        return $false
+    }
+    $runnerSessions = @(Get-MarkedUserSessions $script:runnerUserName)
+    return @($runnerSessions | Where-Object {
+        $_.SessionId -ne $script:runnerSessionID
+    }).Count -gt 0
 }
 
 function Remove-MarkedUserProfile([object] $user) {
