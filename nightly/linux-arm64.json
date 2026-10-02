@@ -5,6 +5,15 @@
   "releases": [
     {
       "channel": "nightly",
+      "version": "nightly-555-2400241812dd",
+      "commit": "2400241812dda68ee2000b4e38e935b783de11ef",
+      "target": "linux-arm64",
+      "index_url": "https://raw.githubusercontent.com/Semcosm/chuzi/release-catalog/nightly/linux-arm64/nightly-555-2400241812dd/chuzi-nightly-555-2400241812dd-linux-arm64.index.json",
+      "published_at": "2026-10-02T08:53:06Z",
+      "prerelease": true
+    },
+    {
+      "channel": "nightly",
       "version": "nightly-531-dd126d00dce6",
       "commit": "dd126d00dce6d33d3c4329fcccea0b0158f38f0a",
       "target": "linux-arm64",
