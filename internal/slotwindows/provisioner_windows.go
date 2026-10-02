@@ -23,13 +23,16 @@ import (
 )
 
 var (
-	ErrOwnership      = errors.New("slotwindows: managed user ownership check failed")
-	ErrACLDrift       = errors.New("slotwindows: managed ACL check failed")
-	ErrCleanup        = errors.New("slotwindows: managed resource cleanup failed")
-	ErrCleanupAgent   = errors.New("slotwindows: agent cleanup failed")
-	ErrCleanupSession = errors.New("slotwindows: session cleanup failed")
-	ErrCleanupRoot    = errors.New("slotwindows: root cleanup failed")
-	ErrCleanupUser    = errors.New("slotwindows: user cleanup failed")
+	ErrOwnership            = errors.New("slotwindows: managed user ownership check failed")
+	ErrACLDrift             = errors.New("slotwindows: managed ACL check failed")
+	ErrCleanup              = errors.New("slotwindows: managed resource cleanup failed")
+	ErrCleanupAgent         = errors.New("slotwindows: agent cleanup failed")
+	ErrCleanupSession       = errors.New("slotwindows: session cleanup failed")
+	ErrCleanupRoot          = errors.New("slotwindows: root cleanup failed")
+	ErrCleanupUser          = errors.New("slotwindows: user cleanup failed")
+	ErrCleanupUserInspect   = errors.New("slotwindows: user cleanup inspection failed")
+	ErrCleanupUserOwnership = errors.New("slotwindows: user cleanup ownership mismatch")
+	ErrCleanupUserDelete    = errors.New("slotwindows: user deletion failed")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -51,6 +54,7 @@ const (
 	userFlagDontExpirePassword     = 0x10000
 	userFlagDisabled               = 0x0002
 	netErrorUserExists             = 2224
+	netErrorUserNotFound           = 2221
 	netErrorMemberInAlias          = 1378
 	localGroupIncludeIndirect      = 1
 	fileAttributeDirectory         = 0x10
@@ -501,10 +505,10 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 		if sid != "" {
 			cleanupCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			if err := deleteManagedProfileWithRetry(cleanupCtx, paths.UserName, sid); err != nil {
-				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
+				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser, err)
 			}
 			if err := deleteManagedUserWithRetry(cleanupCtx, paths.UserName, request.SlotID, request.Ordinal, sid); err != nil {
-				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
+				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser, err)
 			}
 			cancel()
 		}
@@ -1943,18 +1947,34 @@ func callNetUserDelete(name *uint16) uint32 {
 
 func deleteManagedUser(username, slotID string, ordinal int, expectedSID string) error {
 	info, err := getUserInfo(username)
-	if err != nil || info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", slotID, ordinal) || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(username) {
-		return ErrOwnership
+	if err != nil {
+		return ErrCleanupUserInspect
+	}
+	if info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", slotID, ordinal) || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(username) {
+		return ErrCleanupUserOwnership
 	}
 	if expectedSID != "" {
 		actualSID, sidErr := lookupSID(username)
-		if sidErr != nil || actualSID != expectedSID {
-			return ErrOwnership
+		if errors.Is(sidErr, windows.ERROR_NONE_MAPPED) {
+			return nil
+		}
+		if sidErr != nil {
+			return ErrCleanupUserInspect
+		}
+		if actualSID != expectedSID {
+			return ErrCleanupUserOwnership
 		}
 	}
 	name, err := windows.UTF16PtrFromString(username)
-	if err != nil || callNetUserDelete(name) != 0 {
-		return ErrCleanup
+	if err != nil {
+		return ErrCleanupUserInspect
+	}
+	status := callNetUserDelete(name)
+	if status == netErrorUserNotFound {
+		return nil
+	}
+	if status != 0 {
+		return ErrCleanupUserDelete
 	}
 	return nil
 }
@@ -1979,17 +1999,23 @@ func retryCleanup(ctx context.Context, action func() error) error {
 		return ErrCleanup
 	}
 	const attempts = 6
+	var lastErr error
 	for attempt := 0; attempt < attempts; attempt++ {
 		if err := ctx.Err(); err != nil {
+			if lastErr != nil {
+				return lastErr
+			}
 			return ErrCleanup
 		}
 		if err := action(); err == nil {
 			return nil
-		} else if errors.Is(err, ErrOwnership) || errors.Is(err, ErrACLDrift) {
+		} else if errors.Is(err, ErrOwnership) || errors.Is(err, ErrACLDrift) || errors.Is(err, ErrCleanupUserOwnership) {
 			return err
+		} else {
+			lastErr = err
 		}
 		if attempt == attempts-1 {
-			return ErrCleanup
+			return lastErr
 		}
 		delay := time.Duration(100*(1<<attempt)) * time.Millisecond
 		if delay > 2*time.Second {
@@ -2001,9 +2027,15 @@ func retryCleanup(ctx context.Context, action func() error) error {
 			if !timer.Stop() {
 				<-timer.C
 			}
+			if lastErr != nil {
+				return lastErr
+			}
 			return ErrCleanup
 		case <-timer.C:
 		}
+	}
+	if lastErr != nil {
+		return lastErr
 	}
 	return ErrCleanup
 }

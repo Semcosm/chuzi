@@ -233,6 +233,12 @@ func nativeSmokeFailureClass(err error) string {
 		return "cleanup_session_failed"
 	case errors.Is(err, ErrCleanupRoot):
 		return "cleanup_root_failed"
+	case errors.Is(err, ErrCleanupUserOwnership):
+		return "cleanup_user_ownership_failed"
+	case errors.Is(err, ErrCleanupUserInspect):
+		return "cleanup_user_inspect_failed"
+	case errors.Is(err, ErrCleanupUserDelete):
+		return "cleanup_user_delete_failed"
 	case errors.Is(err, ErrCleanupUser):
 		return "cleanup_user_failed"
 	case errors.Is(err, ErrCleanup):
