@@ -472,6 +472,20 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 	if err := p.stopSessionBootstrap(cleanupCtx, request.SlotID); err != nil {
 		cleanupErr = errors.Join(cleanupErr, ErrCleanupSession)
 	}
+	// The runner-owned broker may have returned before Winlogon released the
+	// profile token. Re-issue the SID-scoped logoff fence before deleting the
+	// disposable identity; NetUserDel otherwise commonly reports a transient
+	// busy/profile-in-use failure even though FindSession has disappeared.
+	if sid != "" {
+		if err := logoffManagedSessions(cleanupCtx, sid); err != nil {
+			cleanupErr = errors.Join(cleanupErr, ErrCleanupSession)
+		}
+	}
+	if removeUser {
+		if err := deleteManagedProfileWithRetry(cleanupCtx, paths.UserName); err != nil {
+			cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
+		}
+	}
 	if removeRoot {
 		if err := removeOwnedTree(paths.Root); err != nil {
 			cleanupErr = errors.Join(cleanupErr, ErrCleanupRoot)
@@ -488,7 +502,7 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 			}
 		}
 		if sid != "" {
-			if err := deleteManagedUser(paths.UserName, request.SlotID, request.Ordinal, sid); err != nil {
+			if err := deleteManagedUserWithRetry(cleanupCtx, paths.UserName, request.SlotID, request.Ordinal, sid); err != nil {
 				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
 			}
 		}
@@ -605,13 +619,13 @@ func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionR
 	if err := logoffManagedSessions(ctx, record.SID); err != nil {
 		return ErrCleanup
 	}
-	if err := deleteManagedProfile(paths.UserName); err != nil {
+	if err := deleteManagedProfileWithRetry(ctx, paths.UserName); err != nil {
 		return ErrCleanup
 	}
 	if err := removeOwnedTree(paths.Root); err != nil {
 		return ErrCleanup
 	}
-	if err := deleteManagedUser(paths.UserName, request.SlotID, request.Ordinal, record.SID); err != nil {
+	if err := deleteManagedUserWithRetry(ctx, paths.UserName, request.SlotID, request.Ordinal, record.SID); err != nil {
 		return ErrCleanup
 	}
 	return nil
@@ -1941,6 +1955,55 @@ func deleteManagedUser(username, slotID string, ordinal int, expectedSID string)
 		return ErrCleanup
 	}
 	return nil
+}
+
+// deleteManagedUserWithRetry handles the short interval in which Windows
+// releases a just-logged-off user's profile and token handles. Ownership is
+// checked on every attempt; only the deletion syscall is retried.
+func deleteManagedUserWithRetry(ctx context.Context, username, slotID string, ordinal int, expectedSID string) error {
+	return retryCleanup(ctx, func() error {
+		return deleteManagedUser(username, slotID, ordinal, expectedSID)
+	})
+}
+
+func deleteManagedProfileWithRetry(ctx context.Context, username string) error {
+	return retryCleanup(ctx, func() error {
+		return deleteManagedProfile(username)
+	})
+}
+
+func retryCleanup(ctx context.Context, action func() error) error {
+	if ctx == nil || action == nil {
+		return ErrCleanup
+	}
+	const attempts = 6
+	for attempt := 0; attempt < attempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return ErrCleanup
+		}
+		if err := action(); err == nil {
+			return nil
+		} else if errors.Is(err, ErrOwnership) || errors.Is(err, ErrACLDrift) {
+			return err
+		}
+		if attempt == attempts-1 {
+			return ErrCleanup
+		}
+		delay := time.Duration(100*(1<<attempt)) * time.Millisecond
+		if delay > 2*time.Second {
+			delay = 2 * time.Second
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return ErrCleanup
+		case <-timer.C:
+		}
+	}
+	return ErrCleanup
 }
 
 func randomPasswordUTF16(length int) ([]uint16, error) {
