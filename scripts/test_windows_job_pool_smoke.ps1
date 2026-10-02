@@ -27,7 +27,7 @@ $script:rootPreserved = $false
 $script:unownedSmokeUsers = 0
 $script:remainingSmokeUsers = -1
 $script:rdpCredentialOwned = $false
-$script:rdpCredentialTarget = 'TERMSRV/127.0.0.1'
+$script:rdpCredentialTarget = $null
 $script:rdpClientProcess = $null
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
@@ -256,11 +256,31 @@ function Test-ActiveManagedSession([string] $Name) {
     return $false
 }
 
+function Get-LocalRdpTarget {
+    $configurations = @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)
+    foreach ($configuration in $configurations) {
+        if ($null -eq $configuration.IPv4DefaultGateway) {
+            continue
+        }
+        foreach ($address in @($configuration.IPv4Address)) {
+            $value = [string]$address.IPAddress
+            if (-not [string]::IsNullOrWhiteSpace($value) -and
+                $value -notmatch '^127\.' -and
+                $value -notmatch '^169\.254\.') {
+                return $value
+            }
+        }
+    }
+    throw 'local RDP requires an active non-loopback IPv4 address'
+}
+
 function Start-LocalRdpSession([string] $Name) {
     if (-not [Environment]::UserInteractive) {
         throw 'interactive smoke console required'
     }
     Initialize-SmokeNativeHelpers
+    $targetHost = Get-LocalRdpTarget
+    $script:rdpCredentialTarget = 'TERMSRV/' + $targetHost
     if ([ChuziSmokeCredentialStore]::Exists($script:rdpCredentialTarget)) {
         throw 'local RDP credential target already exists'
     }
@@ -279,10 +299,10 @@ function Start-LocalRdpSession([string] $Name) {
         $password.Dispose()
     }
 
-    Write-Host 'Opening a local RDP session for the disposable smoke user.'
+    Write-Host ('Opening a local RDP session for the disposable smoke user at ' + $targetHost + '.')
     Write-Host 'If Windows shows a first-connection certificate prompt, verify the local target and accept it.'
     $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
-    $client = Start-Process -FilePath $mstsc -ArgumentList @('/v:127.0.0.1') -PassThru -ErrorAction Stop
+    $client = Start-Process -FilePath $mstsc -ArgumentList @('/v:' + $targetHost) -PassThru -ErrorAction Stop
     $script:rdpClientProcess = $client
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     while ([DateTime]::UtcNow -lt $deadline) {
