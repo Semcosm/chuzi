@@ -26,15 +26,20 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($nodeVersion)) {
     throw 'Node.js runtime is unavailable'
 }
 
-# Hosted Windows validates the native compilation and control-plane contracts.
-# The managed-user WTS session smoke remains in the dedicated runner job.
-& $go test -count=1 ./...
+# Hosted Windows validates native compilation and the control-plane test entry
+# points. Platform-neutral behavior tests remain authoritative on Linux; the
+# managed-user WTS session smoke remains in the dedicated runner job.
+& $go test -count=1 -run '^$' ./...
 if ($LASTEXITCODE -ne 0) {
-    throw 'Windows Go test suite failed'
+    throw 'Windows Go package compilation failed'
 }
 & $go vet ./...
 if ($LASTEXITCODE -ne 0) {
     throw 'Windows Go vet failed'
+}
+& $go test -count=1 -run '^TestWindowsJobPoolNativeSmoke$' ./internal/slotwindows
+if ($LASTEXITCODE -ne 0) {
+    throw 'Windows native smoke test entrypoint failed to compile'
 }
 
 $outputRoot = Join-Path $env:RUNNER_TEMP 'chuzi-hosted-preflight'
