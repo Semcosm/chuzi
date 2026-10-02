@@ -42,6 +42,9 @@ var (
 	ErrSessionGroupAdd      = errors.New("slotwindows: remote desktop group add failed")
 	ErrSessionGroupVerify   = errors.New("slotwindows: remote desktop group membership failed")
 	ErrSessionPolicy        = errors.New("slotwindows: remote interactive policy failed")
+	ErrSessionPolicyLookup  = errors.New("slotwindows: remote interactive policy lookup failed")
+	ErrSessionPolicyMissing = errors.New("slotwindows: remote interactive policy allow missing")
+	ErrSessionPolicyDenied  = errors.New("slotwindows: remote interactive policy denied")
 	ErrSessionUserLookup    = errors.New("slotwindows: managed user SID lookup failed")
 	ErrManagedUserSID       = errors.New("slotwindows: managed user SID unavailable")
 )
@@ -2271,7 +2274,7 @@ type lsaEnumerationInformation struct {
 func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...string) error {
 	allowed, err := lsaRightSIDs("SeRemoteInteractiveLogonRight")
 	if err != nil {
-		return ErrSessionPolicy
+		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup)
 	}
 	principals := append([]string{userSID, groupSID}, additionalGroups...)
 	allow := false
@@ -2282,22 +2285,22 @@ func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...
 		}
 	}
 	if !allow {
-		return ErrSessionPolicy
+		return errors.Join(ErrSessionPolicy, ErrSessionPolicyMissing)
 	}
 	denied, err := lsaRightSIDs("SeDenyRemoteInteractiveLogonRight")
 	if err != nil {
-		return ErrSessionPolicy
+		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup)
 	}
 	// An explicit deny for the managed user, any local group, or Everyone
 	// must never be masked by membership in Remote Desktop Users.
 	for _, principal := range principals {
 		if denied[principal] {
-			return ErrSessionPolicy
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyDenied)
 		}
 	}
 	for _, everyone := range []string{"S-1-1-0", "S-1-5-11"} {
 		if denied[everyone] {
-			return ErrSessionPolicy
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyDenied)
 		}
 	}
 	return nil
