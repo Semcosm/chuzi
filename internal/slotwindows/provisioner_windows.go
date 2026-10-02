@@ -33,6 +33,11 @@ var (
 	ErrCleanupUserInspect   = errors.New("slotwindows: user cleanup inspection failed")
 	ErrCleanupUserOwnership = errors.New("slotwindows: user cleanup ownership mismatch")
 	ErrCleanupUserDelete    = errors.New("slotwindows: user deletion failed")
+	ErrCleanupUserMarker    = errors.New("slotwindows: user cleanup marker mismatch")
+	ErrCleanupUserPrivilege = errors.New("slotwindows: user cleanup privilege mismatch")
+	ErrCleanupUserDisabled  = errors.New("slotwindows: user cleanup disabled")
+	ErrCleanupUserAdmin     = errors.New("slotwindows: user cleanup administrator membership")
+	ErrCleanupUserSID       = errors.New("slotwindows: user cleanup SID mismatch")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -1950,8 +1955,21 @@ func deleteManagedUser(username, slotID string, ordinal int, expectedSID string)
 	if err != nil {
 		return ErrCleanupUserInspect
 	}
-	if info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", slotID, ordinal) || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(username) {
-		return ErrCleanupUserOwnership
+	if info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", slotID, ordinal) {
+		return ErrCleanupUserMarker
+	}
+	if info.priv != userPrivUser {
+		return ErrCleanupUserPrivilege
+	}
+	if info.flags&userFlagDisabled != 0 {
+		return ErrCleanupUserDisabled
+	}
+	admin, adminErr := administratorsMembership(username)
+	if adminErr != nil {
+		return ErrCleanupUserInspect
+	}
+	if admin {
+		return ErrCleanupUserAdmin
 	}
 	if expectedSID != "" {
 		actualSID, sidErr := lookupSID(username)
@@ -1962,7 +1980,7 @@ func deleteManagedUser(username, slotID string, ordinal int, expectedSID string)
 			return ErrCleanupUserInspect
 		}
 		if actualSID != expectedSID {
-			return ErrCleanupUserOwnership
+			return ErrCleanupUserSID
 		}
 	}
 	name, err := windows.UTF16PtrFromString(username)
@@ -2009,7 +2027,7 @@ func retryCleanup(ctx context.Context, action func() error) error {
 		}
 		if err := action(); err == nil {
 			return nil
-		} else if errors.Is(err, ErrOwnership) || errors.Is(err, ErrACLDrift) || errors.Is(err, ErrCleanupUserOwnership) {
+		} else if errors.Is(err, ErrOwnership) || errors.Is(err, ErrACLDrift) || errors.Is(err, ErrCleanupUserOwnership) || errors.Is(err, ErrCleanupUserMarker) || errors.Is(err, ErrCleanupUserPrivilege) || errors.Is(err, ErrCleanupUserDisabled) || errors.Is(err, ErrCleanupUserAdmin) || errors.Is(err, ErrCleanupUserSID) {
 			return err
 		} else {
 			lastErr = err
@@ -2125,20 +2143,28 @@ func localGroupNames(username string) ([]string, error) {
 }
 
 func hasAdministratorsMembership(username string) bool {
-	admins, _ := groupNameForSID("S-1-5-32-544")
+	member, err := administratorsMembership(username)
+	return err != nil || member
+}
+
+func administratorsMembership(username string) (bool, error) {
+	admins, err := groupNameForSID("S-1-5-32-544")
+	if err != nil {
+		return false, err
+	}
 	groups, err := localGroupNames(username)
 	if err != nil {
-		return true
+		return false, err
 	}
 	for _, group := range groups {
 		if strings.EqualFold(group, admins) {
-			return true
+			return true, nil
 		}
 		if sid, err := lookupSID(group); err == nil && sid == "S-1-5-32-544" {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func ensureRemoteDesktopMembership(username string) error {
