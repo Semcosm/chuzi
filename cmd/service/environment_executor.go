@@ -69,33 +69,35 @@ func (c serviceEnvironmentControl) ApplyEnvironmentGate(id, version, operation s
 	return record, nil
 }
 
-func (e serviceEnvironmentExecutor) Execute(ctx context.Context, mutation store.EnvironmentMutation) error {
+func (e serviceEnvironmentExecutor) Execute(ctx context.Context, mutation store.EnvironmentMutation) (environment.Record, error) {
 	if e.manager == nil || e.store == nil {
-		return environment.ErrPackageReference
+		return environment.Record{}, environment.ErrPackageReference
 	}
 	switch mutation.Operation {
 	case "install":
 		record, err := e.manager.InstallReferenceFor(ctx, mutation.PackageRef, mutation.EnvironmentID, mutation.Version)
 		if err != nil {
-			return err
+			return environment.Record{}, err
 		}
 		if record.EnvironmentID != mutation.EnvironmentID || record.Version != mutation.Version {
-			return environment.ErrInvalidManifest
+			return environment.Record{}, environment.ErrInvalidManifest
 		}
+		return record, nil
 	case "upgrade":
 		record, err := e.manager.UpgradeReferenceFor(ctx, mutation.PackageRef, mutation.EnvironmentID, mutation.Version)
 		if err != nil {
-			return err
+			return environment.Record{}, err
 		}
 		if record.EnvironmentID != mutation.EnvironmentID || record.Version != mutation.Version {
-			return environment.ErrInvalidManifest
+			return environment.Record{}, environment.ErrInvalidManifest
 		}
+		return record, nil
 	case "rollback":
 		if err := e.manager.Rollback(mutation.EnvironmentID, mutation.Version); err != nil {
-			return err
+			return environment.Record{}, err
 		}
+		return e.manager.Get(mutation.EnvironmentID, mutation.Version)
 	default:
-		return environment.ErrPackageReference
+		return environment.Record{}, environment.ErrPackageReference
 	}
-	return e.manager.SyncRecords(e.store)
 }

@@ -58,9 +58,9 @@ type recordingEnvironmentExecutor struct {
 	err      error
 }
 
-func (e *recordingEnvironmentExecutor) Execute(_ context.Context, mutation store.EnvironmentMutation) error {
+func (e *recordingEnvironmentExecutor) Execute(_ context.Context, mutation store.EnvironmentMutation) (environment.Record, error) {
 	e.mutation = mutation
-	return e.err
+	return environment.Record{EnvironmentID: mutation.EnvironmentID, Version: mutation.Version, ManifestDigest: strings.Repeat("a", 64), Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: controlTestTime}, e.err
 }
 
 func (e controlEnvironments) ListEnvironmentRecords() ([]environment.Record, error) {

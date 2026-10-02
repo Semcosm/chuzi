@@ -333,6 +333,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 				value.ManifestDigest = pool.ManifestDigest
 				value.Signer = pool.Signer
 				value.Trusted = false
+				value.RequireTrusted = pool.RequireTrusted
 				value.AgentHandle = ""
 				value.HealthAt = time.Time{}
 				value.UpdatedAt = r.clock().UTC()
@@ -439,7 +440,7 @@ func containsAll(available, required []string) bool {
 
 func matchesSlotTarget(value slot.Slot, pool slot.PoolConfig) bool {
 	if value.EnvironmentID != pool.EnvironmentID || value.EnvironmentVersion != pool.EnvironmentVersion ||
-		value.ManifestDigest != pool.ManifestDigest || value.Signer != pool.Signer {
+		value.ManifestDigest != pool.ManifestDigest || value.Signer != pool.Signer || value.RequireTrusted != pool.RequireTrusted {
 		return false
 	}
 	if pool.RequireTrusted && !value.Trusted && (value.Status == slot.Ready || value.Status == slot.Leased || value.Status == slot.Draining) {

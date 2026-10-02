@@ -70,6 +70,11 @@ operation ID、last failure code 和 last successful reconcile time。扩缩容�
 Core 或生产 RDP 边界。Windows provisioner 和 agent 只在本机受控边界内运行，
 跨主机资源回收不属于当前拓扑。
 
+当前服务实例仍在启动时绑定部署配置中的一个 `pool_id`。Core/Launcher 可以
+持久化和查询多个逻辑 pool，但运行中的 Scheduler 和 Windows provisioner 只会
+接管该启动 pool；运行中新增 pool 的自动 reconciler/OS 资源接管不属于本阶段
+完成条件。
+
 ## Windows 阶段 2
 
 Windows 构建包含 `chuzi-user-agent.exe`。服务在 Windows-only provisioner 中按

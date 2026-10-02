@@ -130,7 +130,7 @@ func validPool(desired int) slot.PoolConfig {
 	return slot.PoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0", DesiredSlots: desired, Capabilities: []string{"desktop"}, RequireTrusted: true, UpdatedAt: lifecycleNow}
 }
 func slotRecord(status slot.Status, generation uint64) slot.Slot {
-	return slot.Slot{SlotID: "pool-001", Ordinal: 1, PoolID: "pool", EnvironmentID: "env/v1", EnvironmentGeneration: generation, Status: status, CreatedAt: lifecycleNow, UpdatedAt: lifecycleNow}
+	return slot.Slot{SlotID: "pool-001", Ordinal: 1, PoolID: "pool", EnvironmentID: "env/v1", EnvironmentGeneration: generation, RequireTrusted: true, Status: status, CreatedAt: lifecycleNow, UpdatedAt: lifecycleNow}
 }
 
 func TestReconcileProvisionInspectAndRetire(t *testing.T) {
@@ -325,7 +325,7 @@ func TestReconcileDrainsLeasedSlotForEnvironmentChange(t *testing.T) {
 
 func TestReconcileAcceptsAdditionalCapabilities(t *testing.T) {
 	db := &memorySlots{items: map[string]slot.Slot{
-		"pool-001": {SlotID: "pool-001", Ordinal: 1, PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0", EnvironmentGeneration: 1, Capabilities: []string{"desktop", "screenshot"}, Trusted: true, Status: slot.Ready, CreatedAt: lifecycleNow, UpdatedAt: lifecycleNow},
+		"pool-001": {SlotID: "pool-001", Ordinal: 1, PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0", EnvironmentGeneration: 1, Capabilities: []string{"desktop", "screenshot"}, Trusted: true, RequireTrusted: true, Status: slot.Ready, CreatedAt: lifecycleNow, UpdatedAt: lifecycleNow},
 	}, leases: map[string]slot.Lease{}}
 	provisioner := &fakeProvisioner{summary: validSummary(1)}
 	reconciler, err := New(db, provisioner, validPool(1), func() time.Time { return lifecycleNow }, time.Minute, time.Minute)
@@ -337,5 +337,24 @@ func TestReconcileAcceptsAdditionalCapabilities(t *testing.T) {
 	}
 	if len(provisioner.calls) != 1 || provisioner.calls[0] != "inspect" {
 		t.Fatalf("additional capabilities triggered reprovisioning: %v", provisioner.calls)
+	}
+}
+
+func TestReconcileTrustPolicyChangeCreatesNewGeneration(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{
+		"pool-001": {SlotID: "pool-001", Ordinal: 1, PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0", EnvironmentGeneration: 3, Capabilities: []string{"desktop"}, Trusted: true, RequireTrusted: false, Status: slot.Ready, CreatedAt: lifecycleNow, UpdatedAt: lifecycleNow},
+	}, leases: map[string]slot.Lease{}}
+	provisioner := &fakeProvisioner{summary: validSummary(4)}
+	pool := validPool(1)
+	pool.RequireTrusted = true
+	reconciler, err := New(db, provisioner, pool, func() time.Time { return lifecycleNow }, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(provisioner.generations) != 1 || provisioner.generations[0] != 4 || db.items["pool-001"].EnvironmentGeneration != 4 || !db.items["pool-001"].RequireTrusted {
+		t.Fatalf("trust policy generation = %#v calls=%v", db.items["pool-001"], provisioner.calls)
 	}
 }

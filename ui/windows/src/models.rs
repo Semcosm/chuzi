@@ -27,6 +27,40 @@ pub(crate) struct CoreStatus {
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct CoreJobPoolList {
+    pub(crate) job_pools: Vec<CoreJobPool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreJobPool {
+    pub(crate) config: CoreJobPoolConfig,
+    pub(crate) status: CoreJobPoolStatus,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreJobPoolConfig {
+    pub(crate) pool_id: String,
+    #[serde(default)]
+    pub(crate) environment_version: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreJobPoolStatus {
+    pub(crate) desired: i32,
+    pub(crate) ready: i32,
+    pub(crate) leased: i32,
+    pub(crate) quarantined: i32,
+    pub(crate) draining: i32,
+    pub(crate) provisioning: i32,
+    pub(crate) retiring: i32,
+    pub(crate) effective_capacity: i32,
+    #[serde(default)]
+    pub(crate) environment_readiness: String,
+    #[serde(default)]
+    pub(crate) reconcile_state: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct BrowserView {
     pub(crate) request_id: String,
     pub(crate) content_type: String,

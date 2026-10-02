@@ -311,7 +311,7 @@ func validateSlotsTx(tx *bbolt.Tx) error {
 		// Active leases and transitional states may retain the previous
 		// environment until reconcile drains or reprovisions them. A Ready slot
 		// must always match the pool's persisted target.
-		if item.Status == slot.Ready && (item.EnvironmentID != pool.EnvironmentID || item.EnvironmentVersion != pool.EnvironmentVersion || item.ManifestDigest != pool.ManifestDigest || item.Signer != pool.Signer || !containsCapabilities(item.Capabilities, pool.Capabilities)) {
+		if item.Status == slot.Ready && (item.EnvironmentID != pool.EnvironmentID || item.EnvironmentVersion != pool.EnvironmentVersion || item.ManifestDigest != pool.ManifestDigest || item.Signer != pool.Signer || item.RequireTrusted != pool.RequireTrusted || !containsCapabilities(item.Capabilities, pool.Capabilities)) {
 			return fmt.Errorf("%w: execution slot environment does not match pool", ErrCorruptData)
 		}
 		if item.Status == slot.Ready && !item.Trusted {

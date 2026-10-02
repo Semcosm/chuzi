@@ -108,7 +108,7 @@ type EnvironmentOperationFinalizer interface {
 // receives only an opaque catalog reference and never resolves filesystem
 // paths itself.
 type EnvironmentExecutor interface {
-	Execute(context.Context, store.EnvironmentMutation) error
+	Execute(context.Context, store.EnvironmentMutation) (environment.Record, error)
 }
 
 type Dependencies struct {
@@ -406,8 +406,18 @@ func (s *Service) EnvironmentOperation(ctx context.Context, input coreapi.Enviro
 			if _, updateErr := s.environments.UpdateEnvironmentOperation(value.OperationID, "provisioning", "", s.clock()); updateErr != nil {
 				return coreapi.EnvironmentOperation{}, classify(updateErr)
 			}
-			if executeErr := s.environmentExecutor.Execute(ctx, mutation); executeErr != nil {
+			var record environment.Record
+			if executed, executeErr := s.environmentExecutor.Execute(ctx, mutation); executeErr != nil {
 				state, failure = "failed", environmentFailureCode(executeErr)
+			} else {
+				record = executed
+				if finalizer, ok := s.environments.(EnvironmentOperationFinalizer); ok {
+					updated, finalizeErr := finalizer.CompleteEnvironmentOperation(value.OperationID, state, failure, record, s.clock())
+					if finalizeErr != nil {
+						return coreapi.EnvironmentOperation{}, classify(finalizeErr)
+					}
+					return projectEnvironmentOperation(updated, false), nil
+				}
 			}
 		}
 	} else {

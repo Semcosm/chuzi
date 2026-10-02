@@ -627,7 +627,7 @@ func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) e
 	for ordinal := 1; ordinal <= target; ordinal++ {
 		current, ok := byOrdinal[ordinal]
 		if !ok {
-			created := slot.Slot{SlotID: fmt.Sprintf("%s-%03d", config.PoolID, ordinal), Ordinal: ordinal, PoolID: config.PoolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Capabilities: append([]string(nil), config.Capabilities...), ManifestDigest: config.ManifestDigest, Signer: config.Signer, Status: slot.Unprovisioned, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
+			created := slot.Slot{SlotID: fmt.Sprintf("%s-%03d", config.PoolID, ordinal), Ordinal: ordinal, PoolID: config.PoolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Capabilities: append([]string(nil), config.Capabilities...), ManifestDigest: config.ManifestDigest, Signer: config.Signer, RequireTrusted: config.RequireTrusted, Status: slot.Unprovisioned, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
 			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), created.SlotID, created); err != nil {
 				return err
 			}
@@ -636,7 +636,7 @@ func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) e
 		if current.Status == slot.Deleted {
 			continue
 		}
-		targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || !capabilitiesEqual(current.Capabilities, config.Capabilities)
+		targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || current.RequireTrusted != config.RequireTrusted || !capabilitiesEqual(current.Capabilities, config.Capabilities)
 		if targetChanged {
 			if current.Status == slot.Quarantined {
 				// Quarantine is an explicit recovery boundary. A desired config

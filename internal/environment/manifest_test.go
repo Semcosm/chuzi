@@ -375,6 +375,87 @@ func TestManagerUpgradeKeepsPreviousVersionOnFailureAndIsIdempotent(t *testing.T
 	}
 }
 
+func TestManagerSuccessfulSameVersionUpgradeCanRollback(t *testing.T) {
+	oldContent := []byte("old runtime")
+	oldManifest, private := testManifest(t, oldContent)
+	oldSource := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldSource, "runtime.dat"), oldContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldJSON, _ := json.Marshal(oldManifest)
+	if err := os.WriteFile(filepath.Join(oldSource, ManifestName), oldJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	newContent := []byte("new runtime")
+	newManifest := oldManifest
+	newManifest.Resources[0].SHA256 = sha256Digest(newContent)
+	newManifest.Resources[0].Size = int64(len(newContent))
+	newManifest, err := newManifest.Seal(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSource := t.TempDir()
+	if err := os.WriteFile(filepath.Join(newSource, "runtime.dat"), newContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	newJSON, _ := json.Marshal(newManifest)
+	if err := os.WriteFile(filepath.Join(newSource, ManifestName), newJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	manager, err := NewManager(Options{InstallRoot: t.TempDir(), Target: "linux-amd64", Trust: TrustStore{"test-signer": private.Public().(ed25519.PublicKey)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(context.Background(), oldSource); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := manager.Upgrade(context.Background(), newSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upgraded.ManifestDigest == oldManifest.ManifestDigest {
+		t.Fatal("same-version upgrade did not change digest")
+	}
+	root := filepath.Join(manager.root, "environments", oldManifest.EnvironmentID, oldManifest.Version)
+	if _, err := os.Stat(root + ".rollback"); err != nil {
+		t.Fatalf("successful upgrade did not retain rollback tree: %v", err)
+	}
+	thirdContent := []byte("third runtime")
+	thirdManifest := newManifest
+	thirdManifest.Resources[0].SHA256 = sha256Digest(thirdContent)
+	thirdManifest.Resources[0].Size = int64(len(thirdContent))
+	thirdManifest, err = thirdManifest.Seal(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thirdSource := t.TempDir()
+	if err := os.WriteFile(filepath.Join(thirdSource, "runtime.dat"), thirdContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	thirdJSON, _ := json.Marshal(thirdManifest)
+	if err := os.WriteFile(filepath.Join(thirdSource, ManifestName), thirdJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Upgrade(context.Background(), thirdSource); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Rollback(oldManifest.EnvironmentID, oldManifest.Version); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := manager.Get(oldManifest.EnvironmentID, oldManifest.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ManifestDigest != newManifest.ManifestDigest || restored.Generation <= upgraded.Generation {
+		t.Fatalf("rollback record = %#v", restored)
+	}
+	if err := manager.Rollback(oldManifest.EnvironmentID, oldManifest.Version); !errors.Is(err, ErrRollbackUnavailable) {
+		t.Fatalf("second rollback = %v", err)
+	}
+}
+
 func TestManagerRollbackValidatesBothTreesAndFencesGeneration(t *testing.T) {
 	oldContent := []byte("old runtime")
 	oldManifest, oldPrivate := testManifest(t, oldContent)

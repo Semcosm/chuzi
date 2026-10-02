@@ -93,11 +93,14 @@ export component MainWindow inherits Window {
     in-out property <bool> start-core-on-launch: false;
     in-out property <int> update-interval: 60;
     in-out property <string> settings-phase: "loading";
+    in-out property <string> job-pool-phase: "idle";
+    in-out property <string> job-pool-summary: "Job pool status has not been loaded.";
 
     callback install-core();
     callback start-core();
     callback stop-core();
     callback refresh-core();
+    callback refresh-job-pools();
     callback navigate(string);
     callback save-settings();
     callback theme-changed(string);
@@ -502,6 +505,26 @@ export component MainWindow inherits Window {
                     text: root.message == "Working..." ? "" : root.message;
                     kind: root.message-kind;
                     vertical-stretch: 0;
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-2;
+                        Text { text: "Job pools"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: root.job-pool-phase == "loading" ? "Refreshing…" : root.job-pool-summary; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        HorizontalBox {
+                            height: ChuziTheme.control-height;
+                            spacing: ChuziTheme.space-2;
+                            vertical-stretch: 0;
+                            Button { text: "Refresh pool status"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
+                        }
+                    }
                 }
 
                 Rectangle {

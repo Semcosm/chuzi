@@ -34,6 +34,14 @@ references fail with `package_unavailable`. Gate completion commits the signed
 environment record, operation state, and audit event in one Store transaction,
 and restart recovery classifies incomplete package operations deterministically.
 
+Successful same-version package upgrades retain one verified rollback tree; a
+later rollback swaps that tree only after validating both signed package trees.
+The current service instance remains bound to its configured startup pool: Core
+can persist multiple pool records, while automatic runtime takeover of a newly
+created pool is outside this change. The Windows client now renders read-only
+pool capacity and reconcile projections from `list_job_pools`; pool mutations
+remain Core/Launcher operations.
+
 ## Motivation
 
 Phases 2-4 provide logical slots, signed environments, generation fencing,

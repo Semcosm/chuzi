@@ -6,8 +6,8 @@ mod view_model;
 use base64::Engine;
 use desktop_rdp::RdpHost;
 use models::{
-    default_theme, BehaviorSettings, BrowserView, CoreRequest, CoreRequestList, CoreStatus,
-    DiagnosticStatus, UiPreferences,
+    default_theme, BehaviorSettings, BrowserView, CoreJobPoolList, CoreRequest, CoreRequestList,
+    CoreStatus, DiagnosticStatus, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
@@ -253,6 +253,10 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let weak = ui.as_weak();
     let refresh_state = Arc::clone(&state);
     ui.on_refresh_core(move || refresh_core(&weak, Arc::clone(&refresh_state)));
+
+    let weak = ui.as_weak();
+    let pool_state = Arc::clone(&state);
+    ui.on_refresh_job_pools(move || refresh_job_pools(&weak, Arc::clone(&pool_state)));
 
     let weak = ui.as_weak();
     let settings_state = Arc::clone(&state);
@@ -525,6 +529,7 @@ struct CoreSnapshot {
 
 fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
     let sessions_state = Arc::clone(&state);
+    let pools_state = Arc::clone(&state);
     run_background_with(
         ui,
         state,
@@ -569,7 +574,65 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
             window.set_core_details(snapshot.details.into());
             if snapshot.ready {
                 refresh_sessions(&window.as_weak(), Arc::clone(&sessions_state));
+                refresh_job_pools(&window.as_weak(), Arc::clone(&pools_state));
             }
+        },
+    );
+}
+
+fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    if let Some(window) = ui.upgrade() {
+        window.set_job_pool_phase("loading".into());
+    }
+    run_background_with_failure(
+        ui,
+        state,
+        |state| {
+            ensure_core_ready(state)?;
+            let value = core_call(state, "list_job_pools", json!({}))?;
+            let list: CoreJobPoolList = serde_json::from_value(value)
+                .map_err(|error| format!("invalid_job_pool_projection: {error}"))?;
+            let summary = if list.job_pools.is_empty() {
+                "No job pools are configured.".to_owned()
+            } else {
+                list.job_pools
+                    .iter()
+                    .map(|pool| {
+                        format!(
+                            "{} · environment {} · ready {}/{} · leased {} · quarantined {} · draining {} · provisioning {} · retiring {} · effective {} · {} · {}",
+                            pool.config.pool_id,
+                            pool.config.environment_version,
+                            pool.status.ready,
+                            pool.status.desired,
+                            pool.status.leased,
+                            pool.status.quarantined,
+                            pool.status.draining,
+                            pool.status.provisioning,
+                            pool.status.retiring,
+                            pool.status.effective_capacity,
+                            if pool.status.environment_readiness.is_empty() {
+                                "environment readiness unknown"
+                            } else {
+                                pool.status.environment_readiness.as_str()
+                            },
+                            if pool.status.reconcile_state.is_empty() {
+                                "reconcile state unknown"
+                            } else {
+                                pool.status.reconcile_state.as_str()
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
+            Ok(("Job pool status refreshed.".to_owned(), summary))
+        },
+        |window, summary| {
+            window.set_job_pool_phase("ready".into());
+            window.set_job_pool_summary(summary.into());
+        },
+        |window, _| {
+            window.set_job_pool_phase("error".into());
         },
     );
 }

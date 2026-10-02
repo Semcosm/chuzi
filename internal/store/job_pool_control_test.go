@@ -70,6 +70,27 @@ func TestJobPoolOperationCarriesEnvironmentGeneration(t *testing.T) {
 	}
 }
 
+func TestPoolTrustPolicyChangeFencesLogicalSlotTarget(t *testing.T) {
+	database, _ := openTestStore(t)
+	config := slot.PoolConfig{PoolID: "pool-trust-policy", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: "digest", Signer: "signer", RequireTrusted: false}
+	if err := database.ReconcileJobPool(config, storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := database.ListSlots(config.PoolID)
+	if err != nil || len(initial) != 1 || initial[0].RequireTrusted {
+		t.Fatalf("initial slots = %#v, err=%v", initial, err)
+	}
+	changed := config
+	changed.RequireTrusted = true
+	if err := database.ReconcileJobPool(changed, storeTestTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := database.ListSlots(config.PoolID)
+	if err != nil || len(updated) != 1 || updated[0].RequireTrusted || updated[0].Status != slot.Provisioning {
+		t.Fatalf("trust policy change = %#v, err=%v", updated, err)
+	}
+}
+
 func TestJobPoolDrainRetainsLeasedSlotUntilRelease(t *testing.T) {
 	database, _ := openTestStore(t)
 	config := slot.PoolConfig{PoolID: "pool-drain", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: "digest", Signer: "signer"}

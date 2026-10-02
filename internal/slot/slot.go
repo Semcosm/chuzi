@@ -166,6 +166,7 @@ type Slot struct {
 	ManifestDigest        string    `json:"manifest_digest,omitempty"`
 	Signer                string    `json:"signer,omitempty"`
 	Trusted               bool      `json:"trusted"`
+	RequireTrusted        bool      `json:"require_trusted"`
 	AgentHandle           string    `json:"agent_handle,omitempty"`
 	Status                Status    `json:"status"`
 	HealthAt              time.Time `json:"health_at,omitempty"`

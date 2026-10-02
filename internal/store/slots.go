@@ -54,7 +54,7 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 					// the pool target or desired capacity changed.
 					continue
 				}
-				targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || !capabilitiesEqual(current.Capabilities, config.Capabilities)
+				targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || current.RequireTrusted != config.RequireTrusted || !capabilitiesEqual(current.Capabilities, config.Capabilities)
 				if targetChanged {
 					if current.Status == slot.Quarantined {
 						// Quarantine requires an explicit recovery action; ordinary
@@ -85,7 +85,7 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 				}
 				continue
 			}
-			created := slot.Slot{SlotID: fmt.Sprintf("%s-%03d", config.PoolID, ordinal), Ordinal: ordinal, PoolID: config.PoolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Capabilities: append([]string(nil), config.Capabilities...), ManifestDigest: config.ManifestDigest, Signer: config.Signer, Status: slot.Unprovisioned, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
+			created := slot.Slot{SlotID: fmt.Sprintf("%s-%03d", config.PoolID, ordinal), Ordinal: ordinal, PoolID: config.PoolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Capabilities: append([]string(nil), config.Capabilities...), ManifestDigest: config.ManifestDigest, Signer: config.Signer, RequireTrusted: config.RequireTrusted, Status: slot.Unprovisioned, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
 			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), created.SlotID, created); err != nil {
 				return err
 			}
@@ -156,7 +156,7 @@ func capabilitiesEqual(left, right []string) bool {
 }
 
 func slotMatchesPoolTarget(value slot.Slot, config slot.PoolConfig) bool {
-	return value.EnvironmentID == config.EnvironmentID && value.EnvironmentVersion == config.EnvironmentVersion && value.ManifestDigest == config.ManifestDigest && value.Signer == config.Signer && containsCapabilities(value.Capabilities, config.Capabilities)
+	return value.EnvironmentID == config.EnvironmentID && value.EnvironmentVersion == config.EnvironmentVersion && value.ManifestDigest == config.ManifestDigest && value.Signer == config.Signer && value.RequireTrusted == config.RequireTrusted && containsCapabilities(value.Capabilities, config.Capabilities)
 }
 
 // constrainSlotRequirement lets callers narrow capability selection while
@@ -358,6 +358,7 @@ func (s *Store) MarkSlotReady(slotID string, summary slot.EnvironmentSummary, no
 		value.EnvironmentID, value.EnvironmentVersion, value.EnvironmentGeneration = summary.EnvironmentID, summary.Version, summary.Generation
 		value.Capabilities = append([]string(nil), summary.Capabilities...)
 		value.ManifestDigest, value.Signer, value.Trusted = summary.ManifestDigest, summary.Signer, summary.Trusted
+		value.RequireTrusted = pool.RequireTrusted
 		value.AgentHandle = summary.AgentHandle
 		value.Status, value.HealthAt, value.UpdatedAt = slot.Ready, now.UTC(), now.UTC()
 		if err := putJSON(tx.Bucket([]byte(migrations.EnvironmentSummariesBucket)), summary.EnvironmentID, summary); err != nil {

@@ -303,10 +303,28 @@ func (m *Manager) Install(ctx context.Context, source string) (Record, error) {
 		return Record{}, fmt.Errorf("%w: staged package validation", ErrTransaction)
 	}
 	old := root + ".rollback"
-	if _, oldErr := os.Lstat(old); oldErr == nil {
-		// A leftover rollback directory may contain files from an interrupted
-		// update. Do not delete or adopt it without an operator recovery.
+	previousRollback := root + ".rollback-previous"
+	hasRollback := false
+	if _, tempErr := os.Lstat(previousRollback); tempErr == nil {
 		return Record{}, ErrExternalModification
+	} else if !os.IsNotExist(tempErr) {
+		return Record{}, tempErr
+	}
+	if _, oldErr := os.Lstat(old); oldErr == nil {
+		// A previous successful upgrade leaves one verified rollback tree.
+		// Validate it before rotating it away so unknown files are never
+		// deleted. The next successful upgrade keeps a single-step rollback.
+		previousManifest, verifyErr := ValidatePackage(old, m.target, m.trust)
+		if verifyErr != nil || previousManifest.EnvironmentID != manifest.EnvironmentID || previousManifest.Version != manifest.Version {
+			return Record{}, ErrExternalModification
+		}
+		if verifyErr = m.trust.Verify(previousManifest); verifyErr != nil {
+			return Record{}, ErrExternalModification
+		}
+		if err := os.Rename(old, previousRollback); err != nil {
+			return Record{}, fmt.Errorf("%w: rotate previous rollback", ErrTransaction)
+		}
+		hasRollback = true
 	} else if !os.IsNotExist(oldErr) {
 		return Record{}, oldErr
 	}
@@ -323,6 +341,9 @@ func (m *Manager) Install(ctx context.Context, source string) (Record, error) {
 	if err := os.Rename(stage, root); err != nil {
 		if hadOld {
 			_ = os.Rename(old, root)
+		}
+		if hasRollback {
+			_ = os.Rename(previousRollback, old)
 		}
 		return Record{}, fmt.Errorf("%w: commit package", ErrTransaction)
 	}
@@ -352,9 +373,17 @@ func (m *Manager) Install(ctx context.Context, source string) (Record, error) {
 		if hadOld {
 			_ = os.Rename(old, root)
 		}
+		if hasRollback {
+			_ = os.Rename(previousRollback, old)
+		}
 		return Record{}, fmt.Errorf("%w: state commit", ErrTransaction)
 	}
-	_ = os.RemoveAll(old)
+	if hasRollback {
+		_ = os.RemoveAll(previousRollback)
+	}
+	// Keep the verified previous tree after a successful replacement. The
+	// rollback command consumes this sibling after validating both trees;
+	// deleting it here makes a successful same-version upgrade irreversible.
 	return r, nil
 }
 
