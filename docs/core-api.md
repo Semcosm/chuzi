@@ -45,7 +45,7 @@ The first request on a connection must be:
 The result contains the negotiated version and supported method names:
 
 ```json
-{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report"]}
+{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report","get_job_pool_status","list_job_pools","get_job_pool","apply_job_pool","scale_job_pool","drain_job_pool","resume_job_pool","get_job_pool_operation","list_environments","environment_operation","get_environment_operation"]}
 ```
 
 An unsupported protocol or version is reported as `unavailable`. Calls before
@@ -66,6 +66,16 @@ successful negotiation are rejected as `invalid_argument`.
 | `get_browser_view` | `{request_id, width?, height?}` | `coreapi.BrowserView` |
 | `issue_rdp_capability` | `coreapi.RDPCapabilityRequest` | `coreapi.RDPCapability` |
 | `submit_diagnostic_report` | `coreapi.DiagnosticReport` | `coreapi.DiagnosticStatus` |
+| `get_job_pool_status` | `{pool_id}` | `coreapi.JobPoolStatus` |
+| `list_job_pools` | `{}` | `{job_pools}` |
+| `get_job_pool` | `{pool_id}` | `{job_pool}` |
+| `apply_job_pool` | `coreapi.JobPoolApplyRequest` | `{operation}` |
+| `scale_job_pool` | `coreapi.JobPoolScaleRequest` | `{operation}` |
+| `drain_job_pool` / `resume_job_pool` | `coreapi.JobPoolActionRequest` | `{operation}` |
+| `get_job_pool_operation` | `{operation_id}` | `{operation}` |
+| `list_environments` | `{}` | `{environments}` |
+| `environment_operation` | `coreapi.EnvironmentOperationRequest` | `{operation}` |
+| `get_environment_operation` | `{operation_id}` | `{operation}` |
 
 `list_requests` returns a bounded, read-only request projection. It lists
 persisted request records; it does not enumerate accounts without requests or
@@ -136,6 +146,25 @@ reads credentials, browser Profiles, screenshots, page content, raw paths, or
 unstructured log text. If the configured HTTPS endpoint is unavailable, the
 service stores the bounded report in an owner-only local queue and retries with
 backoff.
+
+Job-pool writes carry expected_revision, idempotency_key, actor, and an optional
+caller timestamp. A successful write returns a durable operation ID; repeating
+the same key and payload returns the original operation, while a changed
+payload or stale revision returns conflict. The Store records desired
+configuration separately from slot counts. Reconcile reports requested,
+validating, draining, provisioning, health_check, committing, applied, or
+failed; leased slots remain draining until their lease is released. Pool
+projections expose desired, ready, leased, quarantined, draining, provisioning,
+retiring, unprovisioned, effective capacity, environment readiness, revision,
+and stable failure code only.
+
+Environment operations use the same durable operation and idempotency boundary.
+trust, enable, disable, verify, and health update lifecycle gates through the
+Store. install, upgrade, and rollback are recorded as package_unavailable until
+a service-owned package catalog executor is configured; Core never accepts a
+local path. Launcher package-ref values are opaque catalog references and reject
+separators. Environment DTOs omit package paths, raw errors, credentials, and
+runtime handles.
 
 `cancel` is a transport operation, not a business-state command. Its
 parameters are `{id}` and its result is `{cancelled}`. A client context

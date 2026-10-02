@@ -227,6 +227,7 @@ func nativeSmokeFailureClass(err error) string {
 	appendClass(errors.Is(err, ErrSessionGroupAdd), "session_group_add_failed")
 	appendClass(errors.Is(err, ErrSessionGroupVerify), "session_group_verify_failed")
 	appendClass(errors.Is(err, ErrSessionPolicy), "session_policy_failed")
+	appendClass(errors.Is(err, ErrSessionUserLookup), "session_user_lookup_failed")
 	appendClass(errors.Is(err, ErrSessionUnavailable) || errors.Is(err, ErrSessionBootstrapUnavailable), "session_unavailable")
 	appendClass(errors.Is(err, ErrACLDrift), "acl_drift")
 	appendClass(errors.Is(err, ErrProcessStart), "process_start_failed")

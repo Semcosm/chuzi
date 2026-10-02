@@ -19,37 +19,57 @@ const (
 	ProtocolVersion = coreapi.APIVersion
 	DefaultMaxFrame = 1 << 20
 
-	methodHello              = "hello"
-	methodCancel             = "cancel"
-	methodSubmitRequest      = "submit_request"
-	methodGetRequest         = "get_request"
-	methodListRequests       = "list_requests"
-	methodGetAccount         = "get_account"
-	methodCancelRequest      = "cancel_request"
-	methodGetResult          = "get_result"
-	methodListEvents         = "list_events"
-	methodListNotifications  = "list_notifications"
-	methodGetBrowserView     = "get_browser_view"
-	methodIssueRDPCapability = "issue_rdp_capability"
-	methodSubmitDiagnostic   = "submit_diagnostic_report"
-	methodGetJobPoolStatus   = "get_job_pool_status"
+	methodHello                   = "hello"
+	methodCancel                  = "cancel"
+	methodSubmitRequest           = "submit_request"
+	methodGetRequest              = "get_request"
+	methodListRequests            = "list_requests"
+	methodGetAccount              = "get_account"
+	methodCancelRequest           = "cancel_request"
+	methodGetResult               = "get_result"
+	methodListEvents              = "list_events"
+	methodListNotifications       = "list_notifications"
+	methodGetBrowserView          = "get_browser_view"
+	methodIssueRDPCapability      = "issue_rdp_capability"
+	methodSubmitDiagnostic        = "submit_diagnostic_report"
+	methodGetJobPoolStatus        = "get_job_pool_status"
+	methodListJobPools            = "list_job_pools"
+	methodGetJobPool              = "get_job_pool"
+	methodApplyJobPool            = "apply_job_pool"
+	methodScaleJobPool            = "scale_job_pool"
+	methodDrainJobPool            = "drain_job_pool"
+	methodResumeJobPool           = "resume_job_pool"
+	methodGetJobPoolOperation     = "get_job_pool_operation"
+	methodListEnvironments        = "list_environments"
+	methodEnvironmentOperation    = "environment_operation"
+	methodGetEnvironmentOperation = "get_environment_operation"
 )
 
 const (
-	MethodHello              = methodHello
-	MethodCancel             = methodCancel
-	MethodSubmitRequest      = methodSubmitRequest
-	MethodGetRequest         = methodGetRequest
-	MethodListRequests       = methodListRequests
-	MethodGetAccount         = methodGetAccount
-	MethodCancelRequest      = methodCancelRequest
-	MethodGetResult          = methodGetResult
-	MethodListEvents         = methodListEvents
-	MethodListNotifications  = methodListNotifications
-	MethodGetBrowserView     = methodGetBrowserView
-	MethodIssueRDPCapability = methodIssueRDPCapability
-	MethodSubmitDiagnostic   = methodSubmitDiagnostic
-	MethodGetJobPoolStatus   = methodGetJobPoolStatus
+	MethodHello                   = methodHello
+	MethodCancel                  = methodCancel
+	MethodSubmitRequest           = methodSubmitRequest
+	MethodGetRequest              = methodGetRequest
+	MethodListRequests            = methodListRequests
+	MethodGetAccount              = methodGetAccount
+	MethodCancelRequest           = methodCancelRequest
+	MethodGetResult               = methodGetResult
+	MethodListEvents              = methodListEvents
+	MethodListNotifications       = methodListNotifications
+	MethodGetBrowserView          = methodGetBrowserView
+	MethodIssueRDPCapability      = methodIssueRDPCapability
+	MethodSubmitDiagnostic        = methodSubmitDiagnostic
+	MethodGetJobPoolStatus        = methodGetJobPoolStatus
+	MethodListJobPools            = methodListJobPools
+	MethodGetJobPool              = methodGetJobPool
+	MethodApplyJobPool            = methodApplyJobPool
+	MethodScaleJobPool            = methodScaleJobPool
+	MethodDrainJobPool            = methodDrainJobPool
+	MethodResumeJobPool           = methodResumeJobPool
+	MethodGetJobPoolOperation     = methodGetJobPoolOperation
+	MethodListEnvironments        = methodListEnvironments
+	MethodEnvironmentOperation    = methodEnvironmentOperation
+	MethodGetEnvironmentOperation = methodGetEnvironmentOperation
 )
 
 var (
@@ -116,9 +136,25 @@ type JobPoolStatusResult struct {
 	Status coreapi.JobPoolStatus `json:"status"`
 }
 
+type JobPoolsResult struct {
+	JobPools []coreapi.JobPool `json:"job_pools"`
+}
+type JobPoolResult struct {
+	JobPool coreapi.JobPool `json:"job_pool"`
+}
+type JobPoolOperationResult struct {
+	Operation coreapi.JobPoolOperation `json:"operation"`
+}
+type EnvironmentsResult struct {
+	Environments []coreapi.Environment `json:"environments"`
+}
+type EnvironmentOperationResult struct {
+	Operation coreapi.EnvironmentOperation `json:"operation"`
+}
+
 func methodList() []string {
 	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodListRequests, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetJobPoolStatus}
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
 }
 
 func marshalRequest(id, method string, params any) ([]byte, error) {

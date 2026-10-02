@@ -182,6 +182,29 @@ pipe、bbolt 或读取 Profile。
 契约测试覆盖版本拒绝、未知方法、握手前访问、敏感字段脱敏、取消、并发多路复用、超大
 帧、socket 权限和 endpoint 占用。
 
+### Job pool 和环境控制面
+
+Launcher 是运维脚本和 Native UI 的唯一入口。可用命令为
+`job-pool-list`、`job-pool-get`、`job-pool-apply`、`job-pool-scale`、
+`job-pool-drain`、`job-pool-resume`、`job-pool-operation`，以及
+`environment-list`、`environment-install`、`environment-upgrade`、
+`environment-verify`、`environment-trust`、`environment-enable`、
+`environment-disable`、`environment-health`、`environment-rollback` 和
+`environment-operation`。这些命令都通过 Core IPC，不直接打开 bbolt 或调用
+Windows API；写命令返回 operation ID，状态可重复查询。
+
+Job pool 配置在 Store 中使用递增 `config_revision`。`expected_revision` 必须匹配
+当前版本；`idempotency_key` 与请求 payload 绑定，重复请求返回相同 operation，改变
+payload 会返回稳定 `conflict`。每个写操作同时写入 metadata-only audit event。审计和
+Core/Launcher 投影只允许稳定 ID、计数、状态、时间、revision、operation ID 和失败分类，
+不会包含 actor 原文、SID、用户名、Profile、pipe、RDP endpoint、package 本地路径、
+命令、Cookie、token 或密码。
+
+环境 package 操作只能引用服务拥有的 catalog entry。当前没有注入 catalog executor 时，
+Core 仍会持久化 install/upgrade/rollback 请求并以 `package_unavailable` 完成失败；既有
+`cmd/service -environment-install` 等维护入口继续调用签名 `environment.Manager`，并要求
+受控本地 source。该限制不会把任意路径暴露给 Core 或 Launcher。
+
 首个 Windows Slint 客户端在 `ui/windows`，构建脚本为
 `scripts/build_windows_slint.ps1`，Actions 任务 `chuzi-build-windows-slint` 生成并上传
 `chuzi-windows-installer-exe`。安装器把自包含 Slint 发布目录安装到
