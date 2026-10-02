@@ -429,7 +429,10 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 		}
 		if cleanupErr := p.rollbackProvision(paths, request, sid, !userExisted, !rootExisted); cleanupErr != nil {
 			result = slot.ProvisionResult{}
-			provisionErr = errors.Join(ErrCleanup, cleanupErr)
+			// Preserve the original stable Provision failure alongside cleanup
+			// diagnostics. Cleanup must never hide a failed session, ACL, or
+			// process prerequisite from the native smoke report.
+			provisionErr = errors.Join(provisionErr, ErrCleanup, cleanupErr)
 		}
 	}()
 	managed, err = ensureManagedUser(paths, request)
