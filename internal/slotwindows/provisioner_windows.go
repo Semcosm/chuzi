@@ -25,6 +25,9 @@ import (
 var (
 	ErrOwnership              = errors.New("slotwindows: managed user ownership check failed")
 	ErrACLDrift               = errors.New("slotwindows: managed ACL check failed")
+	ErrACLSlotDirectories     = errors.New("slotwindows: slot directory ACL check failed")
+	ErrACLRuntime             = errors.New("slotwindows: runtime ACL check failed")
+	ErrACLProfile             = errors.New("slotwindows: profile ACL check failed")
 	ErrCleanup                = errors.New("slotwindows: managed resource cleanup failed")
 	ErrCleanupAgent           = errors.New("slotwindows: agent cleanup failed")
 	ErrCleanupSession         = errors.New("slotwindows: session cleanup failed")
@@ -462,15 +465,21 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 		}
 	}
 	if err := ensureSlotDirectories(paths, sid); err != nil {
-		return slot.ProvisionResult{}, ErrACLDrift
+		return slot.ProvisionResult{}, errors.Join(ErrACLDrift, ErrACLSlotDirectories)
 	}
 	if err := p.ensureSessionBootstrap(ctx, request, paths.UserName, managed); err != nil {
 		return slot.ProvisionResult{}, err
 	}
 	if err := p.ensureAgent(ctx, paths, request, sid); err != nil {
+		if errors.Is(err, ErrACLDrift) {
+			return slot.ProvisionResult{}, errors.Join(err, ErrACLRuntime)
+		}
 		return slot.ProvisionResult{}, err
 	}
 	if err := p.verifyProfileGrant(paths, sid); err != nil {
+		if errors.Is(err, ErrACLDrift) {
+			return slot.ProvisionResult{}, errors.Join(err, ErrACLProfile)
+		}
 		return slot.ProvisionResult{}, err
 	}
 	cleanupOnFailure = false
