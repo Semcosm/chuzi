@@ -1,7 +1,7 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 75a84eea807527428b11cdfd2c439cbe6bae2564
+Head or Range: 6468f6c9299564ad3dfa42911ee3a4667435f0ca
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 75a84eea807527428b11cdfd2c439cbe6bae2564
+Head OID: 6468f6c9299564ad3dfa42911ee3a4667435f0ca
 Integrated Result: pending
 
 ## Summary
@@ -33,16 +33,16 @@ user session.
 
 ## Test Evidence
 
-The new `scripts/test_windows_job_pool_smoke.ps1` creates a unique temporary
-root, builds the fixed `chuzi-user-agent.exe`, copies the runner's `node.exe`
-and the versioned worker entrypoint, applies a read/execute runtime ACL, and
-removes only users bearing the fixed CHUZI ownership marker. The Windows-only
-test covers managed-user creation and reuse, Remote Desktop Users membership,
-Administrators exclusion, ownership metadata, Profile ACL grant/revoke,
-reparse/path traversal rejection, named-pipe token and stale-lease checks,
-worker handshake/start/stop, unknown-tree protection, and retirement. It never
-prints passwords, SIDs, usernames, Profile paths, pipe paths, or raw Win32
-errors.
+The new `scripts/test_windows_job_pool_smoke.ps1` requires a Windows
+administrator runner, creates a unique temporary root, builds the fixed
+`chuzi-user-agent.exe`, copies the runner's `node.exe` and the versioned worker
+entrypoint, applies a read/execute runtime ACL, and removes only users bearing
+the fixed CHUZI ownership marker. The Windows-only test covers managed-user
+creation and reuse, Remote Desktop Users membership, Administrators exclusion,
+ownership metadata, Profile ACL grant/revoke, reparse/path traversal rejection,
+named-pipe token and stale-lease checks, worker handshake/start/stop,
+unknown-tree protection, and retirement. It never prints passwords, SIDs,
+usernames, Profile paths, pipe paths, or raw Win32 errors.
 
 The controlled runner job is present in `.github/workflows/chuzi-build.yml`
 with the `self-hosted`, `windows`, `chuzi-job-pool` labels and is included in
