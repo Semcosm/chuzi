@@ -1,7 +1,7 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 52f1cd0457c52db0e66b4d2b32fa7dfa0cc822aa
+Head or Range: 81a467da28dc150cf661c3f9e1e3bda1ea2c31ff
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 52f1cd0457c52db0e66b4d2b32fa7dfa0cc822aa
+Head OID: 81a467da28dc150cf661c3f9e1e3bda1ea2c31ff
 Integrated Result: pending
 
 ## Summary
@@ -47,9 +47,10 @@ Profile paths, pipe paths, or raw Win32 errors.
 
 The controlled runner job is present in `.github/workflows/chuzi-build.yml`
 with the `self-hosted`, `windows`, `chuzi-job-pool` labels and remains required
-for nightly and stable builds. A hosted `windows-2022` preflight now runs the
-Windows Go suite, `go vet`, fixed user-agent build, and terminal-session API
-check; the manual `test` channel uses that preflight and deliberately skips the
+for nightly and stable builds. A hosted `windows-2022` preflight now compiles
+all Windows Go packages, runs `go vet`, checks the native smoke test entrypoint,
+builds the fixed user-agent, and checks the terminal-session API; the manual
+`test` channel uses that preflight and deliberately skips the
 session-dependent native job when no dedicated runner is registered. On this
 Linux host, the deterministic checks passed: `go test ./...`, `go test -race
 ./...`, `go vet ./...`, `GOOS=windows GOARCH=amd64 go build ./...`,
