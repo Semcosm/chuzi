@@ -29,13 +29,22 @@ cp "$go_dir/$service_binary" "$stage_dir/$service_binary"
 cp "$go_dir/$launcher_binary" "$stage_dir/$launcher_binary"
 if [ "$target" = "windows-amd64" ]; then
   cp "$go_dir/$browser_launcher_binary" "$stage_dir/$browser_launcher_binary"
+  cp "$go_dir/chuzi-user-agent.exe" "$stage_dir/chuzi-user-agent.exe"
 fi
 # Artifact archives do not reliably preserve Unix executable bits.
 chmod 0755 "$stage_dir/$service_binary" "$stage_dir/$launcher_binary"
 if [ "$target" = "windows-amd64" ]; then
-  chmod 0755 "$stage_dir/$browser_launcher_binary"
+  chmod 0755 "$stage_dir/$browser_launcher_binary" "$stage_dir/chuzi-user-agent.exe"
 fi
 tar -xzf "$worker_archive" -C "$stage_dir/browser-worker"
+if [ "$target" = "windows-amd64" ]; then
+  node_runtime="${CHUZI_NODE_RUNTIME:-}"
+  if [ -z "$node_runtime" ] || [ ! -f "$node_runtime" ] || [ "${node_runtime##*/}" != "node.exe" ]; then
+    echo "windows-amd64 packaging requires CHUZI_NODE_RUNTIME to point to node.exe" >&2
+    exit 1
+  fi
+  cp "$node_runtime" "$stage_dir/node.exe"
+fi
 adapter_extension=tar.gz
 if [ "$target" = "windows-amd64" ]; then
   adapter_extension=zip

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/migrations"
 	"go.etcd.io/bbolt"
 )
@@ -28,6 +29,12 @@ type OperationalSnapshot struct {
 	ClaimedNotifications      int       `json:"claimed_notifications"`
 	ExpiredNotificationClaims int       `json:"expired_notification_claims"`
 	DeliveredNotifications    int       `json:"delivered_notifications"`
+	JobPools                  int       `json:"job_pools"`
+	DesiredSlots              int       `json:"desired_slots"`
+	ReadySlots                int       `json:"ready_slots"`
+	LeasedSlots               int       `json:"leased_slots"`
+	QuarantinedSlots          int       `json:"quarantined_slots"`
+	DrainingSlots             int       `json:"draining_slots"`
 }
 
 // OperationalIssue is a stable category/count pair; it deliberately carries
@@ -60,7 +67,9 @@ func (s *Store) OperationalSnapshot(now time.Time) (OperationalSnapshot, error) 
 		requests := tx.Bucket([]byte(migrations.RequestsBucket))
 		leases := tx.Bucket([]byte(migrations.LeasesBucket))
 		notifications := tx.Bucket([]byte(migrations.MatrixNotificationsBucket))
-		if accounts == nil || requests == nil || leases == nil || notifications == nil {
+		jobPools := tx.Bucket([]byte(migrations.JobPoolsBucket))
+		executionSlots := tx.Bucket([]byte(migrations.ExecutionSlotsBucket))
+		if accounts == nil || requests == nil || leases == nil || notifications == nil || jobPools == nil || executionSlots == nil {
 			return fmt.Errorf("%w: operational bucket is missing", ErrCorruptData)
 		}
 		if err := accounts.ForEach(func(key, value []byte) error {
@@ -117,7 +126,7 @@ func (s *Store) OperationalSnapshot(now time.Time) (OperationalSnapshot, error) 
 		}); err != nil {
 			return err
 		}
-		return notifications.ForEach(func(key, value []byte) error {
+		if err := notifications.ForEach(func(key, value []byte) error {
 			if value == nil {
 				return nil
 			}
@@ -140,6 +149,48 @@ func (s *Store) OperationalSnapshot(now time.Time) (OperationalSnapshot, error) 
 				}
 			}
 			return nil
+		}); err != nil {
+			return err
+		}
+		if err := jobPools.ForEach(func(key, value []byte) error {
+			if value == nil {
+				return nil
+			}
+			var pool slot.PoolConfig
+			if err := decode(value, &pool); err != nil {
+				return err
+			}
+			if err := pool.Validate(); err != nil {
+				return fmt.Errorf("%w: invalid job pool", ErrCorruptData)
+			}
+			result.JobPools++
+			result.DesiredSlots += pool.DesiredSlots
+			return nil
+		}); err != nil {
+			return err
+		}
+		return executionSlots.ForEach(func(key, value []byte) error {
+			if value == nil {
+				return nil
+			}
+			var item slot.Slot
+			if err := decode(value, &item); err != nil {
+				return err
+			}
+			if err := item.Validate(); err != nil {
+				return fmt.Errorf("%w: invalid execution slot", ErrCorruptData)
+			}
+			switch item.Status {
+			case slot.Ready:
+				result.ReadySlots++
+			case slot.Leased:
+				result.LeasedSlots++
+			case slot.Quarantined:
+				result.QuarantinedSlots++
+			case slot.Draining:
+				result.DrainingSlots++
+			}
+			return nil
 		})
 	})
 	return result, err
@@ -159,6 +210,7 @@ func operationalIssues(snapshot OperationalSnapshot) []OperationalIssue {
 		{Code: "expired_lease", Count: snapshot.ExpiredLeases},
 		{Code: "expired_notification_claim", Count: snapshot.ExpiredNotificationClaims},
 		{Code: "deadline_request", Count: snapshot.DeadlineRequests},
+		{Code: "quarantined_slot", Count: snapshot.QuarantinedSlots},
 	} {
 		if item.Count > 0 {
 			issues = append(issues, item)

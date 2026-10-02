@@ -5,19 +5,19 @@ const Version = "v1"
 // Message types are kept as constants so the Go control plane and the Node
 // worker cannot silently drift on lifecycle spelling.
 const (
-	Hello          = "hello"
-	HelloAck       = "hello_ack"
-	Ping           = "ping"
-	Pong           = "pong"
-	Shutdown       = "shutdown"
-	ShutdownAck    = "shutdown_ack"
-	SessionStart   = "session_start"
-	SessionStarted = "session_started"
-	SessionSuccess = "session_succeeded"
-	SessionFailure = "session_failed"
-	SessionCancel  = "session_cancel"
+	Hello            = "hello"
+	HelloAck         = "hello_ack"
+	Ping             = "ping"
+	Pong             = "pong"
+	Shutdown         = "shutdown"
+	ShutdownAck      = "shutdown_ack"
+	SessionStart     = "session_start"
+	SessionStarted   = "session_started"
+	SessionSuccess   = "session_succeeded"
+	SessionFailure   = "session_failed"
+	SessionCancel    = "session_cancel"
 	SessionCancelled = "session_cancelled"
-	Error          = "error"
+	Error            = "error"
 )
 
 type Envelope struct {

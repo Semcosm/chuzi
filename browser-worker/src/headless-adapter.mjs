@@ -227,7 +227,11 @@ class HeadlessLifecycle {
     try {
       this.child = spawn(process.execPath, this.args(), {
         stdio: ["pipe", "pipe", "ignore"],
-        env: { ...process.env, NODE_OPTIONS: "" },
+        env: {
+          ...process.env,
+          NODE_OPTIONS: "",
+          CHUZI_SESSION_PROFILE_DIR: this.session.profileDir,
+        },
       });
     } catch {
       throw classified("configuration", "lifecycle_process_unavailable");
@@ -245,7 +249,6 @@ class HeadlessLifecycle {
           session_id: this.session.sessionID,
           account_id: this.session.accountID,
           request_id: this.session.requestID,
-          profile_dir: this.session.profileDir,
           mode: "hold",
         },
       }, ["session_started"], this.signal);

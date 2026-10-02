@@ -3,7 +3,8 @@
 ## 配置分类
 
 - 普通配置：`data_dir`、Matrix homeserver/user/policy、同步时序、凭证 key 环境变量
-  名称、健康监听地址和新请求限流窗口。`configs/example.json` 不包含任何 Secret 值。
+  名称、健康监听地址、新请求限流窗口和可选逻辑 `job_pool` 的环境元数据/
+  `desired_slots`。`configs/example.json` 不包含任何 Secret 值。
 - Secret 配置：Matrix access token、凭证加密主密钥（只由环境/Secret manager 注入）。
 - 运行数据：数据库、浏览器 Profile、审计日志、待发送事件和用户同意后的诊断队列。
 
@@ -13,6 +14,54 @@
 输入不能覆盖这些路径。`cmd/service` 普通启动默认加载该文件，也可通过 `-config`
 指定路径；Store、Profile 和队列都从同一 `data_dir` 派生。Secret 不进入 Git。
 生产环境至少限制服务账户、数据库和 Profile 目录的文件权限。
+
+启用逻辑执行槽位池时，配置只填写 pool ID、environment manifest 摘要、能力和
+`desired_slots`，例如：
+
+```json
+{
+  "job_pool": {
+    "pool_id": "windows-cloudgame",
+    "environment_id": "chuzi-environment/v1",
+    "environment_version": "1.0.0",
+    "desired_slots": 2,
+    "capabilities": ["windows-desktop", "cdp"],
+    "require_trusted": true
+  }
+}
+```
+
+Windows 主机若启用 OS 用户池，还需在同一配置中声明与 `job_pool` 容量和环境版本
+一致的 `windows_job_pool`：
+
+```json
+{
+  "windows_job_pool": {
+    "enabled": true,
+    "desired_slots": 2,
+    "user_prefix": "ChuziJob",
+    "rdp_enabled": false,
+    "session_idle_timeout_seconds": 300,
+    "agent_heartbeat_seconds": 10,
+    "provision_timeout_seconds": 120,
+    "cleanup_timeout_seconds": 60,
+    "environment_id": "chuzi-environment/v1",
+    "environment_version": "1.0.0"
+  }
+}
+```
+
+服务启动时先 reconcile 逻辑 slot 记录。Windows 构建在 `windows_job_pool.enabled`
+时继续运行受控 provisioner：它创建/修复带 CHUZI 标记的普通本地用户、受限目录 ACL、
+session-aware `chuzi-user-agent.exe` 和 per-slot Job Object；没有 active session 或
+agent heartbeat 时 slot 保持 provisioning/quarantined，不会参与调度。非 Windows 构建
+返回 `slotwindows.ErrUnsupported`，只运行逻辑 slot。
+
+每次 lifecycle reconcile 失败都会写入脱敏的 `slot/reconcile` 事件，并递增
+`chuzi_slot_reconcile_errors_total`；错误正文、SID、路径和凭证不会写入日志。最近一次
+失败会让 health endpoint 的 `slot_lifecycle` 检查返回 503，下一次成功 reconcile 后恢复
+ready。这样 OS 边界故障既会继续按固定间隔重试，也会出现在指标、结构化日志和 readiness
+投影中。
 
 ## 目标部署的最低运行要求
 
@@ -152,7 +201,7 @@ Test 允许新代码带有未知问题，只能发布 test catalog。Nightly 只
 完整包内的 `release-manifest.json` 是启动器 CLI 和原生客户端的稳定输入，声明目标平台、
 版本、组件资源 SHA-256/大小、适配器描述和更新 channel。`cmd/launcher` 提供 manifest
 展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
-的更新检查、资源修复、组件启停、适配器安装/更新/信任/启停/移除和 `settings`/`settings-save` CLI。
+的更新检查、资源修复、组件启停、适配器安装/更新/信任/启停/移除和 `settings`/`settings-save` CLI。设置中的
 `start_core_on_launch` 只允许客户端在应用启动时启动已经安装的 Core，不会隐式安装或修改组件。
 修改安装目录或设置前会取得 `.chuzi/launcher.lock`，`-progress` 可将脱敏的阶段事件
 写到 stderr，Ctrl-C 会通过 context 取消当前操作。显式 `-release-index` 时，下载器
@@ -195,7 +244,9 @@ scripts/assemble_target.sh <target> <version> <go-dir> <worker-archive> <dist-ro
 ```
 
 Windows runner 使用对应的 `*.ps1` 脚本。`build.sh`/`build.ps1` 保留为本地一体化构建入口，
-并行 CI 使用组件构建和 `assemble_target` 脚本。构建产物必须包含 Go 服务、Worker 文件
+并行 CI 使用组件构建和 `assemble_target` 脚本。Windows 目标会把 Node.js `node.exe`
+一并放入安装目录；在 Unix 主机组装 Windows 目标时，必须通过 `CHUZI_NODE_RUNTIME`
+指定同架构的 `node.exe`。构建产物必须包含 Go 服务、Worker 文件
 和 `build-manifest.json`，并生成 SHA256 校验文件。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 

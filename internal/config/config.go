@@ -26,13 +26,97 @@ var ErrInvalidConfig = errors.New("config: invalid configuration")
 // Config contains ordinary deployment settings only. Secrets intentionally do
 // not have a field in this type and must be supplied by a later secret store.
 type Config struct {
-	DataDir       string              `json:"data_dir"`
-	Matrix        MatrixConfig        `json:"matrix,omitempty"`
-	Credentials   CredentialConfig    `json:"credentials,omitempty"`
-	Health        HealthConfig        `json:"health,omitempty"`
-	Observability ObservabilityConfig `json:"observability,omitempty"`
-	Diagnostics   DiagnosticsConfig   `json:"diagnostics,omitempty"`
-	RateLimit     RateLimitConfig     `json:"rate_limit,omitempty"`
+	DataDir        string               `json:"data_dir"`
+	Matrix         MatrixConfig         `json:"matrix,omitempty"`
+	Credentials    CredentialConfig     `json:"credentials,omitempty"`
+	Health         HealthConfig         `json:"health,omitempty"`
+	Observability  ObservabilityConfig  `json:"observability,omitempty"`
+	Diagnostics    DiagnosticsConfig    `json:"diagnostics,omitempty"`
+	RateLimit      RateLimitConfig      `json:"rate_limit,omitempty"`
+	JobPool        JobPoolConfig        `json:"job_pool,omitempty"`
+	WindowsJobPool WindowsJobPoolConfig `json:"windows_job_pool,omitempty"`
+}
+
+// WindowsJobPoolConfig configures OS-backed job slots separately from launcher
+// BehaviorSettings and the logical slot pool. Secrets and executable/path
+// overrides are intentionally not representable here.
+type WindowsJobPoolConfig struct {
+	Enabled                   bool   `json:"enabled,omitempty"`
+	DesiredSlots              int    `json:"desired_slots,omitempty"`
+	UserPrefix                string `json:"user_prefix,omitempty"`
+	RDPEnabled                bool   `json:"rdp_enabled,omitempty"`
+	SessionIdleTimeoutSeconds int    `json:"session_idle_timeout_seconds,omitempty"`
+	AgentHeartbeatSeconds     int    `json:"agent_heartbeat_seconds,omitempty"`
+	ProvisionTimeoutSeconds   int    `json:"provision_timeout_seconds,omitempty"`
+	CleanupTimeoutSeconds     int    `json:"cleanup_timeout_seconds,omitempty"`
+	EnvironmentID             string `json:"environment_id,omitempty"`
+	EnvironmentVersion        string `json:"environment_version,omitempty"`
+}
+
+func (w WindowsJobPoolConfig) Validate(pool JobPoolConfig) error {
+	if !w.Enabled {
+		if w != (WindowsJobPoolConfig{}) {
+			return fmt.Errorf("%w: disabled windows_job_pool must be empty", ErrInvalidConfig)
+		}
+		return nil
+	}
+	if !pool.Enabled() || w.DesiredSlots != pool.DesiredSlots || w.EnvironmentID != pool.EnvironmentID || w.EnvironmentVersion != pool.EnvironmentVersion {
+		return fmt.Errorf("%w: windows_job_pool must match the logical job_pool capacity and environment", ErrInvalidConfig)
+	}
+	if w.DesiredSlots < 0 || w.DesiredSlots > 256 || w.UserPrefix == "" || len(w.UserPrefix) > 12 || !regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,11}$`).MatchString(w.UserPrefix) {
+		return fmt.Errorf("%w: invalid Windows job pool identity or capacity", ErrInvalidConfig)
+	}
+	if w.SessionIdleTimeoutSeconds < 0 || w.SessionIdleTimeoutSeconds > 604800 ||
+		w.AgentHeartbeatSeconds < 1 || w.AgentHeartbeatSeconds > 300 ||
+		w.ProvisionTimeoutSeconds < 1 || w.ProvisionTimeoutSeconds > 3600 ||
+		w.CleanupTimeoutSeconds < 1 || w.CleanupTimeoutSeconds > 3600 {
+		return fmt.Errorf("%w: Windows job pool timing is out of range", ErrInvalidConfig)
+	}
+	return nil
+}
+
+// JobPoolConfig describes the desired logical execution capacity. It contains
+// only manifest/trust metadata; no Windows user or credential data is valid.
+type JobPoolConfig struct {
+	PoolID             string   `json:"pool_id,omitempty"`
+	EnvironmentID      string   `json:"environment_id,omitempty"`
+	EnvironmentVersion string   `json:"environment_version,omitempty"`
+	DesiredSlots       int      `json:"desired_slots,omitempty"`
+	Capabilities       []string `json:"capabilities,omitempty"`
+	ManifestDigest     string   `json:"manifest_digest,omitempty"`
+	Signer             string   `json:"signer,omitempty"`
+	RequireTrusted     bool     `json:"require_trusted,omitempty"`
+}
+
+func (p JobPoolConfig) Enabled() bool {
+	return strings.TrimSpace(p.PoolID) != "" || strings.TrimSpace(p.EnvironmentID) != "" || strings.TrimSpace(p.EnvironmentVersion) != "" || p.DesiredSlots != 0 || len(p.Capabilities) != 0 || strings.TrimSpace(p.ManifestDigest) != "" || strings.TrimSpace(p.Signer) != "" || p.RequireTrusted
+}
+
+func (p JobPoolConfig) Validate() error {
+	if !p.Enabled() {
+		return nil
+	}
+	if strings.TrimSpace(p.PoolID) == "" || strings.TrimSpace(p.EnvironmentID) == "" || p.DesiredSlots < 0 || p.DesiredSlots > 10000 {
+		return fmt.Errorf("%w: invalid job pool", ErrInvalidConfig)
+	}
+	if strings.TrimSpace(p.PoolID) != p.PoolID || strings.ContainsAny(p.PoolID, "\r\n\t ") || strings.TrimSpace(p.EnvironmentID) != p.EnvironmentID || strings.ContainsAny(p.EnvironmentID, "\r\n\t ") {
+		return fmt.Errorf("%w: invalid job pool identifier", ErrInvalidConfig)
+	}
+	if len(p.EnvironmentVersion) > 128 || len(p.ManifestDigest) > 256 || len(p.Signer) > 256 || strings.ContainsAny(p.EnvironmentVersion, "\r\n") || strings.ContainsAny(p.ManifestDigest, "\r\n\t") || strings.ContainsAny(p.Signer, "\r\n\t") {
+		return fmt.Errorf("%w: invalid job pool metadata", ErrInvalidConfig)
+	}
+	seen := make(map[string]struct{}, len(p.Capabilities))
+	for _, capability := range p.Capabilities {
+		capability = strings.TrimSpace(capability)
+		if capability == "" || len(capability) > 128 || strings.ContainsAny(capability, "\r\n\t") {
+			return fmt.Errorf("%w: invalid job pool capability", ErrInvalidConfig)
+		}
+		if _, ok := seen[capability]; ok {
+			return fmt.Errorf("%w: duplicate job pool capability", ErrInvalidConfig)
+		}
+		seen[capability] = struct{}{}
+	}
+	return nil
 }
 
 // MatrixConfig contains non-secret Matrix deployment settings. The access
@@ -77,7 +161,7 @@ type HealthConfig struct {
 // resolved against the process working directory once, at configuration load.
 func New(dataDir string) (Config, error) {
 	dataDir = strings.TrimSpace(dataDir)
-	if dataDir == "" {
+	if dataDir == "" || strings.ContainsAny(dataDir, "\x00\r\n") || len(dataDir) > 4096 {
 		return Config{}, fmt.Errorf("%w: data_dir is required", ErrInvalidConfig)
 	}
 	absolute, err := filepath.Abs(dataDir)
@@ -126,6 +210,8 @@ func Load(path string) (Config, error) {
 	normalized.Observability = raw.Observability
 	normalized.Diagnostics = raw.Diagnostics
 	normalized.RateLimit = raw.RateLimit
+	normalized.JobPool = raw.JobPool
+	normalized.WindowsJobPool = raw.WindowsJobPool
 	if err := normalized.Validate(); err != nil {
 		return Config{}, err
 	}
@@ -135,7 +221,7 @@ func Load(path string) (Config, error) {
 // Validate checks a Config value, including values constructed as a struct
 // literal rather than through New or Load.
 func (c Config) Validate() error {
-	if strings.TrimSpace(c.DataDir) == "" || !filepath.IsAbs(c.DataDir) {
+	if strings.TrimSpace(c.DataDir) == "" || !filepath.IsAbs(c.DataDir) || strings.ContainsAny(c.DataDir, "\x00\r\n") || len(c.DataDir) > 4096 {
 		return fmt.Errorf("%w: data_dir must be a non-empty absolute path", ErrInvalidConfig)
 	}
 	if filepath.Clean(c.DataDir) == string(filepath.Separator) {
@@ -157,6 +243,12 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.RateLimit.Validate(); err != nil {
+		return err
+	}
+	if err := c.JobPool.Validate(); err != nil {
+		return err
+	}
+	if err := c.WindowsJobPool.Validate(c.JobPool); err != nil {
 		return err
 	}
 	return nil

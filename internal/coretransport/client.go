@@ -266,6 +266,14 @@ func (c *Client) SubmitDiagnosticReport(ctx context.Context, input coreapi.Diagn
 	return result, err
 }
 
+func (c *Client) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
+	var result JobPoolStatusResult
+	err := c.Call(ctx, methodGetJobPoolStatus, struct {
+		PoolID string `json:"pool_id"`
+	}{poolID}, &result)
+	return result.Status, err
+}
+
 func formatUint(value uint64) string {
 	const digits = "0123456789"
 	if value == 0 {

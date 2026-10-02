@@ -304,6 +304,19 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return diagnosticsAPI.SubmitDiagnosticReport(ctx, params)
+	case methodGetJobPoolStatus:
+		statusAPI, ok := s.api.(coreapi.JobPoolStatusAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool status is unavailable")
+		}
+		var params struct {
+			PoolID string `json:"pool_id"`
+		}
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		status, err := statusAPI.GetJobPoolStatus(ctx, params.PoolID)
+		return JobPoolStatusResult{Status: status}, err
 	default:
 		return nil, invalidMethodError(method)
 	}

@@ -19,6 +19,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/diagnostics"
 	"github.com/Semcosm/chuzi/internal/observability"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -57,24 +58,50 @@ type RDPCapabilityPort interface {
 	Issue(context.Context, string, string, string) (coreapi.RDPCapability, error)
 }
 
+// BoundRDPCapabilityPort is the Windows-slot form. The legacy Issue method is
+// retained for non-slot deployments and existing transport adapters.
+type BoundRDPCapabilityPort interface {
+	IssueBound(context.Context, credential.RDPAuthorization) (coreapi.RDPCapability, error)
+}
+
+type accountLeaseReader interface {
+	GetLease(string) (account.Lease, bool, error)
+}
+
+type slotLeaseReader interface {
+	ListSlotLeases() ([]store.SlotLeaseRecord, error)
+}
+
 type DiagnosticsPort interface {
 	Submit(context.Context, diagnostics.ReportInput) (diagnostics.Status, error)
 }
 
+type JobPoolStatusPort interface {
+	SlotPoolStatus(string, time.Time) (slot.StatusCounts, error)
+}
+
 type Dependencies struct {
-	Requests    RequestPort
-	Store       StoreReader
-	Views       BrowserViewPort
-	RDP         RDPCapabilityPort
-	Diagnostics DiagnosticsPort
+	Requests       RequestPort
+	Store          StoreReader
+	Views          BrowserViewPort
+	RDP            RDPCapabilityPort
+	Diagnostics    DiagnosticsPort
+	JobPools       JobPoolStatusPort
+	JobPoolID      string
+	MaxConcurrency int
+	Clock          func() time.Time
 }
 
 type Service struct {
-	requests    RequestPort
-	store       StoreReader
-	views       BrowserViewPort
-	rdp         RDPCapabilityPort
-	diagnostics DiagnosticsPort
+	requests       RequestPort
+	store          StoreReader
+	views          BrowserViewPort
+	rdp            RDPCapabilityPort
+	diagnostics    DiagnosticsPort
+	jobPools       JobPoolStatusPort
+	jobPoolID      string
+	maxConcurrency int
+	clock          func() time.Time
 }
 
 var _ coreapi.API = (*Service)(nil)
@@ -83,7 +110,39 @@ func New(dependencies Dependencies) (*Service, error) {
 	if dependencies.Requests == nil || dependencies.Store == nil {
 		return nil, ErrInvalidService
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics}, nil
+	clock := dependencies.Clock
+	if clock == nil {
+		clock = time.Now
+	}
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+}
+
+func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.JobPoolStatus{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.JobPoolStatus{}, err
+	}
+	if strings.TrimSpace(poolID) == "" {
+		poolID = s.jobPoolID
+	}
+	if !validToken(poolID) || s.jobPools == nil {
+		return coreapi.JobPoolStatus{}, coreapi.NewError(coreapi.CodeUnavailable, "job pool status is unavailable")
+	}
+	now := s.clock()
+	if now.IsZero() {
+		return coreapi.JobPoolStatus{}, coreapi.NewError(coreapi.CodeInternal, "job pool status is unavailable")
+	}
+	status, err := s.jobPools.SlotPoolStatus(poolID, now)
+	if err != nil {
+		return coreapi.JobPoolStatus{}, classify(err)
+	}
+	effective := status.Ready
+	if s.maxConcurrency > 0 && effective > s.maxConcurrency {
+		effective = s.maxConcurrency
+	}
+	return coreapi.JobPoolStatus{PoolID: status.PoolID, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, EffectiveCapacity: effective}, nil
 }
 
 func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
@@ -179,11 +238,58 @@ func (s *Service) IssueRDPCapability(ctx context.Context, input coreapi.RDPCapab
 	default:
 		return coreapi.RDPCapability{}, coreapi.NewError(coreapi.CodeForbidden, "interactive RDP is not authorized for this request")
 	}
-	capability, err := s.rdp.Issue(ctx, request.AccountID, request.RequestID, input.Actor)
+	var capability coreapi.RDPCapability
+	if bound, ok := s.rdp.(BoundRDPCapabilityPort); ok {
+		authorization, authErr := s.rdpAuthorization(request, input.Actor)
+		if authErr != nil {
+			return coreapi.RDPCapability{}, classify(authErr)
+		}
+		capability, err = bound.IssueBound(ctx, authorization)
+	} else {
+		capability, err = s.rdp.Issue(ctx, request.AccountID, request.RequestID, input.Actor)
+	}
 	if err != nil {
 		return coreapi.RDPCapability{}, classify(err)
 	}
 	return capability, nil
+}
+
+func (s *Service) rdpAuthorization(request store.Request, actor string) (credential.RDPAuthorization, error) {
+	authorization := credential.RDPAuthorization{AccountID: request.AccountID, RequestID: request.RequestID, Actor: actor}
+	now := s.clock()
+	if now.IsZero() {
+		return credential.RDPAuthorization{}, coreapi.NewError(coreapi.CodeUnavailable, "interactive RDP lease is unavailable")
+	}
+	if reader, ok := s.store.(accountLeaseReader); ok {
+		lease, found, err := reader.GetLease(request.AccountID)
+		if err != nil {
+			return credential.RDPAuthorization{}, err
+		}
+		if !found || lease.Expired(now) {
+			return credential.RDPAuthorization{}, coreapi.NewError(coreapi.CodeForbidden, "interactive RDP lease is unavailable")
+		}
+		authorization.AccountLeaseID = lease.LeaseID
+	}
+	if reader, ok := s.store.(slotLeaseReader); ok {
+		leases, err := reader.ListSlotLeases()
+		if err != nil {
+			return credential.RDPAuthorization{}, err
+		}
+		found := false
+		for _, record := range leases {
+			if record.Lease.RequestID == request.RequestID && record.Lease.AccountID == request.AccountID && !record.Lease.Expired(now) {
+				authorization.SlotLeaseID = record.Lease.LeaseID
+				authorization.SlotID = record.SlotID
+				authorization.EnvironmentGeneration = record.Lease.EnvironmentGeneration
+				found = true
+				break
+			}
+		}
+		if !found {
+			return credential.RDPAuthorization{}, coreapi.NewError(coreapi.CodeForbidden, "interactive RDP slot lease is unavailable")
+		}
+	}
+	return authorization, nil
 }
 
 func (s *Service) SubmitRequest(ctx context.Context, input coreapi.SubmitRequest) (coreapi.Request, bool, error) {
@@ -557,6 +663,8 @@ func classify(err error) error {
 		errors.Is(err, account.ErrInvalidTransition):
 		code = coreapi.CodeConflict
 	case errors.Is(err, store.ErrQueueCapacity):
+		code = coreapi.CodeUnavailable
+	case errors.Is(err, slot.ErrSlotUnavailable), errors.Is(err, slot.ErrPoolNotFound):
 		code = coreapi.CodeUnavailable
 	case errors.Is(err, browser.ErrViewUnavailable):
 		code = coreapi.CodeUnavailable

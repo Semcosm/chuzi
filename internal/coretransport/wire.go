@@ -32,6 +32,7 @@ const (
 	methodGetBrowserView     = "get_browser_view"
 	methodIssueRDPCapability = "issue_rdp_capability"
 	methodSubmitDiagnostic   = "submit_diagnostic_report"
+	methodGetJobPoolStatus   = "get_job_pool_status"
 )
 
 const (
@@ -48,6 +49,7 @@ const (
 	MethodGetBrowserView     = methodGetBrowserView
 	MethodIssueRDPCapability = methodIssueRDPCapability
 	MethodSubmitDiagnostic   = methodSubmitDiagnostic
+	MethodGetJobPoolStatus   = methodGetJobPoolStatus
 )
 
 var (
@@ -110,9 +112,13 @@ type NotificationsResult struct {
 	Notifications []coreapi.Notification `json:"notifications"`
 }
 
+type JobPoolStatusResult struct {
+	Status coreapi.JobPoolStatus `json:"status"`
+}
+
 func methodList() []string {
 	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodListRequests, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic}
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetJobPoolStatus}
 }
 
 func marshalRequest(id, method string, params any) ([]byte, error) {

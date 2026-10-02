@@ -10,6 +10,8 @@
 Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session Runner
        ^                  │                    │                 │
        └──── Status Notifier <──── State Store ┴──── Credential Store
+                                      │
+                               Execution Slot Pool
 ```
 
 - **Matrix Adapter**：验证房间/用户权限，解析固定命令，生成安全回复并调用
@@ -17,6 +19,10 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 - **Request Service**：创建请求、幂等检查、结果查询和取消；房间/用户授权由
   外部适配器执行。
 - **Queue/Scheduler**：按全局并发上限和账号级租约分配工作，处理超时与重试。
+- **Execution Slot Pool**：按环境 manifest 摘要筛选可用的执行槽位，独立维护
+  slot lease 和 ready capacity。Windows 构建在显式启用 `windows_job_pool` 后由
+  `slotwindows` provisioner 管理受管本地用户、ACL、session 和 user agent；其他平台
+  只实现逻辑 slot。
 - **Request rate limiter**：在 Request Service 提交新请求前按全局、调用方、Matrix 房间和账号
   维度执行可配置的滑动窗口限流；查询和取消不占用额度。
 - **Session Runner**：管理浏览器 Worker 生命周期，绑定账号 Profile，报告运行结果。
@@ -50,6 +56,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 │   ├── macos/                    # SwiftUI/AppKit 客户端（后续 CR）
 │   └── linux/                    # GTK 客户端（后续 CR）
 ├── internal/
+│   ├── slot/                   # 已实现：逻辑执行槽位、环境匹配和 slot lease 领域模型
 │   ├── coreapi/                 # chuzi.core/v1 DTO、API 和稳定错误分类
 │   ├── core/                    # Core 编排 facade，不拥有状态机或存储
 │   ├── coretransport/            # chuzi.core/v1 本地 JSONL IPC（Unix socket/named pipe）

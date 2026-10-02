@@ -89,9 +89,37 @@ func run(ctx context.Context, options serviceOptions) error {
 			}
 		})
 	}
+	if runtime.slotReconciler != nil {
+		startBackground("slot lifecycle", func(workerCtx context.Context) error {
+			reconcile := func() {
+				err := runtime.slotReconciler.Reconcile(workerCtx)
+				runtime.recordSlotReconcile(time.Now().UTC(), err)
+			}
+			reconcile()
+			interval := runtime.slotInterval
+			if interval <= 0 {
+				interval = 5 * time.Second
+			}
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return nil
+				case <-ticker.C:
+					reconcile()
+				}
+			}
+		})
+	}
 	defer func() {
 		cancelBackground()
 		background.Wait()
+		if shutdowner, ok := runtime.slotReconciler.(interface{ Shutdown(context.Context) error }); ok {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = shutdowner.Shutdown(shutdownCtx)
+			shutdownCancel()
+		}
 	}()
 	runtime.refreshMetrics(time.Now().UTC())
 	runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "startup", Outcome: "ready", Resource: options.backend})

@@ -98,3 +98,31 @@ func TestRDPServiceRejectsInvalidLeaseAndContext(t *testing.T) {
 		t.Fatal("cancelled context unexpectedly issued capability")
 	}
 }
+
+func TestRDPServiceBindsCapabilityToActorAccountAndSlotLeases(t *testing.T) {
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	material, _ := NewRDPMaterial("127.0.0.1", 3389, "opaque", "random", "", false)
+	service, _ := NewRDPService(rdpAuthorizerFake{material: material})
+	issued := RDPAuthorization{AccountID: "account-1", RequestID: "request-1", Actor: "ui", AccountLeaseID: "account-lease-1", SlotLeaseID: "slot-lease-1", SlotID: "pool-001", EnvironmentGeneration: 4}
+	capability, err := service.Issue(context.Background(), issued, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Resolve(context.Background(), capability, "ui", now); !errors.Is(err, ErrRDPUnauthorized) {
+		t.Fatalf("unbound resolve = %v", err)
+	}
+	if _, err := service.ResolveBound(context.Background(), capability, issued, now); err != nil {
+		t.Fatal(err)
+	}
+	wrong := issued
+	wrong.SlotLeaseID = "slot-lease-other"
+	if _, err := service.ResolveBound(context.Background(), capability, wrong, now); !errors.Is(err, ErrRDPUnauthorized) {
+		t.Fatalf("wrong slot lease resolve = %v", err)
+	}
+	if err := service.RevokeSlotLease(context.Background(), issued.SlotLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolveBound(context.Background(), capability, issued, now); !errors.Is(err, ErrRDPCapability) {
+		t.Fatalf("resolve after slot revocation = %v", err)
+	}
+}

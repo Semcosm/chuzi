@@ -232,6 +232,22 @@ type DiagnosticsAPI interface {
 	SubmitDiagnosticReport(context.Context, DiagnosticReport) (DiagnosticStatus, error)
 }
 
+// JobPoolStatus is a redaction-safe execution capacity projection. It never
+// contains Windows usernames, SIDs, Profile paths, endpoints, or commands.
+type JobPoolStatus struct {
+	PoolID            string `json:"pool_id"`
+	Desired           int    `json:"desired"`
+	Ready             int    `json:"ready"`
+	Leased            int    `json:"leased"`
+	Quarantined       int    `json:"quarantined"`
+	Draining          int    `json:"draining"`
+	EffectiveCapacity int    `json:"effective_capacity"`
+}
+
+type JobPoolStatusAPI interface {
+	GetJobPoolStatus(context.Context, string) (JobPoolStatus, error)
+}
+
 // API is the stable Core contract. Implementations may use any local IPC or
 // in-process transport as long as these DTOs and error codes remain stable.
 type API interface {

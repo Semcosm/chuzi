@@ -26,6 +26,11 @@ type testAPI struct {
 type viewTestAPI struct{ *testAPI }
 
 type diagnosticTestAPI struct{ *testAPI }
+type jobPoolTestAPI struct{ *testAPI }
+
+func (a *jobPoolTestAPI) GetJobPoolStatus(context.Context, string) (coreapi.JobPoolStatus, error) {
+	return coreapi.JobPoolStatus{PoolID: "pool-test", Desired: 2, Ready: 1, Leased: 1, EffectiveCapacity: 1}, nil
+}
 
 func (a *diagnosticTestAPI) SubmitDiagnosticReport(context.Context, coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
 	return coreapi.DiagnosticStatus{ID: "diag-1", State: "queued"}, nil
@@ -172,6 +177,21 @@ func TestUnixContractDiagnosticReportMethod(t *testing.T) {
 	status, err := client.SubmitDiagnosticReport(context.Background(), coreapi.DiagnosticReport{Severity: "error", Category: "core", Summary: "Core unavailable"})
 	if err != nil || status.ID != "diag-1" || status.State != "queued" {
 		t.Fatalf("diagnostic status = %#v, err=%v", status, err)
+	}
+}
+
+func TestUnixContractJobPoolStatusMethod(t *testing.T) {
+	api := &jobPoolTestAPI{testAPI: &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}}
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	status, err := client.GetJobPoolStatus(context.Background(), "pool-test")
+	if err != nil || status.PoolID != "pool-test" || status.Ready != 1 || status.EffectiveCapacity != 1 {
+		t.Fatalf("job pool status = %#v, err=%v", status, err)
 	}
 }
 

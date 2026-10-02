@@ -14,22 +14,26 @@ import (
 )
 
 const (
-	CurrentVersion uint64 = 5
+	CurrentVersion uint64 = 6
 
-	MetaBucket                = "meta"
-	AccountsBucket            = "accounts"
-	RequestsBucket            = "requests"
-	RequestIdempotencyBucket  = "request_idempotency"
-	AuditsBucket              = "audits"
-	EventsBucket              = "events"
-	LeasesBucket              = "leases"
-	QueueBucket               = "queue"
-	CredentialsBucket         = "credentials"
-	CredentialAuditsBucket    = "credential_audits"
-	MatrixNotificationsBucket = "matrix_notifications"
-	AccountDeletionsBucket    = "account_deletions"
-	MatrixSyncCursorsBucket   = "matrix_sync_cursors"
-	VersionKey                = "version"
+	MetaBucket                 = "meta"
+	AccountsBucket             = "accounts"
+	RequestsBucket             = "requests"
+	RequestIdempotencyBucket   = "request_idempotency"
+	AuditsBucket               = "audits"
+	EventsBucket               = "events"
+	LeasesBucket               = "leases"
+	QueueBucket                = "queue"
+	CredentialsBucket          = "credentials"
+	CredentialAuditsBucket     = "credential_audits"
+	MatrixNotificationsBucket  = "matrix_notifications"
+	AccountDeletionsBucket     = "account_deletions"
+	MatrixSyncCursorsBucket    = "matrix_sync_cursors"
+	JobPoolsBucket             = "job_pools"
+	ExecutionSlotsBucket       = "execution_slots"
+	SlotLeasesBucket           = "slot_leases"
+	EnvironmentSummariesBucket = "environment_summaries"
+	VersionKey                 = "version"
 )
 
 var (
@@ -81,6 +85,10 @@ func Apply(db *bbolt.DB) error {
 				if err := createVersionFive(tx); err != nil {
 					return err
 				}
+			case 6:
+				if err := createVersionSix(tx); err != nil {
+					return err
+				}
 			default:
 				return fmt.Errorf("%w: migration %d", ErrUnsupportedVersion, version+1)
 			}
@@ -118,6 +126,15 @@ func createVersionFour(tx *bbolt.Tx) error {
 
 func createVersionFive(tx *bbolt.Tx) error {
 	for _, name := range []string{AccountDeletionsBucket, MatrixSyncCursorsBucket} {
+		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
+			return fmt.Errorf("create %s bucket: %w", name, err)
+		}
+	}
+	return nil
+}
+
+func createVersionSix(tx *bbolt.Tx) error {
+	for _, name := range []string{JobPoolsBucket, ExecutionSlotsBucket, SlotLeasesBucket, EnvironmentSummariesBucket} {
 		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 			return fmt.Errorf("create %s bucket: %w", name, err)
 		}

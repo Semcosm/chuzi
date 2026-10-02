@@ -33,15 +33,28 @@ var (
 // RDPAuthorization is the minimum context an authorizer needs. It contains no
 // endpoint or credential material.
 type RDPAuthorization struct {
-	AccountID string
-	RequestID string
-	Actor     string
+	AccountID             string
+	RequestID             string
+	Actor                 string
+	AccountLeaseID        string
+	SlotLeaseID           string
+	SlotID                string
+	EnvironmentGeneration uint64
 }
 
 // RDPAuthorizer checks the account/request policy and returns ephemeral
 // connection material. Implementations must not persist or log the material.
 type RDPAuthorizer interface {
 	AuthorizeRDP(context.Context, RDPAuthorization) (RDPMaterial, error)
+}
+
+// DenyRDPAuthorizer is the default deployment boundary. It keeps capability
+// revocation wired in every service while requiring a deployment-owned
+// authorizer before any endpoint or credential material can be issued.
+type DenyRDPAuthorizer struct{}
+
+func (DenyRDPAuthorizer) AuthorizeRDP(context.Context, RDPAuthorization) (RDPMaterial, error) {
+	return RDPMaterial{}, ErrRDPUnauthorized
 }
 
 // RDPMaterial is held only by the credential boundary. Callers can obtain a
@@ -114,10 +127,15 @@ type RDPService struct {
 }
 
 type rdpEntry struct {
-	capability RDPCapability
-	material   RDPMaterial
-	actor      string
-	revoked    bool
+	capability            RDPCapability
+	material              RDPMaterial
+	actor                 string
+	accountID             string
+	accountLeaseID        string
+	slotLeaseID           string
+	slotID                string
+	environmentGeneration uint64
+	revoked               bool
 }
 
 func NewRDPService(authorizer RDPAuthorizer) (*RDPService, error) {
@@ -158,16 +176,30 @@ func (s *RDPService) Issue(ctx context.Context, request RDPAuthorization, now ti
 	digest := sha256.Sum256([]byte(token))
 	capability := RDPCapability{ID: "rdp_" + hex.EncodeToString(digest[:6]), Token: token, RequestID: request.RequestID, ExpiresAt: now.UTC().Add(ttl)}
 	s.mu.Lock()
-	s.entries[hex.EncodeToString(digest[:])] = &rdpEntry{capability: capability, material: material, actor: request.Actor}
+	s.entries[hex.EncodeToString(digest[:])] = &rdpEntry{capability: capability, material: material, actor: request.Actor, accountID: request.AccountID, accountLeaseID: request.AccountLeaseID, slotLeaseID: request.SlotLeaseID, slotID: request.SlotID, environmentGeneration: request.EnvironmentGeneration}
 	s.mu.Unlock()
 	return capability, nil
 }
 
 func (s *RDPService) Resolve(ctx context.Context, capability RDPCapability, actor string, now time.Time) (RDPMaterial, error) {
+	return s.resolve(ctx, capability, RDPAuthorization{Actor: actor, RequestID: capability.RequestID}, now, false)
+}
+
+// ResolveBound requires the same request, actor, account lease and slot lease
+// used to issue a Windows-slot RDP capability. The slot identity remains
+// internal to this credential boundary.
+func (s *RDPService) ResolveBound(ctx context.Context, capability RDPCapability, authorization RDPAuthorization, now time.Time) (RDPMaterial, error) {
+	if validateRDPAuthorization(authorization) != nil {
+		return RDPMaterial{}, ErrRDPInvalidRequest
+	}
+	return s.resolve(ctx, capability, authorization, now, true)
+}
+
+func (s *RDPService) resolve(ctx context.Context, capability RDPCapability, authorization RDPAuthorization, now time.Time, requireBinding bool) (RDPMaterial, error) {
 	if err := ctxErr(ctx); err != nil {
 		return RDPMaterial{}, err
 	}
-	if strings.TrimSpace(capability.Token) == "" || strings.TrimSpace(actor) == "" || now.IsZero() {
+	if strings.TrimSpace(capability.Token) == "" || strings.TrimSpace(authorization.Actor) == "" || now.IsZero() {
 		return RDPMaterial{}, ErrRDPCapability
 	}
 	digest := sha256.Sum256([]byte(capability.Token))
@@ -185,7 +217,14 @@ func (s *RDPService) Resolve(ctx context.Context, capability RDPCapability, acto
 		delete(s.entries, hex.EncodeToString(digest[:]))
 		return RDPMaterial{}, ErrRDPExpired
 	}
-	if entry.actor != actor {
+	if entry.actor != authorization.Actor {
+		return RDPMaterial{}, ErrRDPUnauthorized
+	}
+	if entry.slotLeaseID != "" {
+		if !requireBinding || entry.accountID != authorization.AccountID || entry.capability.RequestID != authorization.RequestID || entry.accountLeaseID != authorization.AccountLeaseID || entry.slotLeaseID != authorization.SlotLeaseID || entry.slotID != authorization.SlotID || entry.environmentGeneration != authorization.EnvironmentGeneration {
+			return RDPMaterial{}, ErrRDPUnauthorized
+		}
+	} else if requireBinding && (entry.accountID != authorization.AccountID || entry.capability.RequestID != authorization.RequestID) {
 		return RDPMaterial{}, ErrRDPUnauthorized
 	}
 	return cloneRDPMaterial(entry.material), nil
@@ -210,12 +249,79 @@ func (s *RDPService) Revoke(ctx context.Context, capability RDPCapability, actor
 	return nil
 }
 
+// RevokeRequest revokes all capabilities for a completed, cancelled or timed
+// out request. It is safe to call repeatedly.
+func (s *RDPService) RevokeRequest(ctx context.Context, requestID string) error {
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(requestID) == "" {
+		return ErrRDPInvalidRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, entry := range s.entries {
+		if entry.capability.RequestID == requestID {
+			entry.revoked = true
+			entry.material.wipe()
+			delete(s.entries, key)
+		}
+	}
+	return nil
+}
+
+// RevokeSlotLease invalidates capabilities when a slot is quarantined or
+// begins user deletion.
+func (s *RDPService) RevokeSlotLease(ctx context.Context, slotLeaseID string) error {
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(slotLeaseID) == "" {
+		return ErrRDPInvalidRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, entry := range s.entries {
+		if entry.slotLeaseID == slotLeaseID {
+			entry.revoked = true
+			entry.material.wipe()
+			delete(s.entries, key)
+		}
+	}
+	return nil
+}
+
+// RevokeSlot invalidates all capabilities associated with a slot, including
+// capabilities whose lease record is already being removed during retirement.
+func (s *RDPService) RevokeSlot(ctx context.Context, slotID string) error {
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(slotID) == "" {
+		return ErrRDPInvalidRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, entry := range s.entries {
+		if entry.slotID == slotID {
+			entry.revoked = true
+			entry.material.wipe()
+			delete(s.entries, key)
+		}
+	}
+	return nil
+}
+
 func cloneRDPMaterial(m RDPMaterial) RDPMaterial {
 	m.password = append([]byte(nil), m.password...)
 	return m
 }
 func validateRDPAuthorization(v RDPAuthorization) error {
 	if strings.TrimSpace(v.AccountID) == "" || strings.TrimSpace(v.RequestID) == "" || strings.TrimSpace(v.Actor) == "" || strings.ContainsAny(v.AccountID+v.RequestID+v.Actor, "\r\n\x00") {
+		return ErrRDPInvalidRequest
+	}
+	hasSlotBinding := v.AccountLeaseID != "" || v.SlotLeaseID != "" || v.SlotID != "" || v.EnvironmentGeneration != 0
+	if hasSlotBinding && (strings.TrimSpace(v.AccountLeaseID) == "" || strings.TrimSpace(v.SlotLeaseID) == "" || strings.TrimSpace(v.SlotID) == "" || v.EnvironmentGeneration == 0 || strings.ContainsAny(v.AccountLeaseID+v.SlotLeaseID+v.SlotID, "\r\n\x00")) {
 		return ErrRDPInvalidRequest
 	}
 	return nil

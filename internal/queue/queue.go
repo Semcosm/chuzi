@@ -12,6 +12,7 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/account"
 	"github.com/Semcosm/chuzi/internal/observability"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -41,12 +42,45 @@ type StorePort interface {
 	ListLeases() ([]store.LeaseRecord, error)
 }
 
+// SlotAwareClaimer atomically claims an account request and a matching
+// execution slot. Concrete store implementations use one bbolt transaction;
+// older focused test stores can continue using StorePort without slots.
+type SlotAwareClaimer interface {
+	ClaimNextWithSlot(time.Time, string, string, time.Duration, string, string, string, store.QueueOptions, string, slot.EnvironmentRequirement) (store.SlotClaim, error)
+}
+
+type SlotLeaseRecovery interface {
+	RecoverExpiredSlotLeases(time.Time) error
+}
+
+type SlotLeaseLister interface {
+	ListSlotLeases() ([]store.SlotLeaseRecord, error)
+}
+
+// SlotLeaseStopper fences any residual agent job before durable lease
+// recovery removes the lease record.
+type SlotLeaseStopper interface {
+	StopSlotLease(context.Context, slot.Lease) error
+}
+
+// CapabilityRevoker invalidates ephemeral interactive capabilities at the
+// same lifecycle boundaries that release account and slot leases.
+type CapabilityRevoker interface {
+	RevokeRequest(context.Context, string) error
+	RevokeSlotLease(context.Context, string) error
+}
+
 var _ StorePort = (*store.Store)(nil)
 
 // Work is the lease-bound unit handed to a session runner.
 type Work struct {
-	Request store.Request
-	Lease   account.Lease
+	Request               store.Request
+	Lease                 account.Lease
+	Slot                  slot.Slot
+	SlotLease             slot.Lease
+	SlotID                string
+	EnvironmentGeneration uint64
+	AgentHandle           string
 }
 
 // Result is the runner's redacted runtime fact. The runner must not choose a
@@ -72,6 +106,24 @@ type Config struct {
 	Clock                Clock
 	NewID                IDGenerator
 	Sink                 observability.Sink
+	SlotPoolID           string
+	SlotRequirement      slot.EnvironmentRequirement
+	Capabilities         CapabilityRevoker
+	SlotLeaseStopper     SlotLeaseStopper
+}
+
+func (s *Scheduler) revokeRequest(requestID string) error {
+	if s == nil || s.config.Capabilities == nil || requestID == "" {
+		return nil
+	}
+	return s.config.Capabilities.RevokeRequest(context.Background(), requestID)
+}
+
+func (s *Scheduler) revokeSlotLease(leaseID string) error {
+	if s == nil || s.config.Capabilities == nil || leaseID == "" {
+		return nil
+	}
+	return s.config.Capabilities.RevokeSlotLease(context.Background(), leaseID)
 }
 
 // Scheduler claims and processes at most one request per RunOnce call. A
@@ -127,9 +179,45 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		s.record(now, "deadline", "failed", "", "store_error", 0)
 		return Outcome{}, err
 	}
-	claim, err := s.store.ClaimNext(now, s.config.NewID("lease"), s.config.Owner,
-		s.config.LeaseTTL, s.config.NewID("claim"), s.config.Owner,
-		"queue claim", store.QueueOptions{MaxGlobalConcurrency: s.config.MaxGlobalConcurrency})
+	if strings.TrimSpace(s.config.SlotPoolID) != "" {
+		if err := s.recoverExpiredSlotLeases(now); err != nil {
+			s.record(now, "slot-recovery", "failed", "", "store_error", 0)
+			return Outcome{}, err
+		}
+	}
+	claimID, leaseID := s.config.NewID("claim"), s.config.NewID("lease")
+	var err error
+	var claim store.Claim
+	var slotClaim store.SlotClaim
+	if strings.TrimSpace(s.config.SlotPoolID) != "" {
+		aware, ok := s.store.(SlotAwareClaimer)
+		if !ok {
+			return Outcome{}, ErrRunnerUnavailable
+		}
+		slotClaim, err = aware.ClaimNextWithSlot(now, leaseID, s.config.Owner, s.config.LeaseTTL, claimID, s.config.Owner,
+			"queue claim", store.QueueOptions{MaxGlobalConcurrency: s.config.MaxGlobalConcurrency}, s.config.SlotPoolID, s.config.SlotRequirement)
+		if errors.Is(err, store.ErrQueueEmpty) || errors.Is(err, store.ErrQueueCapacity) || errors.Is(err, slot.ErrSlotUnavailable) {
+			s.record(now, "claim", "idle", "", "slot_unavailable", 0)
+			return Outcome{Idle: true}, nil
+		}
+		if err != nil {
+			s.record(now, "claim", "failed", "", "store_error", 0)
+			return Outcome{}, err
+		}
+		claim = slotClaim.Claim
+	} else {
+		claim, err = s.store.ClaimNext(now, leaseID, s.config.Owner,
+			s.config.LeaseTTL, claimID, s.config.Owner,
+			"queue claim", store.QueueOptions{MaxGlobalConcurrency: s.config.MaxGlobalConcurrency})
+		if errors.Is(err, store.ErrQueueEmpty) || errors.Is(err, store.ErrQueueCapacity) {
+			s.record(now, "claim", "idle", "", "", 0)
+			return Outcome{Idle: true}, nil
+		}
+		if err != nil {
+			s.record(now, "claim", "failed", "", "store_error", 0)
+			return Outcome{}, err
+		}
+	}
 	if errors.Is(err, store.ErrQueueEmpty) || errors.Is(err, store.ErrQueueCapacity) {
 		s.record(now, "claim", "idle", "", "", 0)
 		return Outcome{Idle: true}, nil
@@ -137,6 +225,9 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	if err != nil {
 		s.record(now, "claim", "failed", "", "store_error", 0)
 		return Outcome{}, err
+	}
+	if workSlotID := slotClaim.SlotLease.SlotID; workSlotID != "" {
+		s.config.Sink.Record(observability.Event{At: now, Component: "slot", Operation: "acquire", Outcome: "leased", RequestID: observability.RedactIdentifier(claim.Request.RequestID), Resource: observability.RedactIdentifier(workSlotID)})
 	}
 
 	state := claim.Transition.State
@@ -168,6 +259,13 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		}
 		_, _ = s.store.CancelRequestOwned(cleanup, claim.Lease, true)
 		_ = s.store.ReleaseLease(claim.Request.AccountID, claim.Lease.LeaseID, claim.Lease.Owner)
+		if slotClaim.SlotLease.LeaseID != "" {
+			if release, ok := s.store.(interface {
+				ReleaseSlotLease(string, string, string) error
+			}); ok {
+				_ = release.ReleaseSlotLease(slotClaim.SlotLease.SlotID, slotClaim.SlotLease.LeaseID, slotClaim.SlotLease.Owner)
+			}
+		}
 		s.record(now, "start", "failed", claim.Request.RequestID, "transition_failed", 0)
 		return Outcome{}, err
 	}
@@ -177,7 +275,12 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	if s.config.RunTimeout > 0 {
 		runnerContext, stopRunnerContext = context.WithTimeout(ctx, s.config.RunTimeout)
 	}
-	runnerResult, runnerErr := s.runner.Run(runnerContext, Work{Request: claim.Request, Lease: claim.Lease})
+	work := Work{Request: claim.Request, Lease: claim.Lease}
+	if strings.TrimSpace(s.config.SlotPoolID) != "" {
+		work.Slot, work.SlotLease = slotClaim.Slot, slotClaim.SlotLease
+		work.SlotID, work.EnvironmentGeneration, work.AgentHandle = slotClaim.Slot.SlotID, slotClaim.Slot.EnvironmentGeneration, slotClaim.Slot.AgentHandle
+	}
+	runnerResult, runnerErr := s.runner.Run(runnerContext, work)
 	runnerContextErr := runnerContext.Err()
 	stopRunnerContext()
 	finishedAt := s.config.Clock()
@@ -188,20 +291,114 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	if duration < 0 {
 		duration = 0
 	}
+	slotQuarantined, slotReleased := false, false
+	slotCapabilityRevoked := false
+	var currentRequest store.Request
+	var currentRequestErr error
 	if runnerErr != nil || runnerContextErr != nil {
+		durableCancellation := false
+		if runnerErr != nil {
+			currentRequest, currentRequestErr = s.store.GetRequest(claim.Request.RequestID)
+			if currentRequestErr == nil {
+				durableCancellation = currentRequest.State == account.Cancelled
+			}
+		}
+		quarantineSlot := runnerErr != nil || (runnerContextErr != nil && ctx.Err() == nil)
+		if ctx.Err() != nil || durableCancellation {
+			quarantineSlot = false
+		}
+		if work.SlotLease.LeaseID != "" && quarantineSlot {
+			if quarantine, ok := s.store.(interface {
+				QuarantineSlotLease(string, string, string, time.Time, string) error
+			}); ok {
+				revokeErr := s.revokeSlotLease(work.SlotLease.LeaseID)
+				slotCapabilityRevoked = revokeErr == nil
+				if revokeErr != nil {
+					return Outcome{}, revokeErr
+				}
+				quarantineErr := quarantine.QuarantineSlotLease(work.SlotLease.SlotID, work.SlotLease.LeaseID, work.SlotLease.Owner, finishedAt, "agent failure")
+				slotQuarantined = true
+				if quarantineErr != nil {
+					return Outcome{}, quarantineErr
+				}
+				s.config.Sink.Record(observability.Event{At: finishedAt, Component: "slot", Operation: "quarantine", Outcome: "quarantined", RequestID: observability.RedactIdentifier(claim.Request.RequestID), Resource: observability.RedactIdentifier(work.SlotLease.SlotID), ErrorClass: "agent_failure"})
+			} else if release, ok := s.store.(interface {
+				ReleaseSlotLease(string, string, string) error
+			}); ok {
+				revokeErr := s.revokeSlotLease(work.SlotLease.LeaseID)
+				slotCapabilityRevoked = revokeErr == nil
+				if revokeErr != nil {
+					return Outcome{}, revokeErr
+				}
+				releaseErr := release.ReleaseSlotLease(work.SlotLease.SlotID, work.SlotLease.LeaseID, work.SlotLease.Owner)
+				if releaseErr != nil {
+					return Outcome{}, releaseErr
+				}
+				slotReleased = true
+			}
+		}
+		if work.SlotLease.LeaseID != "" && !slotQuarantined && !slotReleased {
+			if release, ok := s.store.(interface {
+				ReleaseSlotLease(string, string, string) error
+			}); ok {
+				revokeErr := s.revokeSlotLease(work.SlotLease.LeaseID)
+				slotCapabilityRevoked = revokeErr == nil
+				if revokeErr != nil {
+					return Outcome{}, revokeErr
+				}
+				releaseErr := release.ReleaseSlotLease(work.SlotLease.SlotID, work.SlotLease.LeaseID, work.SlotLease.Owner)
+				if releaseErr != nil {
+					return Outcome{}, releaseErr
+				}
+				slotReleased = true
+				s.config.Sink.Record(observability.Event{At: finishedAt, Component: "slot", Operation: "release", Outcome: "released", RequestID: observability.RedactIdentifier(claim.Request.RequestID), Resource: observability.RedactIdentifier(work.SlotLease.SlotID)})
+			}
+		}
 		// A request cancellation is durable and may race with the worker's
 		// terminal event. Do not turn that expected lifecycle into LOGIN_FAILED
 		// or a retry after the cancellation transaction released its lease.
-		current, readErr := s.store.GetRequest(claim.Request.RequestID)
-		if readErr != nil {
-			s.record(finishedAt, "run", "failed", claim.Request.RequestID, "store_error", duration)
-			return Outcome{}, readErr
+		if currentRequest.RequestID == "" && currentRequestErr == nil {
+			currentRequest, currentRequestErr = s.store.GetRequest(claim.Request.RequestID)
 		}
-		if current.State == account.Cancelled {
+		if currentRequestErr != nil {
+			_ = s.revokeRequest(claim.Request.RequestID)
+			s.record(finishedAt, "run", "failed", claim.Request.RequestID, "store_error", duration)
+			return Outcome{}, currentRequestErr
+		}
+		if currentRequest.State == account.Cancelled {
+			if err := s.revokeRequest(claim.Request.RequestID); err != nil {
+				return Outcome{}, err
+			}
 			s.record(finishedAt, "run", "cancelled", claim.Request.RequestID, "", duration)
-			return Outcome{Request: current}, nil
+			return Outcome{Request: currentRequest}, nil
 		}
 		runnerResult = Result{Failure: account.TransientFailure}
+	}
+	if work.SlotLease.LeaseID != "" && !slotQuarantined && !slotReleased {
+		if release, ok := s.store.(interface {
+			ReleaseSlotLease(string, string, string) error
+		}); ok {
+			revokeErr := s.revokeSlotLease(work.SlotLease.LeaseID)
+			slotCapabilityRevoked = revokeErr == nil
+			if revokeErr != nil {
+				return Outcome{}, revokeErr
+			}
+			releaseErr := release.ReleaseSlotLease(work.SlotLease.SlotID, work.SlotLease.LeaseID, work.SlotLease.Owner)
+			if releaseErr != nil {
+				return Outcome{}, releaseErr
+			}
+			s.config.Sink.Record(observability.Event{At: finishedAt, Component: "slot", Operation: "release", Outcome: "released", RequestID: observability.RedactIdentifier(claim.Request.RequestID), Resource: observability.RedactIdentifier(work.SlotLease.SlotID)})
+		}
+	}
+	if work.SlotLease.LeaseID != "" && !slotCapabilityRevoked {
+		if err := s.revokeSlotLease(work.SlotLease.LeaseID); err != nil {
+			return Outcome{}, err
+		}
+	}
+	// Capabilities are scoped to one running attempt. Revoke them before the
+	// request is retried or reaches a terminal business transition.
+	if err := s.revokeRequest(claim.Request.RequestID); err != nil {
+		return Outcome{}, err
 	}
 	if runnerResult.Succeeded {
 		outcome, err := s.finishSuccess(finishedAt, claim.Request, claim.Lease, Outcome{Request: claim.Request})
@@ -232,6 +429,34 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		s.record(finishedAt, "run", "failed", claim.Request.RequestID, string(runnerResult.Failure), duration)
 	}
 	return outcome, err
+}
+
+func (s *Scheduler) recoverExpiredSlotLeases(now time.Time) error {
+	if s == nil {
+		return ErrInvalidConfig
+	}
+	if lister, ok := s.store.(SlotLeaseLister); ok {
+		leases, err := lister.ListSlotLeases()
+		if err != nil {
+			return err
+		}
+		for _, record := range leases {
+			if record.Lease.Expired(now) {
+				if s.config.SlotLeaseStopper != nil {
+					if err := s.config.SlotLeaseStopper.StopSlotLease(context.Background(), record.Lease); err != nil {
+						return err
+					}
+				}
+				if err := s.revokeSlotLease(record.Lease.LeaseID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if recovery, ok := s.store.(SlotLeaseRecovery); ok {
+		return recovery.RecoverExpiredSlotLeases(now)
+	}
+	return nil
 }
 
 // resolveCancellationRace treats a stale terminal event as an expected
@@ -360,6 +585,9 @@ func (s *Scheduler) expireQueued(now time.Time) error {
 		if _, err := s.store.CancelRequest(event); err != nil && !errors.Is(err, account.ErrStaleEvent) {
 			return err
 		}
+		if err := s.revokeRequest(request.RequestID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -391,6 +619,9 @@ func (s *Scheduler) recoverExpired(now time.Time) error {
 			if _, err := s.finishFailure(now, request, record.Lease, true, account.TransientFailure); err != nil && !errors.Is(err, account.ErrStaleEvent) && !errors.Is(err, account.ErrLeaseNotOwned) && !errors.Is(err, store.ErrLeaseNotFound) {
 				return err
 			}
+			if err := s.revokeRequest(request.RequestID); err != nil {
+				return err
+			}
 		case account.Starting:
 			event := account.Event{
 				EventID:          s.config.NewID("recovery"),
@@ -410,6 +641,57 @@ func (s *Scheduler) recoverExpired(now time.Time) error {
 			}
 		default:
 			if err := s.store.ReleaseLease(record.AccountID, record.Lease.LeaseID, record.Lease.Owner); err != nil && !errors.Is(err, store.ErrLeaseNotFound) && !errors.Is(err, account.ErrLeaseNotOwned) {
+				return err
+			}
+		}
+		if err := s.recoverOrphanedSlotLease(now, request, record.Lease.Owner); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Scheduler) recoverOrphanedSlotLease(now time.Time, request store.Request, owner string) error {
+	lister, ok := s.store.(SlotLeaseLister)
+	if !ok || strings.TrimSpace(s.config.SlotPoolID) == "" {
+		return nil
+	}
+	leases, err := lister.ListSlotLeases()
+	if err != nil {
+		return err
+	}
+	for _, record := range leases {
+		if record.Lease.RequestID != request.RequestID || record.Lease.AccountID != request.AccountID || record.Lease.Owner != owner {
+			continue
+		}
+		if quarantine, ok := s.store.(interface {
+			QuarantineSlotLease(string, string, string, time.Time, string) error
+		}); ok {
+			if s.config.SlotLeaseStopper != nil {
+				if err := s.config.SlotLeaseStopper.StopSlotLease(context.Background(), record.Lease); err != nil {
+					return err
+				}
+			}
+			if err := s.revokeSlotLease(record.Lease.LeaseID); err != nil {
+				return err
+			}
+			if err := quarantine.QuarantineSlotLease(record.SlotID, record.Lease.LeaseID, record.Lease.Owner, now, "account lease expired"); err != nil && !errors.Is(err, slot.ErrLeaseNotOwned) && !errors.Is(err, slot.ErrSlotNotFound) {
+				return err
+			}
+			continue
+		}
+		if release, ok := s.store.(interface {
+			ReleaseSlotLease(string, string, string) error
+		}); ok {
+			if s.config.SlotLeaseStopper != nil {
+				if err := s.config.SlotLeaseStopper.StopSlotLease(context.Background(), record.Lease); err != nil {
+					return err
+				}
+			}
+			if err := s.revokeSlotLease(record.Lease.LeaseID); err != nil {
+				return err
+			}
+			if err := release.ReleaseSlotLease(record.SlotID, record.Lease.LeaseID, record.Lease.Owner); err != nil && !errors.Is(err, slot.ErrLeaseNotOwned) && !errors.Is(err, slot.ErrSlotNotFound) {
 				return err
 			}
 		}

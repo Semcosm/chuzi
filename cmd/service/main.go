@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -32,6 +31,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/plugin"
 	"github.com/Semcosm/chuzi/internal/queue"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -78,24 +78,27 @@ type serviceOptions struct {
 }
 
 type serviceRuntime struct {
-	store         *store.Store
-	requests      *requestservice.Service
-	credentials   *credential.Service
-	runner        queue.Runner
-	automation    automation.Adapter
-	scheduler     *queue.Scheduler
-	notifier      *matrix.Notifier
-	gateway       *matrix.Gateway
-	matrixClient  *matrix.HTTPClient
-	health        *health.Checker
-	healthListen  string
-	metrics       *observability.Metrics
-	logger        *observability.JSONLogger
-	diagnostics   *diagnostics.Service
-	eventBuffer   *observability.EventBuffer
-	metricsListen string
-	coreAPI       coreapi.API
-	coreServer    *coretransport.Server
+	store          *store.Store
+	requests       *requestservice.Service
+	credentials    *credential.Service
+	runner         queue.Runner
+	automation     automation.Adapter
+	scheduler      *queue.Scheduler
+	notifier       *matrix.Notifier
+	gateway        *matrix.Gateway
+	matrixClient   *matrix.HTTPClient
+	health         *health.Checker
+	healthListen   string
+	metrics        *observability.Metrics
+	logger         *observability.JSONLogger
+	diagnostics    *diagnostics.Service
+	eventBuffer    *observability.EventBuffer
+	metricsListen  string
+	coreAPI        coreapi.API
+	coreServer     *coretransport.Server
+	slotReconciler slotReconciler
+	slotInterval   time.Duration
+	slotHealth     *slotLifecycleHealth
 }
 
 func (r *serviceRuntime) refreshMetrics(at time.Time) {
@@ -120,6 +123,36 @@ func (r *serviceRuntime) refreshMetrics(at time.Time) {
 	r.metrics.Set("chuzi_notifications_claimed", float64(snapshot.ClaimedNotifications))
 	r.metrics.Set("chuzi_notifications_expired_claims", float64(snapshot.ExpiredNotificationClaims))
 	r.metrics.Set("chuzi_notifications_delivered", float64(snapshot.DeliveredNotifications))
+	r.metrics.Set("chuzi_job_pools", float64(snapshot.JobPools))
+	r.metrics.Set("chuzi_slots_desired", float64(snapshot.DesiredSlots))
+	r.metrics.Set("chuzi_slots_ready", float64(snapshot.ReadySlots))
+	r.metrics.Set("chuzi_slots_leased", float64(snapshot.LeasedSlots))
+	r.metrics.Set("chuzi_slots_quarantined", float64(snapshot.QuarantinedSlots))
+	r.metrics.Set("chuzi_slots_draining", float64(snapshot.DrainingSlots))
+}
+
+func (r *serviceRuntime) recordSlotReconcile(at time.Time, err error) {
+	if r == nil {
+		return
+	}
+	if r.slotHealth != nil {
+		r.slotHealth.set(err)
+	}
+	if err == nil {
+		return
+	}
+	event := observability.Event{
+		At:        at.UTC(),
+		Component: "slot",
+		Operation: "reconcile",
+		Resource:  "execution_slots",
+	}
+	event.Outcome = "failed"
+	event.ErrorClass = "reconcile_failed"
+	if r.metrics != nil {
+		r.metrics.Inc("chuzi_slot_reconcile_errors_total")
+	}
+	observability.MultiSink{r.metrics, r.logger, r.eventBuffer}.Record(event)
 }
 
 func defaultServiceOptions() serviceOptions {
@@ -290,6 +323,43 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return nil, err
 	}
+	if cfg.JobPool.Enabled() {
+		poolConfig := slot.PoolConfig{
+			PoolID:             cfg.JobPool.PoolID,
+			EnvironmentID:      cfg.JobPool.EnvironmentID,
+			EnvironmentVersion: cfg.JobPool.EnvironmentVersion,
+			DesiredSlots:       cfg.JobPool.DesiredSlots,
+			Capabilities:       append([]string(nil), cfg.JobPool.Capabilities...),
+			ManifestDigest:     cfg.JobPool.ManifestDigest,
+			Signer:             cfg.JobPool.Signer,
+			RequireTrusted:     cfg.JobPool.RequireTrusted,
+		}
+		if err := database.ReconcileJobPool(poolConfig, now()); err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+	}
+	// Slot lease recovery runs from Scheduler.RunOnce after the provisioner
+	// and capability revoker are wired, so stale agents are fenced before the
+	// durable lease is removed.
+	var rdpBridge *rdpCapabilityBridge
+	if cfg.WindowsJobPool.Enabled && cfg.WindowsJobPool.RDPEnabled {
+		rdpBridge, err = newRDPCapabilityBridge(now)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+	}
+	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge)
+	if err != nil {
+		_ = database.Close()
+		return nil, err
+	}
+	factory, err = configureWorkerFactory(cfg, options, factory, slotProfileAccess)
+	if err != nil {
+		_ = database.Close()
+		return nil, err
+	}
 	var logger *observability.JSONLogger
 	var automationAdapter automation.Adapter
 	closeOnError := func(closeErr error) (*serviceRuntime, error) {
@@ -307,6 +377,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		{Name: "chuzi_events_total", Help: "Classified chuzi operational events", Kind: observability.Counter},
 		{Name: "chuzi_event_duration_seconds", Help: "Duration of classified chuzi operations", Kind: observability.Histogram},
 		{Name: "chuzi_operational_errors_total", Help: "Operational snapshot failures", Kind: observability.Counter},
+		{Name: "chuzi_slot_reconcile_errors_total", Help: "Slot lifecycle reconciliation failures", Kind: observability.Counter},
 		{Name: "chuzi_rate_limited_requests_total", Help: "New request submissions rejected by service rate limits", Kind: observability.Counter},
 		{Name: "chuzi_database_bytes", Help: "Active database file size", Kind: observability.Gauge},
 		{Name: "chuzi_accounts", Help: "Accounts in the active store", Kind: observability.Gauge},
@@ -321,6 +392,12 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		{Name: "chuzi_notifications_claimed", Help: "Claimed Matrix notifications", Kind: observability.Gauge},
 		{Name: "chuzi_notifications_expired_claims", Help: "Expired Matrix notification claims", Kind: observability.Gauge},
 		{Name: "chuzi_notifications_delivered", Help: "Delivered Matrix notifications", Kind: observability.Gauge},
+		{Name: "chuzi_job_pools", Help: "Configured logical job pools", Kind: observability.Gauge},
+		{Name: "chuzi_slots_desired", Help: "Desired logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_ready", Help: "Ready logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_leased", Help: "Leased logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_quarantined", Help: "Quarantined logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_draining", Help: "Draining logical execution slots", Kind: observability.Gauge},
 	} {
 		if err := metrics.Register(definition); err != nil {
 			return closeOnError(err)
@@ -384,7 +461,8 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			RoomLimit: cfg.RateLimit.RoomLimit, RoomWindow: time.Duration(cfg.RateLimit.RoomWindowSeconds) * time.Second,
 			AccountLimit: cfg.RateLimit.AccountLimit, AccountWindow: time.Duration(cfg.RateLimit.AccountWindowSeconds) * time.Second,
 		},
-		Sink: sink,
+		Sink:         sink,
+		Capabilities: rdpBridge,
 	})
 	if err != nil {
 		return closeOnError(err)
@@ -400,7 +478,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		if packageErr != nil {
 			return closeOnError(errAdapterUnavailable)
 		}
-		node, lookErr := exec.LookPath(options.workerCommand)
+		node, lookErr := resolveServiceWorkerCommand(options, cfg.WindowsJobPool.Enabled)
 		if lookErr != nil {
 			return closeOnError(fmt.Errorf("service: automation adapter runtime unavailable"))
 		}
@@ -428,7 +506,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		}
 		pipelineRunner, pipelineErr := core.NewPipelineRunner(database, core.PipelineConfig{
 			Factory: factory, Credentials: credentials, Automation: client, Profiles: profiles,
-			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", ViewRegistry: viewRegistry, CancellationObserver: database, Clock: now, Sink: sink},
+			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", ViewRegistry: viewRegistry, CancellationObserver: database, SlotLeases: database, ProfileAccess: slotProfileAccess, Clock: now, Sink: sink},
 			Clock:   now, Actor: options.owner,
 			Operation:          automation.Operation{Name: "genshin.cloudgame.session_probe"},
 			CredentialOptional: true,
@@ -445,12 +523,18 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			ShutdownTimeout:      options.shutdownTimeout,
 			ViewRegistry:         viewRegistry,
 			CancellationObserver: database,
+			SlotLeases:           database,
+			ProfileAccess:        slotProfileAccess,
 			Clock:                now,
 			Sink:                 sink,
 		})
 	}
 	if err != nil {
 		return closeOnError(err)
+	}
+	var slotLeaseStopper queue.SlotLeaseStopper
+	if candidate, ok := slotProfileAccess.(queue.SlotLeaseStopper); ok {
+		slotLeaseStopper = candidate
 	}
 	scheduler, err := queue.New(database, sessionRunner, queue.Config{
 		Owner:                options.owner,
@@ -465,17 +549,39 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		Clock: now,
 		NewID: newID,
 		Sink:  sink,
+		SlotPoolID: func() string {
+			if cfg.JobPool.Enabled() {
+				return cfg.JobPool.PoolID
+			}
+			return ""
+		}(),
+		SlotRequirement: func() slot.EnvironmentRequirement {
+			if cfg.JobPool.Enabled() {
+				return slot.EnvironmentRequirement{EnvironmentID: cfg.JobPool.EnvironmentID, Version: cfg.JobPool.EnvironmentVersion, Capabilities: append([]string(nil), cfg.JobPool.Capabilities...), ManifestDigest: cfg.JobPool.ManifestDigest, Signer: cfg.JobPool.Signer, RequireTrusted: cfg.JobPool.RequireTrusted}
+			}
+			return slot.EnvironmentRequirement{}
+		}(),
+		Capabilities:     rdpBridge,
+		SlotLeaseStopper: slotLeaseStopper,
 	})
 	if err != nil {
 		return closeOnError(err)
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, Diagnostics: diagnosticService})
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolID: cfg.JobPool.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}
 	runtime := &serviceRuntime{
 		store: database, requests: requestService, credentials: credentials,
 		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, diagnostics: diagnosticService, eventBuffer: eventBuffer, coreAPI: coreAPI,
+	}
+	runtime.slotReconciler = slotReconciler
+	if slotReconciler != nil {
+		runtime.slotHealth = newSlotLifecycleHealth()
+	}
+	runtime.slotInterval = 5 * time.Second
+	if cfg.WindowsJobPool.Enabled {
+		runtime.slotInterval = time.Duration(cfg.WindowsJobPool.AgentHeartbeatSeconds) * time.Second
 	}
 	runtime.metricsListen = cfg.Observability.MetricsListen
 	if strings.TrimSpace(options.metricsListen) != "" {
@@ -539,6 +645,9 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return err
 		},
 		"worker": health.StaticProbe(nil),
+	}
+	if runtime.slotHealth != nil {
+		probes["slot_lifecycle"] = runtime.slotHealth.probe
 	}
 	if runtime.matrixClient != nil {
 		probes["matrix"] = func(ctx context.Context) error {

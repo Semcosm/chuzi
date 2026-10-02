@@ -11,6 +11,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/account"
 	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/queue"
+	"github.com/Semcosm/chuzi/internal/slot"
 )
 
 var (
@@ -31,6 +32,17 @@ type LeaseKeeper interface {
 	HeartbeatLease(accountID string, now time.Time, leaseID, owner string, ttl time.Duration) (account.Lease, error)
 }
 
+type SlotLeaseKeeper interface {
+	HeartbeatSlotLease(slotID string, now time.Time, leaseID, owner string, ttl time.Duration) (slot.Lease, error)
+}
+
+// ProfileAccess is the optional platform boundary used to grant a managed
+// slot user access to the service-derived account Profile for one run.
+type ProfileAccess interface {
+	GrantProfile(context.Context, string, string) error
+	RevokeProfile(context.Context, string, string) error
+}
+
 // RequestCancellationObserver is the narrow durable fact needed by a running
 // session to stop after a request was cancelled.
 type RequestCancellationObserver interface {
@@ -40,13 +52,17 @@ type RequestCancellationObserver interface {
 // WorkerSpec contains only service-derived identifiers and the generated
 // profile path. It deliberately has no credential or arbitrary user path.
 type WorkerSpec struct {
-	SessionID  string
-	AccountID  string
-	RequestID  string
-	ProfileDir string
-	LeaseID    string
-	Owner      string
-	Mode       string
+	SessionID             string
+	AccountID             string
+	RequestID             string
+	ProfileDir            string
+	LeaseID               string
+	Owner                 string
+	Mode                  string
+	SlotID                string `json:"slot_id,omitempty"`
+	EnvironmentGeneration uint64 `json:"environment_generation,omitempty"`
+	AgentHandle           string `json:"agent_handle,omitempty"`
+	SlotLeaseID           string `json:"slot_lease_id,omitempty"`
 }
 
 func (s WorkerSpec) validate() error {
@@ -110,6 +126,8 @@ type Config struct {
 	CancellationObserver RequestCancellationObserver
 	Clock                Clock
 	Sink                 observability.Sink
+	SlotLeases           SlotLeaseKeeper
+	ProfileAccess        ProfileAccess
 }
 
 // Runner adapts a WorkerFactory to queue.Runner and keeps worker facts below
@@ -117,9 +135,11 @@ type Config struct {
 type Runner struct {
 	factory       WorkerFactory
 	leases        LeaseKeeper
+	slotLeases    SlotLeaseKeeper
 	cancellations RequestCancellationObserver
 	profiles      *Profiles
 	config        Config
+	profileAccess ProfileAccess
 }
 
 func New(factory WorkerFactory, leases LeaseKeeper, profiles *Profiles, config Config) (*Runner, error) {
@@ -130,7 +150,7 @@ func New(factory WorkerFactory, leases LeaseKeeper, profiles *Profiles, config C
 	if config.HeartbeatInterval < 0 || (config.HeartbeatInterval > 0 && config.HeartbeatInterval >= config.LeaseTTL) {
 		return nil, ErrInvalidConfig
 	}
-	if config.HeartbeatInterval == 0 && leases != nil {
+	if config.HeartbeatInterval == 0 && (leases != nil || config.SlotLeases != nil) {
 		config.HeartbeatInterval = config.LeaseTTL / 3
 		if config.HeartbeatInterval <= 0 {
 			return nil, ErrInvalidConfig
@@ -139,13 +159,13 @@ func New(factory WorkerFactory, leases LeaseKeeper, profiles *Profiles, config C
 	if config.Sink == nil {
 		config.Sink = observability.NopSink{}
 	}
-	return &Runner{factory: factory, leases: leases, cancellations: config.CancellationObserver, profiles: profiles, config: config}, nil
+	return &Runner{factory: factory, leases: leases, slotLeases: config.SlotLeases, cancellations: config.CancellationObserver, profiles: profiles, profileAccess: config.ProfileAccess, config: config}, nil
 }
 
 // Run implements queue.Runner. The queue remains responsible for durable
 // STARTING/LOGGING_IN and terminal business transitions; this method returns
 // only runtime facts and lifecycle errors.
-func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error) {
+func (r *Runner) Run(ctx context.Context, work queue.Work) (result queue.Result, runErr error) {
 	if r == nil || ctx == nil {
 		return queue.Result{}, ErrInvalidConfig
 	}
@@ -173,14 +193,33 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 		return queue.Result{Failure: account.ConfigurationFailure}, err
 	}
 	defer releaseProfile()
+	profileGranted := false
+	if r.profileAccess != nil && work.SlotID != "" {
+		if err := r.profileAccess.GrantProfile(ctx, work.SlotID, profileDir); err != nil {
+			return queue.Result{Failure: account.PermissionFailure}, err
+		}
+		profileGranted = true
+		defer func() {
+			if profileGranted {
+				if revokeErr := r.profileAccess.RevokeProfile(context.Background(), work.SlotID, profileDir); revokeErr != nil && runErr == nil {
+					result = queue.Result{Failure: account.PermissionFailure}
+					runErr = revokeErr
+				}
+			}
+		}()
+	}
 	spec := WorkerSpec{
-		SessionID:  work.Request.RequestID,
-		AccountID:  work.Request.AccountID,
-		RequestID:  work.Request.RequestID,
-		ProfileDir: profileDir,
-		LeaseID:    work.Lease.LeaseID,
-		Owner:      work.Lease.Owner,
-		Mode:       r.config.WorkerMode,
+		SessionID:             work.Request.RequestID,
+		AccountID:             work.Request.AccountID,
+		RequestID:             work.Request.RequestID,
+		ProfileDir:            profileDir,
+		LeaseID:               work.Lease.LeaseID,
+		Owner:                 work.Lease.Owner,
+		Mode:                  r.config.WorkerMode,
+		SlotID:                work.SlotID,
+		EnvironmentGeneration: work.EnvironmentGeneration,
+		AgentHandle:           work.AgentHandle,
+		SlotLeaseID:           work.SlotLease.LeaseID,
 	}
 	worker, err := r.factory.Start(ctx, spec)
 	if err != nil {
@@ -199,7 +238,10 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 	defer func() {
 		closeCtx, closeCancel := context.WithTimeout(context.Background(), r.config.ShutdownTimeout)
 		defer closeCancel()
-		_ = worker.Close(closeCtx)
+		if closeErr := worker.Close(closeCtx); closeErr != nil && runErr == nil {
+			result = queue.Result{Failure: account.TransientFailure}
+			runErr = closeErr
+		}
 	}()
 
 	runCtx, stop := context.WithCancel(ctx)
@@ -208,6 +250,10 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 	leaseState := &leaseState{value: work.Lease}
 	if r.leases != nil {
 		go r.heartbeat(runCtx, work, leaseState, heartbeatErr)
+	}
+	slotState := &slotLeaseState{value: work.SlotLease}
+	if r.slotLeases != nil && work.SlotLease.LeaseID != "" {
+		go r.heartbeatSlot(runCtx, work, slotState, heartbeatErr)
 	}
 
 	done := make(chan workerRun, 1)
@@ -258,6 +304,15 @@ func (r *Runner) Run(ctx context.Context, work queue.Work) (queue.Result, error)
 		if latestLease.Expired(finishedAt) {
 			r.record(finishedAt, "run", "failed", work.Request.RequestID, "lease_expired", elapsed(startedAt, finishedAt))
 			return queue.Result{Failure: account.TransientFailure}, account.ErrLeaseExpired
+		}
+		if work.SlotLease.LeaseID != "" {
+			slotState.mu.RLock()
+			latestSlotLease := slotState.value
+			slotState.mu.RUnlock()
+			if latestSlotLease.Expired(finishedAt) {
+				r.record(finishedAt, "run", "failed", work.Request.RequestID, "slot_lease_expired", elapsed(startedAt, finishedAt))
+				return queue.Result{Failure: account.TransientFailure}, slot.ErrLeaseExpired
+			}
 		}
 		outcomeName := "failed"
 		if outcome.result.Succeeded {
@@ -319,6 +374,36 @@ type workerRun struct {
 type leaseState struct {
 	mu    sync.RWMutex
 	value account.Lease
+}
+
+type slotLeaseState struct {
+	mu    sync.RWMutex
+	value slot.Lease
+}
+
+func (r *Runner) heartbeatSlot(ctx context.Context, work queue.Work, state *slotLeaseState, failures chan<- error) {
+	ticker := time.NewTicker(r.config.HeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			now := r.config.Clock()
+			if now.IsZero() {
+				sendHeartbeatError(failures, ErrInvalidConfig)
+				return
+			}
+			updated, err := r.slotLeases.HeartbeatSlotLease(work.SlotLease.SlotID, now, work.SlotLease.LeaseID, work.SlotLease.Owner, r.config.LeaseTTL)
+			if err != nil {
+				sendHeartbeatError(failures, err)
+				return
+			}
+			state.mu.Lock()
+			state.value = updated
+			state.mu.Unlock()
+		}
+	}
 }
 
 func (r *Runner) heartbeat(ctx context.Context, work queue.Work, state *leaseState, failures chan<- error) {

@@ -9,6 +9,7 @@
 | [core-api.md](core-api.md) | `chuzi.core/v1` wire、DTO、错误和本地 IPC 约定 |
 | [account-state-machine.md](account-state-machine.md) | 账号业务状态、转换条件和异常处理 |
 | [storage.md](storage.md) | 单节点存储拓扑、Schema、事务和恢复约定 |
+| [job-user-pool.md](job-user-pool.md) | 阶段 1 逻辑执行槽位池、租约和容量语义 |
 | [security.md](security.md) | 凭证、浏览器 Profile、日志和权限安全 |
 | [matrix-api.md](matrix-api.md) | Matrix 房间命令、事件和状态通知约定 |
 | [request-rate-limit.md](request-rate-limit.md) | 新请求的服务级限流范围、配置和错误指标 |
@@ -24,6 +25,7 @@
 - **请求（Job）**：外部请求者提交的一次登录或状态查询任务。
 - **队列（Queue）**：根据并发限制调度请求的组件。
 - **业务状态（Business Status）**：对外可见的账号处理状态，不等同于底层浏览器进程状态。
+- **执行槽位（Execution Slot）**：可复用的逻辑执行资源；阶段 1 不代表或创建 Windows 用户。
 
 ## 推荐阅读顺序
 

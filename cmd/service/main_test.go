@@ -18,6 +18,7 @@ import (
 	adapterpkg "github.com/Semcosm/chuzi/internal/adapter"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -31,6 +32,31 @@ func TestWorkerStderrRequiresExplicitDebugOptIn(t *testing.T) {
 	t.Setenv("CHUZI_WORKER_DEBUG", "1")
 	if got := workerStderr(); got != os.Stderr {
 		t.Fatalf("workerStderr() with opt-in = %T, want os.Stderr", got)
+	}
+}
+
+func TestSlotLifecycleFailureIsClassifiedAndAffectsReadiness(t *testing.T) {
+	metrics := observability.NewMetrics()
+	if err := metrics.Register(observability.MetricDefinition{Name: "chuzi_slot_reconcile_errors_total", Kind: observability.Counter}); err != nil {
+		t.Fatal(err)
+	}
+	healthState := newSlotLifecycleHealth()
+	events := observability.NewEventBuffer(8)
+	runtime := &serviceRuntime{metrics: metrics, eventBuffer: events, slotHealth: healthState}
+	runtime.recordSlotReconcile(time.Date(2026, time.September, 12, 1, 2, 3, 0, time.UTC), errors.New("SID and password must never leave the OS boundary"))
+	if err := healthState.probe(context.Background()); err == nil {
+		t.Fatal("failed reconcile did not mark slot lifecycle unhealthy")
+	}
+	if got := metrics.Prometheus(); !strings.Contains(got, "chuzi_slot_reconcile_errors_total 1") {
+		t.Fatalf("reconcile metric = %q", got)
+	}
+	window := events.Snapshot(8)
+	if len(window) != 1 || window[0].ErrorClass != "reconcile_failed" || strings.Contains(window[0].ErrorClass, "password") {
+		t.Fatalf("classified reconcile event = %#v", window)
+	}
+	runtime.recordSlotReconcile(time.Date(2026, time.September, 12, 1, 2, 4, 0, time.UTC), nil)
+	if err := healthState.probe(context.Background()); err != nil {
+		t.Fatalf("successful reconcile left readiness unhealthy: %v", err)
 	}
 }
 

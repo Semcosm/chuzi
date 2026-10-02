@@ -40,6 +40,8 @@ for target in linux-amd64 windows-amd64; do
     printf '%s' launcher >"$stage/chuzi-launcher.exe"
     printf '%s' service >"$stage/chuzi.exe"
     printf '%s' browser-launcher >"$stage/chuzi-browser-launcher.exe"
+    printf '%s' user-agent >"$stage/chuzi-user-agent.exe"
+    printf '%s' node-runtime >"$stage/node.exe"
     printf '%s' presentmon >"$stage/PresentMon.exe"
     printf '%s' presentmon-license >"$stage/PresentMon-LICENSE.txt"
   else
@@ -116,7 +118,7 @@ stage, dist, version, target = map(Path, sys.argv[1:])
 groups = {
     "bundle": [path for path in stage.rglob("*") if path.is_file()],
     "launcher": [stage / "chuzi-launcher.exe", stage / "release-manifest.json"],
-    "service": [stage / "chuzi.exe", stage / "chuzi-browser-launcher.exe"],
+    "service": [stage / "chuzi.exe", stage / "chuzi-browser-launcher.exe", stage / "chuzi-user-agent.exe", stage / "node.exe"],
     "browser-worker": [path for path in (stage / "browser-worker").rglob("*") if path.is_file()],
     "presentmon": [stage / "PresentMon.exe", stage / "PresentMon-LICENSE.txt"],
 }
