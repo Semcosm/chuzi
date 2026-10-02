@@ -38,6 +38,10 @@ var (
 	ErrCleanupUserDisabled  = errors.New("slotwindows: user cleanup disabled")
 	ErrCleanupUserAdmin     = errors.New("slotwindows: user cleanup administrator membership")
 	ErrCleanupUserSID       = errors.New("slotwindows: user cleanup SID mismatch")
+	ErrSessionGroupLookup   = errors.New("slotwindows: remote desktop group lookup failed")
+	ErrSessionGroupAdd      = errors.New("slotwindows: remote desktop group add failed")
+	ErrSessionGroupVerify   = errors.New("slotwindows: remote desktop group membership failed")
+	ErrSessionPolicy        = errors.New("slotwindows: remote interactive policy failed")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -2182,7 +2186,7 @@ func ensureRemoteDesktopMembership(username string) error {
 func verifyRemoteDesktopMembership(username string) error {
 	groups, err := localGroupNames(username)
 	if err != nil {
-		return err
+		return ErrSessionGroupVerify
 	}
 	userSID, err := lookupSID(username)
 	if err != nil {
@@ -2193,7 +2197,7 @@ func verifyRemoteDesktopMembership(username string) error {
 	for _, name := range groups {
 		groupSID, sidErr := lookupSID(name)
 		if sidErr != nil {
-			return ErrSessionIdentity
+			return ErrSessionGroupVerify
 		}
 		if groupSID == "S-1-5-32-555" {
 			memberOfRDP = true
@@ -2201,10 +2205,10 @@ func verifyRemoteDesktopMembership(username string) error {
 		principals = append(principals, groupSID)
 	}
 	if !memberOfRDP {
-		return ErrSessionIdentity
+		return ErrSessionGroupVerify
 	}
 	if err := verifyRemoteInteractiveRight(userSID, "S-1-5-32-555", principals...); err != nil {
-		return ErrSessionIdentity
+		return ErrSessionPolicy
 	}
 	return nil
 }
@@ -2316,7 +2320,7 @@ func changeRemoteDesktopMembership(username string, add bool) error {
 	}
 	group, err := groupNameForSID("S-1-5-32-555")
 	if err != nil {
-		return ErrSessionIdentity
+		return ErrSessionGroupLookup
 	}
 	groupPtr, err := windows.UTF16PtrFromString(group)
 	if err != nil {
@@ -2341,7 +2345,7 @@ func changeRemoteDesktopMembership(username string, add bool) error {
 		return nil
 	}
 	if status != 0 {
-		return ErrSessionIdentity
+		return ErrSessionGroupAdd
 	}
 	return nil
 }
