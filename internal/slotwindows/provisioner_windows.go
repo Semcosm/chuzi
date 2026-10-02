@@ -2258,6 +2258,7 @@ type lsaUnicodeString struct {
 type lsaObjectAttributes struct {
 	Length                   uint32
 	RootDirectory            uintptr
+	ObjectName               uintptr
 	Attributes               uint32
 	SecurityDescriptor       uintptr
 	SecurityQualityOfService uintptr
