@@ -78,6 +78,64 @@ agent heartbeat 时 slot 保持 provisioning/quarantined，不会参与调度。
 ready。这样 OS 边界故障既会继续按固定间隔重试，也会出现在指标、结构化日志和 readiness
 投影中。
 
+## Windows job pool 原生验收
+
+阶段 4 的原生 smoke 只能在受控 Windows runner 上运行。runner 必须使用管理员权限、
+可创建 disposable 本地用户、可查询 WTS session，并带有 `go.exe`、Node.js 20+ 和
+当前 checkout；runner 标签为 `self-hosted`, `windows`, `chuzi-job-pool`。测试脚本不接受
+用户名、路径、命令或 executable 参数：
+
+```powershell
+scripts/test_windows_job_pool_smoke.ps1
+```
+
+脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
+`chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，
+并在退出时只删除带有 `CHUZI-MANAGED` ownership 标记的测试用户和本次临时目录。输出不得
+包含密码、SID、用户名、Profile 路径、pipe 路径或原始 Win32 错误。没有可用的管理员权限或
+已登录的受控用户 session 时，smoke 必须失败；不能将交叉编译或逻辑测试当作 Windows
+原生通过。
+
+原生 smoke 覆盖受管用户创建/复用/删除、Remote Desktop Users 成员和
+Administrators 排除、ownership/SID 对账、Profile ACL、reparse/path traversal 拒绝、
+agent named pipe/token、session-aware worker 启动、browser worker handshake、worker
+停止、stale lease、未知 ownership 项保护和资源退休。发布 workflow 的
+`chuzi-build-windows-job-pool-smoke` job 使用专用 runner；该 job 失败或排队不可用时，
+`chuzi-build` 聚合检查失败或保持等待，发布不能继续。
+
+## Windows readiness 和故障处理
+
+Windows job pool 的 readiness 必须按以下分类投影，不能将计数非零直接解释为生产 ready：
+
+| 分类 | 含义 | 处理 |
+| --- | --- | --- |
+| `slot_pool_disabled` | 未启用逻辑或 Windows pool | 不调度作业 |
+| `provisioning` | 正在创建或修复 slot/agent | 等待 reconcile |
+| `ready` | trusted environment、session、desktop、agent health 均通过 | 允许调度 |
+| `degraded` | reconcile、health 或容量部分失败 | 保留可用 slot，限制新作业并告警 |
+| `quarantined` | agent/ACL/session 故障隔离 | 不调度，按 ownership 检查修复 |
+| `draining` | 缩容或 generation 升级等待 lease 释放 | 不接新作业 |
+| `rdp_unavailable` | RDP 未启用或无受控 authorizer/broker | 仅允许非交互能力 |
+| `environment_untrusted` | manifest、digest、signer 或 ready record 不匹配 | fail closed |
+| `windows_platform_unavailable` | 非 Windows、权限不足或原生 smoke 未通过 | 不启用 OS 用户池 |
+
+RDP capability 仍由 credential boundary 管理，并只向 Core/UI 返回 opaque token。当前默认
+authorizer 是 deny-by-default；在提供受控 RDP broker、Windows API 权限和测试凭证边界之前，
+生产交互式 RDP 必须保持 `rdp_unavailable`。
+
+## 扩缩容、升级和恢复
+
+扩容先增加 `desired_slots`，由 reconcile 创建新的 generation；缩容将 leased slot 标为
+`draining`，释放 lease 后才进入 `retiring`。环境升级必须先安装、验证、trust、health 和
+promote 新 package；旧 generation 继续服务已有 lease，释放后才切换。升级失败或回滚期间
+保持旧的 ready record，不删除未知目录或用户。
+
+服务重启或断电恢复时，agent Job Object 和 lease fence 优先处理；过期 account/slot lease
+不得直接恢复为 Ready，残留 agent 必须先停止，generation 不匹配的 agent 不能接收新 request。
+quarantine 只能在 ownership、ACL、环境和 agent health 全部重新通过后显式恢复。紧急停用时
+先禁用 pool 和 RDP authorizer，再停止服务；恢复按 package promote、reconcile、health、
+readiness 顺序执行。
+
 ## 目标部署的最低运行要求
 
 1. 可持久化的状态数据库。

@@ -566,6 +566,28 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  windows_job_pool_smoke:
+    name: chuzi-build-windows-job-pool-smoke
+    runs-on: [self-hosted, windows, chuzi-job-pool]
+    timeout-minutes: 20
+    needs: [contract_checks]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: 20
+      - name: Run disposable Windows job-pool smoke
+        shell: pwsh
+        run: ./scripts/test_windows_job_pool_smoke.ps1
+
   assemble_target:
     name: chuzi-build-${{ matrix.target }}
     needs: [release_context, go_build, node_checks]
@@ -692,7 +714,7 @@ jobs:
   chuzi_build:
     name: chuzi-build
     if: always()
-    needs: [release_context, contract_checks, go_checks, node_checks, go_build, windows_slint_build, windows_slint_layout, windows_slint, assemble_target, artifact_integration]
+    needs: [release_context, contract_checks, go_checks, node_checks, go_build, windows_slint_build, windows_slint_layout, windows_slint, windows_job_pool_smoke, assemble_target, artifact_integration]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every build stage
@@ -707,6 +729,7 @@ jobs:
             "${{ needs.windows_slint_build.result }}" \
             "${{ needs.windows_slint_layout.result }}" \
             "${{ needs.windows_slint.result }}" \
+            "${{ needs.windows_job_pool_smoke.result }}" \
             "${{ needs.assemble_target.result }}"; do
             test "$result" = success || { echo "build stage did not succeed: $result" >&2; exit 1; }
           done
