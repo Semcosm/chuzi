@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 7df03426fc42beb541ed5151159dafed63ebf26a
+Head or Range: bffd97e3b25b0de4da2fbbd64b55246156707a8b
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 7df03426fc42beb541ed5151159dafed63ebf26a
+Head OID: bffd97e3b25b0de4da2fbbd64b55246156707a8b
 Integrated Result: pending
 
 ## Summary
@@ -71,6 +71,10 @@ setup stage but the previous script exposed only the generic `setup` label; the
 follow-up test commit now reports stable setup classifications such as
 `administrator_required`, `toolchain_required`, `runtime_acl`, or
 `session_unavailable` and preserves a redacted diagnostic log.
+The elevated rerun reached the native provision path and returned
+`cleanup_failed`; the follow-up commit now separates `cleanup_agent_failed`,
+`cleanup_session_failed`, `cleanup_root_failed`, and `cleanup_user_failed` so
+the next native run identifies the exact rollback boundary.
 The hosted preflight is covered by `scripts/test_windows_job_pool_hosted_preflight.ps1`;
 its first remote result is pending at this revision.
 
