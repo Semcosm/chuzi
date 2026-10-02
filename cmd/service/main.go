@@ -621,7 +621,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolID: cfg.JobPool.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, Environments: database, JobPoolID: cfg.JobPool.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}

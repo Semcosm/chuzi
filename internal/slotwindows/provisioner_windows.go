@@ -42,6 +42,7 @@ var (
 	ErrSessionGroupAdd      = errors.New("slotwindows: remote desktop group add failed")
 	ErrSessionGroupVerify   = errors.New("slotwindows: remote desktop group membership failed")
 	ErrSessionPolicy        = errors.New("slotwindows: remote interactive policy failed")
+	ErrSessionUserLookup    = errors.New("slotwindows: managed user SID lookup failed")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -2088,10 +2089,14 @@ func lookupSID(account string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var sidBuffer [68]byte
-	var domainBuffer [512]uint16
-	sidSize, domainSize := uint32(len(sidBuffer)), uint32(len(domainBuffer))
+	sidSize, domainSize := uint32(0), uint32(0)
 	var use uint32
+	err = windows.LookupAccountName(nil, name, nil, &sidSize, nil, &domainSize, &use)
+	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		return "", err
+	}
+	sidBuffer := make([]byte, sidSize)
+	domainBuffer := make([]uint16, domainSize+1)
 	sid := (*windows.SID)(unsafe.Pointer(&sidBuffer[0]))
 	if err := windows.LookupAccountName(nil, name, sid, &sidSize, &domainBuffer[0], &domainSize, &use); err != nil {
 		return "", err
@@ -2190,7 +2195,7 @@ func verifyRemoteDesktopMembership(username string) error {
 	}
 	userSID, err := lookupSID(username)
 	if err != nil {
-		return ErrSessionIdentity
+		return ErrSessionUserLookup
 	}
 	memberOfRDP := false
 	principals := make([]string, 0, len(groups))
@@ -2328,7 +2333,7 @@ func changeRemoteDesktopMembership(username string, add bool) error {
 	}
 	sidText, err := lookupSID(username)
 	if err != nil {
-		return ErrSessionIdentity
+		return ErrSessionUserLookup
 	}
 	sid, err := windows.StringToSid(sidText)
 	if err != nil {
