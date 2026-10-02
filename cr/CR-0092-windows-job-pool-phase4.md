@@ -5,7 +5,7 @@ Head or Range: 7ac91bc3b63a5043884310205ae7e06a0d2e5760
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 12
+Revision: 13
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -156,6 +156,14 @@ and SID, Credential Manager target, temporary RDP profile path, and an explicit
 password-not-printed marker. The same redacted summary is preserved in the
 failure log when the RDP session cannot be established. No credential material
 is written to the summary or output.
+
+Revision 13 changes the diagnostic `-LocalRdp` target to `127.0.0.2`, matching
+the `mstsc` target used by the sebaxakerhtc RDPWrap `RDP_CnC` self-test. The
+Credential Manager target now uses `TERMSRV/127.0.0.2`; the exact disposable
+computer-local username remains pinned in the temporary profile and
+`administrative session:i:0` remains disabled. This is still only a diagnostic
+local-RDP path: the Go provisioner must observe the exact active WTS session,
+and no session, broker, or authorizer fence is bypassed.
 
 ## Risk
 

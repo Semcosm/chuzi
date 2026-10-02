@@ -259,21 +259,10 @@ function Test-ActiveManagedSession([string] $Name) {
 }
 
 function Get-LocalRdpTarget {
-    $configurations = @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)
-    foreach ($configuration in $configurations) {
-        if ($null -eq $configuration.IPv4DefaultGateway) {
-            continue
-        }
-        foreach ($address in @($configuration.IPv4Address)) {
-            $value = [string]$address.IPAddress
-            if (-not [string]::IsNullOrWhiteSpace($value) -and
-                $value -notmatch '^127\.' -and
-                $value -notmatch '^169\.254\.') {
-                return $value
-            }
-        }
-    }
-    throw 'local RDP requires an active non-loopback IPv4 address'
+    # RDPWrap's own RDP_CnC mstsc checks use 127.0.0.2. On supported
+    # patched hosts this loopback alias enters the RDP listener without
+    # being treated as a reconnect to the current console session.
+    return '127.0.0.2'
 }
 
 function Start-LocalRdpSession([string] $Name) {
