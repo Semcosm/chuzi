@@ -2238,7 +2238,7 @@ func verifyRemoteDesktopMembership(username string) error {
 		return ErrSessionGroupVerify
 	}
 	if err := verifyRemoteInteractiveRight(userSID, "S-1-5-32-555", principals...); err != nil {
-		return ErrSessionPolicy
+		return err
 	}
 	return nil
 }
