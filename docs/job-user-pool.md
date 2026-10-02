@@ -135,3 +135,34 @@ bootstrap 退出时先停止 worker 和 agent，再调用 provider 的幂等 `St
 ownership marker 不匹配的 root 或未知目录永远不会删除。失败会保留脱敏
 `test-output.log`，成功运行必须报告 `RemainingSmokeUsers = 0` 和
 `RemainingSmokeRoots = 0`。
+
+### 固定 session broker 协议
+
+部署侧 broker 只能监听编译期固定的
+`\\.\pipe\chuzi-session-bootstrap-v1`。JSONL 协议版本为 `1`，操作只有 `start`
+和 `stop`。请求字段是 `version`、`operation`、`slot_id`、`ordinal`、`generation`、
+`sid`、`owner`，`stop` 另外必须带非零 `session_id`；响应字段是 `version`、`operation`、
+`code`、`session_id` 和 `state`。协议解码拒绝未知字段、未知操作、错误版本、空 slot、
+非法 SID/ordinal、零 generation、缺失 owner、start 携带 session ID 和 stop 缺失
+session ID。稳定错误码包括 `invalid_version`、`invalid_request`、`unknown_operation`、
+`ownership_mismatch`、`ownership_unknown`、`stale_generation`、`session_unavailable`、
+`session_changed` 和 `stop_timeout`。
+
+broker 只在内存中保存自己创建的 `(slot_id, ordinal, generation, sid, session_id, owner)`
+记录。重复 start 只在 ownership 和仍为 active 的同一 session 完全匹配时幂等成功；旧 generation、
+错误 owner/SID/session ID 和重复使用未知 ownership 都被拒绝。broker 重启后不会接管现有
+session，也不能停止未知 session。stop 会调用部署适配器并等待 `FindSession(sid)` 不再发现
+该 session；等待受 context 总超时约束，重复 stop 仅对本次 broker 已确认的 tombstone 幂等成功。
+
+pipe listener 必须在解析 JSON 前使用显式 ACL，只允许 chuzi 服务 SID 和部署侧 broker SID，
+拒绝 Everyone、Users、Remote Desktop Users 等宽泛主体。仓库提供协议/ACL 验证和
+`SessionBroker` ownership 状态机，但不伪造 broker listener；真实 listener、ACL、RDP/Winlogon
+authorizer 和 WTS 建立动作属于部署适配器。Windows SDK 没有可直接替代真实登录的
+`WTSLogonUser` API，这不允许改用 `runas`、`CreateProcessAsUser`、`tscon` 或伪造 pipe 响应。
+
+需要一次性密码的部署实现必须使用 `SessionLoginAdapter`：密码只作为短生命周期的内存
+UTF-16 buffer 在同一受 ACL 保护的服务进程内传递，并在调用返回后清零；它不会进入 broker JSON、
+Core、UI、Matrix、日志、诊断、环境变量、临时文件或持久化状态。固定 pipe 客户端不接受
+用户名/密码字段。适配器返回的 session ID 也不能作为事实，provisioner 必须再次执行
+`FindSession(managed SID)` 并确认 SID 和 active 状态。没有真实适配器时稳定返回
+`session_unavailable`，阶段 4 不得声称 native acceptance 完成。

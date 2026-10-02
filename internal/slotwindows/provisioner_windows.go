@@ -831,7 +831,7 @@ func (p *windowsProvisioner) summary(request slot.ProvisionRequest, sid string) 
 }
 
 func (p *windowsProvisioner) managedIdentity(request slot.ProvisionRequest, sid string) (ManagedIdentity, error) {
-	identity := ManagedIdentity{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.EnvironmentGeneration, SID: sid}
+	identity := ManagedIdentity{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.EnvironmentGeneration, SID: sid, Owner: request.Owner}
 	if err := identity.validate(); err != nil {
 		return ManagedIdentity{}, err
 	}
@@ -853,7 +853,8 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 		return nil
 	}
 	provider := p.options.SessionBootstrapper
-	if provider == nil {
+	loginAdapter := p.options.SessionLoginAdapter
+	if provider == nil && loginAdapter == nil {
 		return retryableProvisionFailure{cause: ErrSessionUnavailable}
 	}
 
@@ -866,25 +867,31 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 		}
 		_ = p.stopSessionBootstrap(ctx, request.SlotID)
 	}
-	started, startErr := startManagedSession(ctx, provider, identity, username, managed.password)
+	var started BootstrapSession
+	var startErr error
+	if loginAdapter != nil {
+		started, startErr = startManagedLoginSession(ctx, loginAdapter, identity, username, managed.password)
+	} else {
+		started, startErr = startManagedSession(ctx, provider, identity, username, managed.password)
+	}
 	if startErr != nil {
 		return retryableProvisionFailure{cause: classifySessionBootstrapError(startErr)}
 	}
 	if started.ID == 0 || started.State != "active" {
-		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
 			return ErrCleanup
 		}
 		return retryableProvisionFailure{cause: ErrSessionUnavailable}
 	}
 	current, findErr := FindSession(managed.SID)
 	if findErr != nil {
-		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
 			return ErrCleanup
 		}
 		return retryableProvisionFailure{cause: classifySessionBootstrapError(findErr)}
 	}
 	if current.ID != started.ID || current.State != "active" {
-		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
 			return ErrCleanup
 		}
 		return retryableProvisionFailure{cause: ErrSessionChanged}
@@ -914,7 +921,7 @@ func classifySessionBootstrapError(err error) error {
 }
 
 func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID string) error {
-	if p == nil || p.options.SessionBootstrapper == nil {
+	if p == nil || (p.options.SessionBootstrapper == nil && p.options.SessionLoginAdapter == nil) {
 		return nil
 	}
 	p.mu.Lock()
@@ -923,7 +930,7 @@ func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID st
 	if !ok {
 		return nil
 	}
-	if err := p.options.SessionBootstrapper.Stop(ctx, state.identity, state.session); err != nil {
+	if err := p.stopManagedSession(ctx, state.identity, state.session); err != nil {
 		return ErrCleanup
 	}
 	if err := waitForSessionGone(ctx, state.identity.SID); err != nil {
@@ -937,9 +944,30 @@ func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID st
 	return nil
 }
 
+func (p *windowsProvisioner) stopManagedSession(ctx context.Context, identity ManagedIdentity, session BootstrapSession) error {
+	if p == nil {
+		return ErrCleanup
+	}
+	if p.options.SessionLoginAdapter != nil {
+		return p.options.SessionLoginAdapter.Stop(ctx, identity, session)
+	}
+	if p.options.SessionBootstrapper != nil {
+		return p.options.SessionBootstrapper.Stop(ctx, identity, session)
+	}
+	return ErrSessionBootstrapUnavailable
+}
+
 func waitForSessionGone(ctx context.Context, sid string) error {
 	if sid == "" {
 		return ErrSessionIdentity
+	}
+	if ctx == nil {
+		return ErrCleanup
+	}
+	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
 	}
 	for {
 		if err := ctx.Err(); err != nil {
