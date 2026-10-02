@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 4c0f224a97f5b3763549c603f71ba4ee66e3fe2a
+Head or Range: 9a8a35c97a90f606d365511284a87c34dd86a894
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 10
+Revision: 11
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 4c0f224a97f5b3763549c603f71ba4ee66e3fe2a
+Head OID: 9a8a35c97a90f606d365511284a87c34dd86a894
 Integrated Result: pending
 
 ## Summary
@@ -140,6 +140,15 @@ from `Get-NetIPConfiguration`, stores the short-lived Credential Manager entry
 under the matching `TERMSRV/<address>` target, and keeps the connection on the
 same machine. No broker, `runas`, `tscon`, `CreateProcessAsUser`, or WTS fence is
 bypassed. Native smoke and production broker/RDP gates remain pending.
+
+Revision 11 makes the local RDP client identity explicit. The smoke harness
+writes a run-owned temporary RDP profile containing the exact
+COMPUTERNAME\\<random-user> username and administrative session disabled, then
+launches mstsc with that profile. The profile contains no password and is
+removed during cleanup; Credential Manager remains the only password boundary.
+This prevents the client from falling back to the interactive console identity.
+The qwinsta/RDP client evidence from the target host showed no managed-user
+session was created before this change, so native acceptance remains pending.
 
 ## Risk
 
