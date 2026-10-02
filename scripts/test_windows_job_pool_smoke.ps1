@@ -321,7 +321,9 @@ function Start-LocalRdpSession([string] $Name) {
     @("full address:s:$targetHost",
       "username:s:$targetUsername",
       'prompt for credentials:i:0',
-      'administrative session:i:0') |
+      'administrative session:i:0',
+      'disableconnectionsharing:i:1',
+      'promptcredentialonce:i:0') |
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
     $script:rdpProfilePath = $rdpProfile
 

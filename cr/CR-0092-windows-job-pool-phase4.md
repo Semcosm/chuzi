@@ -5,7 +5,7 @@ Head or Range: 14dcb07238a970cd0a26016a9381ddbe1141bfd6
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 14
+Revision: 15
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -170,6 +170,15 @@ SID must differ from the interactive runner SID, and any newly observed active
 WTS session for the runner account causes `local RDP authenticated as the
 interactive runner identity` failure. The native smoke therefore cannot
 accept a runner-account session as evidence for the disposable target.
+
+Revision 15 makes the generated RDP profile request a fresh connection with
+`disableconnectionsharing:i:1` and disables credential reuse across gateway and
+remote-host boundaries with `promptcredentialonce:i:0`. The previous profile
+omitted both settings, leaving the documented `disableconnectionsharing`
+default of `0`, which permits mstsc to reconnect an existing disconnected
+session. The explicit settings close that profile-level session-reuse path while
+the exact username, Credential Manager target, runner identity fence, and
+production WTS `FindSession` validation remain unchanged.
 
 ## Risk
 
