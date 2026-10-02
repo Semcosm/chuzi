@@ -49,6 +49,10 @@ type Options struct {
 	BrowserCommand     string
 	SessionIdleTimeout time.Duration
 	CapabilityRevoker  CapabilityRevoker
+	// SessionBootstrapper is intentionally optional. When nil, Provision keeps
+	// the existing external-session prerequisite and fails closed if FindSession
+	// cannot locate the managed SID.
+	SessionBootstrapper SessionBootstrapper
 }
 
 type Paths struct {

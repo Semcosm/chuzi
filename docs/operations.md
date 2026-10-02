@@ -91,10 +91,20 @@ scripts/test_windows_job_pool_smoke.ps1
 
 脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
 `chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，
-并在退出时只删除带有 `CHUZI-MANAGED` ownership 标记的测试用户和本次临时目录。输出不得
-包含密码、SID、用户名、Profile 路径、pipe 路径或原始 Win32 错误。没有可用的管理员权限或
-已登录的受控用户 session 时，smoke 必须失败；不能将交叉编译或逻辑测试当作 Windows
-原生通过。
+并在退出时只删除带有本轮 ownership marker 的测试用户和临时目录。输出不得包含密码、
+SID、用户名、Profile 路径、pipe 路径或原始 Win32 错误。native smoke 需要一个能为
+managed user 建立真实 active WTS session 的受控 session provider；只有 Remote Desktop
+Users 成员资格并不会建立 session。provider 缺失或 session 复核失败时，smoke 应返回
+稳定的 `session_unavailable`/`session_changed` 分类，不能跳过 `FindSession` 或将
+`CreateProcessAsUser` 当作 WTS session。
+
+agent/worker 停止、进程句柄释放、session stop/logoff、用户清理和 root 清理按固定顺序
+执行，每一阶段使用有限 retry/backoff 和总超时。失败保留脱敏 `test-output.log`；user
+cleanup 与 root cleanup 分别报告；未知 ownership 或未知目录不会被删除。默认关闭的
+`CHUZI_PRESERVE_WINDOWS_JOB_POOL_SMOKE_ROOT=1` 只用于本地诊断保留一次性 root，不会
+保留真实用户或密码，也不会被生产服务读取。成功运行必须输出
+`RemainingSmokeUsers = 0`、`RemainingSmokeRoots = 0` 和
+`Windows job-pool native smoke passed`。
 
 `chuzi-build-windows-job-pool-preflight` 在 GitHub-hosted `windows-2022` 上编译所有
 Windows Go 包、运行 `go vet`、检查 native smoke 测试入口并构建固定 user-agent。手动

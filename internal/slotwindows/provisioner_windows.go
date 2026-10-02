@@ -97,6 +97,7 @@ type windowsProvisioner struct {
 	options Options
 	mu      sync.Mutex
 	agents  map[string]agentProcess
+	boots   map[string]sessionBootstrapState
 }
 
 type agentProcess struct {
@@ -109,6 +110,24 @@ type agentProcess struct {
 	sid               string
 	session           uint32
 	disconnectedSince time.Time
+}
+
+type sessionBootstrapState struct {
+	identity ManagedIdentity
+	session  BootstrapSession
+}
+
+type managedUserCredentials struct {
+	SID      string
+	password []uint16
+}
+
+func (c *managedUserCredentials) clear() {
+	if c == nil {
+		return
+	}
+	clear(c.password)
+	c.password = nil
 }
 
 // LeaseHealthChecker is an optional lifecycle hook used while a slot lease is
@@ -273,6 +292,33 @@ func (p *windowsProvisioner) terminateAgent(slotID string, agent agentProcess) e
 	return p.terminateAgentLocked(slotID, agent)
 }
 
+func (p *windowsProvisioner) terminateAgentWithRetry(ctx context.Context, slotID string, agent agentProcess) error {
+	if ctx == nil {
+		return ErrCleanup
+	}
+	for attempt := 0; attempt < 6; attempt++ {
+		if err := p.terminateAgent(slotID, agent); err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			return ErrCleanup
+		}
+		select {
+		case <-ctx.Done():
+			return ErrCleanup
+		case <-time.After(time.Duration(100*(1<<attempt)) * time.Millisecond):
+		}
+		p.mu.Lock()
+		current, ok := p.agents[slotID]
+		p.mu.Unlock()
+		if !ok {
+			return nil
+		}
+		agent = current
+	}
+	return ErrCleanup
+}
+
 // terminateAgentLocked closes a mapped agent while the agent registry is
 // held. Keeping the map check and process fence in one critical section avoids
 // a replacement agent being removed by a stale cleanup path.
@@ -285,11 +331,11 @@ func (p *windowsProvisioner) terminateAgentLocked(slotID string, agent agentProc
 	}
 	terminateErr := agent.process.Terminate()
 	closeErr := agent.process.Close()
-	if current, ok := p.agents[slotID]; ok && current.token == agent.token {
-		delete(p.agents, slotID)
-	}
 	if terminateErr != nil || closeErr != nil {
 		return ErrCleanup
+	}
+	if current, ok := p.agents[slotID]; ok && current.token == agent.token {
+		delete(p.agents, slotID)
 	}
 	return nil
 }
@@ -317,8 +363,11 @@ func (p *windowsProvisioner) Shutdown(ctx context.Context) error {
 				cleanupErr = errors.Join(cleanupErr, ErrCleanup)
 			}
 		}
-		if err := p.terminateAgent(slotID, agent); err != nil {
+		if err := p.terminateAgentWithRetry(ctx, slotID, agent); err != nil {
 			cleanupErr = errors.Join(cleanupErr, ErrCleanup)
+		}
+		if err := p.stopSessionBootstrap(ctx, slotID); err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
 		}
 	}
 	if cleanupErr != nil {
@@ -331,7 +380,7 @@ func New(options Options) (Provisioner, error) {
 	if err := options.Validate(); err != nil {
 		return nil, err
 	}
-	return &windowsProvisioner{options: options, agents: make(map[string]agentProcess)}, nil
+	return &windowsProvisioner{options: options, agents: make(map[string]agentProcess), boots: make(map[string]sessionBootstrapState)}, nil
 }
 
 func (p *windowsProvisioner) Provision(ctx context.Context, request slot.ProvisionRequest) (result slot.ProvisionResult, provisionErr error) {
@@ -359,6 +408,8 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	// rollback. Existing managed resources may belong to a running generation.
 	cleanupOnFailure := true
 	var sid string
+	var managed managedUserCredentials
+	defer managed.clear()
 	defer func() {
 		if provisionErr == nil || !cleanupOnFailure {
 			return
@@ -368,10 +419,11 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 			provisionErr = ErrCleanup
 		}
 	}()
-	sid, err = ensureManagedUser(paths, request)
+	managed, err = ensureManagedUser(paths, request)
 	if err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	sid = managed.SID
 	if p.options.RDPEnabled {
 		if err := ensureRemoteDesktopMembership(paths.UserName); err != nil {
 			return slot.ProvisionResult{}, ErrSessionIdentity
@@ -384,6 +436,9 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	}
 	if err := ensureSlotDirectories(paths, sid); err != nil {
 		return slot.ProvisionResult{}, ErrACLDrift
+	}
+	if err := p.ensureSessionBootstrap(ctx, request, paths.UserName, managed); err != nil {
+		return slot.ProvisionResult{}, err
 	}
 	if err := p.ensureAgent(ctx, paths, request, sid); err != nil {
 		return slot.ProvisionResult{}, err
@@ -401,9 +456,17 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 	agent, present := p.agents[request.SlotID]
 	p.mu.Unlock()
 	if present {
-		if err := p.terminateAgent(request.SlotID, agent); err != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := p.terminateAgentWithRetry(cleanupCtx, request.SlotID, agent)
+		cancel()
+		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
 		}
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := p.stopSessionBootstrap(cleanupCtx, request.SlotID); err != nil {
+		cleanupErr = errors.Join(cleanupErr, err)
 	}
 	if removeRoot {
 		if err := removeOwnedTree(paths.Root); err != nil {
@@ -524,6 +587,9 @@ func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionR
 	p.mu.Unlock()
 	if agentCleanupErr != nil {
 		return agentCleanupErr
+	}
+	if err := p.stopSessionBootstrap(ctx, request.SlotID); err != nil {
+		return err
 	}
 	if err := p.revokeRecordedProfile(paths, record.SID); err != nil {
 		return ErrCleanup
@@ -701,6 +767,133 @@ func (p *windowsProvisioner) summary(request slot.ProvisionRequest, sid string) 
 		signer = p.options.Signer
 	}
 	return slot.EnvironmentSummary{EnvironmentID: p.options.EnvironmentID, Version: p.options.Version, Generation: request.EnvironmentGeneration, Capabilities: append([]string(nil), request.Requirement.Capabilities...), ManifestDigest: digest, Signer: signer, Trusted: true, AgentVersion: "chuzi-user-agent/v1", AgentHandle: "slot:" + request.SlotID, SessionState: "ready", DesktopReady: true, UpdatedAt: time.Now().UTC()}
+}
+
+func (p *windowsProvisioner) managedIdentity(request slot.ProvisionRequest, sid string) (ManagedIdentity, error) {
+	identity := ManagedIdentity{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.EnvironmentGeneration, SID: sid}
+	if err := identity.validate(); err != nil {
+		return ManagedIdentity{}, err
+	}
+	return identity, nil
+}
+
+// ensureSessionBootstrap invokes only the optional, deployment-owned session
+// provider. It always re-queries WTS after Start; a provider result alone can
+// never satisfy the production FindSession fence.
+func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request slot.ProvisionRequest, username string, managed managedUserCredentials) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	identity, err := p.managedIdentity(request, managed.SID)
+	if err != nil {
+		return err
+	}
+	if current, findErr := FindSession(managed.SID); findErr == nil && current.State == "active" {
+		return nil
+	}
+	provider := p.options.SessionBootstrapper
+	if provider == nil {
+		return retryableProvisionFailure{cause: ErrSessionUnavailable}
+	}
+
+	p.mu.Lock()
+	previous, hadPrevious := p.boots[request.SlotID]
+	p.mu.Unlock()
+	if hadPrevious {
+		if current, findErr := FindSession(managed.SID); findErr == nil && current.ID == previous.session.ID && current.State == "active" {
+			return nil
+		}
+		_ = p.stopSessionBootstrap(ctx, request.SlotID)
+	}
+	started, startErr := startManagedSession(ctx, provider, identity, username, managed.password)
+	if startErr != nil {
+		return retryableProvisionFailure{cause: classifySessionBootstrapError(startErr)}
+	}
+	if started.ID == 0 || started.State != "active" {
+		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+			return ErrCleanup
+		}
+		return retryableProvisionFailure{cause: ErrSessionUnavailable}
+	}
+	current, findErr := FindSession(managed.SID)
+	if findErr != nil {
+		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+			return ErrCleanup
+		}
+		return retryableProvisionFailure{cause: classifySessionBootstrapError(findErr)}
+	}
+	if current.ID != started.ID || current.State != "active" {
+		if stopErr := provider.Stop(ctx, identity, started); stopErr != nil {
+			return ErrCleanup
+		}
+		return retryableProvisionFailure{cause: ErrSessionChanged}
+	}
+	p.mu.Lock()
+	p.boots[request.SlotID] = sessionBootstrapState{identity: identity, session: started}
+	p.mu.Unlock()
+	return nil
+}
+
+func classifySessionBootstrapError(err error) error {
+	switch {
+	case errors.Is(err, ErrSessionChanged):
+		return ErrSessionChanged
+	case errors.Is(err, ErrSessionDisconnected):
+		return ErrSessionDisconnected
+	case errors.Is(err, ErrSessionIdentity):
+		return ErrSessionIdentity
+	case errors.Is(err, ErrSessionUnavailable), errors.Is(err, ErrSessionBootstrapUnavailable):
+		return ErrSessionUnavailable
+	default:
+		// Provider implementation errors are intentionally collapsed to the
+		// stable session classification; raw Win32/provider text must not cross
+		// the smoke, log, or control-plane boundary.
+		return ErrSessionUnavailable
+	}
+}
+
+func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID string) error {
+	if p == nil || p.options.SessionBootstrapper == nil {
+		return nil
+	}
+	p.mu.Lock()
+	state, ok := p.boots[slotID]
+	p.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	if err := p.options.SessionBootstrapper.Stop(ctx, state.identity, state.session); err != nil {
+		return ErrCleanup
+	}
+	if err := waitForSessionGone(ctx, state.identity.SID); err != nil {
+		return ErrCleanup
+	}
+	p.mu.Lock()
+	if current, present := p.boots[slotID]; present && current.identity == state.identity && current.session == state.session {
+		delete(p.boots, slotID)
+	}
+	p.mu.Unlock()
+	return nil
+}
+
+func waitForSessionGone(ctx context.Context, sid string) error {
+	if sid == "" {
+		return ErrSessionIdentity
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		_, err := FindSession(sid)
+		if errors.Is(err, ErrSessionUnavailable) {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (p *windowsProvisioner) ensureAgent(ctx context.Context, paths Paths, request slot.ProvisionRequest, sid string) error {
@@ -1057,63 +1250,68 @@ func (p *windowsProvisioner) validateRequest(request slot.ProvisionRequest) erro
 	return nil
 }
 
-func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (string, error) {
+func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserCredentials, error) {
 	marker := fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal)
 	if sid, err := lookupSID(paths.UserName); err == nil {
 		info, infoErr := getUserInfo(paths.UserName)
 		if infoErr != nil || info.comment != marker || info.priv != userPrivUser || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
-			return "", ErrOwnership
+			return managedUserCredentials{}, ErrOwnership
 		}
 		record, recordErr := readOwnership(paths.Metadata)
 		if errors.Is(recordErr, fs.ErrNotExist) {
 			// A matching comment is not proof of service ownership: it is
 			// forgeable and the SID may have drifted after deletion/recreation.
 			// Require the durable ownership record and fail closed on its loss.
-			return "", ErrOwnership
+			return managedUserCredentials{}, ErrOwnership
 		}
 		if recordErr != nil || record.SlotID != request.SlotID || record.Ordinal != request.Ordinal || record.SID != sid {
-			return "", ErrOwnership
+			return managedUserCredentials{}, ErrOwnership
 		}
 		if record.Generation > request.EnvironmentGeneration {
 			// A stale provision request must not move ownership metadata back to
 			// an older environment generation.
-			return "", ErrOwnership
+			return managedUserCredentials{}, ErrOwnership
 		}
 		if record.Generation < request.EnvironmentGeneration {
 			record.Generation = request.EnvironmentGeneration
 			if err := replaceOwnership(paths.Metadata, record); err != nil {
-				return "", err
+				return managedUserCredentials{}, err
 			}
 		}
-		return sid, nil
+		return managedUserCredentials{SID: sid}, nil
 	} else if !errors.Is(err, windows.ERROR_NONE_MAPPED) {
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	}
 	_, recordErr := readOwnership(paths.Metadata)
 	if recordErr == nil {
 		// Recreating a missing user would assign a new SID. Keep the old
 		// ownership record as a drift fence instead of adopting that identity.
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	} else if !errors.Is(recordErr, fs.ErrNotExist) {
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	} else {
 		rootExists, rootErr := managedPathExists(paths.Root)
 		if rootErr != nil || rootExists {
-			return "", ErrOwnership
+			return managedUserCredentials{}, ErrOwnership
 		}
 	}
 	password, err := randomPasswordUTF16(48)
 	if err != nil {
-		return "", ErrSessionIdentity
+		return managedUserCredentials{}, ErrSessionIdentity
 	}
-	defer clear(password)
+	keepPassword := false
+	defer func() {
+		if !keepPassword {
+			clear(password)
+		}
+	}()
 	name, err := windows.UTF16PtrFromString(paths.UserName)
 	if err != nil {
-		return "", ErrInvalidOptions
+		return managedUserCredentials{}, ErrInvalidOptions
 	}
 	comment, err := windows.UTF16PtrFromString(marker)
 	if err != nil {
-		return "", ErrInvalidOptions
+		return managedUserCredentials{}, ErrInvalidOptions
 	}
 	info := userInfo1{Name: name, Password: &password[0], Priv: userPrivUser, Comment: comment, Flags: userFlagScript | userFlagNormalAccount | userFlagDontExpirePassword}
 	status := callNetUserAdd(&info)
@@ -1123,48 +1321,49 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (string, erro
 		// idempotent race as an ownership failure.
 		sid, lookupErr := lookupSID(paths.UserName)
 		if lookupErr != nil {
-			return "", ErrOwnership
+			return managedUserCredentials{}, ErrOwnership
 		}
 		infoSnapshot, infoErr := getUserInfo(paths.UserName)
 		if infoErr != nil || infoSnapshot.comment != marker || infoSnapshot.priv != userPrivUser || infoSnapshot.flags&userFlagDisabled != 0 || hasAdministratorsMembership(paths.UserName) {
-			return "", ErrOwnership
+			return managedUserCredentials{}, ErrOwnership
 		}
 		record, recordErr := readOwnership(paths.Metadata)
 		if recordErr == nil {
 			if record.SlotID != request.SlotID || record.Ordinal != request.Ordinal || record.SID != sid || record.Generation > request.EnvironmentGeneration {
-				return "", ErrOwnership
+				return managedUserCredentials{}, ErrOwnership
 			}
 			if record.Generation < request.EnvironmentGeneration {
 				record.Generation = request.EnvironmentGeneration
 				if err := replaceOwnership(paths.Metadata, record); err != nil {
-					return "", err
+					return managedUserCredentials{}, err
 				}
 			}
-			return sid, nil
+			return managedUserCredentials{SID: sid}, nil
 		}
 		// NetUserAdd can race another provision attempt, but a missing or
 		// unreadable ownership record still cannot establish which SID owns the
 		// slot. Do not adopt the user or rewrite metadata in that case.
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	}
 	if status != 0 {
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	}
 	sid, err := lookupSID(paths.UserName)
 	if err != nil {
-		return "", ErrSessionIdentity
+		return managedUserCredentials{}, ErrSessionIdentity
 	}
 	if recordErr == nil {
 		// Recreating a missing user would produce a new SID. Preserve the old
 		// record as a drift fence instead of silently adopting that identity.
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	} else if !errors.Is(recordErr, fs.ErrNotExist) {
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	} else if err := writeOwnership(paths.Metadata, ownershipRecord{Version: 1, SlotID: request.SlotID, Ordinal: request.Ordinal, SID: sid, Generation: request.EnvironmentGeneration}); err != nil {
 		_ = deleteManagedUser(paths.UserName, request.SlotID, request.Ordinal, sid)
-		return "", ErrOwnership
+		return managedUserCredentials{}, ErrOwnership
 	}
-	return sid, nil
+	keepPassword = true
+	return managedUserCredentials{SID: sid, password: password}, nil
 }
 
 func replaceOwnership(path string, record ownershipRecord) error {

@@ -45,20 +45,21 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	}
 
 	options := Options{
-		DataDir:            dataDir,
-		UserPrefix:         userPrefix,
-		EnvironmentID:      "chuzi-environment/v1",
-		Version:            "smoke-1",
-		ManifestDigest:     strings.Repeat("a", 64),
-		Signer:             "smoke-signer",
-		RequireTrusted:     true,
-		RDPEnabled:         true,
-		AgentPath:          agentPath,
-		RuntimePath:        runtimeRoot,
-		WorkerRuntimeRoot:  runtimeRoot,
-		WorkerCommand:      nodePath,
-		WorkerScript:       workerPath,
-		SessionIdleTimeout: 5 * time.Second,
+		DataDir:             dataDir,
+		UserPrefix:          userPrefix,
+		EnvironmentID:       "chuzi-environment/v1",
+		Version:             "smoke-1",
+		ManifestDigest:      strings.Repeat("a", 64),
+		Signer:              "smoke-signer",
+		RequireTrusted:      true,
+		RDPEnabled:          true,
+		AgentPath:           agentPath,
+		RuntimePath:         runtimeRoot,
+		WorkerRuntimeRoot:   runtimeRoot,
+		WorkerCommand:       nodePath,
+		WorkerScript:        workerPath,
+		SessionIdleTimeout:  5 * time.Second,
+		SessionBootstrapper: NewRunnerSessionBootstrapper(),
 	}
 	provisionerValue, err := New(options)
 	if err != nil {
@@ -88,7 +89,7 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 
 	result, err := provisioner.Provision(ctx, request)
 	if err != nil {
-		t.Fatal("native Windows provision failed")
+		t.Fatalf("native Windows provision failed: %s", nativeSmokeFailureClass(err))
 	}
 	retired := false
 	t.Cleanup(func() {
@@ -210,6 +211,27 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 		t.Fatal("native managed resource retirement failed")
 	}
 	retired = true
+}
+
+func nativeSmokeFailureClass(err error) string {
+	switch {
+	case errors.Is(err, ErrSessionChanged):
+		return "session_changed"
+	case errors.Is(err, ErrSessionDisconnected):
+		return "session_disconnected"
+	case errors.Is(err, ErrSessionIdentity):
+		return "session_identity_mismatch"
+	case errors.Is(err, ErrSessionUnavailable), errors.Is(err, ErrSessionBootstrapUnavailable):
+		return "session_unavailable"
+	case errors.Is(err, ErrACLDrift):
+		return "acl_drift"
+	case errors.Is(err, ErrProcessStart):
+		return "process_start_failed"
+	case errors.Is(err, ErrCleanup):
+		return "cleanup_failed"
+	default:
+		return "provision_failed"
+	}
 }
 
 func requiredSmokeEnv(t *testing.T, name string) string {

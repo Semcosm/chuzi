@@ -116,3 +116,21 @@ ACL/reparse point、Profile、RDP session/desktop、named pipe ACL、
 `CreateProcessAsUser`、Job Object 回收、服务重启/断电恢复和 disposable user 清理。
 当前默认 RDP authorizer 仍为 deny-by-default；通用 `chuzi-environment/v1` manifest、
 资源 digest/签名 trust store、插件注入、滚动升级和回滚属于阶段 3。
+
+## 阶段 4 session bootstrap 边界
+
+阶段 4 native smoke 在调用 `Provision` 前必须拥有真实的 managed-user WTS
+session。`SessionBootstrapper` 是受控注入边界，只接收由 provisioner 从 slot
+ownership 派生的 slot、ordinal、generation 和 SID；接口不接收密码、用户名、Profile
+路径、RDP endpoint、命令或 executable。provider 建立 session 后，provisioner 仍会重新
+调用 `FindSession(managed SID)`，并校验 session ID 和 active 状态；provider 返回值或
+`CreateProcessAsUser` 不能替代 WTS 校验。生产默认不配置 bootstrapper，继续依赖外部受控
+interactive session，找不到 session 时保持 `session_unavailable`/quarantine 的
+fail-closed 行为。
+
+bootstrap 退出时先停止 worker 和 agent，再调用 provider 的幂等 `Stop`，等待
+`FindSession` 不再发现该 SID，最后由 provisioner 执行 logoff、Profile/ACL、目录和用户
+回收。smoke harness 的 user cleanup 与 root cleanup 分阶段重试并分别报告；未知用户、
+ownership marker 不匹配的 root 或未知目录永远不会删除。失败会保留脱敏
+`test-output.log`，成功运行必须报告 `RemainingSmokeUsers = 0` 和
+`RemainingSmokeRoots = 0`。

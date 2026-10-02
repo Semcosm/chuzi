@@ -10,30 +10,104 @@ $tempRoot = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
 } else {
     [System.IO.Path]::GetTempPath()
 }
-$runRoot = Join-Path $tempRoot ('chuzi-job-pool-smoke-' + [Guid]::NewGuid().ToString('N'))
-$userPrefix = 'Cz' + ([Guid]::NewGuid().ToString('N').Substring(0, 9))
+$runID = [Guid]::NewGuid().ToString('N')
+$runRoot = Join-Path $tempRoot ('chuzi-job-pool-smoke-' + $runID)
+$userPrefix = 'Cz' + $runID.Substring(0, 9)
 $marker = 'CHUZI-MANAGED:smoke-001:1'
+$ownershipMarker = 'CHUZI-SMOKE-OWNERSHIP:' + $runID
 $cleanupErrors = [System.Collections.Generic.List[string]]::new()
+$smokePassed = $false
+$script:rootPreserved = $false
+$failureStage = 'setup'
+$testLog = Join-Path $runRoot 'test-output.log'
+$preservedLog = Join-Path $tempRoot 'chuzi-job-pool-smoke-test-output.log'
+
+function Invoke-SmokeRetry([scriptblock] $Action, [int] $Attempts = 6) {
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        try {
+            & $Action
+            return $true
+        } catch {
+            if ($attempt -eq $Attempts) {
+                return $false
+            }
+            Start-Sleep -Milliseconds ([Math]::Min(2000, 250 * [Math]::Pow(2, $attempt - 1)))
+        }
+    }
+    return $false
+}
+
+function Get-MarkedUsers {
+    @(Get-LocalUser -ErrorAction Stop | Where-Object {
+        $_.Name.StartsWith($userPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+        $_.Description -eq $marker
+    })
+}
+
+function Stop-MarkedUserSessions([string] $name) {
+    $lines = @(quser.exe $name 2>$null)
+    foreach ($line in $lines) {
+        if ($line -match '\s(?<sessionId>[0-9]+)\s+(Active|Disc)') {
+            $sessionID = $Matches['sessionId']
+            [void](Invoke-SmokeRetry {
+                & logoff.exe $sessionID 2>$null 1>$null
+                if ($LASTEXITCODE -ne 0) { throw 'session logoff failed' }
+            })
+        }
+    }
+}
+
+function Test-RunOwnership {
+    if (-not (Test-Path -LiteralPath $runRoot -PathType Container)) {
+        return $false
+    }
+    $ownershipPath = Join-Path $runRoot '.chuzi-smoke-ownership'
+    if (-not (Test-Path -LiteralPath $ownershipPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        return ((Get-Content -LiteralPath $ownershipPath -Raw -ErrorAction Stop).Trim() -eq $ownershipMarker)
+    } catch {
+        return $false
+    }
+}
 
 function Stop-SmokeResources {
+    $usersClean = $true
+    $rootClean = $true
     try {
-        $markedUsers = @(Get-LocalUser -ErrorAction Stop | Where-Object {
-            $_.Name.StartsWith($userPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
-            $_.Description -eq $marker
-        })
+        $markedUsers = Get-MarkedUsers
         foreach ($user in $markedUsers) {
-            Remove-LocalUser -Name $user.Name -Confirm:$false -ErrorAction Stop
+            Stop-MarkedUserSessions $user.Name
+            if (-not (Invoke-SmokeRetry {
+                Remove-LocalUser -Name $user.Name -Confirm:$false -ErrorAction Stop
+            })) {
+                $usersClean = $false
+            }
+        }
+        if ((Get-MarkedUsers).Count -ne 0) {
+            $usersClean = $false
         }
     } catch {
-        $cleanupErrors.Add('managed user cleanup failed')
+        $usersClean = $false
     }
-    try {
-        if (Test-Path -LiteralPath $runRoot) {
+    if (-not $usersClean) {
+        $cleanupErrors.Add('user_cleanup_failed')
+    }
+
+    if ($env:CHUZI_PRESERVE_WINDOWS_JOB_POOL_SMOKE_ROOT -eq '1') {
+        $script:rootPreserved = $true
+    } elseif (Test-RunOwnership) {
+        if (-not (Invoke-SmokeRetry {
             Remove-Item -LiteralPath $runRoot -Recurse -Force -ErrorAction Stop
+        })) {
+            $rootClean = $false
         }
-    } catch {
-        $cleanupErrors.Add('temporary resource cleanup failed')
     }
+    if (-not $rootClean -and $env:CHUZI_PRESERVE_WINDOWS_JOB_POOL_SMOKE_ROOT -ne '1') {
+        $cleanupErrors.Add('root_cleanup_failed')
+    }
+    return @{ Users = $usersClean; Root = $rootClean }
 }
 
 function Invoke-Icacls([string] $path) {
@@ -41,7 +115,7 @@ function Invoke-Icacls([string] $path) {
     $system = 'NT AUTHORITY\SYSTEM:(OI)(CI)(F)'
     $administrators = 'BUILTIN\Administrators:(OI)(CI)(F)'
     $users = 'BUILTIN\Users:(OI)(CI)(RX)'
-    & icacls.exe $path /inheritance:r /grant:r "${identity}:(OI)(CI)(F)" $system $administrators $users /T /C 1>$null 2>$null
+    & icacls.exe $path /inheritance:r /grant:r ($identity + ':(OI)(CI)(F)') $system $administrators $users /T /C 1>$null 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw 'runtime ACL preparation failed'
     }
@@ -57,6 +131,7 @@ try {
         throw 'Windows native smoke requires an administrator runner'
     }
     New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $runRoot '.chuzi-smoke-ownership') -Value $ownershipMarker -NoNewline -Encoding ASCII
     $runtimeRoot = Join-Path $runRoot 'runtime'
     $workerRoot = Join-Path $runtimeRoot 'browser-worker/src'
     $dataRoot = Join-Path $runRoot 'data'
@@ -70,6 +145,7 @@ try {
     $nodePath = Join-Path $runtimeRoot 'node.exe'
     $workerPath = Join-Path $workerRoot 'worker.mjs'
 
+    $failureStage = 'build_agent'
     & $go build -trimpath -o $agentPath (Join-Path $repoRoot 'cmd/user-agent') 1>$null 2>$null
     if ($LASTEXITCODE -ne 0) {
         throw 'user-agent build failed'
@@ -85,15 +161,24 @@ try {
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_WORKER = $workerPath
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_USER_PREFIX = $userPrefix
 
-    $testLog = Join-Path $runRoot 'test-output.log'
+    $failureStage = 'native_smoke'
+    New-Item -ItemType File -Path $testLog -Force | Out-Null
     & $go test -count=1 -run '^TestWindowsJobPoolNativeSmoke$' ./internal/slotwindows 1>$testLog 2>&1
     if ($LASTEXITCODE -ne 0) {
+        if (Select-String -LiteralPath $testLog -Pattern 'session_unavailable' -Quiet) {
+            $failureStage = 'session_unavailable'
+        }
         throw 'Windows job-pool native smoke failed'
     }
-    Write-Host 'Windows job-pool native smoke passed'
+    $smokePassed = $true
 } catch {
-    Write-Error $_.Exception.Message
-    exit 1
+    if (Test-Path -LiteralPath $testLog -PathType Leaf) {
+        try {
+            Copy-Item -LiteralPath $testLog -Destination $preservedLog -Force
+        } catch {
+            $cleanupErrors.Add('test_log_preservation_failed')
+        }
+    }
 } finally {
     Remove-Item Env:CHUZI_RUN_WINDOWS_JOB_POOL_SMOKE -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_ROOT -ErrorAction SilentlyContinue
@@ -101,11 +186,24 @@ try {
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_NODE -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_WORKER -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_USER_PREFIX -ErrorAction SilentlyContinue
-    Stop-SmokeResources
-    if ($cleanupErrors.Count -gt 0) {
-        foreach ($cleanupError in $cleanupErrors) {
-            Write-Error $cleanupError
+    $cleanupResult = Stop-SmokeResources
+    if ($smokePassed -and $cleanupErrors.Count -eq 0 -and $cleanupResult.Users -and $cleanupResult.Root) {
+        Write-Host 'RemainingSmokeUsers = 0'
+        if ($script:rootPreserved) {
+            Write-Host 'RemainingSmokeRoots = preserved'
+        } else {
+            Write-Host 'RemainingSmokeRoots = 0'
         }
-        exit 1
+        Write-Host 'Windows job-pool native smoke passed'
+        exit 0
     }
+    if ($smokePassed) {
+        Write-Error 'Windows job-pool native smoke failed: cleanup_failed'
+    } else {
+        Write-Error ('Windows job-pool native smoke failed: ' + $failureStage)
+    }
+    foreach ($cleanupError in $cleanupErrors) {
+        Write-Error $cleanupError
+    }
+    exit 1
 }
