@@ -29,6 +29,7 @@ $script:remainingSmokeUsers = -1
 $script:rdpCredentialOwned = $false
 $script:rdpCredentialTarget = $null
 $script:rdpProfilePath = $null
+$script:rdpDebugSummary = @()
 $script:rdpClientProcess = $null
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
@@ -301,8 +302,25 @@ function Start-LocalRdpSession([string] $Name) {
     }
 
     $rdpProfile = Join-Path $runRoot 'local-rdp.rdp'
+    $targetUsername = $env:COMPUTERNAME + '\' + $Name
+    $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
+    $runnerIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $runnerSessionID = (Get-Process -Id $PID -ErrorAction Stop).SessionId
+    $script:rdpDebugSummary = @(
+        ('smoke_runner_user=' + $runnerIdentity),
+        ('smoke_runner_session_id=' + $runnerSessionID),
+        ('rdp_target_host=' + $targetHost),
+        ('rdp_target_user=' + $targetUsername),
+        ('rdp_target_sid=' + $targetUser.SID.Value),
+        ('rdp_credential_target=' + $script:rdpCredentialTarget),
+        ('rdp_profile=' + $rdpProfile),
+        'rdp_password=not_printed'
+    )
+    foreach ($line in $script:rdpDebugSummary) {
+        Write-Host ('RDP DEBUG: ' + $line)
+    }
     @("full address:s:$targetHost",
-      "username:s:$env:COMPUTERNAME\$Name",
+      "username:s:$targetUsername",
       'prompt for credentials:i:0',
       'administrative session:i:0') |
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
@@ -563,7 +581,8 @@ try {
         }
     } else {
         try {
-            Set-Content -LiteralPath $preservedLog -Value ('failure_stage=' + $failureStage) -Encoding ASCII
+            $failureRecord = @('failure_stage=' + $failureStage) + @($script:rdpDebugSummary)
+            Set-Content -LiteralPath $preservedLog -Value $failureRecord -Encoding ASCII
         } catch {
             $cleanupErrors.Add('test_log_preservation_failed')
         }

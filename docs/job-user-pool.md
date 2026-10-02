@@ -151,7 +151,9 @@ Manager；随后选择本机默认路由对应的非回环 IPv4 地址启动 mst
 loopback 请求解释为当前 console 重连。测试按 SID、slot ownership 和 active session
 重新校验身份；结束后注销 session、回收用户、profile、运行目录和临时 Credential
 Manager 凭据。session 查询使用 WTS API 和数值状态，不依赖系统显示语言。密码不进入
-命令行、环境变量、文件、Core、测试日志或输出。
+命令行、环境变量、文件、Core、测试日志或输出。连接前会输出执行用户、执行 session、
+目标用户、目标 SID、目标地址和 Credential Manager target；密码字段固定显示为
+not_printed。
 
 Windows hosted preflight 使用 -ValidateOnly 解析 smoke 脚本并编译 Credential Manager
 与 WTS API helper，不创建用户、session 或临时目录。
