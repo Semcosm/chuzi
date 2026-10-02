@@ -35,8 +35,10 @@ user session.
 The new `scripts/test_windows_job_pool_smoke.ps1` requires a Windows
 administrator runner, creates a unique temporary root, builds the fixed
 `chuzi-user-agent.exe`, copies the runner's `node.exe` and the versioned worker
-entrypoint, applies a read/execute runtime ACL, and removes only users bearing
-the current CHUZI ownership marker. Revision 2 adds the `SessionBootstrapper`
+entrypoint, applies a read/execute runtime ACL, and removes only the current run's exact random-prefix user
+after validating run-root and user ownership markers. Historical marker users are counted and reported,
+but are never removed by a later run. The script still validates the current
+CHUZI ownership marker. Revision 2 adds the SessionBootstrapper
 contract: a runner-owned provider may establish the disposable user's WTS
 session, but `Provision` always re-runs `FindSession(managed SID)` before
 starting the agent. No password crosses the contract or enters Core, logs,

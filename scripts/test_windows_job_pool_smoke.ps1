@@ -13,12 +13,15 @@ $tempRoot = if (-not [string]::IsNullOrWhiteSpace($env:RUNNER_TEMP)) {
 $runID = [Guid]::NewGuid().ToString('N')
 $runRoot = Join-Path $tempRoot ('chuzi-job-pool-smoke-' + $runID)
 $userPrefix = 'Cz' + $runID.Substring(0, 9)
+$currentUserPattern = '^' + [regex]::Escape($userPrefix) + '0001$'
 $smokeUserPattern = '^Cz[0-9a-f]{9}0001$'
 $marker = 'CHUZI-MANAGED:smoke-001:1'
 $ownershipMarker = 'CHUZI-SMOKE-OWNERSHIP:' + $runID
+$userOwnershipMarker = 'CHUZI-SMOKE-USER-OWNERSHIP:' + $runID + ':' + $userPrefix
 $cleanupErrors = [System.Collections.Generic.List[string]]::new()
 $smokePassed = $false
 $script:rootPreserved = $false
+$script:unownedSmokeUsers = 0
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
 $preservedLog = Join-Path $tempRoot 'chuzi-job-pool-smoke-test-output.log'
@@ -38,14 +41,24 @@ function Invoke-SmokeRetry([scriptblock] $Action, [int] $Attempts = 6) {
     return $false
 }
 
-function Get-MarkedUsers {
+function Get-MarkedUsers([switch] $CurrentRunOnly) {
+    $pattern = $smokeUserPattern
+    if ($CurrentRunOnly) {
+        $pattern = $currentUserPattern
+    }
     @(Get-LocalUser -ErrorAction Stop | Where-Object {
-        # The prefix is deliberately random per run. Match every disposable
-        # smoke identity so a failed earlier run cannot accumulate accounts,
-        # while the exact name shape and marker exclude ordinary local users.
-        $_.Name -match $smokeUserPattern -and
+        $_.Name -match $pattern -and
         $_.Description -eq $marker
     })
+}
+
+function Get-MarkedUserSessions([string] $Name) {
+    # quser returns a non-zero exit code and writes an error when the account
+    # has no session. That is the normal cleanup state, not a cleanup failure.
+    @(
+        & cmd.exe /d /c ('quser.exe "{0}" 2>nul' -f $Name) 2>$null |
+        Select-String '\s[0-9]+\s+(Active|Disc)\s'
+    )
 }
 
 function Remove-MarkedUserProfile([object] $user) {
@@ -63,15 +76,20 @@ function Remove-MarkedUserProfile([object] $user) {
 }
 
 function Stop-MarkedUserSessions([string] $name) {
-    $lines = @(quser.exe $name 2>$null)
+    $lines = @(Get-MarkedUserSessions $name)
     foreach ($line in $lines) {
         if ($line -match '\s(?<sessionId>[0-9]+)\s+(Active|Disc)') {
             $sessionID = $Matches['sessionId']
-            [void](Invoke-SmokeRetry {
+            if (-not (Invoke-SmokeRetry {
                 & logoff.exe $sessionID 2>$null 1>$null
                 if ($LASTEXITCODE -ne 0) { throw 'session logoff failed' }
-            })
+            })) {
+                throw 'session logoff failed'
+            }
         }
+    }
+    if ((Get-MarkedUserSessions $name).Count -ne 0) {
+        throw 'managed session remained after logoff'
     }
 }
 
@@ -90,32 +108,56 @@ function Test-RunOwnership {
     }
 }
 
+function Test-RunUserOwnership {
+    if (-not (Test-RunOwnership)) {
+        return $false
+    }
+    $ownershipPath = Join-Path $runRoot '.chuzi-smoke-user-ownership'
+    if (-not (Test-Path -LiteralPath $ownershipPath -PathType Leaf)) {
+        return $false
+    }
+    try {
+        return ((Get-Content -LiteralPath $ownershipPath -Raw -ErrorAction Stop).Trim() -eq $userOwnershipMarker)
+    } catch {
+        return $false
+    }
+}
+
 function Stop-SmokeResources {
     $usersClean = $true
     $rootClean = $true
-    try {
-        $markedUsers = Get-MarkedUsers
-        foreach ($user in $markedUsers) {
-            Stop-MarkedUserSessions $user.Name
-            $profileClean = Invoke-SmokeRetry {
-                Stop-MarkedUserSessions $user.Name
-                Remove-MarkedUserProfile $user
+    if (Test-RunUserOwnership) {
+        try {
+            $markedUsers = @(Get-MarkedUsers -CurrentRunOnly)
+            foreach ($user in $markedUsers) {
+                $profileClean = Invoke-SmokeRetry {
+                    Stop-MarkedUserSessions $user.Name
+                    Remove-MarkedUserProfile $user
+                }
+                if (-not $profileClean) {
+                    $usersClean = $false
+                    continue
+                }
+                if (-not (Invoke-SmokeRetry {
+                    Remove-LocalUser -Name $user.Name -Confirm:$false -ErrorAction Stop
+                })) {
+                    $usersClean = $false
+                }
             }
-            if (-not $profileClean) {
+            if ((Get-MarkedUsers -CurrentRunOnly).Count -ne 0) {
                 $usersClean = $false
             }
-            if (-not (Invoke-SmokeRetry {
-                Remove-LocalUser -Name $user.Name -Confirm:$false -ErrorAction Stop
-            })) {
-                $usersClean = $false
-            }
-        }
-        if ((Get-MarkedUsers).Count -ne 0) {
+        } catch {
             $usersClean = $false
         }
-    } catch {
+    } elseif ((Get-MarkedUsers -CurrentRunOnly).Count -ne 0) {
+        # Never delete a matching account when the run-owned marker is absent
+        # or unreadable. Leave it for explicit operator review.
         $usersClean = $false
     }
+    $script:unownedSmokeUsers = @(Get-MarkedUsers | Where-Object {
+        $_.Name -notmatch $currentUserPattern
+    }).Count
     if (-not $usersClean) {
         $cleanupErrors.Add('user_cleanup_failed')
     }
@@ -160,6 +202,7 @@ try {
     $failureStage = 'root_setup'
     New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
     Set-Content -LiteralPath (Join-Path $runRoot '.chuzi-smoke-ownership') -Value $ownershipMarker -NoNewline -Encoding ASCII
+    Set-Content -LiteralPath (Join-Path $runRoot '.chuzi-smoke-user-ownership') -Value $userOwnershipMarker -NoNewline -Encoding ASCII
     $failureStage = 'runtime_setup'
     $runtimeRoot = Join-Path $runRoot 'runtime'
     $workerRoot = Join-Path $runtimeRoot 'browser-worker/src'
@@ -224,6 +267,7 @@ try {
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_WORKER -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_USER_PREFIX -ErrorAction SilentlyContinue
     $cleanupResult = Stop-SmokeResources
+    Write-Host ('UnownedSmokeUsers = ' + $script:unownedSmokeUsers)
     if ($smokePassed -and $cleanupErrors.Count -eq 0 -and $cleanupResult.Users -and $cleanupResult.Root) {
         Write-Host 'RemainingSmokeUsers = 0'
         if ($script:rootPreserved) {

@@ -91,7 +91,8 @@ scripts/test_windows_job_pool_smoke.ps1
 
 脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
 `chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，
-并在退出时只删除带有本轮 ownership marker 的测试用户和临时目录。输出不得包含密码、
+并在退出时只删除带有本轮 user ownership marker 且名称与本轮随机前缀完全匹配的测试用户和临时目录；
+历史运行留下的 marker 用户只计数报告，不会被当前运行自动删除。输出不得包含密码、
 SID、用户名、Profile 路径、pipe 路径或原始 Win32 错误。native smoke 需要一个能为
 managed user 建立真实 active WTS session 的受控 session provider；只有 Remote Desktop
 Users 成员资格并不会建立 session。provider 缺失或 session 复核失败时，smoke 应返回

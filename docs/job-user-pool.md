@@ -130,7 +130,8 @@ fail-closed 行为。
 
 bootstrap 退出时先停止 worker 和 agent，再调用 provider 的幂等 `Stop`，等待
 `FindSession` 不再发现该 SID，最后由 provisioner 执行 logoff、Profile/ACL、目录和用户
-回收。smoke harness 的 user cleanup 与 root cleanup 分阶段重试并分别报告；未知用户、
+回收。smoke harness 的 user cleanup 与 root cleanup 分阶段重试并分别报告。user cleanup 只处理本轮
+随机前缀和 user ownership marker 同时匹配的账户；历史运行留下的 marker 用户只报告数量，未知用户、
 ownership marker 不匹配的 root 或未知目录永远不会删除。失败会保留脱敏
 `test-output.log`，成功运行必须报告 `RemainingSmokeUsers = 0` 和
 `RemainingSmokeRoots = 0`。
