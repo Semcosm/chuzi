@@ -50,10 +50,10 @@ func (s *Store) ClaimNextWithSlot(now time.Time, leaseID, owner string, ttl time
 		if err := getJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), poolID, &pool, slot.ErrPoolNotFound); err != nil {
 			return err
 		}
-		if requirement.EnvironmentID == "" {
-			requirement = pool.Requirement()
+		if err := validatePoolEnvironmentTx(tx, pool); err != nil {
+			return err
 		}
-		requirement, err = requirement.Normalize()
+		requirement, err = constrainSlotRequirement(requirement, pool)
 		if err != nil {
 			return err
 		}
@@ -77,6 +77,8 @@ func (s *Store) ClaimNextWithSlot(now time.Time, leaseID, owner string, ttl time
 					status := slot.Ready
 					if candidate.Ordinal > pool.DesiredSlots {
 						status = slot.Retiring
+					} else if !slotMatchesPoolTarget(*candidate, pool) {
+						status = slot.Provisioning
 					}
 					candidate.Status, candidate.UpdatedAt = status, now.UTC()
 					if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), candidate.SlotID, *candidate); err != nil {
@@ -100,6 +102,8 @@ func (s *Store) ClaimNextWithSlot(now time.Time, leaseID, owner string, ttl time
 					status := slot.Ready
 					if candidate.Ordinal > pool.DesiredSlots {
 						status = slot.Retiring
+					} else if !slotMatchesPoolTarget(*candidate, pool) {
+						status = slot.Provisioning
 					}
 					candidate.Status, candidate.UpdatedAt = status, now.UTC()
 					if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), candidate.SlotID, *candidate); err != nil {

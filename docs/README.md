@@ -10,6 +10,7 @@
 | [account-state-machine.md](account-state-machine.md) | 账号业务状态、转换条件和异常处理 |
 | [storage.md](storage.md) | 单节点存储拓扑、Schema、事务和恢复约定 |
 | [job-user-pool.md](job-user-pool.md) | 阶段 1 逻辑执行槽位池、租约和容量语义 |
+| [environment-package.md](environment-package.md) | 阶段 3 签名环境包、生命周期门和代际围栏 |
 | [security.md](security.md) | 凭证、浏览器 Profile、日志和权限安全 |
 | [matrix-api.md](matrix-api.md) | Matrix 房间命令、事件和状态通知约定 |
 | [request-rate-limit.md](request-rate-limit.md) | 新请求的服务级限流范围、配置和错误指标 |

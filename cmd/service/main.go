@@ -25,6 +25,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/coretransport"
 	"github.com/Semcosm/chuzi/internal/credential"
 	"github.com/Semcosm/chuzi/internal/diagnostics"
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/health"
 	"github.com/Semcosm/chuzi/internal/matrix"
 	"github.com/Semcosm/chuzi/internal/observability"
@@ -78,27 +79,31 @@ type serviceOptions struct {
 }
 
 type serviceRuntime struct {
-	store          *store.Store
-	requests       *requestservice.Service
-	credentials    *credential.Service
-	runner         queue.Runner
-	automation     automation.Adapter
-	scheduler      *queue.Scheduler
-	notifier       *matrix.Notifier
-	gateway        *matrix.Gateway
-	matrixClient   *matrix.HTTPClient
-	health         *health.Checker
-	healthListen   string
-	metrics        *observability.Metrics
-	logger         *observability.JSONLogger
-	diagnostics    *diagnostics.Service
-	eventBuffer    *observability.EventBuffer
-	metricsListen  string
-	coreAPI        coreapi.API
-	coreServer     *coretransport.Server
-	slotReconciler slotReconciler
-	slotInterval   time.Duration
-	slotHealth     *slotLifecycleHealth
+	store              *store.Store
+	environment        *environment.Manager
+	environmentID      string
+	environmentVersion string
+	requests           *requestservice.Service
+	credentials        *credential.Service
+	runner             queue.Runner
+	automation         automation.Adapter
+	scheduler          *queue.Scheduler
+	notifier           *matrix.Notifier
+	gateway            *matrix.Gateway
+	matrixClient       *matrix.HTTPClient
+	health             *health.Checker
+	healthListen       string
+	metrics            *observability.Metrics
+	logger             *observability.JSONLogger
+	diagnostics        *diagnostics.Service
+	eventBuffer        *observability.EventBuffer
+	metricsListen      string
+	coreAPI            coreapi.API
+	coreServer         *coretransport.Server
+	slotReconciler     slotReconciler
+	slotInterval       time.Duration
+	slotHealth         *slotLifecycleHealth
+	rdp                *rdpCapabilityBridge
 }
 
 func (r *serviceRuntime) refreshMetrics(at time.Time) {
@@ -129,6 +134,9 @@ func (r *serviceRuntime) refreshMetrics(at time.Time) {
 	r.metrics.Set("chuzi_slots_leased", float64(snapshot.LeasedSlots))
 	r.metrics.Set("chuzi_slots_quarantined", float64(snapshot.QuarantinedSlots))
 	r.metrics.Set("chuzi_slots_draining", float64(snapshot.DrainingSlots))
+	r.metrics.Set("chuzi_slots_provisioning", float64(snapshot.ProvisioningSlots))
+	r.metrics.Set("chuzi_slots_retiring", float64(snapshot.RetiringSlots))
+	r.metrics.Set("chuzi_slots_unprovisioned", float64(snapshot.UnprovisionedSlots))
 }
 
 func (r *serviceRuntime) recordSlotReconcile(at time.Time, err error) {
@@ -148,11 +156,32 @@ func (r *serviceRuntime) recordSlotReconcile(at time.Time, err error) {
 		Resource:  "execution_slots",
 	}
 	event.Outcome = "failed"
-	event.ErrorClass = "reconcile_failed"
+	event.ErrorClass = slotReconcileErrorClass(err)
 	if r.metrics != nil {
 		r.metrics.Inc("chuzi_slot_reconcile_errors_total")
 	}
 	observability.MultiSink{r.metrics, r.logger, r.eventBuffer}.Record(event)
+}
+
+func slotReconcileErrorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "trusted environment"):
+		return "trust"
+	case strings.Contains(message, "cleanup"):
+		return "cleanup"
+	case strings.Contains(message, "provisioning"), strings.Contains(message, "session"), strings.Contains(message, "health"):
+		return "health"
+	case strings.Contains(message, "permission"):
+		return "permission"
+	case strings.Contains(message, "config"):
+		return "configuration"
+	default:
+		return "reconcile_failed"
+	}
 }
 
 func defaultServiceOptions() serviceOptions {
@@ -323,6 +352,28 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return nil, err
 	}
+	var environmentManager *environment.Manager
+	var environmentRuntime *serviceEnvironmentRuntime
+	if cfg.WindowsJobPool.Enabled {
+		environmentManager, err = newConfiguredEnvironmentManager(cfg, serviceTarget())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		if err := environmentManager.SyncRecords(database); err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		entryName := "headless"
+		if options.backend == backendNode {
+			entryName = "worker"
+		}
+		environmentRuntime, err = resolveServiceEnvironment(cfg, environmentManager, entryName)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+	}
 	if cfg.JobPool.Enabled() {
 		poolConfig := slot.PoolConfig{
 			PoolID:             cfg.JobPool.PoolID,
@@ -334,7 +385,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			Signer:             cfg.JobPool.Signer,
 			RequireTrusted:     cfg.JobPool.RequireTrusted,
 		}
-		if err := database.ReconcileJobPool(poolConfig, now()); err != nil {
+		if err := database.ReconcileTrustedJobPool(poolConfig, now()); err != nil {
 			_ = database.Close()
 			return nil, err
 		}
@@ -350,7 +401,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return nil, err
 		}
 	}
-	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge)
+	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge, environmentRuntime)
 	if err != nil {
 		_ = database.Close()
 		return nil, err
@@ -398,6 +449,9 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		{Name: "chuzi_slots_leased", Help: "Leased logical execution slots", Kind: observability.Gauge},
 		{Name: "chuzi_slots_quarantined", Help: "Quarantined logical execution slots", Kind: observability.Gauge},
 		{Name: "chuzi_slots_draining", Help: "Draining logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_provisioning", Help: "Provisioning logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_retiring", Help: "Retiring logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_unprovisioned", Help: "Unprovisioned logical execution slots", Kind: observability.Gauge},
 	} {
 		if err := metrics.Register(definition); err != nil {
 			return closeOnError(err)
@@ -572,8 +626,9 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		return closeOnError(coreErr)
 	}
 	runtime := &serviceRuntime{
-		store: database, requests: requestService, credentials: credentials,
+		store: database, environment: environmentManager, environmentID: cfg.JobPool.EnvironmentID, environmentVersion: cfg.JobPool.EnvironmentVersion, requests: requestService, credentials: credentials,
 		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, diagnostics: diagnosticService, eventBuffer: eventBuffer, coreAPI: coreAPI,
+		rdp: rdpBridge,
 	}
 	runtime.slotReconciler = slotReconciler
 	if slotReconciler != nil {
@@ -756,6 +811,16 @@ func main() {
 	auditAccount := flag.String("audit-account", "", "optional account filter for -audit")
 	auditLimit := flag.Int("audit-limit", 1000, "maximum entries returned by -audit")
 	validateBackupPath := flag.String("validate-backup", "", "validate a backup database without restoring it")
+	environmentInstall := flag.String("environment-install", "", "install a signed environment package source")
+	environmentUpgrade := flag.String("environment-upgrade", "", "upgrade from a signed environment package source")
+	environmentTrust := flag.Bool("environment-trust", false, "trust an installed environment")
+	environmentEnable := flag.Bool("environment-enable", false, "enable a trusted environment")
+	environmentDisable := flag.Bool("environment-disable", false, "disable an environment")
+	environmentHealth := flag.Bool("environment-health", false, "health-check an enabled environment")
+	environmentRollback := flag.Bool("environment-rollback", false, "rollback an environment package")
+	environmentPromote := flag.Bool("environment-promote", false, "promote manager-ready environment records into Store")
+	environmentID := flag.String("environment-id", "", "environment ID for a lifecycle operation")
+	environmentVersion := flag.String("environment-version", "", "environment version for a lifecycle operation")
 	flag.Parse()
 
 	if *showVersion {
@@ -767,9 +832,27 @@ func main() {
 	defer stop()
 
 	var err error
-	if *backup || strings.TrimSpace(*restorePath) != "" || strings.TrimSpace(*injectAccount) != "" || strings.TrimSpace(*rotateAccount) != "" || strings.TrimSpace(*revokeAccount) != "" || *diagnostics || *audit || strings.TrimSpace(*validateBackupPath) != "" {
+	environmentOperation := ""
+	environmentSource := ""
+	for operation, enabled := range map[string]bool{"install": strings.TrimSpace(*environmentInstall) != "", "upgrade": strings.TrimSpace(*environmentUpgrade) != "", "trust": *environmentTrust, "enable": *environmentEnable, "disable": *environmentDisable, "health": *environmentHealth, "rollback": *environmentRollback, "promote": *environmentPromote} {
+		if enabled {
+			if environmentOperation != "" {
+				err = fmt.Errorf("service: multiple environment operations")
+				break
+			}
+			environmentOperation = operation
+		}
+	}
+	if environmentOperation == "install" {
+		environmentSource = *environmentInstall
+	} else if environmentOperation == "upgrade" {
+		environmentSource = *environmentUpgrade
+	}
+	if err == nil && environmentOperation != "" {
+		err = runEnvironmentMaintenance(ctx, options, environmentOperation, environmentSource, *environmentID, *environmentVersion)
+	} else if err == nil && (*backup || strings.TrimSpace(*restorePath) != "" || strings.TrimSpace(*injectAccount) != "" || strings.TrimSpace(*rotateAccount) != "" || strings.TrimSpace(*revokeAccount) != "" || *diagnostics || *audit || strings.TrimSpace(*validateBackupPath) != "") {
 		err = runMaintenance(ctx, options, *backup, *restorePath, *injectAccount, *rotateAccount, *revokeAccount, *credentialEnv, *credentialActor, *diagnostics, *audit, *auditAccount, *validateBackupPath, *auditLimit)
-	} else if *selfTest {
+	} else if err == nil && *selfTest {
 		err = runSelfTest(ctx, options.workerCommand, options.workerScript)
 	} else {
 		err = run(ctx, options)

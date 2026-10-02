@@ -28,7 +28,7 @@ Darwin arm64 的构建契约。
 自行创建账号或请求，因此已有的排队请求可在重启后由 Scheduler 按租约状态恢复。
 迁移、事务、恢复和备份契约仍由 `internal/store` 库层及其测试作为事实来源。
 
-## Schema v6
+## Schema v7
 
 迁移在数据库的 `meta/version` 中记录当前版本，并可重复执行。v1 建立
 以下 bbolt bucket：
@@ -121,6 +121,17 @@ account lease、request 和 account snapshot；owner、request ID、account ID�
 时间窗以及 `STARTING`/`LOGGING_IN` 状态必须一致，同一 account/request 不能出现
 多个 slot lease。校验失败会返回 `ErrCorruptData`，恢复流程不能把不完整 claim
 当作健康资源。
+
+v7 增加签名环境包生命周期桶：
+
+| Bucket | 内容 |
+| --- | --- |
+| `environment_packages` | environment ID、版本、能力、manifest digest、signer，以及 installed/verified/trusted/enabled/healthy/ready 独立生命周期门和 generation |
+
+环境包记录只在显式验证、信任、启用和健康检查完成后才可成为 `ready`。Windows
+slot lifecycle 将该桶作为环境权威来源，要求 pool 的 environment、版本、能力、
+ digest 和 signer 完全匹配；缺少 ready 记录时服务保持 unprovisioned/provisioning/unhealthy，
+不会把仅安装或仅配置的包当作可调度资源。
 
 ## 事务边界与幂等
 

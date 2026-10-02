@@ -126,3 +126,36 @@ func TestRDPServiceBindsCapabilityToActorAccountAndSlotLeases(t *testing.T) {
 		t.Fatalf("resolve after slot revocation = %v", err)
 	}
 }
+
+func TestRDPServiceRevokesAccountGenerationAndClose(t *testing.T) {
+	now := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	material, _ := NewRDPMaterial("127.0.0.1", 3389, "opaque", "random", "", false)
+	service, _ := NewRDPService(rdpAuthorizerFake{material: material})
+	authorization := RDPAuthorization{AccountID: "account-1", RequestID: "request-1", Actor: "ui", AccountLeaseID: "account-lease-1", SlotLeaseID: "slot-lease-1", SlotID: "pool-001", EnvironmentGeneration: 4}
+	capability, err := service.Issue(context.Background(), authorization, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RevokeGeneration(context.Background(), authorization.SlotID, authorization.EnvironmentGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolveBound(context.Background(), capability, authorization, now); !errors.Is(err, ErrRDPCapability) {
+		t.Fatalf("generation revoke = %v", err)
+	}
+	capability, err = service.Issue(context.Background(), authorization, now, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RevokeAccountLease(context.Background(), authorization.AccountLeaseID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ResolveBound(context.Background(), capability, authorization, now); !errors.Is(err, ErrRDPCapability) {
+		t.Fatalf("account lease revoke = %v", err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

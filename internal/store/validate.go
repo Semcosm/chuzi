@@ -9,6 +9,7 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/account"
 	"github.com/Semcosm/chuzi/internal/credential"
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/migrations"
 	"go.etcd.io/bbolt"
@@ -75,6 +76,7 @@ func validateDB(database *bbolt.DB) error {
 			migrations.MatrixSyncCursorsBucket, migrations.JobPoolsBucket,
 			migrations.ExecutionSlotsBucket, migrations.SlotLeasesBucket,
 			migrations.EnvironmentSummariesBucket,
+			migrations.EnvironmentPackagesBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				return fmt.Errorf("%w: required bucket %q is missing", ErrCorruptData, name)
@@ -116,7 +118,29 @@ func validateDB(database *bbolt.DB) error {
 		if err := validateEnvironmentSummariesTx(tx); err != nil {
 			return err
 		}
+		if err := validateEnvironmentPackagesTx(tx); err != nil {
+			return err
+		}
 		return validateEventsTx(tx)
+	})
+}
+
+func validateEnvironmentPackagesTx(tx *bbolt.Tx) error {
+	return tx.Bucket([]byte(migrations.EnvironmentPackagesBucket)).ForEach(func(key, value []byte) error {
+		if value == nil {
+			return fmt.Errorf("%w: environment package bucket contains nested bucket", ErrCorruptData)
+		}
+		var record environment.Record
+		if err := decode(value, &record); err != nil {
+			return err
+		}
+		if string(key) != record.EnvironmentID+"@"+record.Version {
+			return fmt.Errorf("%w: environment package key mismatch", ErrCorruptData)
+		}
+		if err := record.Validate(); err != nil {
+			return fmt.Errorf("%w: invalid environment package", ErrCorruptData)
+		}
+		return nil
 	})
 }
 
@@ -140,6 +164,7 @@ func validateEnvironmentSummariesTx(tx *bbolt.Tx) error {
 }
 
 func validateJobPoolsTx(tx *bbolt.Tx) error {
+	environmentPackages := tx.Bucket([]byte(migrations.EnvironmentPackagesBucket))
 	return tx.Bucket([]byte(migrations.JobPoolsBucket)).ForEach(func(key, value []byte) error {
 		if value == nil {
 			return fmt.Errorf("%w: job pool bucket contains nested bucket", ErrCorruptData)
@@ -153,6 +178,14 @@ func validateJobPoolsTx(tx *bbolt.Tx) error {
 		}
 		if err := config.Validate(); err != nil {
 			return fmt.Errorf("%w: invalid job pool", ErrCorruptData)
+		}
+		// Once the environment registry contains records, every persisted pool
+		// must resolve to a complete ready record. This keeps restore validation
+		// from accepting a pool whose metadata no longer names a trusted package.
+		if environmentPackages != nil && environmentPackages.Stats().KeyN > 0 {
+			if err := validatePoolEnvironmentTx(tx, config); err != nil {
+				return fmt.Errorf("%w: job pool environment is unavailable", ErrCorruptData)
+			}
 		}
 		return nil
 	})
@@ -176,6 +209,26 @@ func validateSlotsTx(tx *bbolt.Tx) error {
 		}
 		if err := item.Validate(); err != nil {
 			return fmt.Errorf("%w: invalid execution slot", ErrCorruptData)
+		}
+		poolRaw := jobPools.Get([]byte(item.PoolID))
+		if poolRaw == nil {
+			return fmt.Errorf("%w: execution slot references missing pool", ErrCorruptData)
+		}
+		var pool slot.PoolConfig
+		if err := decode(poolRaw, &pool); err != nil {
+			return err
+		}
+		if err := pool.Validate(); err != nil {
+			return fmt.Errorf("%w: execution slot references invalid pool", ErrCorruptData)
+		}
+		// Active leases and transitional states may retain the previous
+		// environment until reconcile drains or reprovisions them. A Ready slot
+		// must always match the pool's persisted target.
+		if item.Status == slot.Ready && (item.EnvironmentID != pool.EnvironmentID || item.EnvironmentVersion != pool.EnvironmentVersion || item.ManifestDigest != pool.ManifestDigest || item.Signer != pool.Signer || !containsCapabilities(item.Capabilities, pool.Capabilities)) {
+			return fmt.Errorf("%w: execution slot environment does not match pool", ErrCorruptData)
+		}
+		if item.Status == slot.Ready && !item.Trusted {
+			return fmt.Errorf("%w: ready execution slot is not trusted", ErrCorruptData)
 		}
 		if (item.Status == slot.Leased || item.Status == slot.Draining) && leases.Get(key) == nil {
 			return fmt.Errorf("%w: leased slot has no lease", ErrCorruptData)

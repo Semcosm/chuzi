@@ -45,7 +45,7 @@ func configureWorkerFactory(cfg config.Config, options serviceOptions, factory b
 	return browser.NewAgentProcessFactory(slotAgentBridge{resolver: resolver}, slotagent.BrowserWorker)
 }
 
-func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker) (slotReconciler, slotProfileAccess, error) {
+func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker, environmentRuntime *serviceEnvironmentRuntime) (slotReconciler, slotProfileAccess, error) {
 	if !cfg.WindowsJobPool.Enabled {
 		return nil, nil, nil
 	}
@@ -54,7 +54,10 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 		return nil, nil, err
 	}
 	runtimeRoot := filepath.Dir(executable)
-	workerCommand, workerScript, err := fixedWindowsWorkerRuntime(runtimeRoot, options)
+	if environmentRuntime == nil || environmentRuntime.Root == "" || environmentRuntime.WorkerScript == "" {
+		return nil, nil, fmt.Errorf("service: trusted environment runtime is unavailable")
+	}
+	workerCommand, workerScript, err := fixedWindowsWorkerRuntime(environmentRuntime.Root, environmentRuntime.WorkerScript, runtimeRoot, options)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -62,7 +65,7 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 	if options.backend == backendHeadless || options.backend == backendHeaded {
 		browserMode, browserCommand = options.backend, options.headlessBrowserCommand
 	}
-	provisionOptions := slotwindows.Options{DataDir: cfg.DataDir, UserPrefix: cfg.WindowsJobPool.UserPrefix, EnvironmentID: cfg.WindowsJobPool.EnvironmentID, Version: cfg.WindowsJobPool.EnvironmentVersion, RDPEnabled: cfg.WindowsJobPool.RDPEnabled, AgentPath: filepath.Join(runtimeRoot, "chuzi-user-agent.exe"), RuntimePath: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, BrowserMode: browserMode, BrowserCommand: browserCommand, SessionIdleTimeout: time.Duration(cfg.WindowsJobPool.SessionIdleTimeoutSeconds) * time.Second, CapabilityRevoker: revoker}
+	provisionOptions := slotwindows.Options{DataDir: cfg.DataDir, UserPrefix: cfg.WindowsJobPool.UserPrefix, EnvironmentID: cfg.WindowsJobPool.EnvironmentID, Version: cfg.WindowsJobPool.EnvironmentVersion, ManifestDigest: cfg.JobPool.ManifestDigest, Signer: cfg.JobPool.Signer, RequireTrusted: cfg.JobPool.RequireTrusted, RDPEnabled: cfg.WindowsJobPool.RDPEnabled, AgentPath: filepath.Join(runtimeRoot, "chuzi-user-agent.exe"), RuntimePath: environmentRuntime.Root, WorkerRuntimeRoot: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, BrowserMode: browserMode, BrowserCommand: browserCommand, SessionIdleTimeout: time.Duration(cfg.WindowsJobPool.SessionIdleTimeoutSeconds) * time.Second, CapabilityRevoker: revoker}
 	provisioner, err := slotwindows.New(provisionOptions)
 	if err != nil {
 		return nil, nil, err
@@ -74,7 +77,7 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 	if candidate, ok := revoker.(slotlifecycle.CapabilityRevoker); ok {
 		leaseRevoker = candidate
 	}
-	reconciler, err := slotlifecycle.New(database, provisioner, pool, now, provisionTimeout, cleanupTimeout, leaseRevoker)
+	reconciler, err := slotlifecycle.New(database, provisioner, pool, now, provisionTimeout, cleanupTimeout, leaseRevoker, database, options.owner)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -84,29 +87,33 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 // fixedWindowsWorkerRuntime is the allowlist for the user-agent process. The
 // Windows slot boundary runs only the packaged Node worker entry points; a
 // service flag cannot turn a managed slot into a shell or arbitrary launcher.
-func fixedWindowsWorkerRuntime(runtimeRoot string, options serviceOptions) (string, string, error) {
-	if runtimeRoot == "" || !filepath.IsAbs(runtimeRoot) || strings.ContainsAny(runtimeRoot, "\x00\r\n") {
+func fixedWindowsWorkerRuntime(packageRoot, workerScript, serviceRuntimeRoot string, options serviceOptions) (string, string, error) {
+	if packageRoot == "" || !filepath.IsAbs(packageRoot) || strings.ContainsAny(packageRoot, "\x00\r\n") || serviceRuntimeRoot == "" || !filepath.IsAbs(serviceRuntimeRoot) {
 		return "", "", fmt.Errorf("service: invalid Windows runtime root")
 	}
-	runtimeRoot = filepath.Clean(runtimeRoot)
-	if !windowsRuntimeDirectory(runtimeRoot) {
+	packageRoot = filepath.Clean(packageRoot)
+	serviceRuntimeRoot = filepath.Clean(serviceRuntimeRoot)
+	if !windowsRuntimeDirectory(packageRoot) || !windowsRuntimeDirectory(serviceRuntimeRoot) {
 		return "", "", fmt.Errorf("service: invalid Windows runtime root")
 	}
-	resolved, err := packagedWindowsNodeRuntime(runtimeRoot, options.workerCommand)
+	resolved, err := fixedWindowsNodeRuntime(serviceRuntimeRoot, options.workerCommand)
 	if err != nil {
-		return "", "", fmt.Errorf("service: Windows job pool requires node.exe inside the package runtime")
+		return "", "", fmt.Errorf("service: Windows job pool requires the service-owned node.exe runtime")
 	}
-	script := filepath.Join(runtimeRoot, "browser-worker", "src", "headless.mjs")
-	if options.backend == backendNode {
-		script = filepath.Join(runtimeRoot, "browser-worker", "src", "worker.mjs")
+	script := filepath.Clean(workerScript)
+	if options.backend == backendNode && filepath.Base(script) != "worker.mjs" {
+		return "", "", fmt.Errorf("service: signed environment has no deferred worker entrypoint")
 	}
-	if !windowsRuntimeFile(runtimeRoot, script) {
+	if options.backend != backendNode && filepath.Base(script) != "headless.mjs" {
+		return "", "", fmt.Errorf("service: signed environment has no CDP worker entrypoint")
+	}
+	if !windowsRuntimeFile(packageRoot, script) {
 		return "", "", fmt.Errorf("service: packaged browser worker entry point is unavailable")
 	}
 	return filepath.Clean(resolved), script, nil
 }
 
-func packagedWindowsNodeRuntime(runtimeRoot, requested string) (string, error) {
+func fixedWindowsNodeRuntime(runtimeRoot, requested string) (string, error) {
 	requested = strings.TrimSpace(requested)
 	if requested == "" {
 		return "", fmt.Errorf("empty worker runtime")
@@ -133,7 +140,7 @@ func resolveServiceWorkerCommand(options serviceOptions, windowsPool bool) (stri
 		if err != nil {
 			return "", err
 		}
-		return packagedWindowsNodeRuntime(filepath.Dir(executable), options.workerCommand)
+		return fixedWindowsNodeRuntime(filepath.Dir(executable), options.workerCommand)
 	}
 	return exec.LookPath(options.workerCommand)
 }

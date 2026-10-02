@@ -27,7 +27,7 @@ func TestRuntimeHandlerRestoresBootstrapLeaseAfterStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	handler := &RuntimeHandler{Leases: leases, Launcher: resetTestLauncher{job: resetTestJob{}}, jobs: make(map[string]Job)}
-	prepare := Request{Command: PrepareSlot, RequestID: "request-1", AccountID: "account-1", SlotID: "pool-001", LeaseID: "slot-lease", EnvironmentGeneration: 2, Auth: "token"}
+	prepare := Request{Command: PrepareSlot, RequestID: "request-1", Owner: "service", AccountID: "account-1", SlotID: "pool-001", LeaseID: "slot-lease", EnvironmentGeneration: 2, Auth: "token"}
 	if _, err := handler.HandleAgentCommand(context.Background(), prepare); err != nil {
 		t.Fatal(err)
 	}

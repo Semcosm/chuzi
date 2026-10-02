@@ -3,9 +3,11 @@ package slotlifecycle
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/slot"
 )
 
@@ -14,6 +16,15 @@ var lifecycleNow = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 type memorySlots struct {
 	items  map[string]slot.Slot
 	leases map[string]slot.Lease
+}
+
+type environmentAuthority struct {
+	record environment.Record
+	err    error
+}
+
+func (a environmentAuthority) GetEnvironmentRecord(string, string) (environment.Record, error) {
+	return a.record, a.err
 }
 
 func (m *memorySlots) ListSlots(pool string) ([]slot.Slot, error) {
@@ -49,8 +60,14 @@ func (m *memorySlots) MarkSlotReady(id string, summary slot.EnvironmentSummary, 
 	v := m.items[id]
 	v.EnvironmentID, v.EnvironmentVersion, v.EnvironmentGeneration = summary.EnvironmentID, summary.Version, summary.Generation
 	v.Capabilities, v.ManifestDigest, v.Signer, v.Trusted = summary.Capabilities, summary.ManifestDigest, summary.Signer, summary.Trusted
+	v.AgentHandle = summary.AgentHandle
 	v.Status, v.HealthAt, v.UpdatedAt = slot.Ready, at, at
 	m.items[id] = v
+	return nil
+}
+
+func (m *memorySlots) UpsertSlot(value slot.Slot) error {
+	m.items[value.SlotID] = value
 	return nil
 }
 
@@ -60,6 +77,7 @@ type fakeProvisioner struct {
 	summary                             slot.EnvironmentSummary
 	inspectErr, provisionErr, retireErr error
 	shutdownCalls                       int
+	owner                               string
 }
 
 type retryableProvisionError struct{}
@@ -70,6 +88,7 @@ func (retryableProvisionError) Retryable() bool { return true }
 func (f *fakeProvisioner) Provision(_ context.Context, request slot.ProvisionRequest) (slot.ProvisionResult, error) {
 	f.calls = append(f.calls, "provision")
 	f.generations = append(f.generations, request.EnvironmentGeneration)
+	f.owner = request.Owner
 	return slot.ProvisionResult{AgentHandle: "opaque", Summary: f.summary}, f.provisionErr
 }
 func (f *fakeProvisioner) Inspect(_ context.Context, _ slot.ProvisionRequest) (slot.EnvironmentSummary, error) {
@@ -120,8 +139,14 @@ func TestReconcileProvisionInspectAndRetire(t *testing.T) {
 	if err := reconciler.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if db.items["pool-001"].Status != slot.Ready || len(provisioner.calls) != 1 || provisioner.calls[0] != "provision" || len(provisioner.generations) != 1 || provisioner.generations[0] != 1 {
+	if db.items["pool-001"].Status != slot.Ready || len(provisioner.calls) != 2 || provisioner.calls[0] != "provision" || provisioner.calls[1] != "inspect" || len(provisioner.generations) != 1 || provisioner.generations[0] != 1 {
 		t.Fatalf("provision state=%#v calls=%v", db.items["pool-001"], provisioner.calls)
+	}
+	if db.items["pool-001"].AgentHandle != "opaque" {
+		t.Fatalf("agent handle was not committed: %#v", db.items["pool-001"])
+	}
+	if provisioner.owner != "service" {
+		t.Fatalf("provision owner = %q", provisioner.owner)
 	}
 	provisioner.calls = nil
 	if err := reconciler.Reconcile(context.Background()); err != nil {
@@ -153,6 +178,35 @@ func TestReconcileProvisionInspectAndRetire(t *testing.T) {
 	}
 }
 
+func TestReconcileRequiresExactReadyEnvironmentAuthority(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
+	p := validPool(1)
+	p.ManifestDigest, p.Signer = strings.Repeat("a", 64), "signer"
+	summary := validSummary(1)
+	summary.ManifestDigest, summary.Signer = p.ManifestDigest, p.Signer
+	provisioner := &fakeProvisioner{summary: summary}
+	authority := environmentAuthority{record: environment.Record{EnvironmentID: p.EnvironmentID, Version: p.EnvironmentVersion, Capabilities: []string{"desktop"}, ManifestDigest: p.ManifestDigest, Signer: p.Signer, Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: lifecycleNow}}
+	r, err := New(db, provisioner, p, func() time.Time { return lifecycleNow }, time.Minute, time.Minute, authority, "operator")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provisioner.owner != "operator" {
+		t.Fatalf("owner = %q", provisioner.owner)
+	}
+	bad := authority
+	bad.record.Capabilities = nil
+	r, err = New(db, provisioner, p, func() time.Time { return lifecycleNow }, time.Minute, time.Minute, bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(context.Background()); err == nil {
+		t.Fatal("authority without required capability was accepted")
+	}
+}
+
 func TestReconcileFailureDoesNotMarkSlotReady(t *testing.T) {
 	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
 	provisioner := &fakeProvisioner{summary: validSummary(1), provisionErr: errors.New("secret native error")}
@@ -163,6 +217,21 @@ func TestReconcileFailureDoesNotMarkSlotReady(t *testing.T) {
 	}
 	if db.items["pool-001"].Status == slot.Ready {
 		t.Fatal("failed provision became schedulable")
+	}
+}
+
+func TestReconcileHealthGateQuarantinesAfterProvision(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
+	provisioner := &fakeProvisioner{summary: validSummary(1), inspectErr: errors.New("health unavailable")}
+	reconciler, _ := New(db, provisioner, validPool(1), func() time.Time { return lifecycleNow }, time.Minute, time.Minute)
+	if err := reconciler.Reconcile(context.Background()); err == nil || err.Error() != "slotlifecycle: health check failed" {
+		t.Fatalf("health gate error = %v", err)
+	}
+	if db.items["pool-001"].Status != slot.Quarantined {
+		t.Fatalf("health failure status = %s, want quarantined", db.items["pool-001"].Status)
+	}
+	if len(provisioner.calls) != 2 || provisioner.calls[0] != "provision" || provisioner.calls[1] != "inspect" {
+		t.Fatalf("lifecycle order = %v", provisioner.calls)
 	}
 }
 

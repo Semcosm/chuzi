@@ -142,7 +142,7 @@ func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.
 	if s.maxConcurrency > 0 && effective > s.maxConcurrency {
 		effective = s.maxConcurrency
 	}
-	return coreapi.JobPoolStatus{PoolID: status.PoolID, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, EffectiveCapacity: effective}, nil
+	return coreapi.JobPoolStatus{PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, EffectiveCapacity: effective}, nil
 }
 
 func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {

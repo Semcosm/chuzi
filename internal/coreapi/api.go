@@ -235,13 +235,18 @@ type DiagnosticsAPI interface {
 // JobPoolStatus is a redaction-safe execution capacity projection. It never
 // contains Windows usernames, SIDs, Profile paths, endpoints, or commands.
 type JobPoolStatus struct {
-	PoolID            string `json:"pool_id"`
-	Desired           int    `json:"desired"`
-	Ready             int    `json:"ready"`
-	Leased            int    `json:"leased"`
-	Quarantined       int    `json:"quarantined"`
-	Draining          int    `json:"draining"`
-	EffectiveCapacity int    `json:"effective_capacity"`
+	PoolID             string `json:"pool_id"`
+	EnvironmentID      string `json:"environment_id"`
+	EnvironmentVersion string `json:"environment_version"`
+	Desired            int    `json:"desired"`
+	Ready              int    `json:"ready"`
+	Leased             int    `json:"leased"`
+	Quarantined        int    `json:"quarantined"`
+	Draining           int    `json:"draining"`
+	Provisioning       int    `json:"provisioning"`
+	Retiring           int    `json:"retiring"`
+	Unprovisioned      int    `json:"unprovisioned"`
+	EffectiveCapacity  int    `json:"effective_capacity"`
 }
 
 type JobPoolStatusAPI interface {

@@ -18,7 +18,9 @@ import (
 	adapterpkg "github.com/Semcosm/chuzi/internal/adapter"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/observability"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -118,6 +120,45 @@ func TestAssembleRuntimeOpensPersistentStoreAndBuildsBoundaries(t *testing.T) {
 		t.Fatalf("reopened store schema version = %v", err)
 	}
 	if err := reopened.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAssembleRuntimeRequiresDurableReadyEnvironmentForPool(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg, err := config.New(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("a", 64)
+	cfg.JobPool = config.JobPoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, Capabilities: []string{"desktop"}, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}
+	cfg.EnvironmentPackage = config.EnvironmentPackageConfig{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: digest, Signer: "signer"}
+	if _, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), time.Now, testFactory{}); !errors.Is(err, store.ErrEnvironmentUnavailable) {
+		t.Fatalf("missing ready environment error = %v", err)
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", Capabilities: []string{"desktop"}, ManifestDigest: digest, Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: time.Now().UTC()}
+	if err := database.PutEnvironmentRecord(record); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), time.Now, testFactory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.store == nil {
+		t.Fatal("trusted pool runtime did not open store")
+	}
+	if slots, err := runtime.store.ListSlots("pool"); err != nil || len(slots) != 1 || slots[0].Status != slot.Unprovisioned {
+		t.Fatalf("trusted pool slots = %#v, %v", slots, err)
+	}
+	if err := runtime.store.Close(); err != nil {
 		t.Fatal(err)
 	}
 }

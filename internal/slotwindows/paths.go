@@ -28,13 +28,20 @@ var (
 const managedDesktopPrefix = "ChuziSlot"
 
 type Options struct {
-	DataDir            string
-	UserPrefix         string
-	EnvironmentID      string
-	Version            string
-	RDPEnabled         bool
-	AgentPath          string
-	RuntimePath        string
+	DataDir        string
+	UserPrefix     string
+	EnvironmentID  string
+	Version        string
+	ManifestDigest string
+	Signer         string
+	RequireTrusted bool
+	RDPEnabled     bool
+	AgentPath      string
+	RuntimePath    string
+	// WorkerRuntimeRoot is the service-owned host runtime directory (for
+	// example the directory containing node.exe). The signed environment
+	// remains RuntimePath and supplies the worker script/resources.
+	WorkerRuntimeRoot  string
 	WorkerCommand      string
 	WorkerScript       string
 	AdapterScript      string
@@ -75,10 +82,10 @@ type CapabilityRevoker interface {
 }
 
 func (o Options) Validate() error {
-	if !filepath.IsAbs(o.DataDir) || filepath.Clean(o.DataDir) == string(filepath.Separator) || containsUnsafePathText(o.DataDir) || !userPrefixPattern.MatchString(o.UserPrefix) || o.EnvironmentID == "" || len(o.EnvironmentID) > 256 || len(o.Version) > 128 {
+	if !filepath.IsAbs(o.DataDir) || filepath.Clean(o.DataDir) == string(filepath.Separator) || containsUnsafePathText(o.DataDir) || !userPrefixPattern.MatchString(o.UserPrefix) || o.EnvironmentID == "" || len(o.EnvironmentID) > 256 || len(o.Version) > 128 || len(o.ManifestDigest) > 256 || len(o.Signer) > 256 || strings.ContainsAny(o.EnvironmentID+o.Version+o.ManifestDigest+o.Signer, "\x00\r\n\t") {
 		return ErrInvalidOptions
 	}
-	for _, value := range []string{o.AgentPath, o.RuntimePath, o.WorkerCommand, o.WorkerScript, o.AdapterScript, o.BrowserCommand} {
+	for _, value := range []string{o.AgentPath, o.RuntimePath, o.WorkerRuntimeRoot, o.WorkerCommand, o.WorkerScript, o.AdapterScript, o.BrowserCommand} {
 		if filepath.Clean(value) == string(filepath.Separator) || containsUnsafePathText(value) {
 			return ErrInvalidOptions
 		}

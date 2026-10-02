@@ -26,15 +26,43 @@ var ErrInvalidConfig = errors.New("config: invalid configuration")
 // Config contains ordinary deployment settings only. Secrets intentionally do
 // not have a field in this type and must be supplied by a later secret store.
 type Config struct {
-	DataDir        string               `json:"data_dir"`
-	Matrix         MatrixConfig         `json:"matrix,omitempty"`
-	Credentials    CredentialConfig     `json:"credentials,omitempty"`
-	Health         HealthConfig         `json:"health,omitempty"`
-	Observability  ObservabilityConfig  `json:"observability,omitempty"`
-	Diagnostics    DiagnosticsConfig    `json:"diagnostics,omitempty"`
-	RateLimit      RateLimitConfig      `json:"rate_limit,omitempty"`
-	JobPool        JobPoolConfig        `json:"job_pool,omitempty"`
-	WindowsJobPool WindowsJobPoolConfig `json:"windows_job_pool,omitempty"`
+	DataDir            string                   `json:"data_dir"`
+	Matrix             MatrixConfig             `json:"matrix,omitempty"`
+	Credentials        CredentialConfig         `json:"credentials,omitempty"`
+	Health             HealthConfig             `json:"health,omitempty"`
+	Observability      ObservabilityConfig      `json:"observability,omitempty"`
+	Diagnostics        DiagnosticsConfig        `json:"diagnostics,omitempty"`
+	RateLimit          RateLimitConfig          `json:"rate_limit,omitempty"`
+	EnvironmentPackage EnvironmentPackageConfig `json:"environment_package,omitempty"`
+	JobPool            JobPoolConfig            `json:"job_pool,omitempty"`
+	WindowsJobPool     WindowsJobPoolConfig     `json:"windows_job_pool,omitempty"`
+}
+
+// EnvironmentPackageConfig identifies the service-owned manifest selected by
+// a pool. It deliberately carries metadata only; package files are resolved
+// below a deployment-owned root by the environment manager.
+type EnvironmentPackageConfig struct {
+	EnvironmentID  string `json:"environment_id,omitempty"`
+	Version        string `json:"version,omitempty"`
+	ManifestDigest string `json:"manifest_digest,omitempty"`
+	Signer         string `json:"signer,omitempty"`
+}
+
+func (e EnvironmentPackageConfig) Enabled() bool {
+	return strings.TrimSpace(e.EnvironmentID) != "" || strings.TrimSpace(e.Version) != "" || strings.TrimSpace(e.ManifestDigest) != "" || strings.TrimSpace(e.Signer) != ""
+}
+
+func (e EnvironmentPackageConfig) Validate(pool JobPoolConfig) error {
+	if !e.Enabled() {
+		return nil
+	}
+	if !pool.Enabled() || e.EnvironmentID != pool.EnvironmentID || e.Version != pool.EnvironmentVersion || e.ManifestDigest != pool.ManifestDigest || e.Signer != pool.Signer {
+		return fmt.Errorf("%w: environment_package must match job_pool", ErrInvalidConfig)
+	}
+	if strings.TrimSpace(e.EnvironmentID) != e.EnvironmentID || strings.TrimSpace(e.Version) != e.Version || strings.TrimSpace(e.ManifestDigest) != e.ManifestDigest || strings.TrimSpace(e.Signer) != e.Signer || strings.ContainsAny(e.EnvironmentID+e.Version+e.ManifestDigest+e.Signer, "\r\n\t") {
+		return fmt.Errorf("%w: invalid environment_package metadata", ErrInvalidConfig)
+	}
+	return nil
 }
 
 // WindowsJobPoolConfig configures OS-backed job slots separately from launcher
@@ -210,6 +238,7 @@ func Load(path string) (Config, error) {
 	normalized.Observability = raw.Observability
 	normalized.Diagnostics = raw.Diagnostics
 	normalized.RateLimit = raw.RateLimit
+	normalized.EnvironmentPackage = raw.EnvironmentPackage
 	normalized.JobPool = raw.JobPool
 	normalized.WindowsJobPool = raw.WindowsJobPool
 	if err := normalized.Validate(); err != nil {
@@ -243,6 +272,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.RateLimit.Validate(); err != nil {
+		return err
+	}
+	if err := c.EnvironmentPackage.Validate(c.JobPool); err != nil {
 		return err
 	}
 	if err := c.JobPool.Validate(); err != nil {

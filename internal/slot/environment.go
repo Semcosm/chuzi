@@ -8,6 +8,7 @@ type ProvisionRequest struct {
 	SlotID                string
 	PoolID                string
 	Ordinal               int
+	Owner                 string
 	EnvironmentGeneration uint64
 	Requirement           EnvironmentRequirement
 }

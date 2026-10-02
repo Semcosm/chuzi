@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CurrentVersion uint64 = 6
+	CurrentVersion uint64 = 7
 
 	MetaBucket                 = "meta"
 	AccountsBucket             = "accounts"
@@ -33,6 +33,7 @@ const (
 	ExecutionSlotsBucket       = "execution_slots"
 	SlotLeasesBucket           = "slot_leases"
 	EnvironmentSummariesBucket = "environment_summaries"
+	EnvironmentPackagesBucket  = "environment_packages"
 	VersionKey                 = "version"
 )
 
@@ -89,6 +90,10 @@ func Apply(db *bbolt.DB) error {
 				if err := createVersionSix(tx); err != nil {
 					return err
 				}
+			case 7:
+				if err := createVersionSeven(tx); err != nil {
+					return err
+				}
 			default:
 				return fmt.Errorf("%w: migration %d", ErrUnsupportedVersion, version+1)
 			}
@@ -138,6 +143,13 @@ func createVersionSix(tx *bbolt.Tx) error {
 		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 			return fmt.Errorf("create %s bucket: %w", name, err)
 		}
+	}
+	return nil
+}
+
+func createVersionSeven(tx *bbolt.Tx) error {
+	if _, err := tx.CreateBucketIfNotExists([]byte(EnvironmentPackagesBucket)); err != nil {
+		return fmt.Errorf("create %s bucket: %w", EnvironmentPackagesBucket, err)
 	}
 	return nil
 }

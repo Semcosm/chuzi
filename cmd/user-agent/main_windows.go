@@ -51,6 +51,10 @@ func main() {
 	}
 	requestID := os.Getenv("CHUZI_AGENT_REQUEST_ID")
 	accountID := os.Getenv("CHUZI_AGENT_ACCOUNT_ID")
+	owner, err := requiredEnv("CHUZI_AGENT_OWNER")
+	if err != nil {
+		fail(err)
+	}
 	version := os.Getenv("CHUZI_AGENT_VERSION")
 	state := os.Getenv("CHUZI_AGENT_SESSION_STATE")
 	runtimeRoot, err := requiredEnv("CHUZI_AGENT_RUNTIME_ROOT")
@@ -81,8 +85,12 @@ func main() {
 	if !strings.EqualFold(filepath.Base(workerCommand), "node.exe") {
 		fail(fmt.Errorf("user-agent: unsupported worker runtime"))
 	}
-	if !runtimePathContained(runtimeRoot, workerCommand) {
-		fail(fmt.Errorf("user-agent: worker runtime outside package"))
+	workerRuntimeRoot := os.Getenv("CHUZI_AGENT_WORKER_RUNTIME_ROOT")
+	if workerRuntimeRoot == "" {
+		workerRuntimeRoot = filepath.Dir(workerCommand)
+	}
+	if !filepath.IsAbs(workerRuntimeRoot) || !runtimePathContained(workerRuntimeRoot, workerCommand) {
+		fail(fmt.Errorf("user-agent: worker runtime outside service runtime"))
 	}
 	workerRelative, relErr := filepath.Rel(runtimeRoot, workerScript)
 	if relErr != nil || (workerRelative != filepath.Join("browser-worker", "src", "worker.mjs") && workerRelative != filepath.Join("browser-worker", "src", "headless.mjs")) {
@@ -114,12 +122,12 @@ func main() {
 	if !filepath.IsAbs(profileRoot) || !filepath.IsAbs(workDir) || strings.ContainsAny(runtimeRoot+profileRoot+workDir, "\x00\r\n") {
 		fail(fmt.Errorf("user-agent: invalid runtime configuration"))
 	}
-	launcher, err := slotagent.NewProcessLauncher(slotagent.RuntimeConfig{RuntimeRoot: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, AdapterScript: adapterScript, ProfileRoot: profileRoot, WorkDir: workDir, BrowserArgs: browserArgs})
+	launcher, err := slotagent.NewProcessLauncher(slotagent.RuntimeConfig{RuntimeRoot: runtimeRoot, WorkerRuntimeRoot: workerRuntimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, AdapterScript: adapterScript, ProfileRoot: profileRoot, WorkDir: workDir, BrowserArgs: browserArgs})
 	if err != nil {
 		fail(err)
 	}
 	leases := &slotagent.LeaseState{}
-	if err := leases.Update(slotID, generation, leaseID, requestID, accountID, token); err != nil {
+	if err := leases.UpdateOwned(slotID, generation, leaseID, requestID, owner, accountID, token); err != nil {
 		fail(err)
 	}
 	handler := &slotagent.RuntimeHandler{Version: version, SessionState: state, SessionStateFunc: slotagent.CurrentSessionState, Leases: leases, Launcher: launcher}

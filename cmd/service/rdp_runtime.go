@@ -68,10 +68,34 @@ func (b *rdpCapabilityBridge) RevokeSlot(ctx context.Context, slotID string) err
 	return b.service.RevokeSlot(ctx, slotID)
 }
 
+func (b *rdpCapabilityBridge) RevokeAccountLease(ctx context.Context, leaseID string) error {
+	if b == nil || b.service == nil {
+		return nil
+	}
+	return b.service.RevokeAccountLease(ctx, leaseID)
+}
+
+func (b *rdpCapabilityBridge) RevokeGeneration(ctx context.Context, slotID string, generation uint64) error {
+	if b == nil || b.service == nil {
+		return nil
+	}
+	return b.service.RevokeGeneration(ctx, slotID, generation)
+}
+
+func (b *rdpCapabilityBridge) Close() error {
+	if b == nil || b.service == nil {
+		return nil
+	}
+	return b.service.Close()
+}
+
 var _ interface {
 	Issue(context.Context, string, string, string) (coreapi.RDPCapability, error)
 	IssueBound(context.Context, credential.RDPAuthorization) (coreapi.RDPCapability, error)
 	RevokeRequest(context.Context, string) error
 	RevokeSlotLease(context.Context, string) error
 	RevokeSlot(context.Context, string) error
+	RevokeAccountLease(context.Context, string) error
+	RevokeGeneration(context.Context, string, uint64) error
+	Close() error
 } = (*rdpCapabilityBridge)(nil)

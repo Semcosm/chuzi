@@ -125,7 +125,7 @@ type EnvironmentSummary struct {
 }
 
 func (e EnvironmentSummary) Validate() error {
-	if !validID(e.EnvironmentID) || e.Generation == 0 || e.UpdatedAt.IsZero() || len(e.Version) > 128 || len(e.ManifestDigest) > 256 || len(e.Signer) > 256 || len(e.AgentVersion) > 64 || len(e.SessionState) > 32 || len(e.AgentHandle) > 256 || strings.ContainsAny(e.Version+e.ManifestDigest+e.Signer+e.AgentVersion+e.SessionState+e.AgentHandle, "\r\n\t") {
+	if !validID(e.EnvironmentID) || e.Generation == 0 || e.UpdatedAt.IsZero() || len(e.Version) > 128 || len(e.ManifestDigest) > 256 || len(e.Signer) > 256 || len(e.AgentVersion) > 64 || len(e.SessionState) > 32 || len(e.AgentHandle) > 256 || strings.ContainsAny(e.Version+e.ManifestDigest+e.Signer+e.AgentVersion+e.SessionState, "\r\n\t") || strings.ContainsAny(e.AgentHandle, "\r\n\t \\/") {
 		return ErrInvalidConfig
 	}
 	_, err := normalizeCapabilities(e.Capabilities)
@@ -287,15 +287,17 @@ func ReleaseSlotLease(lease Lease, leaseID, owner string) error {
 
 // StatusCounts is a redaction-safe pool projection.
 type StatusCounts struct {
-	PoolID        string `json:"pool_id"`
-	Desired       int    `json:"desired"`
-	Ready         int    `json:"ready"`
-	Leased        int    `json:"leased"`
-	Quarantined   int    `json:"quarantined"`
-	Draining      int    `json:"draining"`
-	Provisioning  int    `json:"provisioning"`
-	Retiring      int    `json:"retiring"`
-	Unprovisioned int    `json:"unprovisioned"`
+	PoolID             string `json:"pool_id"`
+	EnvironmentID      string `json:"environment_id"`
+	EnvironmentVersion string `json:"environment_version"`
+	Desired            int    `json:"desired"`
+	Ready              int    `json:"ready"`
+	Leased             int    `json:"leased"`
+	Quarantined        int    `json:"quarantined"`
+	Draining           int    `json:"draining"`
+	Provisioning       int    `json:"provisioning"`
+	Retiring           int    `json:"retiring"`
+	Unprovisioned      int    `json:"unprovisioned"`
 }
 
 func SortSlots(slots []Slot) {

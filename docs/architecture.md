@@ -41,7 +41,7 @@ Matrix Adapter ──> Request Service ──> Queue/Scheduler ──> Session R
 以下是目标目录。`internal/account`、`internal/protocol`、`internal/browser`、
 `internal/request`、`internal/queue`、`internal/credential`、`internal/matrix`、
 `internal/observability`、`internal/store`、`internal/config`、`internal/coreapi`、
-`internal/core` 和 `migrations/` 均已有实现与测试。`cmd/service` 已把配置、Store、凭证服务、
+`internal/core`、`internal/environment` 和 `migrations/` 均已有实现与测试。`cmd/service` 已把配置、Store、凭证服务、
 Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知 worker 和
 健康端点组装成持久化调度入口；`deploy/` 提供 systemd 与 Secret 边界示例。
 
@@ -74,6 +74,7 @@ Request Service、Session Runner、Queue Scheduler、可选 Matrix 同步/通知
 │   ├── config/                  # 已实现：配置加载与路径派生
 │   ├── observability/           # 已实现：结构化脱敏日志、轮转、指标和事件 Sink
 │   ├── adapter/                 # chuzi-adapter/v1 manifest、校验和受控 Registry
+│   ├── environment/             # chuzi-environment/v1 签名包、生命周期门和 digest 校验
 │   └── launcher/                # release manifest、校验和组件/适配器管理接口
 ├── migrations/                  # 已实现：bbolt schema 迁移
 ├── tests/                       # 跨模块集成测试与端到端测试

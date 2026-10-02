@@ -63,11 +63,22 @@ type SlotLeaseStopper interface {
 	StopSlotLease(context.Context, slot.Lease) error
 }
 
+type SlotLeaseFenceConfirmer interface {
+	ConfirmSlotLeaseStopped(slot.Lease) error
+}
+
 // CapabilityRevoker invalidates ephemeral interactive capabilities at the
 // same lifecycle boundaries that release account and slot leases.
 type CapabilityRevoker interface {
 	RevokeRequest(context.Context, string) error
 	RevokeSlotLease(context.Context, string) error
+}
+
+// AccountLeaseRevoker is optional so focused scheduler fakes can retain the
+// smaller capability surface while the production credential boundary fences
+// capabilities when an account lease expires.
+type AccountLeaseRevoker interface {
+	RevokeAccountLease(context.Context, string) error
 }
 
 var _ StorePort = (*store.Store)(nil)
@@ -124,6 +135,17 @@ func (s *Scheduler) revokeSlotLease(leaseID string) error {
 		return nil
 	}
 	return s.config.Capabilities.RevokeSlotLease(context.Background(), leaseID)
+}
+
+func (s *Scheduler) revokeAccountLease(leaseID string) error {
+	if s == nil || s.config.Capabilities == nil || leaseID == "" {
+		return nil
+	}
+	revoker, ok := s.config.Capabilities.(AccountLeaseRevoker)
+	if !ok {
+		return nil
+	}
+	return revoker.RevokeAccountLease(context.Background(), leaseID)
 }
 
 // Scheduler claims and processes at most one request per RunOnce call. A
@@ -447,6 +469,11 @@ func (s *Scheduler) recoverExpiredSlotLeases(now time.Time) error {
 						return err
 					}
 				}
+				if confirmer, ok := s.store.(SlotLeaseFenceConfirmer); ok {
+					if err := confirmer.ConfirmSlotLeaseStopped(record.Lease); err != nil {
+						return err
+					}
+				}
 				if err := s.revokeSlotLease(record.Lease.LeaseID); err != nil {
 					return err
 				}
@@ -600,6 +627,9 @@ func (s *Scheduler) recoverExpired(now time.Time) error {
 	for _, record := range leases {
 		if !record.Lease.Expired(now) {
 			continue
+		}
+		if err := s.revokeAccountLease(record.Lease.LeaseID); err != nil {
+			return err
 		}
 		request, err := s.requestForAccount(record.AccountID)
 		if err != nil {

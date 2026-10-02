@@ -74,6 +74,58 @@ func TestJobPoolReconcileDesiredAndReadyCapacity(t *testing.T) {
 	}
 }
 
+func TestSlotReadyCommitRejectsStaleGenerationAndRequirementCannotEscapePool(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	item, err := database.GetSlot("pool-test-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkSlotReady(item.SlotID, testEnvironmentSummary(2), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkSlotReady(item.SlotID, testEnvironmentSummary(1), storeTestTime.Add(time.Second)); !errors.Is(err, slot.ErrInvalidStatus) {
+		t.Fatalf("stale ready commit = %v", err)
+	}
+	future := testEnvironmentSummary(3)
+	if err := database.MarkSlotReady(item.SlotID, future, storeTestTime.Add(time.Second)); !errors.Is(err, slot.ErrInvalidStatus) {
+		t.Fatalf("future ready commit = %v", err)
+	}
+	if _, _, err := database.AcquireSlotLease(storeTestTime, "pool-test", slot.EnvironmentRequirement{EnvironmentID: "other-environment", Version: "1.0.0"}, "request-x", "account-x", "owner-x", "lease-x", time.Minute); !errors.Is(err, slot.ErrSlotUnavailable) {
+		t.Fatalf("environment escape = %v", err)
+	}
+	if _, _, err := database.AcquireSlotLease(storeTestTime, "pool-test", slot.EnvironmentRequirement{Capabilities: []string{"windows-desktop"}}, "request-y", "account-y", "owner-y", "lease-y", time.Minute); err != nil {
+		t.Fatalf("capability-only requirement was rejected: %v", err)
+	}
+}
+
+func TestDeletedSlotIsNotRevivedByPoolTargetChange(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetSlotStatus("pool-test-001", slot.Retiring, storeTestTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetSlotStatus("pool-test-001", slot.Deleted, storeTestTime.Add(2*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	changed := testPoolConfig(1)
+	changed.EnvironmentVersion = "2.0.0"
+	if err := database.ReconcileJobPool(changed, storeTestTime.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	item, err := database.GetSlot("pool-test-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Status != slot.Deleted {
+		t.Fatalf("deleted slot revived after target change: %s", item.Status)
+	}
+}
+
 func TestJobPoolScaleDownUnprovisionedSlotRemainsValid(t *testing.T) {
 	database, _ := openTestStore(t)
 	now := storeTestTime

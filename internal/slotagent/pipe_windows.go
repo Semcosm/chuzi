@@ -30,6 +30,7 @@ type LeaseState struct {
 	Generation uint64
 	LeaseID    string
 	RequestID  string
+	Owner      string
 	AccountID  string
 	Token      string
 	Valid      bool
@@ -40,6 +41,7 @@ type leaseSnapshot struct {
 	Generation uint64
 	LeaseID    string
 	RequestID  string
+	Owner      string
 	AccountID  string
 	Token      string
 	Valid      bool
@@ -51,7 +53,7 @@ func (s *LeaseState) snapshot() (leaseSnapshot, bool) {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return leaseSnapshot{SlotID: s.SlotID, Generation: s.Generation, LeaseID: s.LeaseID, RequestID: s.RequestID, AccountID: s.AccountID, Token: s.Token, Valid: s.Valid}, s.Valid
+	return leaseSnapshot{SlotID: s.SlotID, Generation: s.Generation, LeaseID: s.LeaseID, RequestID: s.RequestID, Owner: s.Owner, AccountID: s.AccountID, Token: s.Token, Valid: s.Valid}, s.Valid
 }
 
 func (s *LeaseState) restore(snapshot leaseSnapshot) {
@@ -59,7 +61,7 @@ func (s *LeaseState) restore(snapshot leaseSnapshot) {
 		return
 	}
 	s.mu.Lock()
-	s.SlotID, s.Generation, s.LeaseID, s.RequestID, s.AccountID, s.Token, s.Valid = snapshot.SlotID, snapshot.Generation, snapshot.LeaseID, snapshot.RequestID, snapshot.AccountID, snapshot.Token, snapshot.Valid
+	s.SlotID, s.Generation, s.LeaseID, s.RequestID, s.Owner, s.AccountID, s.Token, s.Valid = snapshot.SlotID, snapshot.Generation, snapshot.LeaseID, snapshot.RequestID, snapshot.Owner, snapshot.AccountID, snapshot.Token, snapshot.Valid
 	s.mu.Unlock()
 }
 
@@ -69,7 +71,7 @@ func (s *LeaseState) ValidateAgentLease(_ context.Context, request Request) erro
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if !s.Valid || request.SlotID != s.SlotID || request.EnvironmentGeneration != s.Generation || (s.Token != "" && request.Auth != s.Token) {
+	if !s.Valid || request.SlotID != s.SlotID || request.EnvironmentGeneration != s.Generation || (s.Owner != "" && request.Owner != "" && request.Owner != s.Owner) || (s.Token != "" && request.Auth != s.Token) {
 		return ErrStaleLease
 	}
 	if request.Command == PrepareSlot {
@@ -85,12 +87,16 @@ func (s *LeaseState) ValidateAgentLease(_ context.Context, request Request) erro
 }
 
 func (s *LeaseState) Update(slotID string, generation uint64, leaseID, requestID, accountID, token string) error {
-	if !safeID(slotID, 128) || generation == 0 || !safeID(leaseID, 160) || !safeID(requestID, 128) || !safeID(accountID, 128) || (token != "" && !safeID(token, 256)) {
+	return s.UpdateOwned(slotID, generation, leaseID, requestID, "service", accountID, token)
+}
+
+func (s *LeaseState) UpdateOwned(slotID string, generation uint64, leaseID, requestID, owner, accountID, token string) error {
+	if !safeID(slotID, 128) || generation == 0 || !safeID(leaseID, 160) || !safeID(requestID, 128) || !safeID(owner, 160) || !safeID(accountID, 128) || (token != "" && !safeID(token, 256)) {
 		return ErrInvalidMessage
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.SlotID, s.Generation, s.LeaseID, s.RequestID, s.AccountID, s.Token, s.Valid = slotID, generation, leaseID, requestID, accountID, token, true
+	s.SlotID, s.Generation, s.LeaseID, s.RequestID, s.Owner, s.AccountID, s.Token, s.Valid = slotID, generation, leaseID, requestID, owner, accountID, token, true
 	return nil
 }
 
@@ -108,7 +114,7 @@ func (s *LeaseState) validateWorkerFrame(frame Frame) error {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if !s.Valid || frame.SlotID != s.SlotID || frame.EnvironmentGeneration != s.Generation || frame.LeaseID != s.LeaseID || frame.RequestID != s.RequestID {
+	if !s.Valid || frame.SlotID != s.SlotID || frame.EnvironmentGeneration != s.Generation || frame.LeaseID != s.LeaseID || frame.RequestID != s.RequestID || (s.Owner != "" && frame.Owner != s.Owner) {
 		return ErrStaleLease
 	}
 	return nil
@@ -184,7 +190,7 @@ func (h *RuntimeHandler) HandleAgentCommand(ctx context.Context, request Request
 		if stopErr != nil {
 			return Response{}, stopErr
 		}
-		if err := h.Leases.Update(request.SlotID, request.EnvironmentGeneration, request.LeaseID, request.RequestID, request.AccountID, request.Auth); err != nil {
+		if err := h.Leases.UpdateOwned(request.SlotID, request.EnvironmentGeneration, request.LeaseID, request.RequestID, request.Owner, request.AccountID, request.Auth); err != nil {
 			return Response{}, err
 		}
 	case StartJob:
@@ -257,7 +263,7 @@ func (h *RuntimeHandler) HandleWorkerFrame(ctx context.Context, frame Frame) (Fr
 	if err != nil {
 		return Frame{}, err
 	}
-	return Frame{Kind: "worker_event", SlotID: frame.SlotID, RequestID: frame.RequestID, LeaseID: frame.LeaseID, EnvironmentGeneration: frame.EnvironmentGeneration, Worker: &response}, nil
+	return Frame{Kind: "worker_event", SlotID: frame.SlotID, RequestID: frame.RequestID, Owner: frame.Owner, LeaseID: frame.LeaseID, EnvironmentGeneration: frame.EnvironmentGeneration, Worker: &response}, nil
 }
 
 func (h *RuntimeHandler) DisconnectJobs(_ context.Context) {
@@ -360,7 +366,7 @@ func (c *Client) Call(ctx context.Context, request Request) (Response, error) {
 	if err != nil || frame.Kind != "response" || frame.Response == nil {
 		return Response{}, ErrAgentStopped
 	}
-	if frame.Response.Validate() != nil || frame.Response.CommandID != request.CommandID || frame.Response.RequestID != request.RequestID || frame.Response.SlotID != request.SlotID || frame.Response.LeaseID != request.LeaseID || frame.Response.EnvironmentGeneration != request.EnvironmentGeneration {
+	if frame.Response.Validate() != nil || frame.Response.CommandID != request.CommandID || frame.Response.RequestID != request.RequestID || frame.Response.Owner != request.Owner || frame.Response.SlotID != request.SlotID || frame.Response.LeaseID != request.LeaseID || frame.Response.EnvironmentGeneration != request.EnvironmentGeneration {
 		return Response{}, ErrInvalidMessage
 	}
 	if !frame.Response.OK {
@@ -408,7 +414,7 @@ func (c *Client) WorkerCall(ctx context.Context, frame Frame) (Frame, error) {
 			return Frame{}, ErrAgentStopped
 		}
 	}
-	if response.Kind != "worker_event" || response.Worker == nil || response.SlotID != frame.SlotID || response.RequestID != frame.RequestID || response.LeaseID != frame.LeaseID || response.EnvironmentGeneration != frame.EnvironmentGeneration {
+	if response.Kind != "worker_event" || response.Worker == nil || response.SlotID != frame.SlotID || response.RequestID != frame.RequestID || response.Owner != frame.Owner || response.LeaseID != frame.LeaseID || response.EnvironmentGeneration != frame.EnvironmentGeneration {
 		return Frame{}, ErrInvalidMessage
 	}
 	return response, nil
@@ -439,7 +445,7 @@ func serveConn(ctx context.Context, conn net.Conn, server *Server, stop func()) 
 			}
 			response, handleErr := server.Handle(ctx, *frame.Request)
 			if handleErr != nil {
-				response = Response{CommandID: frame.Request.CommandID, RequestID: frame.Request.RequestID, SlotID: frame.Request.SlotID, LeaseID: frame.Request.LeaseID, EnvironmentGeneration: frame.Request.EnvironmentGeneration, OK: false, Failure: failureClass(handleErr)}
+				response = Response{CommandID: frame.Request.CommandID, RequestID: frame.Request.RequestID, Owner: frame.Request.Owner, SlotID: frame.Request.SlotID, LeaseID: frame.Request.LeaseID, EnvironmentGeneration: frame.Request.EnvironmentGeneration, OK: false, Failure: failureClass(handleErr)}
 			}
 			if err := WriteFrame(conn, Frame{Kind: "response", Response: &response}); err != nil {
 				return
@@ -456,7 +462,7 @@ func serveConn(ctx context.Context, conn net.Conn, server *Server, stop func()) 
 			}
 			response, handleErr := server.HandleWorker(ctx, frame)
 			if handleErr != nil {
-				response = Frame{Kind: "response", Response: &Response{OK: false, Failure: failureClass(handleErr), RequestID: frame.RequestID, SlotID: frame.SlotID, LeaseID: frame.LeaseID, EnvironmentGeneration: frame.EnvironmentGeneration}}
+				response = Frame{Kind: "response", Response: &Response{OK: false, Failure: failureClass(handleErr), RequestID: frame.RequestID, Owner: frame.Owner, SlotID: frame.SlotID, LeaseID: frame.LeaseID, EnvironmentGeneration: frame.EnvironmentGeneration}}
 			} else {
 				response.Kind = "worker_event"
 			}

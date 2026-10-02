@@ -57,12 +57,12 @@ func (f *AgentProcessFactory) Start(ctx context.Context, spec WorkerSpec) (Worke
 		return nil, err
 	}
 	worker := &agentWorker{client: client, spec: spec, token: endpoint.Token, kind: f.kind}
-	prepare := slotagent.Request{CommandID: leaseCommandID("prepare", spec.RequestID, spec.SlotLeaseID), RequestID: spec.RequestID, AccountID: spec.AccountID, SlotID: spec.SlotID, LeaseID: spec.SlotLeaseID, EnvironmentGeneration: spec.EnvironmentGeneration, Auth: endpoint.Token, Command: slotagent.PrepareSlot}
+	prepare := slotagent.Request{CommandID: leaseCommandID("prepare", spec.RequestID, spec.SlotLeaseID), RequestID: spec.RequestID, Owner: spec.Owner, AccountID: spec.AccountID, SlotID: spec.SlotID, LeaseID: spec.SlotLeaseID, EnvironmentGeneration: spec.EnvironmentGeneration, Auth: endpoint.Token, Command: slotagent.PrepareSlot}
 	if _, err := client.Call(ctx, prepare); err != nil {
 		_ = client.Close()
 		return nil, err
 	}
-	start := slotagent.Request{CommandID: leaseCommandID("start", spec.RequestID, spec.SlotLeaseID), RequestID: spec.RequestID, AccountID: spec.AccountID, SlotID: spec.SlotID, LeaseID: spec.SlotLeaseID, EnvironmentGeneration: spec.EnvironmentGeneration, Auth: endpoint.Token, Command: slotagent.StartJob, JobKind: f.kind}
+	start := slotagent.Request{CommandID: leaseCommandID("start", spec.RequestID, spec.SlotLeaseID), RequestID: spec.RequestID, Owner: spec.Owner, AccountID: spec.AccountID, SlotID: spec.SlotID, LeaseID: spec.SlotLeaseID, EnvironmentGeneration: spec.EnvironmentGeneration, Auth: endpoint.Token, Command: slotagent.StartJob, JobKind: f.kind}
 	if _, err := client.Call(ctx, start); err != nil {
 		_ = client.Close()
 		return nil, err
@@ -89,7 +89,7 @@ func (w *agentWorker) nextID(prefix string) string {
 }
 
 func (w *agentWorker) call(ctx context.Context, message protocol.Envelope) (protocol.Envelope, error) {
-	frame := slotagent.Frame{Kind: "worker_request", SlotID: w.spec.SlotID, RequestID: w.spec.RequestID, LeaseID: w.spec.SlotLeaseID, EnvironmentGeneration: w.spec.EnvironmentGeneration, Worker: &message}
+	frame := slotagent.Frame{Kind: "worker_request", SlotID: w.spec.SlotID, RequestID: w.spec.RequestID, Owner: w.spec.Owner, LeaseID: w.spec.SlotLeaseID, EnvironmentGeneration: w.spec.EnvironmentGeneration, Worker: &message}
 	response, err := w.client.WorkerCall(ctx, frame)
 	if err != nil {
 		return protocol.Envelope{}, err
@@ -164,7 +164,7 @@ func (w *agentWorker) Cancel(ctx context.Context) error {
 		return ErrWorkerNotRunning
 	}
 	_, err := w.call(ctx, protocol.Request(w.nextID("cancel"), protocol.SessionCancel, map[string]string{"session_id": w.spec.SessionID}))
-	command := slotagent.Request{CommandID: w.nextID("cancel-job"), RequestID: w.spec.RequestID, SlotID: w.spec.SlotID, LeaseID: w.spec.SlotLeaseID, EnvironmentGeneration: w.spec.EnvironmentGeneration, Auth: w.token, Command: slotagent.CancelJob}
+	command := slotagent.Request{CommandID: w.nextID("cancel-job"), RequestID: w.spec.RequestID, SlotID: w.spec.SlotID, Owner: w.spec.Owner, LeaseID: w.spec.SlotLeaseID, EnvironmentGeneration: w.spec.EnvironmentGeneration, Auth: w.token, Command: slotagent.CancelJob}
 	_, callErr := w.client.Call(ctx, command)
 	if callErr == nil {
 		w.mu.Lock()
@@ -188,7 +188,7 @@ func (w *agentWorker) Close(ctx context.Context) error {
 	w.mu.Unlock()
 	var stopErr error
 	if !stopped {
-		command := slotagent.Request{CommandID: w.nextID("stop-job"), RequestID: w.spec.RequestID, SlotID: w.spec.SlotID, LeaseID: w.spec.SlotLeaseID, EnvironmentGeneration: w.spec.EnvironmentGeneration, Auth: w.token, Command: slotagent.StopJob}
+		command := slotagent.Request{CommandID: w.nextID("stop-job"), RequestID: w.spec.RequestID, SlotID: w.spec.SlotID, Owner: w.spec.Owner, LeaseID: w.spec.SlotLeaseID, EnvironmentGeneration: w.spec.EnvironmentGeneration, Auth: w.token, Command: slotagent.StopJob}
 		_, stopErr = w.client.Call(ctx, command)
 	}
 	return errors.Join(stopErr, w.client.Close())

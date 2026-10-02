@@ -93,6 +93,7 @@ Test 版本格式为 `test-<run-number>-<commit-short-hash>`，nightly 版本格
 - [账号状态机](docs/account-state-machine.md)
 - [状态存储与恢复](docs/storage.md)
 - [作业专用 Windows 用户池](docs/job-user-pool.md)
+- [签名环境包](docs/environment-package.md)
 - [安全与凭证管理](docs/security.md)
 - [Matrix 服务接口](docs/matrix-api.md)
 - [部署与运维](docs/operations.md)

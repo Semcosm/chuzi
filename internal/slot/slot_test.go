@@ -61,3 +61,13 @@ func TestDeletedSlotMayHaveNoEnvironmentGeneration(t *testing.T) {
 		t.Fatalf("deleted slot validation = %v", err)
 	}
 }
+
+func TestEnvironmentSummaryRejectsPathLikeAgentHandle(t *testing.T) {
+	value := EnvironmentSummary{
+		EnvironmentID: "chuzi-environment/v1", Generation: 1, UpdatedAt: slotTestTime,
+		AgentHandle: `C:\Users\operator\agent.exe`,
+	}
+	if err := value.Validate(); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("path-like agent handle validation = %v", err)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/account"
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/migrations"
 	"go.etcd.io/bbolt"
@@ -35,6 +36,9 @@ type OperationalSnapshot struct {
 	LeasedSlots               int       `json:"leased_slots"`
 	QuarantinedSlots          int       `json:"quarantined_slots"`
 	DrainingSlots             int       `json:"draining_slots"`
+	ProvisioningSlots         int       `json:"provisioning_slots"`
+	RetiringSlots             int       `json:"retiring_slots"`
+	UnprovisionedSlots        int       `json:"unprovisioned_slots"`
 }
 
 // OperationalIssue is a stable category/count pair; it deliberately carries
@@ -69,8 +73,30 @@ func (s *Store) OperationalSnapshot(now time.Time) (OperationalSnapshot, error) 
 		notifications := tx.Bucket([]byte(migrations.MatrixNotificationsBucket))
 		jobPools := tx.Bucket([]byte(migrations.JobPoolsBucket))
 		executionSlots := tx.Bucket([]byte(migrations.ExecutionSlotsBucket))
+		environmentPackages := tx.Bucket([]byte(migrations.EnvironmentPackagesBucket))
+		poolConfigs := make(map[string]slot.PoolConfig)
+		environmentReady := make(map[string]bool)
 		if accounts == nil || requests == nil || leases == nil || notifications == nil || jobPools == nil || executionSlots == nil {
 			return fmt.Errorf("%w: operational bucket is missing", ErrCorruptData)
+		}
+		if environmentPackages == nil {
+			return fmt.Errorf("%w: environment package bucket is missing", ErrCorruptData)
+		}
+		if err := environmentPackages.ForEach(func(key, value []byte) error {
+			if value == nil {
+				return nil
+			}
+			var record environment.Record
+			if err := decode(value, &record); err != nil {
+				return err
+			}
+			if err := record.Validate(); err != nil {
+				return fmt.Errorf("%w: invalid environment package", ErrCorruptData)
+			}
+			environmentReady[string(key)] = record.IsReady()
+			return nil
+		}); err != nil {
+			return err
 		}
 		if err := accounts.ForEach(func(key, value []byte) error {
 			if value == nil {
@@ -163,6 +189,7 @@ func (s *Store) OperationalSnapshot(now time.Time) (OperationalSnapshot, error) 
 			if err := pool.Validate(); err != nil {
 				return fmt.Errorf("%w: invalid job pool", ErrCorruptData)
 			}
+			poolConfigs[pool.PoolID] = pool
 			result.JobPools++
 			result.DesiredSlots += pool.DesiredSlots
 			return nil
@@ -182,13 +209,28 @@ func (s *Store) OperationalSnapshot(now time.Time) (OperationalSnapshot, error) 
 			}
 			switch item.Status {
 			case slot.Ready:
-				result.ReadySlots++
+				pool, ok := poolConfigs[item.PoolID]
+				readyEnvironment := true
+				if len(environmentReady) > 0 {
+					readyEnvironment = environmentReady[environmentKey(pool.EnvironmentID, pool.EnvironmentVersion)]
+				}
+				if ok && readyEnvironment && slotMatchesPoolTarget(item, pool) && item.Trusted {
+					result.ReadySlots++
+				} else {
+					result.ProvisioningSlots++
+				}
 			case slot.Leased:
 				result.LeasedSlots++
 			case slot.Quarantined:
 				result.QuarantinedSlots++
 			case slot.Draining:
 				result.DrainingSlots++
+			case slot.Provisioning:
+				result.ProvisioningSlots++
+			case slot.Retiring:
+				result.RetiringSlots++
+			case slot.Unprovisioned:
+				result.UnprovisionedSlots++
 			}
 			return nil
 		})

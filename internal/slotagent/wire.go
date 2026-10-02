@@ -63,7 +63,7 @@ func (f Frame) Validate() error {
 		}
 		return f.Response.Validate()
 	case "worker_request", "worker_event":
-		if f.Worker == nil || f.Request != nil || f.Response != nil || !safeID(f.SlotID, 128) || !safeID(f.RequestID, 128) || !safeID(f.LeaseID, 160) || f.EnvironmentGeneration == 0 {
+		if f.Worker == nil || f.Request != nil || f.Response != nil || !safeID(f.SlotID, 128) || !safeID(f.RequestID, 128) || !safeID(f.Owner, 160) || !safeID(f.LeaseID, 160) || f.EnvironmentGeneration == 0 {
 			return ErrInvalidMessage
 		}
 		return ValidateWorkerEnvelope(*f.Worker)

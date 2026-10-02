@@ -44,6 +44,24 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 		for ordinal := 1; ordinal <= config.DesiredSlots; ordinal++ {
 			current, ok := byOrdinal[ordinal]
 			if ok {
+				if current.Status == slot.Deleted {
+					// Deleted slots are tombstones. Never revive one merely because
+					// the pool target or desired capacity changed.
+					continue
+				}
+				targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || !containsCapabilities(current.Capabilities, config.Capabilities)
+				if targetChanged {
+					if current.Status == slot.Leased || current.Status == slot.Draining {
+						current.Status = slot.Draining
+					} else {
+						current.Status = slot.Provisioning
+					}
+					current.UpdatedAt = now.UTC()
+					if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
+						return err
+					}
+					continue
+				}
 				if current.Status == slot.Retiring {
 					if current.EnvironmentGeneration == 0 {
 						current.Status = slot.Unprovisioned
@@ -79,6 +97,112 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 		}
 		return nil
 	})
+}
+
+// ReconcileTrustedJobPool is the production entry point for pool changes.
+// The durable environment record is the authority; configuration metadata
+// alone cannot create a pool that can provision slots.
+func (s *Store) ReconcileTrustedJobPool(config slot.PoolConfig, now time.Time) error {
+	if err := s.ValidatePoolEnvironment(config); err != nil {
+		return err
+	}
+	return s.ReconcileJobPool(config, now)
+}
+
+// ValidatePoolEnvironment checks that a pool target is backed by an installed,
+// verified, trusted, enabled and healthy environment record.
+func (s *Store) ValidatePoolEnvironment(config slot.PoolConfig) error {
+	if err := config.Validate(); err != nil {
+		return err
+	}
+	if strings.TrimSpace(config.EnvironmentVersion) == "" || strings.TrimSpace(config.ManifestDigest) == "" || strings.TrimSpace(config.Signer) == "" {
+		return ErrEnvironmentUnavailable
+	}
+	record, err := s.GetEnvironmentRecord(config.EnvironmentID, config.EnvironmentVersion)
+	if err != nil {
+		return ErrEnvironmentUnavailable
+	}
+	if !record.IsReady() || record.EnvironmentID != config.EnvironmentID || record.Version != config.EnvironmentVersion || !strings.EqualFold(record.ManifestDigest, config.ManifestDigest) || record.Signer != config.Signer || !containsCapabilities(record.Capabilities, config.Capabilities) {
+		return ErrEnvironmentUnavailable
+	}
+	return nil
+}
+
+func containsCapabilities(available, required []string) bool {
+	set := make(map[string]struct{}, len(available))
+	for _, value := range available {
+		set[value] = struct{}{}
+	}
+	for _, value := range required {
+		if _, ok := set[value]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func slotMatchesPoolTarget(value slot.Slot, config slot.PoolConfig) bool {
+	return value.EnvironmentID == config.EnvironmentID && value.EnvironmentVersion == config.EnvironmentVersion && value.ManifestDigest == config.ManifestDigest && value.Signer == config.Signer && containsCapabilities(value.Capabilities, config.Capabilities)
+}
+
+// constrainSlotRequirement lets callers narrow capability selection while
+// preventing them from changing the pool's trusted environment identity.
+func constrainSlotRequirement(requested slot.EnvironmentRequirement, pool slot.PoolConfig) (slot.EnvironmentRequirement, error) {
+	if requested.EnvironmentID == "" {
+		requested.EnvironmentID = pool.EnvironmentID
+	}
+	requested, err := requested.Normalize()
+	if err != nil {
+		return slot.EnvironmentRequirement{}, err
+	}
+	if requested.EnvironmentID != "" && requested.EnvironmentID != pool.EnvironmentID {
+		return slot.EnvironmentRequirement{}, slot.ErrSlotUnavailable
+	}
+	if requested.Version != "" && requested.Version != pool.EnvironmentVersion {
+		return slot.EnvironmentRequirement{}, slot.ErrSlotUnavailable
+	}
+	if requested.ManifestDigest != "" && requested.ManifestDigest != pool.ManifestDigest {
+		return slot.EnvironmentRequirement{}, slot.ErrSlotUnavailable
+	}
+	if requested.Signer != "" && requested.Signer != pool.Signer {
+		return slot.EnvironmentRequirement{}, slot.ErrSlotUnavailable
+	}
+	requested.EnvironmentID = pool.EnvironmentID
+	if pool.EnvironmentVersion != "" {
+		requested.Version = pool.EnvironmentVersion
+	}
+	if pool.ManifestDigest != "" {
+		requested.ManifestDigest = pool.ManifestDigest
+	}
+	if pool.Signer != "" {
+		requested.Signer = pool.Signer
+	}
+	requested.RequireTrusted = requested.RequireTrusted || pool.RequireTrusted
+	capabilities := append([]string(nil), pool.Capabilities...)
+	capabilities = append(capabilities, requested.Capabilities...)
+	requested.Capabilities, err = normalizeSlotCapabilities(capabilities)
+	if err != nil {
+		return slot.EnvironmentRequirement{}, err
+	}
+	return requested, nil
+}
+
+func normalizeSlotCapabilities(values []string) ([]string, error) {
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || len(value) > 128 || strings.ContainsAny(value, "\r\n\t") {
+			return nil, slot.ErrInvalidRequest
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func (s *Store) GetJobPool(poolID string) (slot.PoolConfig, error) {
@@ -191,8 +315,26 @@ func (s *Store) MarkSlotReady(slotID string, summary slot.EnvironmentSummary, no
 		if err := getJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), slotID, &value, slot.ErrSlotNotFound); err != nil {
 			return err
 		}
+		if value.Status == slot.Retiring || value.Status == slot.Deleted {
+			return slot.ErrInvalidStatus
+		}
 		if value.Status == slot.Leased || value.Status == slot.Draining {
 			return slot.ErrLeaseHeld
+		}
+		if value.EnvironmentGeneration != 0 && summary.Generation != value.EnvironmentGeneration {
+			return fmt.Errorf("%w: environment generation fence", slot.ErrInvalidStatus)
+		}
+		var pool slot.PoolConfig
+		if err := getJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), value.PoolID, &pool, slot.ErrPoolNotFound); err != nil {
+			return err
+		}
+		if err := validatePoolEnvironmentTx(tx, pool); err != nil {
+			return err
+		}
+		if summary.EnvironmentID != pool.EnvironmentID || summary.Version != pool.EnvironmentVersion ||
+			summary.ManifestDigest != pool.ManifestDigest || summary.Signer != pool.Signer ||
+			!summary.Trusted || !containsCapabilities(summary.Capabilities, pool.Capabilities) {
+			return fmt.Errorf("%w: environment summary does not match trusted pool", slot.ErrInvalidStatus)
 		}
 		value.EnvironmentID, value.EnvironmentVersion, value.EnvironmentGeneration = summary.EnvironmentID, summary.Version, summary.Generation
 		value.Capabilities = append([]string(nil), summary.Capabilities...)
@@ -215,6 +357,12 @@ func (s *Store) SetSlotStatus(slotID string, status slot.Status, now time.Time) 
 		if err := getJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), slotID, &value, slot.ErrSlotNotFound); err != nil {
 			return err
 		}
+		if value.Status == slot.Deleted && status != slot.Deleted {
+			return slot.ErrInvalidStatus
+		}
+		if value.Status == slot.Retiring && status == slot.Ready {
+			return slot.ErrInvalidStatus
+		}
 		if value.EnvironmentGeneration == 0 && status != slot.Unprovisioned && status != slot.Provisioning && status != slot.Retiring && status != slot.Deleted {
 			return slot.ErrInvalidSlot
 		}
@@ -236,19 +384,20 @@ func (s *Store) AcquireSlotLease(now time.Time, poolID string, requirement slot.
 	if now.IsZero() || strings.TrimSpace(poolID) == "" || strings.TrimSpace(requestID) == "" || strings.TrimSpace(accountID) == "" || strings.TrimSpace(owner) == "" || strings.TrimSpace(leaseID) == "" || ttl <= 0 {
 		return slot.Lease{}, slot.Slot{}, ErrInvalidQueueOptions
 	}
-	requirement, err := requirement.Normalize()
-	if err != nil {
-		return slot.Lease{}, slot.Slot{}, err
-	}
 	var leaseResult slot.Lease
 	var slotResult slot.Slot
+	var err error
 	err = s.update(func(tx *bbolt.Tx) error {
 		var config slot.PoolConfig
 		if err := getJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), poolID, &config, slot.ErrPoolNotFound); err != nil {
 			return err
 		}
-		if requirement.EnvironmentID == "" {
-			requirement = config.Requirement()
+		if err := validatePoolEnvironmentTx(tx, config); err != nil {
+			return err
+		}
+		requirement, err = constrainSlotRequirement(requirement, config)
+		if err != nil {
+			return err
 		}
 		all, err := slotsForPoolTx(tx, poolID)
 		if err != nil {
@@ -427,6 +576,11 @@ func (s *Store) ReleaseSlotLease(slotID, leaseID, owner string) error {
 			}
 			if value.Ordinal > config.DesiredSlots {
 				status = slot.Retiring
+			} else if !slotMatchesPoolTarget(value, config) {
+				// A drained lease may still carry the previous generation. Keep it
+				// out of selection until lifecycle reconciliation provisions the
+				// pool's current trusted environment.
+				status = slot.Provisioning
 			}
 			value.Status, value.UpdatedAt = status, current.LastHeartbeat
 			return putJSON(slots, slotID, value)
@@ -505,7 +659,7 @@ func (s *Store) RecoverExpiredSlotLeases(now time.Time) error {
 	}
 	return s.update(func(tx *bbolt.Tx) error {
 		leases, slots := tx.Bucket([]byte(migrations.SlotLeasesBucket)), tx.Bucket([]byte(migrations.ExecutionSlotsBucket))
-		var expired []string
+		var expired []slot.Lease
 		if err := leases.ForEach(func(key, raw []byte) error {
 			if raw == nil {
 				return nil
@@ -518,18 +672,22 @@ func (s *Store) RecoverExpiredSlotLeases(now time.Time) error {
 				return err
 			}
 			if lease.Expired(now) {
-				expired = append(expired, string(key))
+				expired = append(expired, lease)
 			}
 			return nil
 		}); err != nil {
 			return err
 		}
-		for _, slotID := range expired {
-			if err := leases.Delete([]byte(slotID)); err != nil {
-				return err
-			}
+		for _, lease := range expired {
+			slotID := lease.SlotID
 			var value slot.Slot
 			if err := getJSON(slots, slotID, &value, slot.ErrSlotNotFound); err != nil {
+				return err
+			}
+			if value.AgentHandle != "" && !s.consumeFencedSlotLease(lease) {
+				return ErrSlotLeaseFenceRequired
+			}
+			if err := leases.Delete([]byte(slotID)); err != nil {
 				return err
 			}
 			if value.Status == slot.Leased || value.Status == slot.Draining {
@@ -540,6 +698,8 @@ func (s *Store) RecoverExpiredSlotLeases(now time.Time) error {
 				status := slot.Ready
 				if value.Ordinal > config.DesiredSlots {
 					status = slot.Retiring
+				} else if !slotMatchesPoolTarget(value, config) {
+					status = slot.Provisioning
 				}
 				value.Status, value.UpdatedAt = status, now.UTC()
 				if err := putJSON(slots, slotID, value); err != nil {
@@ -549,6 +709,40 @@ func (s *Store) RecoverExpiredSlotLeases(now time.Time) error {
 		}
 		return nil
 	})
+}
+
+// ConfirmSlotLeaseStopped records that the platform agent has been fenced for
+// an expired lease. Logical slots without an agent handle do not need this
+// confirmation; Windows-backed slots do.
+func (s *Store) ConfirmSlotLeaseStopped(lease slot.Lease) error {
+	if err := lease.Validate(); err != nil {
+		return err
+	}
+	value, err := s.GetSlot(lease.SlotID)
+	if err != nil {
+		return err
+	}
+	if value.AgentHandle == "" {
+		return nil
+	}
+	s.fenceMu.Lock()
+	defer s.fenceMu.Unlock()
+	if s.fenced == nil {
+		s.fenced = make(map[string]slot.Lease)
+	}
+	s.fenced[lease.SlotID] = lease
+	return nil
+}
+
+func (s *Store) consumeFencedSlotLease(lease slot.Lease) bool {
+	s.fenceMu.Lock()
+	defer s.fenceMu.Unlock()
+	confirmed, ok := s.fenced[lease.SlotID]
+	if !ok || confirmed.LeaseID != lease.LeaseID || confirmed.Owner != lease.Owner || confirmed.EnvironmentGeneration != lease.EnvironmentGeneration {
+		return false
+	}
+	delete(s.fenced, lease.SlotID)
+	return true
 }
 
 func (s *Store) SlotPoolStatus(poolID string, now time.Time) (slot.StatusCounts, error) {
@@ -566,11 +760,22 @@ func (s *Store) SlotPoolStatus(poolID string, now time.Time) (slot.StatusCounts,
 	if err != nil {
 		return slot.StatusCounts{}, err
 	}
-	result := slot.StatusCounts{PoolID: poolID, Desired: config.DesiredSlots}
+	environmentReady := true
+	if records, listErr := s.ListEnvironmentRecords(); listErr != nil {
+		return slot.StatusCounts{}, listErr
+	} else if len(records) > 0 {
+		record, recordErr := s.GetEnvironmentRecord(config.EnvironmentID, config.EnvironmentVersion)
+		environmentReady = recordErr == nil && record.IsReady() && record.EnvironmentID == config.EnvironmentID && record.Version == config.EnvironmentVersion && strings.EqualFold(record.ManifestDigest, config.ManifestDigest) && record.Signer == config.Signer && containsCapabilities(record.Capabilities, config.Capabilities)
+	}
+	result := slot.StatusCounts{PoolID: poolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Desired: config.DesiredSlots}
 	for _, value := range items {
 		switch value.Status {
 		case slot.Ready:
-			result.Ready++
+			if environmentReady && slotMatchesPoolTarget(value, config) && value.Trusted {
+				result.Ready++
+			} else {
+				result.Provisioning++
+			}
 		case slot.Leased:
 			result.Leased++
 		case slot.Quarantined:

@@ -31,13 +31,14 @@ var (
 // RuntimeConfig is fixed when the agent starts. Requests select only the
 // closed JobKind enum and an account identifier used to derive the profile.
 type RuntimeConfig struct {
-	RuntimeRoot   string
-	WorkerCommand string
-	WorkerScript  string
-	AdapterScript string
-	ProfileRoot   string
-	WorkDir       string
-	BrowserArgs   []string
+	RuntimeRoot       string
+	WorkerRuntimeRoot string
+	WorkerCommand     string
+	WorkerScript      string
+	AdapterScript     string
+	ProfileRoot       string
+	WorkDir           string
+	BrowserArgs       []string
 }
 
 type processLauncher struct{ config RuntimeConfig }
@@ -49,10 +50,16 @@ func NewProcessLauncher(config RuntimeConfig) (JobLauncher, error) {
 	if len(config.BrowserArgs) > 32 {
 		return nil, ErrRuntimeConfig
 	}
+	if config.WorkerRuntimeRoot == "" {
+		config.WorkerRuntimeRoot = config.RuntimeRoot
+	}
 	if config.RuntimeRoot != "" {
-		if !filepath.IsAbs(config.RuntimeRoot) || !runtimePathContained(config.RuntimeRoot, config.WorkerCommand) || !runtimePathContained(config.RuntimeRoot, config.WorkerScript) || (config.AdapterScript != "" && !runtimePathContained(config.RuntimeRoot, config.AdapterScript)) {
+		if !filepath.IsAbs(config.RuntimeRoot) || !runtimePathContained(config.RuntimeRoot, config.WorkerScript) || (config.AdapterScript != "" && !runtimePathContained(config.RuntimeRoot, config.AdapterScript)) {
 			return nil, ErrRuntimeConfig
 		}
+	}
+	if config.WorkerRuntimeRoot != "" && (!filepath.IsAbs(config.WorkerRuntimeRoot) || !runtimePathContained(config.WorkerRuntimeRoot, config.WorkerCommand)) {
+		return nil, ErrRuntimeConfig
 	}
 	args := append([]string(nil), config.BrowserArgs...)
 	for _, arg := range args {

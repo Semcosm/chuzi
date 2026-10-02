@@ -104,6 +104,7 @@ type agentProcess struct {
 	token             string
 	pipe              string
 	leaseID           string
+	owner             string
 	generation        uint64
 	sid               string
 	session           uint32
@@ -148,6 +149,7 @@ func (p *windowsProvisioner) Health(ctx context.Context, request slot.ProvisionR
 			return err
 		}
 	}
+	request.Owner = lease.Owner
 	response, err := p.agentHealthWithLease(ctx, agent, request, lease.LeaseID, lease.RequestID)
 	if err != nil {
 		// A reconcile tick can race the worker's prepare_slot command. If the
@@ -250,6 +252,7 @@ func (p *windowsProvisioner) StopSlotLease(ctx context.Context, lease slot.Lease
 		_, err = client.Call(stopCtx, slotagent.Request{
 			CommandID:             fmt.Sprintf("stop-expired-%d", time.Now().UnixNano()),
 			RequestID:             lease.RequestID,
+			Owner:                 lease.Owner,
 			SlotID:                lease.SlotID,
 			LeaseID:               lease.LeaseID,
 			EnvironmentGeneration: lease.EnvironmentGeneration,
@@ -690,7 +693,14 @@ func (p *windowsProvisioner) summary(request slot.ProvisionRequest, sid string) 
 	// executable and ACL allowlists are verified before this summary is
 	// returned, so the resulting local environment satisfies trusted-pool
 	// selection without exposing the managed SID.
-	return slot.EnvironmentSummary{EnvironmentID: p.options.EnvironmentID, Version: p.options.Version, Generation: request.EnvironmentGeneration, Capabilities: append([]string(nil), request.Requirement.Capabilities...), ManifestDigest: request.Requirement.ManifestDigest, Signer: request.Requirement.Signer, Trusted: true, AgentVersion: "chuzi-user-agent/v1", AgentHandle: "slot:" + request.SlotID, SessionState: "ready", DesktopReady: true, UpdatedAt: time.Now().UTC()}
+	digest, signer := request.Requirement.ManifestDigest, request.Requirement.Signer
+	if p.options.ManifestDigest != "" {
+		digest = p.options.ManifestDigest
+	}
+	if p.options.Signer != "" {
+		signer = p.options.Signer
+	}
+	return slot.EnvironmentSummary{EnvironmentID: p.options.EnvironmentID, Version: p.options.Version, Generation: request.EnvironmentGeneration, Capabilities: append([]string(nil), request.Requirement.Capabilities...), ManifestDigest: digest, Signer: signer, Trusted: true, AgentVersion: "chuzi-user-agent/v1", AgentHandle: "slot:" + request.SlotID, SessionState: "ready", DesktopReady: true, UpdatedAt: time.Now().UTC()}
 }
 
 func (p *windowsProvisioner) ensureAgent(ctx context.Context, paths Paths, request slot.ProvisionRequest, sid string) error {
@@ -773,31 +783,33 @@ func (p *windowsProvisioner) ensureAgent(ctx context.Context, paths Paths, reque
 		return ErrSessionIdentity
 	}
 	environment := map[string]string{
-		"CHUZI_AGENT_SLOT_ID":          request.SlotID,
-		"CHUZI_AGENT_PIPE":             pipe,
-		"CHUZI_AGENT_LEASE_ID":         "provision-" + request.SlotID,
-		"CHUZI_AGENT_TOKEN":            tokenValue,
-		"CHUZI_AGENT_GENERATION":       fmt.Sprintf("%d", request.EnvironmentGeneration),
-		"CHUZI_AGENT_REQUEST_ID":       "maintenance-" + request.SlotID,
-		"CHUZI_AGENT_ACCOUNT_ID":       "maintenance-" + request.SlotID,
-		"CHUZI_AGENT_VERSION":          "chuzi-user-agent/v1",
-		"CHUZI_AGENT_SESSION_STATE":    "ready",
-		"CHUZI_AGENT_RUNTIME_ROOT":     p.options.RuntimePath,
-		"CHUZI_AGENT_PROFILE_ROOT":     filepath.Join(filepath.Clean(p.options.DataDir), "profiles"),
-		"CHUZI_AGENT_WORK_DIR":         paths.Work,
-		"CHUZI_AGENT_WORKER_COMMAND":   p.options.WorkerCommand,
-		"CHUZI_AGENT_WORKER_SCRIPT":    p.options.WorkerScript,
-		"CHUZI_AGENT_ADAPTER_SCRIPT":   p.options.AdapterScript,
-		"CHUZI_AGENT_BROWSER_MODE":     p.options.BrowserMode,
-		"CHUZI_AGENT_BROWSER_COMMAND":  p.options.BrowserCommand,
-		"CHUZI_AGENT_PIPE_SERVICE_SID": serviceSID,
+		"CHUZI_AGENT_SLOT_ID":             request.SlotID,
+		"CHUZI_AGENT_PIPE":                pipe,
+		"CHUZI_AGENT_LEASE_ID":            "provision-" + request.SlotID,
+		"CHUZI_AGENT_TOKEN":               tokenValue,
+		"CHUZI_AGENT_GENERATION":          fmt.Sprintf("%d", request.EnvironmentGeneration),
+		"CHUZI_AGENT_REQUEST_ID":          "maintenance-" + request.SlotID,
+		"CHUZI_AGENT_ACCOUNT_ID":          "maintenance-" + request.SlotID,
+		"CHUZI_AGENT_OWNER":               request.Owner,
+		"CHUZI_AGENT_VERSION":             "chuzi-user-agent/v1",
+		"CHUZI_AGENT_SESSION_STATE":       "ready",
+		"CHUZI_AGENT_RUNTIME_ROOT":        p.options.RuntimePath,
+		"CHUZI_AGENT_WORKER_RUNTIME_ROOT": p.options.WorkerRuntimeRoot,
+		"CHUZI_AGENT_PROFILE_ROOT":        filepath.Join(filepath.Clean(p.options.DataDir), "profiles"),
+		"CHUZI_AGENT_WORK_DIR":            paths.Work,
+		"CHUZI_AGENT_WORKER_COMMAND":      p.options.WorkerCommand,
+		"CHUZI_AGENT_WORKER_SCRIPT":       p.options.WorkerScript,
+		"CHUZI_AGENT_ADAPTER_SCRIPT":      p.options.AdapterScript,
+		"CHUZI_AGENT_BROWSER_MODE":        p.options.BrowserMode,
+		"CHUZI_AGENT_BROWSER_COMMAND":     p.options.BrowserCommand,
+		"CHUZI_AGENT_PIPE_SERVICE_SID":    serviceSID,
 	}
 	clear(tokenText)
 	process, err := StartProcessAsSlotUserForSlotID(sid, session.ID, request.SlotID, p.options.AgentPath, []string{p.options.AgentPath}, environment, paths.Work)
 	if err != nil {
 		return err
 	}
-	agent := agentProcess{process: process, token: tokenValue, pipe: pipe, leaseID: "provision-" + request.SlotID, generation: request.EnvironmentGeneration, sid: sid, session: session.ID}
+	agent := agentProcess{process: process, token: tokenValue, pipe: pipe, leaseID: "provision-" + request.SlotID, owner: request.Owner, generation: request.EnvironmentGeneration, sid: sid, session: session.ID}
 	p.agents[request.SlotID] = agent
 	if err := p.agentHealth(ctx, agent, request); err != nil {
 		terminateErr := process.Terminate()
@@ -819,15 +831,20 @@ func validateRuntimePaths(options Options) error {
 	if !filepath.IsAbs(root) || inspectDirectoryNoReparseChain(root) != nil {
 		return ErrACLDrift
 	}
-	for _, path := range []string{options.AgentPath, options.WorkerCommand, options.WorkerScript} {
-		if !runtimeFileUnderRoot(root, path) {
-			return ErrACLDrift
-		}
+	if !filepath.IsAbs(options.AgentPath) || !strings.EqualFold(filepath.Base(options.AgentPath), "chuzi-user-agent.exe") || !runtimeRegularNoReparse(options.AgentPath) {
+		return ErrACLDrift
+	}
+	if !runtimeFileUnderRoot(root, options.WorkerScript) {
+		return ErrACLDrift
+	}
+	workerRoot := filepath.Clean(options.WorkerRuntimeRoot)
+	if !filepath.IsAbs(workerRoot) || inspectDirectoryNoReparseChain(workerRoot) != nil || !runtimeFileUnderRoot(workerRoot, options.WorkerCommand) {
+		return ErrACLDrift
 	}
 	if options.AdapterScript != "" && !runtimeFileUnderRoot(root, options.AdapterScript) {
 		return ErrACLDrift
 	}
-	if !strings.EqualFold(filepath.Base(options.AgentPath), "chuzi-user-agent.exe") || !strings.EqualFold(filepath.Base(options.WorkerCommand), "node.exe") {
+	if !strings.EqualFold(filepath.Base(options.WorkerCommand), "node.exe") {
 		return ErrACLDrift
 	}
 	for _, script := range []string{options.WorkerScript, options.AdapterScript} {
@@ -840,6 +857,14 @@ func validateRuntimePaths(options Options) error {
 		}
 	}
 	return nil
+}
+
+func runtimeRegularNoReparse(path string) bool {
+	if inspectNoReparseChain(path) != nil {
+		return false
+	}
+	attrs, err := fileAttributes(filepath.Clean(path))
+	return err == nil && attrs&fileAttributeDirectory == 0 && attrs&fileAttributeReparsePoint == 0
 }
 
 func runtimeFileUnderRoot(root, path string) bool {
@@ -981,7 +1006,7 @@ func (p *windowsProvisioner) agentHealthWithLease(ctx context.Context, agent age
 		return slotagent.Response{}, ErrSessionUnavailable
 	}
 	defer client.Close()
-	response, err := client.Call(checkCtx, slotagent.Request{CommandID: fmt.Sprintf("health-%d", time.Now().UnixNano()), RequestID: requestID, SlotID: request.SlotID, LeaseID: leaseID, EnvironmentGeneration: request.EnvironmentGeneration, Auth: agent.token, Command: slotagent.Health})
+	response, err := client.Call(checkCtx, slotagent.Request{CommandID: fmt.Sprintf("health-%d", time.Now().UnixNano()), RequestID: requestID, Owner: request.Owner, SlotID: request.SlotID, LeaseID: leaseID, EnvironmentGeneration: request.EnvironmentGeneration, Auth: agent.token, Command: slotagent.Health})
 	if err == nil && response.SessionState != "disconnected" {
 		if _, verifyErr := VerifySession(agent.sid, agent.session); verifyErr != nil {
 			if isRetryableSessionError(verifyErr) {
@@ -1004,12 +1029,12 @@ func (p *windowsProvisioner) shutdownAgent(ctx context.Context, agent agentProce
 		return err
 	}
 	defer client.Close()
-	_, err = client.Call(checkCtx, slotagent.Request{CommandID: fmt.Sprintf("shutdown-%d", time.Now().UnixNano()), RequestID: "maintenance-" + request.SlotID, SlotID: request.SlotID, LeaseID: agent.leaseID, EnvironmentGeneration: request.EnvironmentGeneration, Auth: agent.token, Command: slotagent.Shutdown})
+	_, err = client.Call(checkCtx, slotagent.Request{CommandID: fmt.Sprintf("shutdown-%d", time.Now().UnixNano()), RequestID: "maintenance-" + request.SlotID, Owner: agent.owner, SlotID: request.SlotID, LeaseID: agent.leaseID, EnvironmentGeneration: request.EnvironmentGeneration, Auth: agent.token, Command: slotagent.Shutdown})
 	return err
 }
 
 func validateProvisionRequest(request slot.ProvisionRequest) error {
-	if request.SlotID == "" || request.PoolID == "" || request.Ordinal < 1 || request.EnvironmentGeneration == 0 || request.Requirement.EnvironmentID == "" {
+	if request.SlotID == "" || request.PoolID == "" || request.Ordinal < 1 || strings.TrimSpace(request.Owner) != request.Owner || request.Owner == "" || len(request.Owner) > 160 || strings.ContainsAny(request.Owner, "\x00\r\n\t/\\") || request.EnvironmentGeneration == 0 || request.Requirement.EnvironmentID == "" {
 		return ErrInvalidOptions
 	}
 	if _, err := request.Requirement.Normalize(); err != nil {
@@ -1026,7 +1051,7 @@ func (p *windowsProvisioner) validateRequest(request slot.ProvisionRequest) erro
 		return err
 	}
 	requirement, err := request.Requirement.Normalize()
-	if err != nil || requirement.EnvironmentID != p.options.EnvironmentID || requirement.Version != p.options.Version {
+	if err != nil || requirement.EnvironmentID != p.options.EnvironmentID || requirement.Version != p.options.Version || (p.options.ManifestDigest != "" && requirement.ManifestDigest != p.options.ManifestDigest) || (p.options.Signer != "" && requirement.Signer != p.options.Signer) || (p.options.RequireTrusted && !requirement.RequireTrusted) {
 		return ErrInvalidOptions
 	}
 	return nil

@@ -65,16 +65,21 @@ func (h *acceptingWorkerHandler) HandleAgentCommand(context.Context, Request) (R
 
 func (h *acceptingWorkerHandler) HandleWorkerFrame(_ context.Context, frame Frame) (Frame, error) {
 	h.forwarded = true
-	return Frame{Kind: "worker_event", SlotID: frame.SlotID, RequestID: frame.RequestID, LeaseID: frame.LeaseID, EnvironmentGeneration: frame.EnvironmentGeneration, Worker: frame.Worker}, nil
+	return Frame{Kind: "worker_event", SlotID: frame.SlotID, RequestID: frame.RequestID, Owner: frame.Owner, LeaseID: frame.LeaseID, EnvironmentGeneration: frame.EnvironmentGeneration, Worker: frame.Worker}, nil
 }
 
 func (h *acceptingWorkerHandler) DisconnectJobs(context.Context) { h.disconnected = true }
 
 func TestAgentRequestHasClosedCommandAndJobEnums(t *testing.T) {
-	base := Request{CommandID: "command-1", RequestID: "request-1", AccountID: "account-1", SlotID: "pool-001", LeaseID: "lease-1", EnvironmentGeneration: 2, Command: StartJob, JobKind: BrowserWorker}
+	base := Request{CommandID: "command-1", RequestID: "request-1", Owner: "service", AccountID: "account-1", SlotID: "pool-001", LeaseID: "lease-1", EnvironmentGeneration: 2, Command: StartJob, JobKind: BrowserWorker}
 	if err := base.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	base.Owner = ""
+	if !errors.Is(base.Validate(), ErrInvalidMessage) {
+		t.Fatal("missing owner accepted")
+	}
+	base.Owner = "service"
 	base.Command = Command("run-powershell")
 	if !errors.Is(base.Validate(), ErrUnsupported) {
 		t.Fatal("unknown command accepted")
@@ -99,7 +104,7 @@ func TestAgentServerChecksLeaseSlotGenerationAndDuplicateRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	req := Request{CommandID: "command-1", RequestID: "request-1", SlotID: "pool-001", LeaseID: "lease-1", EnvironmentGeneration: 2, Command: Health}
+	req := Request{CommandID: "command-1", RequestID: "request-1", Owner: "service", SlotID: "pool-001", LeaseID: "lease-1", EnvironmentGeneration: 2, Command: Health}
 	response, err := server.Handle(context.Background(), req)
 	if err != nil || !response.OK || response.RequestID != req.RequestID || response.LeaseID != req.LeaseID {
 		t.Fatalf("Handle = %#v, %v", response, err)
@@ -123,7 +128,7 @@ func TestAgentServerDisconnectsWorkerOnStaleLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame := Frame{Kind: "worker_request", SlotID: "pool-001", RequestID: "request-1", LeaseID: "lease-1", EnvironmentGeneration: 2, Worker: &protocol.Envelope{Protocol: protocol.Version, ID: "ping-1", Type: protocol.Ping}}
+	frame := Frame{Kind: "worker_request", SlotID: "pool-001", RequestID: "request-1", Owner: "service", LeaseID: "lease-1", EnvironmentGeneration: 2, Worker: &protocol.Envelope{Protocol: protocol.Version, ID: "ping-1", Type: protocol.Ping}}
 	if _, err := server.HandleWorker(context.Background(), frame); !errors.Is(err, ErrStaleLease) {
 		t.Fatalf("stale worker lease = %v", err)
 	}
@@ -139,7 +144,7 @@ func TestAgentServerValidatesWorkerLeaseBeforeAlternateHandler(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frame := Frame{Kind: "worker_request", SlotID: "pool-001", RequestID: "request-1", LeaseID: "stale", EnvironmentGeneration: 2, Worker: &protocol.Envelope{Protocol: protocol.Version, ID: "ping-1", Type: protocol.Ping}}
+	frame := Frame{Kind: "worker_request", SlotID: "pool-001", RequestID: "request-1", Owner: "service", LeaseID: "stale", EnvironmentGeneration: 2, Worker: &protocol.Envelope{Protocol: protocol.Version, ID: "ping-1", Type: protocol.Ping}}
 	if _, err := server.HandleWorker(context.Background(), frame); !errors.Is(err, ErrStaleLease) {
 		t.Fatalf("stale worker lease = %v", err)
 	}
@@ -162,7 +167,7 @@ func TestAgentServerBoundsCommandDedupeWindow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := Request{RequestID: "request-1", SlotID: "pool-001", LeaseID: "lease-1", EnvironmentGeneration: 1, Command: Health}
+	request := Request{RequestID: "request-1", Owner: "service", SlotID: "pool-001", LeaseID: "lease-1", EnvironmentGeneration: 1, Command: Health}
 	for index := 0; index <= maxSeenCommands; index++ {
 		request.CommandID = fmt.Sprintf("command-%d", index)
 		if _, err := server.Handle(context.Background(), request); err != nil {

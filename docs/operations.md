@@ -31,6 +31,21 @@
 }
 ```
 
+环境 manifest 摘要只是选择约束，不是信任凭证。启用 Windows slot lifecycle 前，
+必须通过环境包管理边界安装并验证对应版本，并将验证后的 Record 通过 Store API
+持久化为同一 bbolt 数据目录中的 `environment_packages` 记录；只有
+`trusted`、`enabled`、`healthy` 和 `ready` 全部成立时才可使用。服务启动时
+若找不到完全匹配的 ready 记录会 fail closed，slot 保持 unprovisioned/provisioning，不会仅凭配置
+或调用方 requirement 运行。
+
+服务提供显式环境维护入口：`-environment-install`/`-environment-upgrade`
+安装签名包，随后使用 `-environment-id`、`-environment-version` 配合
+`-environment-trust`、`-environment-enable`、`-environment-health` 和
+`-environment-promote` 完成生命周期门；`-environment-disable` 和
+`-environment-rollback` 用于停用及回滚。部署 signer 公钥放在
+`<data_dir>/.chuzi/environment-trust.json`，服务不从普通配置或命令行读取
+私钥、runtime executable 或任意路径。
+
 Windows 主机若启用 OS 用户池，还需在同一配置中声明与 `job_pool` 容量和环境版本
 一致的 `windows_job_pool`：
 

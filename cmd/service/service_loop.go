@@ -28,6 +28,9 @@ func run(ctx context.Context, options serviceOptions) error {
 		return err
 	}
 	defer func() {
+		if runtime.rdp != nil {
+			_ = runtime.rdp.Close()
+		}
 		if runtime.coreServer != nil {
 			_ = runtime.coreServer.Close()
 		}
@@ -92,7 +95,21 @@ func run(ctx context.Context, options serviceOptions) error {
 	if runtime.slotReconciler != nil {
 		startBackground("slot lifecycle", func(workerCtx context.Context) error {
 			reconcile := func() {
-				err := runtime.slotReconciler.Reconcile(workerCtx)
+				var err error
+				if runtime.environment != nil {
+					// Revalidate the signed tree before each slot pass. Store remains
+					// the projection used by claims and capacity, so an external
+					// package edit immediately removes readiness from both views.
+					if _, healthErr := runtime.environment.HealthCheck(workerCtx, runtime.environmentID, runtime.environmentVersion); healthErr != nil {
+						err = healthErr
+					}
+					if syncErr := runtime.environment.SyncRecords(runtime.store); err == nil && syncErr != nil {
+						err = syncErr
+					}
+				}
+				if err == nil {
+					err = runtime.slotReconciler.Reconcile(workerCtx)
+				}
 				runtime.recordSlotReconcile(time.Now().UTC(), err)
 			}
 			reconcile()

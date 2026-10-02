@@ -20,7 +20,7 @@ func configureWorkerFactory(_ config.Config, _ serviceOptions, factory browser.W
 	return factory, nil
 }
 
-func newSlotReconciler(config config.Config, _ serviceOptions, _ *store.Store, _ func() time.Time, _ slotCapabilityRevoker) (slotReconciler, slotProfileAccess, error) {
+func newSlotReconciler(config config.Config, _ serviceOptions, _ *store.Store, _ func() time.Time, _ slotCapabilityRevoker, _ *serviceEnvironmentRuntime) (slotReconciler, slotProfileAccess, error) {
 	if config.WindowsJobPool.Enabled {
 		return nil, nil, slotwindows.ErrUnsupported
 	}

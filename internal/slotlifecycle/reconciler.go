@@ -5,8 +5,11 @@ package slotlifecycle
 import (
 	"context"
 	"errors"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/slot"
 )
 
@@ -34,6 +37,17 @@ type CapabilityRevoker interface {
 	RevokeSlotLease(context.Context, string) error
 }
 
+type GenerationRevoker interface {
+	RevokeGeneration(context.Context, string, uint64) error
+}
+
+// EnvironmentAuthority is the trusted package registry consulted before a
+// pool is provisioned. It keeps caller supplied slot requirements from
+// becoming an alternate environment source.
+type EnvironmentAuthority interface {
+	GetEnvironmentRecord(string, string) (environment.Record, error)
+}
+
 // slotTargetUpdater is optional so focused lifecycle fakes do not need to
 // persist target metadata. The durable store implements it to record the
 // generation fence before provisioning starts.
@@ -55,6 +69,7 @@ type Shutdowner interface {
 }
 
 type Reconciler struct {
+	mu               sync.Mutex
 	store            Store
 	provisioner      Provisioner
 	pool             slot.PoolConfig
@@ -62,20 +77,43 @@ type Reconciler struct {
 	provisionTimeout time.Duration
 	cleanupTimeout   time.Duration
 	revoker          CapabilityRevoker
+	authority        EnvironmentAuthority
+	owner            string
 }
 
-func New(database Store, provisioner Provisioner, pool slot.PoolConfig, clock func() time.Time, provisionTimeout, cleanupTimeout time.Duration, revokers ...CapabilityRevoker) (*Reconciler, error) {
+func New(database Store, provisioner Provisioner, pool slot.PoolConfig, clock func() time.Time, provisionTimeout, cleanupTimeout time.Duration, extras ...any) (*Reconciler, error) {
 	if database == nil || provisioner == nil || clock == nil || pool.Validate() != nil || provisionTimeout <= 0 || cleanupTimeout <= 0 {
 		return nil, ErrInvalidConfig
 	}
 	var revoker CapabilityRevoker
-	if len(revokers) > 1 {
-		return nil, ErrInvalidConfig
+	var authority EnvironmentAuthority
+	owner := "service"
+	ownerSet := false
+	for _, extra := range extras {
+		switch value := extra.(type) {
+		case nil:
+			continue
+		case CapabilityRevoker:
+			if revoker != nil {
+				return nil, ErrInvalidConfig
+			}
+			revoker = value
+		case EnvironmentAuthority:
+			if authority != nil {
+				return nil, ErrInvalidConfig
+			}
+			authority = value
+		case string:
+			if ownerSet || strings.TrimSpace(value) != value || value == "" || len(value) > 160 || strings.ContainsAny(value, "\x00\r\n\t/\\") {
+				return nil, ErrInvalidConfig
+			}
+			owner = value
+			ownerSet = true
+		default:
+			return nil, ErrInvalidConfig
+		}
 	}
-	if len(revokers) == 1 {
-		revoker = revokers[0]
-	}
-	return &Reconciler{store: database, provisioner: provisioner, pool: pool, clock: clock, provisionTimeout: provisionTimeout, cleanupTimeout: cleanupTimeout, revoker: revoker}, nil
+	return &Reconciler{store: database, provisioner: provisioner, pool: pool, clock: clock, provisionTimeout: provisionTimeout, cleanupTimeout: cleanupTimeout, revoker: revoker, authority: authority, owner: owner}, nil
 }
 
 // Reconcile processes one pass. Failures are returned as a stable category;
@@ -83,6 +121,14 @@ func New(database Store, provisioner Provisioner, pool slot.PoolConfig, clock fu
 func (r *Reconciler) Reconcile(ctx context.Context) error {
 	if r == nil || ctx == nil {
 		return ErrInvalidConfig
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.authority != nil {
+		record, authorityErr := r.authority.GetEnvironmentRecord(r.pool.EnvironmentID, r.pool.EnvironmentVersion)
+		if authorityErr != nil || !record.IsReady() || record.EnvironmentID != r.pool.EnvironmentID || record.Version != r.pool.EnvironmentVersion || r.pool.ManifestDigest == "" || !strings.EqualFold(record.ManifestDigest, r.pool.ManifestDigest) || r.pool.Signer == "" || record.Signer != r.pool.Signer || !containsAll(record.Capabilities, r.pool.Capabilities) {
+			return errors.New("slotlifecycle: trusted environment unavailable")
+		}
 	}
 	slots, err := r.store.ListSlots(r.pool.PoolID)
 	if err != nil {
@@ -118,7 +164,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			}
 			generation++
 		}
-		request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, EnvironmentGeneration: generation, Requirement: r.pool.Requirement()}
+		request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: generation, Requirement: r.pool.Requirement()}
 		if value.Ordinal > r.pool.DesiredSlots {
 			if leased {
 				if value.Status != slot.Draining {
@@ -161,6 +207,11 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			// releases it. Drain it before health checks so no new work can
 			// select a slot whose target no longer matches the pool.
 			if environmentChanged && value.Status != slot.Draining {
+				if generationRevoker, ok := r.revoker.(GenerationRevoker); ok {
+					if revokeErr := generationRevoker.RevokeGeneration(context.Background(), value.SlotID, value.EnvironmentGeneration); revokeErr != nil && first == nil {
+						first = errors.New("slotlifecycle: generation capability revocation failed")
+					}
+				}
 				if err := r.store.SetSlotStatus(value.SlotID, slot.Draining, r.clock().UTC()); err != nil {
 					if first == nil {
 						first = err
@@ -174,9 +225,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 					first = ErrLeaseMismatch
 				}
 			}
+			// A leased slot keeps its old generation isolated until the owner
+			// releases it. Do not probe it with the new pool requirement: that
+			// would turn a valid drain into a false health failure or quarantine.
+			if environmentChanged {
+				continue
+			}
 			if checker, ok := r.provisioner.(LeaseHealthChecker); ok {
 				healthCtx, cancel := context.WithTimeout(ctx, r.provisionTimeout)
-				healthErr := checker.Health(healthCtx, slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, EnvironmentGeneration: value.EnvironmentGeneration, Requirement: r.pool.Requirement()}, lease)
+				healthErr := checker.Health(healthCtx, slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: value.EnvironmentGeneration, Requirement: r.pool.Requirement()}, lease)
 				cancel()
 				if healthErr != nil {
 					if retryable, retryableOK := healthErr.(interface{ Retryable() bool }); retryableOK && retryable.Retryable() {
@@ -269,8 +326,26 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			}
 			continue
 		}
-		result.Summary.UpdatedAt = r.clock().UTC()
-		if err := r.store.MarkSlotReady(value.SlotID, result.Summary, result.Summary.UpdatedAt); err != nil && first == nil {
+		// Provisioning establishes the runtime, but Inspect is the health gate.
+		// A successful process start must not become schedulable until the
+		// provisioner reports the same generation and trusted environment.
+		inspectCtx, inspectCancel := context.WithTimeout(ctx, r.provisionTimeout)
+		inspected, inspectErr := r.provisioner.Inspect(inspectCtx, request)
+		inspectCancel()
+		if inspectErr != nil || !matches(inspected, r.pool, generation) {
+			if retryable, ok := inspectErr.(interface{ Retryable() bool }); !ok || !retryable.Retryable() {
+				_ = r.store.SetSlotStatus(value.SlotID, slot.Quarantined, r.clock().UTC())
+			}
+			if first == nil {
+				first = errors.New("slotlifecycle: health check failed")
+			}
+			continue
+		}
+		if inspected.AgentHandle == "" {
+			inspected.AgentHandle = result.AgentHandle
+		}
+		inspected.UpdatedAt = r.clock().UTC()
+		if err := r.store.MarkSlotReady(value.SlotID, inspected, inspected.UpdatedAt); err != nil && first == nil {
 			first = err
 		}
 	}
@@ -283,6 +358,8 @@ func (r *Reconciler) Shutdown(ctx context.Context) error {
 	if r == nil || ctx == nil {
 		return ErrInvalidConfig
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if shutdowner, ok := r.provisioner.(Shutdowner); ok {
 		return shutdowner.Shutdown(ctx)
 	}
@@ -291,10 +368,10 @@ func (r *Reconciler) Shutdown(ctx context.Context) error {
 
 func matches(summary slot.EnvironmentSummary, pool slot.PoolConfig, generation uint64) bool {
 	if summary.Validate() != nil || summary.Generation == 0 || (generation != 0 && summary.Generation != generation) ||
-		summary.EnvironmentID != pool.EnvironmentID || summary.Version != pool.EnvironmentVersion || !summary.Trusted && pool.RequireTrusted {
+		summary.EnvironmentID != pool.EnvironmentID || summary.Version != pool.EnvironmentVersion || !summary.Trusted {
 		return false
 	}
-	if pool.ManifestDigest != "" && summary.ManifestDigest != pool.ManifestDigest || pool.Signer != "" && summary.Signer != pool.Signer {
+	if summary.ManifestDigest != pool.ManifestDigest || summary.Signer != pool.Signer {
 		return false
 	}
 	available := make(map[string]struct{}, len(summary.Capabilities))
@@ -307,6 +384,19 @@ func matches(summary slot.EnvironmentSummary, pool slot.PoolConfig, generation u
 		}
 	}
 	return summary.SessionState == "ready" && summary.DesktopReady && summary.AgentVersion != ""
+}
+
+func containsAll(available, required []string) bool {
+	set := make(map[string]struct{}, len(available))
+	for _, value := range available {
+		set[value] = struct{}{}
+	}
+	for _, value := range required {
+		if _, ok := set[value]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func matchesSlotTarget(value slot.Slot, pool slot.PoolConfig) bool {

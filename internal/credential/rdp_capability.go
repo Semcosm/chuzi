@@ -221,6 +221,9 @@ func (s *RDPService) resolve(ctx context.Context, capability RDPCapability, auth
 		return RDPMaterial{}, ErrRDPUnauthorized
 	}
 	if entry.slotLeaseID != "" {
+		// A capability issued for a Windows slot is never resolvable through
+		// the legacy unbound path. Requiring the complete binding here keeps a
+		// leaked bearer token from outliving its durable leases or generation.
 		if !requireBinding || entry.accountID != authorization.AccountID || entry.capability.RequestID != authorization.RequestID || entry.accountLeaseID != authorization.AccountLeaseID || entry.slotLeaseID != authorization.SlotLeaseID || entry.slotID != authorization.SlotID || entry.environmentGeneration != authorization.EnvironmentGeneration {
 			return RDPMaterial{}, ErrRDPUnauthorized
 		}
@@ -308,6 +311,64 @@ func (s *RDPService) RevokeSlot(ctx context.Context, slotID string) error {
 			entry.material.wipe()
 			delete(s.entries, key)
 		}
+	}
+	return nil
+}
+
+// RevokeAccountLease fences capabilities when the account lease expires or is
+// replaced, even if the request is still present in durable storage.
+func (s *RDPService) RevokeAccountLease(ctx context.Context, leaseID string) error {
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(leaseID) == "" {
+		return ErrRDPInvalidRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, entry := range s.entries {
+		if entry.accountLeaseID == leaseID {
+			entry.revoked = true
+			entry.material.wipe()
+			delete(s.entries, key)
+		}
+	}
+	return nil
+}
+
+// RevokeGeneration invalidates capabilities from an older environment
+// generation while allowing a newly provisioned generation to be authorized.
+func (s *RDPService) RevokeGeneration(ctx context.Context, slotID string, generation uint64) error {
+	if err := ctxErr(ctx); err != nil {
+		return err
+	}
+	if strings.TrimSpace(slotID) == "" || generation == 0 {
+		return ErrRDPInvalidRequest
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, entry := range s.entries {
+		if entry.slotID == slotID && entry.environmentGeneration == generation {
+			entry.revoked = true
+			entry.material.wipe()
+			delete(s.entries, key)
+		}
+	}
+	return nil
+}
+
+// Close revokes every in-memory capability and is safe during repeated
+// service shutdown paths.
+func (s *RDPService) Close() error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, entry := range s.entries {
+		entry.revoked = true
+		entry.material.wipe()
+		delete(s.entries, key)
 	}
 	return nil
 }

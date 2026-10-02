@@ -46,6 +46,7 @@ const maxSeenCommands = 4096
 type Request struct {
 	CommandID             string  `json:"command_id"`
 	RequestID             string  `json:"request_id"`
+	Owner                 string  `json:"owner,omitempty"`
 	AccountID             string  `json:"account_id,omitempty"`
 	SlotID                string  `json:"slot_id"`
 	LeaseID               string  `json:"lease_id"`
@@ -58,6 +59,7 @@ type Request struct {
 type Response struct {
 	CommandID             string `json:"command_id"`
 	RequestID             string `json:"request_id"`
+	Owner                 string `json:"owner,omitempty"`
 	SlotID                string `json:"slot_id"`
 	LeaseID               string `json:"lease_id"`
 	EnvironmentGeneration uint64 `json:"environment_generation"`
@@ -70,6 +72,7 @@ type Response struct {
 func (r Response) Validate() error {
 	if r.CommandID != "" && !safeID(r.CommandID, 128) ||
 		r.RequestID != "" && !safeID(r.RequestID, 128) ||
+		r.Owner != "" && !safeID(r.Owner, 160) ||
 		r.SlotID != "" && !safeID(r.SlotID, 128) ||
 		r.LeaseID != "" && !safeID(r.LeaseID, 160) ||
 		r.EnvironmentGeneration == 0 && (r.CommandID != "" || r.RequestID != "" || r.SlotID != "" || r.LeaseID != "") ||
@@ -86,7 +89,7 @@ func (r Response) Validate() error {
 }
 
 func (r Request) Validate() error {
-	if !safeID(r.CommandID, 128) || !safeID(r.RequestID, 128) || !safeID(r.SlotID, 128) || !safeID(r.LeaseID, 160) || r.EnvironmentGeneration == 0 || (r.Auth != "" && !safeID(r.Auth, 256)) {
+	if !safeID(r.CommandID, 128) || !safeID(r.RequestID, 128) || !safeID(r.Owner, 160) || !safeID(r.SlotID, 128) || !safeID(r.LeaseID, 160) || r.EnvironmentGeneration == 0 || (r.Auth != "" && !safeID(r.Auth, 256)) {
 		return ErrInvalidMessage
 	}
 	switch r.Command {
@@ -186,6 +189,7 @@ func (s *Server) Handle(ctx context.Context, request Request) (Response, error) 
 	}
 	response.CommandID = request.CommandID
 	response.RequestID = request.RequestID
+	response.Owner = request.Owner
 	response.SlotID = s.slotID
 	response.LeaseID = request.LeaseID
 	response.EnvironmentGeneration = s.generation
@@ -228,6 +232,7 @@ type Frame struct {
 	Response              *Response          `json:"response,omitempty"`
 	SlotID                string             `json:"slot_id,omitempty"`
 	RequestID             string             `json:"request_id,omitempty"`
+	Owner                 string             `json:"owner,omitempty"`
 	LeaseID               string             `json:"lease_id,omitempty"`
 	EnvironmentGeneration uint64             `json:"environment_generation,omitempty"`
 	Worker                *protocol.Envelope `json:"worker,omitempty"`

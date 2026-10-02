@@ -142,6 +142,14 @@ func TestConfigValidatesLogicalJobPoolAndTreatsAllMetadataAsEnabled(t *testing.T
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
 	}
+	cfg.EnvironmentPackage = EnvironmentPackageConfig{EnvironmentID: "chuzi-environment/v1", Version: "1.0.0", ManifestDigest: "sha256:test", Signer: "signer"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("matching environment package rejected: %v", err)
+	}
+	cfg.EnvironmentPackage.Version = "2.0.0"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("environment package escaped the pool target")
+	}
 	cfg.JobPool.Capabilities = []string{"cdp", "cdp"}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("duplicate job pool capability was accepted")

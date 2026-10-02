@@ -18,6 +18,7 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/account"
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/migrations"
 	"go.etcd.io/bbolt"
 )
@@ -40,6 +41,8 @@ var (
 	ErrQueueEmpty             = errors.New("store: queue is empty")
 	ErrQueueCapacity          = errors.New("store: queue capacity is reached")
 	ErrInvalidQueueOptions    = errors.New("store: invalid queue options")
+	ErrEnvironmentUnavailable = errors.New("store: trusted environment is unavailable")
+	ErrSlotLeaseFenceRequired = errors.New("store: expired slot lease requires agent fence")
 	ErrRequestAttemptOverflow = errors.New("store: request attempt overflow")
 )
 
@@ -136,6 +139,8 @@ type Store struct {
 	db        *bbolt.DB
 	cfg       config.Config
 	closeOnce sync.Once
+	fenceMu   sync.Mutex
+	fenced    map[string]slot.Lease
 }
 
 // Open creates the configured data directory, opens its derived database, and
@@ -160,7 +165,7 @@ func Open(cfg config.Config) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("rebuild request queue index: %w", err)
 	}
-	return &Store{db: db, cfg: normalized}, nil
+	return &Store{db: db, cfg: normalized, fenced: make(map[string]slot.Lease)}, nil
 }
 
 // Close releases the database file lock. It is safe to call more than once.
