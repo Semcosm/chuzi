@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 88287aee7c6f9265ce7f2aab6cc0034eb2e0df5c
+Head or Range: 8684134db9fdba3c96640135335c13e5bb3a0588
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 8
+Revision: 9
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 88287aee7c6f9265ce7f2aab6cc0034eb2e0df5c
+Head OID: 8684134db9fdba3c96640135335c13e5bb3a0588
 Integrated Result: pending
 
 ## Summary
@@ -121,6 +121,16 @@ and `git diff --check`; the current Linux host has no PowerShell, so the
 Windows helper compilation and local RDP/native smoke are still pending.
 `-LocalRdp` remains diagnostic evidence only; broker, pipe ACL, ownership
 lifecycle and production RDP authorizer gates are unchanged.
+
+Revision 9 fixes Windows PowerShell 5.1 result unrolling in the smoke cleanup:
+all function output is captured as an array before reading `Count`, including
+empty, single-item, and multi-item results. `-ValidateOnly` now asserts those
+three cardinalities. If managed-user or session cleanup fails, the run-owned
+temporary root and its ownership marker are preserved and the script prints
+the root path for recovery. Linux Go, Windows cross-build/vet, Node, repository
+validator, build-contract, and diff checks pass; Windows hosted preflight and
+the target machine's `-LocalRdp` native smoke remain to be run. This CR remains
+pending until the native acceptance and deployment-owned broker/RDP gates pass.
 
 ## Risk
 
