@@ -2274,14 +2274,14 @@ type lsaEnumerationInformation struct {
 }
 
 func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...string) error {
-	allowed, err := lsaRightSIDs("SeRemoteInteractiveLogonRight")
-	if err != nil {
-		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
-	}
 	principals := append([]string{userSID, groupSID}, additionalGroups...)
 	allow := false
 	for _, principal := range principals {
-		if allowed[principal] {
+		hasRight, err := lsaAccountHasRight(principal, "SeRemoteInteractiveLogonRight")
+		if err != nil {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
+		}
+		if hasRight {
 			allow = true
 			break
 		}
@@ -2289,23 +2289,72 @@ func verifyRemoteInteractiveRight(userSID, groupSID string, additionalGroups ...
 	if !allow {
 		return errors.Join(ErrSessionPolicy, ErrSessionPolicyMissing)
 	}
-	denied, err := lsaRightSIDs("SeDenyRemoteInteractiveLogonRight")
-	if err != nil {
-		return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
-	}
 	// An explicit deny for the managed user, any local group, or Everyone
 	// must never be masked by membership in Remote Desktop Users.
 	for _, principal := range principals {
-		if denied[principal] {
+		hasDeny, err := lsaAccountHasRight(principal, "SeDenyRemoteInteractiveLogonRight")
+		if err != nil {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
+		}
+		if hasDeny {
 			return errors.Join(ErrSessionPolicy, ErrSessionPolicyDenied)
 		}
 	}
 	for _, everyone := range []string{"S-1-1-0", "S-1-5-11"} {
-		if denied[everyone] {
+		hasDeny, err := lsaAccountHasRight(everyone, "SeDenyRemoteInteractiveLogonRight")
+		if err != nil {
+			return errors.Join(ErrSessionPolicy, ErrSessionPolicyLookup, err)
+		}
+		if hasDeny {
 			return errors.Join(ErrSessionPolicy, ErrSessionPolicyDenied)
 		}
 	}
 	return nil
+}
+
+// lsaAccountHasRight checks one SID directly. Enumerating accounts by right
+// is inconsistent across Windows policy providers; account-right enumeration
+// keeps the check scoped to the exact managed identity and its validated
+// local groups.
+func lsaAccountHasRight(sidText, rightName string) (bool, error) {
+	sid, err := windows.StringToSid(sidText)
+	if err != nil {
+		return false, ErrSessionPolicyLookup
+	}
+	attrs := lsaObjectAttributes{Length: uint32(unsafe.Sizeof(lsaObjectAttributes{}))}
+	open := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaOpenPolicy")
+	enumerate := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaEnumerateAccountRights")
+	free := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaFreeMemory")
+	close := windows.NewLazySystemDLL("advapi32.dll").NewProc("LsaClose")
+	var policy uintptr
+	status, _, _ := open.Call(0, uintptr(unsafe.Pointer(&attrs)), 0x00000800, uintptr(unsafe.Pointer(&policy)))
+	if status != 0 || policy == 0 {
+		return false, ErrSessionPolicyOpen
+	}
+	defer close.Call(policy)
+	var rights *lsaUnicodeString
+	var count uint32
+	status, _, _ = enumerate.Call(policy, uintptr(unsafe.Pointer(sid)), uintptr(unsafe.Pointer(&rights)), uintptr(unsafe.Pointer(&count)))
+	if status == statusObjectNameNotFound || status == statusObjectPathNotFound || status == statusNoMoreEntries || status == statusNoSuchPrivilege {
+		return false, nil
+	}
+	if status != 0 {
+		return false, ErrSessionPolicyEnumerate
+	}
+	if rights == nil || count == 0 {
+		return false, nil
+	}
+	defer free.Call(uintptr(unsafe.Pointer(rights)))
+	for _, right := range unsafe.Slice(rights, count) {
+		if right.Buffer == nil || right.Length == 0 {
+			continue
+		}
+		value := windows.UTF16ToString(unsafe.Slice(right.Buffer, int(right.Length/2)))
+		if value == rightName {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 const (
