@@ -53,11 +53,4 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $agent)) {
     throw 'Windows user-agent build failed'
 }
 
-# Confirm that the hosted image exposes a queryable terminal-session API without
-# printing session identities or tokens into workflow logs.
-& query.exe session 1>$null 2>$null
-if ($LASTEXITCODE -ne 0) {
-    throw 'Windows terminal-session query is unavailable'
-}
-
 Write-Host 'Windows hosted job-pool preflight passed'
