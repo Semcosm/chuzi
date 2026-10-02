@@ -23,9 +23,13 @@ import (
 )
 
 var (
-	ErrOwnership = errors.New("slotwindows: managed user ownership check failed")
-	ErrACLDrift  = errors.New("slotwindows: managed ACL check failed")
-	ErrCleanup   = errors.New("slotwindows: managed resource cleanup failed")
+	ErrOwnership      = errors.New("slotwindows: managed user ownership check failed")
+	ErrACLDrift       = errors.New("slotwindows: managed ACL check failed")
+	ErrCleanup        = errors.New("slotwindows: managed resource cleanup failed")
+	ErrCleanupAgent   = errors.New("slotwindows: agent cleanup failed")
+	ErrCleanupSession = errors.New("slotwindows: session cleanup failed")
+	ErrCleanupRoot    = errors.New("slotwindows: root cleanup failed")
+	ErrCleanupUser    = errors.New("slotwindows: user cleanup failed")
 )
 
 type retryableProvisionFailure struct{ cause error }
@@ -416,7 +420,7 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 		}
 		if cleanupErr := p.rollbackProvision(paths, request, sid, !userExisted, !rootExisted); cleanupErr != nil {
 			result = slot.ProvisionResult{}
-			provisionErr = ErrCleanup
+			provisionErr = errors.Join(ErrCleanup, cleanupErr)
 		}
 	}()
 	managed, err = ensureManagedUser(paths, request)
@@ -460,17 +464,17 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 		err := p.terminateAgentWithRetry(cleanupCtx, request.SlotID, agent)
 		cancel()
 		if err != nil {
-			cleanupErr = errors.Join(cleanupErr, err)
+			cleanupErr = errors.Join(cleanupErr, ErrCleanupAgent)
 		}
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := p.stopSessionBootstrap(cleanupCtx, request.SlotID); err != nil {
-		cleanupErr = errors.Join(cleanupErr, err)
+		cleanupErr = errors.Join(cleanupErr, ErrCleanupSession)
 	}
 	if removeRoot {
 		if err := removeOwnedTree(paths.Root); err != nil {
-			cleanupErr = errors.Join(cleanupErr, err)
+			cleanupErr = errors.Join(cleanupErr, ErrCleanupRoot)
 		}
 	}
 	if removeUser {
@@ -485,7 +489,7 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 		}
 		if sid != "" {
 			if err := deleteManagedUser(paths.UserName, request.SlotID, request.Ordinal, sid); err != nil {
-				cleanupErr = errors.Join(cleanupErr, err)
+				cleanupErr = errors.Join(cleanupErr, ErrCleanupUser)
 			}
 		}
 	}

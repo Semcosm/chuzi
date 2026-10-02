@@ -227,6 +227,14 @@ func nativeSmokeFailureClass(err error) string {
 		return "acl_drift"
 	case errors.Is(err, ErrProcessStart):
 		return "process_start_failed"
+	case errors.Is(err, ErrCleanupAgent):
+		return "cleanup_agent_failed"
+	case errors.Is(err, ErrCleanupSession):
+		return "cleanup_session_failed"
+	case errors.Is(err, ErrCleanupRoot):
+		return "cleanup_root_failed"
+	case errors.Is(err, ErrCleanupUser):
+		return "cleanup_user_failed"
 	case errors.Is(err, ErrCleanup):
 		return "cleanup_failed"
 	default:
