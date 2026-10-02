@@ -85,10 +85,14 @@ type PoolConfig struct {
 	EnvironmentID      string    `json:"environment_id,omitempty"`
 	EnvironmentVersion string    `json:"environment_version,omitempty"`
 	DesiredSlots       int       `json:"desired_slots"`
+	MaxConcurrency     int       `json:"max_concurrency,omitempty"`
 	Capabilities       []string  `json:"capabilities,omitempty"`
 	ManifestDigest     string    `json:"manifest_digest,omitempty"`
 	Signer             string    `json:"signer,omitempty"`
 	RequireTrusted     bool      `json:"require_trusted,omitempty"`
+	DesiredState       string    `json:"desired_state,omitempty"`
+	ConfigRevision     uint64    `json:"config_revision,omitempty"`
+	UpdatedBy          string    `json:"updated_by,omitempty"`
 	UpdatedAt          time.Time `json:"updated_at"`
 }
 
@@ -97,11 +101,29 @@ type PoolConfig struct {
 type SlotPool = PoolConfig
 
 func (p PoolConfig) Validate() error {
-	if !validID(p.PoolID) || p.DesiredSlots < 0 || p.DesiredSlots > 10000 || p.EnvironmentID == "" {
+	if !validID(p.PoolID) || p.DesiredSlots < 0 || p.DesiredSlots > 10000 || p.EnvironmentID == "" || p.MaxConcurrency < 0 || p.MaxConcurrency > 10000 || len(p.UpdatedBy) > 256 || strings.ContainsAny(p.UpdatedBy, "\r\n\t") {
+		return ErrInvalidConfig
+	}
+	if p.DesiredState == "" {
+		p.DesiredState = "enabled"
+	}
+	if p.DesiredState != "enabled" && p.DesiredState != "draining" && p.DesiredState != "disabled" {
 		return ErrInvalidConfig
 	}
 	_, err := (EnvironmentRequirement{EnvironmentID: p.EnvironmentID, Version: p.EnvironmentVersion, Capabilities: p.Capabilities, ManifestDigest: p.ManifestDigest, Signer: p.Signer, RequireTrusted: p.RequireTrusted}).Normalize()
 	return err
+}
+
+func (p PoolConfig) Enabled() bool {
+	return p.DesiredState == "" || p.DesiredState == "enabled" || p.DesiredState == "draining"
+}
+
+func (p PoolConfig) Normalized() PoolConfig {
+	if p.DesiredState == "" {
+		p.DesiredState = "enabled"
+	}
+	p.Capabilities = append([]string(nil), p.Capabilities...)
+	return p
 }
 
 func (p PoolConfig) Requirement() EnvironmentRequirement {
