@@ -190,6 +190,11 @@ func TestManagerCatalogReferenceIsOpaqueAndServiceOwned(t *testing.T) {
 	if _, err := manager.InstallReference(context.Background(), "missing-package"); !errors.Is(err, ErrPackageReference) {
 		t.Fatalf("missing reference error = %v", err)
 	}
+	for _, reference := range []string{"/absolute", "nested/ref", "shell|command"} {
+		if _, err := manager.InstallReference(context.Background(), reference); !errors.Is(err, ErrPackageReference) {
+			t.Fatalf("invalid reference %q error = %v", reference, err)
+		}
+	}
 }
 
 func TestManagerResolvesClosedRuntimeEntrypoint(t *testing.T) {
@@ -519,6 +524,70 @@ func TestManagerRollbackValidatesBothTreesAndFencesGeneration(t *testing.T) {
 	}
 	if _, err := ValidatePackage(root, "linux-amd64", trust); err != nil {
 		t.Fatalf("restored package = %v", err)
+	}
+}
+
+func TestManagerRollbackFailureLeavesCurrentPackageAndRecordUntouched(t *testing.T) {
+	oldContent := []byte("old runtime")
+	oldManifest, private := testManifest(t, oldContent)
+	oldSource := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldSource, "runtime.dat"), oldContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oldJSON, _ := json.Marshal(oldManifest)
+	if err := os.WriteFile(filepath.Join(oldSource, ManifestName), oldJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	newContent := []byte("new runtime")
+	newManifest := oldManifest
+	newManifest.Resources[0].SHA256 = sha256Digest(newContent)
+	newManifest.Resources[0].Size = int64(len(newContent))
+	newManifest, err := newManifest.Seal(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newSource := t.TempDir()
+	if err := os.WriteFile(filepath.Join(newSource, "runtime.dat"), newContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	newJSON, _ := json.Marshal(newManifest)
+	if err := os.WriteFile(filepath.Join(newSource, ManifestName), newJSON, 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(Options{InstallRoot: t.TempDir(), Target: "linux-amd64", Trust: TrustStore{"test-signer": private.Public().(ed25519.PublicKey)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Install(context.Background(), oldSource); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Upgrade(context.Background(), newSource); err != nil {
+		t.Fatal(err)
+	}
+	before, err := manager.Get(oldManifest.EnvironmentID, oldManifest.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(manager.root, "environments", oldManifest.EnvironmentID, oldManifest.Version)
+	if err := os.WriteFile(filepath.Join(root+".rollback", "unexpected"), []byte("tampered"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Rollback(oldManifest.EnvironmentID, oldManifest.Version); !errors.Is(err, ErrExternalModification) {
+		t.Fatalf("corrupt rollback error = %v", err)
+	}
+	after, err := manager.Get(oldManifest.EnvironmentID, oldManifest.Version)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.ManifestDigest != before.ManifestDigest || after.Generation != before.Generation {
+		t.Fatalf("failed rollback changed record: before=%#v after=%#v", before, after)
+	}
+	current, err := os.ReadFile(filepath.Join(root, "runtime.dat"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != string(newContent) {
+		t.Fatalf("failed rollback changed current package to %q", current)
 	}
 }
 

@@ -305,7 +305,12 @@ func (s *Store) ListJobPoolOperations(poolID string, limit int) ([]JobPoolOperat
 			return nil
 		})
 	})
-	sort.Slice(result, func(i, j int) bool { return result[i].RequestedAt.Before(result[j].RequestedAt) })
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].RequestedAt.Equal(result[j].RequestedAt) {
+			return result[i].OperationID < result[j].OperationID
+		}
+		return result[i].RequestedAt.Before(result[j].RequestedAt)
+	})
 	if len(result) > limit {
 		result = result[len(result)-limit:]
 	}

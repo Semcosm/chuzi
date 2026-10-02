@@ -1046,9 +1046,12 @@ func (m *Manager) Rollback(id, version string) error {
 		_ = os.Rename(staging, root)
 		return fmt.Errorf("%w: rollback state", ErrTransaction)
 	}
-	if err := os.RemoveAll(staging); err != nil {
-		return fmt.Errorf("%w: finalize rollback", ErrTransaction)
-	}
+	// The durable record and active tree are already committed together. A
+	// cleanup failure must not report rollback failure after that commit: doing
+	// so would leave the manager ahead of the Store operation projection. The
+	// retained staging tree is service-owned and can be cleaned up on a later
+	// maintenance pass.
+	_ = os.RemoveAll(staging)
 	return nil
 }
 

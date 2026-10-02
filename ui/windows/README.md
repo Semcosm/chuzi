@@ -19,6 +19,11 @@ saved through the launcher settings commands; the titlebar and Settings appearan
 control save only the UI-local theme. Diagnostic consent is shown only before
 submitting a report.
 
+The Settings job-pool panel consumes the redacted `list_job_pools` DTO and is
+read-only in this phase. Pool and environment mutations use typed Core/Launcher
+commands; the UI never turns user input into a path, shell command, or
+executable.
+
 The former Overview, Accounts, Tasks, Adapters, and RDP login pages and their
 compatibility routes have been removed. The main window does not keep hidden
 legacy pages. New destinations must use the current shell and projections.

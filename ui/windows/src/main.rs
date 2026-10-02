@@ -595,35 +595,7 @@ fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) 
             let summary = if list.job_pools.is_empty() {
                 "No job pools are configured.".to_owned()
             } else {
-                list.job_pools
-                    .iter()
-                    .map(|pool| {
-                        format!(
-                            "{} · environment {} · ready {}/{} · leased {} · quarantined {} · draining {} · provisioning {} · retiring {} · effective {} · {} · {}",
-                            pool.config.pool_id,
-                            pool.config.environment_version,
-                            pool.status.ready,
-                            pool.status.desired,
-                            pool.status.leased,
-                            pool.status.quarantined,
-                            pool.status.draining,
-                            pool.status.provisioning,
-                            pool.status.retiring,
-                            pool.status.effective_capacity,
-                            if pool.status.environment_readiness.is_empty() {
-                                "environment readiness unknown"
-                            } else {
-                                pool.status.environment_readiness.as_str()
-                            },
-                            if pool.status.reconcile_state.is_empty() {
-                                "reconcile state unknown"
-                            } else {
-                                pool.status.reconcile_state.as_str()
-                            },
-                        )
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
+                format_job_pool_summary(&list)
             };
             Ok(("Job pool status refreshed.".to_owned(), summary))
         },
@@ -635,6 +607,94 @@ fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) 
             window.set_job_pool_phase("error".into());
         },
     );
+}
+
+fn format_job_pool_summary(list: &CoreJobPoolList) -> String {
+    list.job_pools
+        .iter()
+        .map(|pool| {
+            format!(
+                "{} · environment {} · ready {}/{} · leased {} · quarantined {} · draining {} · provisioning {} · retiring {} · effective {} · readiness {} · reconcile {} · failure {}",
+                pool.config.pool_id,
+                pool.config.environment_version,
+                pool.status.ready,
+                pool.status.desired,
+                pool.status.leased,
+                pool.status.quarantined,
+                pool.status.draining,
+                pool.status.provisioning,
+                pool.status.retiring,
+                pool.status.effective_capacity,
+                if pool.status.environment_readiness.is_empty() {
+                    "unknown"
+                } else {
+                    pool.status.environment_readiness.as_str()
+                },
+                if pool.status.reconcile_state.is_empty() {
+                    "unknown"
+                } else {
+                    pool.status.reconcile_state.as_str()
+                },
+                if pool.status.last_failure_code.is_empty() {
+                    "none"
+                } else {
+                    pool.status.last_failure_code.as_str()
+                },
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[cfg(test)]
+mod job_pool_tests {
+    use super::{
+        format_job_pool_summary,
+        models::{CoreJobPool, CoreJobPoolConfig, CoreJobPoolList, CoreJobPoolStatus},
+    };
+
+    #[test]
+    fn summary_contains_safe_capacity_and_failure_fields() {
+        let summary = format_job_pool_summary(&CoreJobPoolList {
+            job_pools: vec![CoreJobPool {
+                config: CoreJobPoolConfig {
+                    pool_id: "pool-a".to_owned(),
+                    environment_version: "1.2.3".to_owned(),
+                },
+                status: CoreJobPoolStatus {
+                    desired: 3,
+                    ready: 2,
+                    leased: 1,
+                    quarantined: 0,
+                    draining: 1,
+                    provisioning: 1,
+                    retiring: 0,
+                    effective_capacity: 2,
+                    environment_readiness: "ready".to_owned(),
+                    reconcile_state: "failed".to_owned(),
+                    last_failure_code: "package_unavailable".to_owned(),
+                },
+            }],
+        });
+        for field in [
+            "ready 2/3",
+            "leased 1",
+            "draining 1",
+            "provisioning 1",
+            "effective 2",
+            "readiness ready",
+            "reconcile failed",
+            "failure package_unavailable",
+        ] {
+            assert!(summary.contains(field), "missing {field} in {summary}");
+        }
+        for secret in ["SID", "password", "profile", "pipe", "endpoint", "agent"] {
+            assert!(
+                !summary.to_ascii_lowercase().contains(secret),
+                "summary leaked {secret}: {summary}"
+            );
+        }
+    }
 }
 
 const SESSION_PAGE_SIZE: usize = 100;
