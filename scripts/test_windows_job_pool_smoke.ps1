@@ -22,6 +22,7 @@ $cleanupErrors = [System.Collections.Generic.List[string]]::new()
 $smokePassed = $false
 $script:rootPreserved = $false
 $script:unownedSmokeUsers = 0
+$script:remainingSmokeUsers = -1
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
 $preservedLog = Join-Path $tempRoot 'chuzi-job-pool-smoke-test-output.log'
@@ -155,9 +156,15 @@ function Stop-SmokeResources {
         # or unreadable. Leave it for explicit operator review.
         $usersClean = $false
     }
-    $script:unownedSmokeUsers = @(Get-MarkedUsers | Where-Object {
-        $_.Name -notmatch $currentUserPattern
-    }).Count
+    try {
+        $script:remainingSmokeUsers = @(Get-MarkedUsers -CurrentRunOnly).Count
+        $script:unownedSmokeUsers = @(Get-MarkedUsers | Where-Object {
+            $_.Name -notmatch $currentUserPattern
+        }).Count
+    } catch {
+        $script:remainingSmokeUsers = -1
+        $usersClean = $false
+    }
     if (-not $usersClean) {
         $cleanupErrors.Add('user_cleanup_failed')
     }
@@ -267,9 +274,9 @@ try {
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_WORKER -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_USER_PREFIX -ErrorAction SilentlyContinue
     $cleanupResult = Stop-SmokeResources
+    Write-Host ('RemainingSmokeUsers = ' + $script:remainingSmokeUsers)
     Write-Host ('UnownedSmokeUsers = ' + $script:unownedSmokeUsers)
-    if ($smokePassed -and $cleanupErrors.Count -eq 0 -and $cleanupResult.Users -and $cleanupResult.Root) {
-        Write-Host 'RemainingSmokeUsers = 0'
+    if ($smokePassed -and $script:remainingSmokeUsers -eq 0 -and $cleanupErrors.Count -eq 0 -and $cleanupResult.Users -and $cleanupResult.Root) {
         if ($script:rootPreserved) {
             Write-Host 'RemainingSmokeRoots = preserved'
         } else {
