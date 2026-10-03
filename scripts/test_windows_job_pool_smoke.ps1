@@ -36,6 +36,9 @@ $script:runnerSessionID = -1
 $script:runnerSID = $null
 $script:failureDetail = $null
 $script:rdpDiagnosticsPath = $null
+$script:rdpFailurePhase = 'not_started'
+$script:rdpFailureExceptionType = 'unavailable'
+$script:rdpFailureHResult = 'unavailable'
 $script:rdpStartTime = $null
 $script:sessionShellSigningThumbprint = $null
 $script:lastRdpDiagnosticAt = [DateTime]::MinValue
@@ -508,7 +511,16 @@ function Write-RdpDiagnostic([string] $Line) {
     if ([string]::IsNullOrWhiteSpace($script:rdpDiagnosticsPath)) {
         return
     }
-    Add-Content -LiteralPath $script:rdpDiagnosticsPath -Value $Line -Encoding UTF8
+    try {
+        Add-Content -LiteralPath $script:rdpDiagnosticsPath -Value $Line -Encoding UTF8 -ErrorAction Stop
+    } catch {
+        return
+    }
+}
+
+function Set-RdpFailurePhase([string] $Phase) {
+    $script:rdpFailurePhase = $Phase
+    Write-RdpDiagnostic ('PHASE=' + $Phase)
 }
 
 function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
@@ -591,12 +603,19 @@ function Remove-SmokeRdpCredential([string] $Target) {
 }
 
 function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
+    $script:rdpFailurePhase = 'diagnostics_initialize'
+    $script:rdpDiagnosticsPath = Join-Path $runRoot 'rdp-diagnostics.log'
+    New-Item -ItemType File -Path $script:rdpDiagnosticsPath -Force | Out-Null
     if (-not [Environment]::UserInteractive) {
+        Set-RdpFailurePhase 'interactive_check'
         throw 'interactive smoke console required'
     }
+    Set-RdpFailurePhase 'native_helpers'
     Initialize-SmokeNativeHelpers
+    Set-RdpFailurePhase 'target_selection'
     $targetHost = Get-LocalRdpTarget
     $script:rdpCredentialTarget = 'TERMSRV/' + $targetHost
+    Set-RdpFailurePhase 'credential_precheck'
     if (Test-SmokeRdpCredential $script:rdpCredentialTarget) {
         throw 'local RDP credential target already exists'
     }
@@ -606,25 +625,30 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
     # interactive runner when the saved credential username differs.
     $targetUsername = $env:COMPUTERNAME + '\' + $Name
     $credentialUsername = $targetUsername
+    Set-RdpFailurePhase 'password_generation'
     $password = New-SmokePassword
     try {
+        Set-RdpFailurePhase 'user_create'
         if (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue) {
             throw 'temporary smoke user already exists'
         }
         New-LocalUser -Name $Name -Password $password -Description $marker -PasswordNeverExpires -ErrorAction Stop | Out-Null
+        Set-RdpFailurePhase 'rdp_group_add'
         $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
+        Set-RdpFailurePhase 'credential_write'
         Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $password
         $script:rdpCredentialOwned = $true
+        Set-RdpFailurePhase 'profile_initialize'
         Initialize-SmokeUserProfile $Name $password
+        Set-RdpFailurePhase 'session_shell_policy'
         Apply-SmokeSessionShellPolicy $Name $RuntimeRoot
     } finally {
         $password.Dispose()
     }
 
     $rdpProfile = Join-Path $runRoot 'local-rdp.rdp'
-    $script:rdpDiagnosticsPath = Join-Path $runRoot 'rdp-diagnostics.log'
-    New-Item -ItemType File -Path $script:rdpDiagnosticsPath -Force | Out-Null
+    Set-RdpFailurePhase 'runner_identity_check'
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
     $runnerIdentityObject = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $runnerIdentity = $runnerIdentityObject.Name
@@ -641,6 +665,7 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
         'rdp_profile=run-scoped-and-redacted',
         'rdp_password=redacted'
     )
+    Set-RdpFailurePhase 'rdp_profile_setup'
     Write-Host ('RDP DEBUG: rdp_diagnostics=' + $script:rdpDiagnosticsPath)
     @("full address:s:${targetHost}:3389",
       "username:s:$targetUsername",
@@ -662,9 +687,11 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
     $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
     $script:rdpStartTime = Get-Date
     $mstscArguments = @('"' + $rdpProfile + '"')
+    Set-RdpFailurePhase 'mstsc_launch'
     Write-RdpDiagnostic 'MSTSC_LAUNCH=started'
     $client = Start-Process -FilePath $mstsc -ArgumentList $mstscArguments -PassThru -ErrorAction Stop
     $script:rdpClientProcess = $client
+    Set-RdpFailurePhase 'rdp_session_wait'
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     $activeSince = $null
     while ([DateTime]::UtcNow -lt $deadline) {
@@ -697,6 +724,7 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
             }
             Remove-SmokeRdpCredential $script:rdpCredentialTarget
             $script:rdpCredentialOwned = $false
+            Set-RdpFailurePhase 'complete'
             return
         }
         $activeSince = $null
@@ -958,6 +986,13 @@ try {
     $smokePassed = $true
     } catch {
         $script:failureDetail = 'redacted'
+        if ($failureStage -eq 'local_rdp_session') {
+            $script:rdpFailureExceptionType = $_.Exception.GetType().FullName
+            $script:rdpFailureHResult = '0x{0:X8}' -f $_.Exception.HResult
+            Write-RdpDiagnostic ('FAILURE_PHASE=' + $script:rdpFailurePhase)
+            Write-RdpDiagnostic ('FAILURE_EXCEPTION_TYPE=' + $script:rdpFailureExceptionType)
+            Write-RdpDiagnostic ('FAILURE_HRESULT=' + $script:rdpFailureHResult)
+        }
         if (Test-Path -LiteralPath $testLog -PathType Leaf) {
         try {
             Copy-Item -LiteralPath $testLog -Destination $preservedLog -Force
@@ -967,6 +1002,11 @@ try {
     } else {
         try {
             $failureRecord = @('failure_stage=' + $failureStage) + @($script:rdpDebugSummary)
+            if ($failureStage -eq 'local_rdp_session') {
+                $failureRecord += 'local_rdp_phase=' + $script:rdpFailurePhase
+                $failureRecord += 'local_rdp_exception_type=' + $script:rdpFailureExceptionType
+                $failureRecord += 'local_rdp_hresult=' + $script:rdpFailureHResult
+            }
             if (-not [string]::IsNullOrWhiteSpace($script:failureDetail)) {
                 $failureRecord += 'failure_detail=' + $script:failureDetail
             }

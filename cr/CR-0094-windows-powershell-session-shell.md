@@ -5,7 +5,7 @@ Head or Range: aa7e4b348f5d51bcd4e24f378fb0c5a4231e1d9d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -22,6 +22,9 @@ that user's SID-derived hive, and retains ownership of the agent, desktop,
 worker, lease, and Job Object lifecycle. The Shell reports SID/session-scoped
 readiness and waits; it does not launch agents or workers. Windows build,
 assembly, manifest, and service package paths now include the script.
+The local RDP smoke records its current setup phase and safe exception metadata
+from the beginning of account preparation, without persisting raw exception
+messages or credentials.
 
 ## Motivation
 
@@ -44,9 +47,13 @@ and all packages except slotwindows in go test ./... passed. Windows
 EvalSymlinks normalized an 8.3 alias; path validation now compares long-path
 forms after checking each component for reparse points, with a Windows
 short-name regression test. A malformed deny-ACE test fixture was corrected;
-the Windows slotwindows rerun and full suite are pending. Authenticode trust,
-WTS readiness, native provisioner smoke, and local RDP behavior also remain
-pending operator assistance.
+the Windows slotwindows rerun and full suite passed. The Windows workstation
+then reported a local RDP smoke failure; the smoke summary intentionally
+redacted its exception detail, and the RDP log was initialized too late to
+record setup failures. The harness now records the setup phase, exception type,
+and HRESULT for a follow-up run without raw exception text. Authenticode trust,
+WTS readiness, native provisioner smoke, and local RDP behavior remain pending
+operator verification.
 
 ## Risk
 
