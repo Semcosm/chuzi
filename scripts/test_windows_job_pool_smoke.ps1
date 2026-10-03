@@ -482,9 +482,13 @@ function Get-LocalRdpTarget {
     throw 'no unused loopback RDP credential target is available'
 }
 
-function Test-SmokeRdpCredential([string] $Target) {
+function Get-SmokeRdpCredentialListing {
     $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
-    $output = (& $cmdkey (('/list:' + $Target)) 2>&1 | Out-String)
+    return (& $cmdkey '/list' 2>&1 | Out-String)
+}
+
+function Test-SmokeRdpCredential([string] $Target) {
+    $output = Get-SmokeRdpCredentialListing
     return $output.IndexOf($Target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
