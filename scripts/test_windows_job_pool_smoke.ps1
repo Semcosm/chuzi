@@ -42,6 +42,7 @@ $script:rdpFailureHResult = 'unavailable'
 $script:rdpFailureCategory = 'unavailable'
 $script:rdpFailureOperation = 'unavailable'
 $script:rdpFailureDetailsCaptured = $false
+$script:rdpFailureLine = 'unavailable'
 $script:rdpFailureUnloadExitCode = 'unavailable'
 $script:rdpFailureUnloadHiveMounted = 'unavailable'
 $script:rdpFailureUnloadAttempts = 'unavailable'
@@ -622,6 +623,7 @@ function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
                 $script:rdpFailureDetailsCaptured = $true
                 throw 'target user hive unload failed'
             }
+            Set-RdpFailurePhase 'session_shell_policy_hive_unload_complete'
         }
     }
     if ($operationFailed) {
@@ -821,6 +823,7 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
         Initialize-SmokeUserProfile $Name $password
         Set-RdpFailurePhase 'session_shell_policy'
         Apply-SmokeSessionShellPolicy $Name $RuntimeRoot
+        Set-RdpFailurePhase 'session_shell_policy_applied'
     } finally {
         $password.Dispose()
     }
@@ -1165,6 +1168,9 @@ try {
     } catch {
         $script:failureDetail = 'redacted'
         if ($failureStage -eq 'local_rdp_session') {
+            if ($null -ne $_.InvocationInfo) {
+                $script:rdpFailureLine = [string]$_.InvocationInfo.ScriptLineNumber
+            }
             if (-not $script:rdpFailureDetailsCaptured) {
                 $cause = $_.Exception
                 while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
@@ -1173,6 +1179,7 @@ try {
                 $script:rdpFailureCategory = Get-RdpFailureCategory $_.Exception
             }
             Write-RdpDiagnostic ('FAILURE_PHASE=' + $script:rdpFailurePhase)
+            Write-RdpDiagnostic ('FAILURE_SCRIPT_LINE=' + $script:rdpFailureLine)
             Write-RdpDiagnostic ('FAILURE_OPERATION=' + $script:rdpFailureOperation)
             Write-RdpDiagnostic ('FAILURE_EXCEPTION_TYPE=' + $script:rdpFailureExceptionType)
             Write-RdpDiagnostic ('FAILURE_HRESULT=' + $script:rdpFailureHResult)
@@ -1192,6 +1199,7 @@ try {
             $failureRecord = @('failure_stage=' + $failureStage) + @($script:rdpDebugSummary)
             if ($failureStage -eq 'local_rdp_session') {
                 $failureRecord += 'local_rdp_phase=' + $script:rdpFailurePhase
+                $failureRecord += 'local_rdp_failure_line=' + $script:rdpFailureLine
                 $failureRecord += 'local_rdp_exception_type=' + $script:rdpFailureExceptionType
                 $failureRecord += 'local_rdp_hresult=' + $script:rdpFailureHResult
                 $failureRecord += 'local_rdp_failure_category=' + $script:rdpFailureCategory
