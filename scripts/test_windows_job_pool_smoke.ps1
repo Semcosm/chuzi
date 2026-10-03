@@ -950,6 +950,12 @@ function Get-SmokeRdpCredentialListing {
     return (& $cmdkey '/list' 2>&1 | Out-String)
 }
 
+function Test-SmokeRdpCredential([string] $Target) {
+    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
+    $output = (& $cmdkey (('/list:' + $Target)) 2>&1 | Out-String)
+    return $output.IndexOf($Target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
 function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
     if (-not [string]::IsNullOrWhiteSpace($ProfileTemplatePath)) {
         $resolvedPath = (Resolve-Path -LiteralPath $ProfileTemplatePath -ErrorAction Stop).Path
@@ -1029,11 +1035,29 @@ function Get-SmokeRdpProfileLines([string] $TargetHost, [string] $TargetUsername
 }
 
 function Set-SmokeRdpCredential([string] $Target, [string] $UserName, [System.Security.SecureString] $Password) {
-    [ChuziSmokeRdpCredentialOverrideV3]::Write($Target, $UserName, $Password)
+    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
+    $plainPassword = Convert-SmokeSecureStringToPlainText $Password
+    try {
+        $argumentList = @(
+            ('/generic:' + $Target),
+            ('/user:' + $UserName),
+            ('/pass:"' + $plainPassword + '"')
+        )
+        $process = Start-Process -FilePath $cmdkey -ArgumentList $argumentList -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+        if ($process.ExitCode -ne 0) {
+            throw ('cmdkey credential write failed with exit code ' + $process.ExitCode)
+        }
+    } finally {
+        $plainPassword = $null
+    }
 }
 
 function Remove-SmokeRdpCredential([string] $Target) {
-    [ChuziSmokeRdpCredentialOverrideV3]::Restore($Target)
+    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
+    $process = Start-Process -FilePath $cmdkey -ArgumentList @('/delete:' + $Target) -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+    if ($process.ExitCode -ne 0 -and (Test-SmokeRdpCredential $Target)) {
+        throw ('cmdkey credential cleanup failed with exit code ' + $process.ExitCode)
+    }
 }
 
 function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $TargetHost) {
