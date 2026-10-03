@@ -303,7 +303,7 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     if ([string]::IsNullOrWhiteSpace($script:rdpDiagnosticsPath)) {
         return
     }
-    Write-RdpDiagnostic ('`n=== ' + $Label + ' @ ' + (Get-Date -Format o) + ' ===')
+    Write-RdpDiagnostic ("`n=== " + $Label + ' @ ' + (Get-Date -Format o) + ' ===')
     try {
         Write-RdpDiagnostic ('RUNNER=' + [System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
         Write-RdpDiagnostic ('RUNNER_SESSION=' + (Get-Process -Id $PID -ErrorAction Stop).SessionId)
@@ -357,10 +357,21 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
 }
 
 function Get-LocalRdpTarget {
-    # RDPWrap's own RDP_CnC mstsc checks use 127.0.0.2. On supported
-    # patched hosts this loopback alias enters the RDP listener without
-    # being treated as a reconnect to the current console session.
-    return '127.0.0.2'
+    $configurations = @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)
+    foreach ($configuration in $configurations) {
+        if ($null -eq $configuration.IPv4DefaultGateway) {
+            continue
+        }
+        foreach ($address in @($configuration.IPv4Address)) {
+            $value = [string]$address.IPAddress
+            if (-not [string]::IsNullOrWhiteSpace($value) -and
+                $value -notmatch '^127[.]' -and
+                $value -notmatch '^169[.]254[.]') {
+                return $value
+            }
+        }
+    }
+    throw 'local RDP requires an active non-loopback IPv4 address'
 }
 
 function Start-LocalRdpSession([string] $Name) {
