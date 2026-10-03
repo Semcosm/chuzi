@@ -472,7 +472,7 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
 }
 
 function Get-LocalRdpTarget {
-    return 'localhost'
+    return '127.0.0.2'
 }
 
 function Start-LocalRdpSession([string] $Name) {
@@ -535,14 +535,17 @@ function Start-LocalRdpSession([string] $Name) {
     }
     Write-Host ('RDP DEBUG: rdp_password=' + $debugPassword)
     Write-Host ('RDP DEBUG: rdp_diagnostics=' + $script:rdpDiagnosticsPath)
-    @("full address:s:$targetHost",
+    @("full address:s:${targetHost}:3389",
       "username:s:$targetUsername",
       'prompt for credentials:i:0',
       'administrative session:i:0',
-      # Match the default interactive mstsc behavior. For local RDP/RDPWrap,
-      # forcing a new connection can be rejected as console error 0x708.
-      'disableconnectionsharing:i:0',
-      'promptcredentialonce:i:0') |
+      'screen mode id:i:2',
+      'session bpp:i:32',
+      'compression:i:1',
+      'redirectclipboard:i:1',
+      'autoreconnection enabled:i:1',
+      'authentication level:i:2',
+      'negotiate security layer:i:1') |
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
     $script:rdpProfilePath = $rdpProfile
 
