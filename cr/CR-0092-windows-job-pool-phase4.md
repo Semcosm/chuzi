@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 9c407b1c632a9df07815141e6c25a721be2e21a8
+Head or Range: 90347f5a75335fdc5c80c2320414a7af127c7034
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 24
+Revision: 25
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 2f120ad41a2f9401fb83c9525d508829f563a455
+Head OID: 90347f5a75335fdc5c80c2320414a7af127c7034
 Integrated Result: pending
 
 ## Summary
@@ -229,6 +229,11 @@ and writes failure output directly to stderr so PowerShell's Stop error policy
 cannot hide the detail after the first error line. Local RDP failures now expose
 whether the existing Credential Manager target, Profile bootstrap, or mstsc
 launch failed, without adding password material to preserved output.
+
+Revision 25 keeps the hand-tested .\<user> form in the generated RDP profile
+while writing the Credential Manager username as COMPUTERNAME\<user>. Windows
+accepts the dot-local form for interactive mstsc login but CredWrite rejects it
+as an invalid username; the password, target, and profile remain run-scoped.
 
 ## Risk
 
