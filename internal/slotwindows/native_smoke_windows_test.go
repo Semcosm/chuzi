@@ -246,9 +246,22 @@ func prepareLocalRDPTestSession(t *testing.T, root string, options Options, requ
 	if err := verifyRemoteDesktopMembership(paths.UserName); err != nil {
 		t.Fatal("local RDP smoke user is not authorized for Remote Desktop Users")
 	}
-	session, err := FindSession(sid)
-	if err != nil || session.State != "active" {
-		t.Fatal("local RDP smoke requires an active WTS session for the managed user")
+	// RDP authentication and WTS activation are separate transitions. The
+	// client can be authenticated while the session is still in connection
+	// query state, so wait for the same production FindSession fence to become
+	// active instead of treating that short transition as a failed login.
+	deadline := time.Now().Add(30 * time.Second)
+	var session Session
+	var sessionErr error
+	for time.Now().Before(deadline) {
+		session, sessionErr = FindSession(sid)
+		if sessionErr == nil && session.State == "active" {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	if sessionErr != nil || session.State != "active" {
+		t.Fatalf("local RDP smoke requires an active WTS session for the managed user (last state=%q, error=%v)", session.State, sessionErr)
 	}
 	if exists, err := managedPathExists(paths.Root); err != nil || exists {
 		t.Fatal("local RDP smoke ownership root is not fresh")
