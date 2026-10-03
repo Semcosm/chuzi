@@ -260,6 +260,7 @@ public static class ChuziSmokeProfileBootstrap
         StringBuilder commandLine = new StringBuilder("cmd.exe /c exit");
         IntPtr passwordBuffer = IntPtr.Zero;
         bool created;
+        int error = 0;
         try
         {
             passwordBuffer = Marshal.SecureStringToGlobalAllocUnicode(password);
@@ -275,12 +276,13 @@ public static class ChuziSmokeProfileBootstrap
                 systemDirectory,
                 ref startupInfo,
                 out processInformation);
+            if (!created) error = Marshal.GetLastWin32Error();
         }
         finally
         {
             if (passwordBuffer != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(passwordBuffer);
         }
-        if (!created) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!created) throw new Win32Exception(error);
 
         try
         {
@@ -437,7 +439,7 @@ function Wait-SmokeUserProfileReleased([string] $Sid, [int] $TimeoutSeconds = 30
 }
 
 function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureString] $Password) {
-    [ChuziSmokeProfileBootstrap]::Run($Name, $env:COMPUTERNAME, $Password)
+    [ChuziSmokeProfileBootstrap]::Run($Name, '.', $Password)
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
     $profile = Wait-SmokeUserProfile $targetUser.SID.Value
     if ($null -eq $profile) {

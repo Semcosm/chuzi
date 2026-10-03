@@ -5,7 +5,7 @@ Head or Range: aa7e4b348f5d51bcd4e24f378fb0c5a4231e1d9d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -23,9 +23,10 @@ worker, lease, and Job Object lifecycle. The Shell reports SID/session-scoped
 readiness and waits; it does not launch agents or workers. Windows build,
 assembly, manifest, and service package paths now include the script.
 The local RDP smoke records its current setup phase and safe exception metadata
-from the beginning of account preparation. Native failures are mapped to a
-small set of categories without persisting raw Win32 codes, messages, or
-credentials.
+from the beginning of account preparation. Profile bootstrap uses the local
+machine domain alias used by the production Windows boundary, captures the
+native error before clearing the password buffer, and maps failures to a small
+set of categories without persisting raw Win32 codes, messages, or credentials.
 
 ## Motivation
 
@@ -52,9 +53,13 @@ the Windows slotwindows rerun and full suite passed. The Windows workstation
 then reported a local RDP smoke failure during profile initialization. The
 smoke summary exposed only the outer PowerShell exception, so the harness now
 records the setup phase, exception metadata, and a safe category mapped from
-known native failures. It does not persist raw Win32 codes or messages.
-Authenticode trust, WTS readiness, native provisioner smoke, and local RDP
-behavior remain pending operator verification.
+known native failures. The latest operator query found a Security 4625 event
+classified as bad_password with LogonType 2 during profile initialization. The
+bootstrap now uses the local domain alias from the production boundary and
+preserves the original Win32 error before password-buffer cleanup. This change
+has not yet been verified on the Windows workstation. Authenticode trust, WTS
+readiness, native provisioner smoke, and local RDP behavior remain pending
+operator verification.
 
 ## Risk
 
