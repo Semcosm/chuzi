@@ -144,16 +144,14 @@ fail-closed 行为。
 Windows 实验机可在仓库根目录以管理员 PowerShell 执行
 scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和 slot
 agent 链路。该模式创建本轮随机命名的普通本地用户，
-用系统随机密码，并仅将凭据短暂写入当前交互用户的 session-scoped Windows Credential
-Manager；随后选择本机默认路由对应的非回环 IPv4 地址启动 mstsc.exe，等待该用户
-对应的真实 active WTS session，再运行原生 provisioner 测试。RDP 配置显式指定
-本轮随机用户并关闭 administrative session，使用非回环地址避免 Windows/RDPWrap 将
-loopback 请求解释为当前 console 重连。测试按 SID、slot ownership 和 active session
-重新校验身份；结束后注销 session、回收用户、profile、运行目录和临时 Credential
-Manager 凭据。session 查询使用 WTS API 和数值状态，不依赖系统显示语言。密码不进入
-命令行、环境变量、文件、Core、测试日志或输出。连接前会输出执行用户、执行 session、
-目标用户、目标 SID、目标地址和 Credential Manager target；密码字段固定显示为
-not_printed。
+用系统随机密码，并把目标用户名、密码、SID 和连接诊断输出到当前交互控制台；凭据
+仅短暂写入当前交互用户的 session-scoped Windows Credential Manager。随后使用固定
+`127.0.0.2` RDPWrap 诊断地址启动 mstsc.exe，等待该用户对应的真实 active WTS
+session，再运行原生 provisioner 测试。RDP 配置显式指定本轮随机用户并关闭
+administrative session。测试按 SID、slot ownership 和 active session 重新校验身份；
+结束后注销 session、回收用户、profile、运行目录和临时 Credential Manager 凭据。
+session 查询使用 WTS API 和数值状态，不依赖系统显示语言。密码不进入命令行、环境变量、
+文件、Core、测试日志或保留输出，只在测试机的实时调试控制台显示。
 
 Windows hosted preflight 使用 -ValidateOnly 解析 smoke 脚本并编译 Credential Manager
 与 WTS API helper，不创建用户、session 或临时目录。
