@@ -170,7 +170,8 @@ agent 链路。该模式创建本轮随机命名的普通本地用户，
 用系统随机密码，并把凭据仅短暂写入当前交互用户的 session-scoped Windows Credential
 Manager；密码、token 和 Profile 原始路径不写入普通日志或 Core/Matrix DTO。`-LocalRdp`
 扫描 `127.0.0.2` 到 `127.0.0.254`，以端口 3389 可达和唯一已有的
-`TERMSRV/127.0.0.x` Credential Manager 记录确认已验证的 loopback 路由；随后在 smoke
+`TERMSRV/127.0.0.x` Credential Manager 记录确认已验证的 loopback 路由（兼容 Generic 和
+Domain Password 凭据类型）；随后在 smoke
 目录生成一次性 profile。profile 固定保留已验证的 `prompt for credentials`、
 `administrative session`、显示、压缩、剪贴板、自动重连、认证级别和协商安全层字段，
 只动态写入 endpoint 与本轮用户名。已有的 Credential Manager 记录会在测试期间暂存并于退出时恢复，

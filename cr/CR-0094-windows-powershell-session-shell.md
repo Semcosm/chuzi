@@ -5,7 +5,7 @@ Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..ec87e23842d9c7f48a91df3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 12
+Revision: 13
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -124,6 +124,14 @@ smoke directory. The endpoint and disposable Chuzi username remain dynamic;
 the generated profile is removed during cleanup. The explicit template path is
 retained only as an optional diagnostic override. Windows validation after this
 change is pending.
+
+The operator's endpoint scan showed that all loopback aliases report TCP 3389
+reachable, while the only saved route evidence is `TERMSRV/127.0.0.2` with a
+`LegacyGeneric` Credential Manager record. Revision 13 teaches the versioned
+credential helper to read and temporarily replace both Generic and Domain
+Password records, preserving the original credential type for restoration.
+This keeps endpoint selection evidence-based without embedding the observed
+address in the harness.
 
 ## Risk
 

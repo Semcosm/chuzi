@@ -91,7 +91,8 @@ scripts/test_windows_job_pool_smoke.ps1 -LocalRdp
 ```
 
 `-LocalRdp` 扫描 `127.0.0.2` 到 `127.0.0.254`，只接受端口 3389 可达且已有
-`TERMSRV/127.0.0.x` Credential Manager 记录的唯一候选；没有候选或候选不唯一时 fail closed，
+`TERMSRV/127.0.0.x` Credential Manager 记录的唯一候选（兼容 Generic 和 Domain Password
+凭据类型）；没有候选或候选不唯一时 fail closed，
 不会回退到主机名、LAN 地址或当前交互用户。脚本在 run-scoped smoke 目录生成一次性 `.rdp`，
 只把 endpoint 和本轮临时用户名写入动态字段。已验证 MiniSession profile 的固定证据字段为：
 `prompt for credentials:i:0`、`administrative session:i:0`、`screen mode id:i:2`、
