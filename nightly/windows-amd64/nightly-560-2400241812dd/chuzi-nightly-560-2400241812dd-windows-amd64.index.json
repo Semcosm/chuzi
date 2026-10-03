@@ -1,0 +1,196 @@
+{
+  "format": "chuzi-release-index/v1",
+  "channel": "nightly",
+  "version": "nightly-560-2400241812dd",
+  "commit": "2400241812dda68ee2000b4e38e935b783de11ef",
+  "target": "windows-amd64",
+  "generated_at": "2026-10-03T08:14:31.100394Z",
+  "manifest": {
+    "format": "chuzi-release/v1",
+    "channel": "nightly",
+    "version": "nightly-560-2400241812dd",
+    "commit": "2400241812dda68ee2000b4e38e935b783de11ef",
+    "target": "windows-amd64",
+    "generated_at": "2026-10-03T08:14:31.100394Z",
+    "components": [
+      {
+        "id": "launcher",
+        "version": "nightly-560-2400241812dd",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-nightly-560-2400241812dd-windows-amd64-launcher.zip",
+        "resources": [
+          {
+            "path": "chuzi-launcher.exe",
+            "sha256": "e850de111f3bf314053cd633d8f24428dd4ffd9a0986db9c52731eafba4dc9af",
+            "size": 7170048
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "version": "nightly-560-2400241812dd",
+        "required": false,
+        "dependencies": [
+          "browser-worker"
+        ],
+        "artifact": "chuzi-nightly-560-2400241812dd-windows-amd64-service.zip",
+        "resources": [
+          {
+            "path": "chuzi.exe",
+            "sha256": "909958df4ff289c3d577e7871157bac7f6a65daa7672580c2c7684a44b6a03ae",
+            "size": 8143360
+          },
+          {
+            "path": "chuzi-browser-launcher.exe",
+            "sha256": "32e85d3b3c3f64316cd3fdd455a0ab2ebba25ad46a22979e8dc60e6604643fb9",
+            "size": 2721792
+          }
+        ]
+      },
+      {
+        "id": "browser-worker",
+        "version": "nightly-560-2400241812dd",
+        "required": false,
+        "dependencies": [],
+        "artifact": "chuzi-nightly-560-2400241812dd-windows-amd64-browser-worker.zip",
+        "resources": [
+          {
+            "path": "browser-worker/src/cdp-runtime.mjs",
+            "sha256": "0cbf8bca821e05499db6125aef265ac5f90bc283f36e787f6ec311fe35749165",
+            "size": 10614
+          },
+          {
+            "path": "browser-worker/src/headless-adapter.mjs",
+            "sha256": "626e8145b237af9d4fab9c6b9bee9e29fe39e6f3d196b8d89fc260e99c5c0e50",
+            "size": 28201
+          },
+          {
+            "path": "browser-worker/src/headless.mjs",
+            "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+            "size": 14202
+          },
+          {
+            "path": "browser-worker/src/local-test-page.html",
+            "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+            "size": 397
+          },
+          {
+            "path": "browser-worker/src/worker.mjs",
+            "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+            "size": 3421
+          },
+          {
+            "path": "browser-worker/worker-manifest.json",
+            "sha256": "b514d60399b3a8865ae004a0e6195bc6d8436f629df74373ee246c078478f17f",
+            "size": 434
+          }
+        ]
+      },
+      {
+        "id": "presentmon",
+        "version": "nightly-560-2400241812dd",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-nightly-560-2400241812dd-windows-amd64-presentmon.zip",
+        "resources": [
+          {
+            "path": "PresentMon.exe",
+            "sha256": "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af",
+            "size": 980320
+          },
+          {
+            "path": "PresentMon-LICENSE.txt",
+            "sha256": "b1043ee2efacbd24a1ad830128a61f40dc3d27e2b9b24d7d3631950b88f2d66e",
+            "size": 1086
+          }
+        ]
+      }
+    ],
+    "plugins": [
+      {
+        "id": "chuzi.headless-cdp",
+        "version": "nightly-560-2400241812dd",
+        "api": "chuzi.adapter/v1",
+        "distribution": "builtin",
+        "source_component": "browser-worker",
+        "capabilities": [
+          "cdp@1",
+          "headless-cdp@1",
+          "headed-cdp@1",
+          "browser-view@1",
+          "local.test-page@1"
+        ],
+        "installable": false
+      },
+      {
+        "id": "genshin-cloudgame",
+        "version": "nightly-560-2400241812dd",
+        "api": "chuzi.adapter/v1",
+        "entry": "adapter.mjs",
+        "distribution": "package",
+        "target": "windows-amd64",
+        "archive": "chuzi-nightly-560-2400241812dd-windows-amd64-genshin-cloudgame.zip",
+        "sha256": "13c2357f69476c923be629a84f4c4bae89eaefee0b8df81284365763598a7fc4",
+        "capabilities": [
+          "genshin-cloudgame@1"
+        ],
+        "permissions": [
+          "browser.cdp.loopback"
+        ],
+        "signed_by": "chuzi-release",
+        "installable": true
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "component": "bundle",
+      "target": "windows-amd64",
+      "version": "nightly-560-2400241812dd",
+      "path": "chuzi-nightly-560-2400241812dd-windows-amd64.zip",
+      "size": 8530665,
+      "sha256": "82c05e1f921d1d17bf74aef8863a1456f1d803aa132c3800508a6ef7402fb15e"
+    },
+    {
+      "component": "launcher",
+      "target": "windows-amd64",
+      "version": "nightly-560-2400241812dd",
+      "path": "chuzi-nightly-560-2400241812dd-windows-amd64-launcher.zip",
+      "size": 3014869,
+      "sha256": "ff7c16fcc7c6911ed54bc0581bb1f106cbc1209ccac5f93578e6d9fe321826a2"
+    },
+    {
+      "component": "service",
+      "target": "windows-amd64",
+      "version": "nightly-560-2400241812dd",
+      "path": "chuzi-nightly-560-2400241812dd-windows-amd64-service.zip",
+      "size": 5045565,
+      "sha256": "3141f4d5fd8c6fe9b690b6932e527403568fe821135236d1bdee2c41a1c4c207"
+    },
+    {
+      "component": "browser-worker",
+      "target": "windows-amd64",
+      "version": "nightly-560-2400241812dd",
+      "path": "chuzi-nightly-560-2400241812dd-windows-amd64-browser-worker.zip",
+      "size": 16823,
+      "sha256": "e1811b428cdb6bf305a85408e20613b8e8137db3c47098263ae03820cc3ff4bd"
+    },
+    {
+      "component": "presentmon",
+      "target": "windows-amd64",
+      "version": "nightly-560-2400241812dd",
+      "path": "chuzi-nightly-560-2400241812dd-windows-amd64-presentmon.zip",
+      "size": 453224,
+      "sha256": "b925edd86b3f6bd2dac36463040cdacfb41283a030f4d5a7120dc1a98eb8742b"
+    },
+    {
+      "component": "genshin-cloudgame",
+      "target": "windows-amd64",
+      "version": "nightly-560-2400241812dd",
+      "path": "chuzi-nightly-560-2400241812dd-windows-amd64-genshin-cloudgame.zip",
+      "size": 7101,
+      "sha256": "13c2357f69476c923be629a84f4c4bae89eaefee0b8df81284365763598a7fc4"
+    }
+  ]
+}
