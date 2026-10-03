@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 1f87b2aec5c0e588c33e1b843564fa79596dc483
+Head or Range: 46e896a64e88d33b969eadf2dc20dda96f2fd32a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 30
+Revision: 31
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 1f87b2aec5c0e588c33e1b843564fa79596dc483
+Head OID: 46e896a64e88d33b969eadf2dc20dda96f2fd32a
 Integrated Result: pending
 
 ## Summary
@@ -260,6 +260,11 @@ Revision 30 scans loopback addresses from 127.0.0.2 through 127.0.0.254 and
 selects the first address without an existing TERMSRV credential. This keeps
 the operator's working MiniSession credential intact while assigning the
 selected address consistently to cmdkey and the generated RDP profile.
+
+Revision 31 reads the complete cmdkey listing for availability checks instead
+of relying on filtered cmdkey queries, which can return ambiguous results on
+localized Windows hosts. Only an actually listed TERMSRV target is treated as
+occupied.
 
 ## Risk
 
