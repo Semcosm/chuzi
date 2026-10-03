@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 36518a12e5109894a232b9d61caec64203ec6396
+Head or Range: c0c630800bc73e1ddc5e60e8a4f2828625e1f107
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 26
+Revision: 27
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 36518a12e5109894a232b9d61caec64203ec6396
+Head OID: c0c630800bc73e1ddc5e60e8a4f2828625e1f107
 Integrated Result: pending
 
 ## Summary
@@ -239,6 +239,11 @@ Revision 26 uses the same COMPUTERNAME\<user> identity in the generated RDP
 profile and Credential Manager entry. This prevents mstsc from treating the
 profile username and saved credential username as different identities and
 falling back to the interactive runner account.
+
+Revision 27 restores the default disableconnectionsharing:i:0 behavior used
+by the successful interactive mstsc flow. On local RDP/RDPWrap hosts,
+forcing a new connection with value 1 can produce console-session error
+0x708 before credentials are evaluated.
 
 ## Risk
 
