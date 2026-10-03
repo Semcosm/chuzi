@@ -5,7 +5,7 @@ Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..ec87e23842d9c7f48a91df3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 15
+Revision: 16
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -139,6 +139,17 @@ override matched the generated user and WTS reported one active session for that
 user; the remaining failure was the session-shell readiness event. Revision 14
 adds explicit credential-user, WTS-user, and readiness checks with safe debug
 booleans, so a mismatch stops before the native smoke continues.
+
+The Windows workstation then verified the credential and RDP route after the
+write path was restored to `cmdkey /generic`. With `TERMSRV/127.0.0.2` already
+occupied by the operator's prototype credential, the smoke selected the lowest
+unoccupied target, `127.0.0.3`, and launched the generated profile through
+`mstsc.exe`. The saved credential username matched the disposable user,
+Terminal Services reported the same active WTS username, and the run completed
+credential cleanup without removing the pre-existing `127.0.0.2` entry. This
+`cmdkey /generic` -> Credential Manager -> `mstsc.exe` loopback route is the
+only currently verified local-RDP route. The same run stopped only at
+`session_shell_ready=False`; shell readiness remains a separate pending gate.
 
 The endpoint allocation rule is now explicit: parse `cmdkey /list`, reserve the
 lowest unoccupied loopback alias in the test range, write the disposable Chuzi
