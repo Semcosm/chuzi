@@ -1,11 +1,11 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: c28794d1db90707d2a27f244e7f05900814d3e52
+Head or Range: 9c407b1c632a9df07815141e6c25a721be2e21a8
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 23
+Revision: 24
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -223,6 +223,12 @@ Revision 23 makes the native PowerShell helper initialization idempotent across
 sequential ValidateOnly and LocalRdp invocations in the same PowerShell session.
 The script now reuses an already loaded ChuziSmokeCredentialStore type instead
 of attempting a second Add-Type definition.
+
+Revision 24 preserves the terminating exception message in the failure summary
+and writes failure output directly to stderr so PowerShell's Stop error policy
+cannot hide the detail after the first error line. Local RDP failures now expose
+whether the existing Credential Manager target, Profile bootstrap, or mstsc
+launch failed, without adding password material to preserved output.
 
 ## Risk
 
