@@ -391,6 +391,18 @@ function Wait-SmokeUserProfile([string] $Sid, [int] $TimeoutSeconds = 30) {
     return $null
 }
 
+function Wait-SmokeUserProfileReleased([string] $Sid, [int] $TimeoutSeconds = 30) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $profiles = @(Get-CimInstance -ClassName Win32_UserProfile -Filter ("SID='" + $Sid + "'") -ErrorAction SilentlyContinue)
+        if ($profiles.Count -eq 1 -and -not $profiles[0].Loaded) {
+            return $profiles[0]
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $null
+}
+
 function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureString] $Password) {
     $plainPassword = Convert-SmokeSecureStringToPlainText $Password
     try {
@@ -403,6 +415,10 @@ function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureStri
     if ($null -eq $profile) {
         throw 'local RDP user profile did not initialize'
     }
+    if ($null -eq (Wait-SmokeUserProfileReleased $targetUser.SID.Value)) {
+        throw 'local RDP user profile remained loaded after bootstrap'
+    }
+    Start-Sleep -Milliseconds 500
     Write-Host ('RDP DEBUG: preinitialized_user_profile=' + $profile.LocalPath)
     Write-Host ('RDP DEBUG: preinitialized_user_ntuser_dat=' + (Join-Path $profile.LocalPath 'NTUSER.DAT'))
 }
@@ -455,7 +471,8 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
         'Microsoft-Windows-TerminalServices-RDPClient/Operational',
         'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational',
         'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational',
-        'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational'
+        'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational',
+        'Microsoft-Windows-User Profiles Service/Operational'
     )
     foreach ($channel in $channels) {
         try {
@@ -597,6 +614,7 @@ function Start-LocalRdpSession([string] $Name) {
     $client = Start-Process -FilePath $mstsc -ArgumentList $mstscArguments -PassThru -ErrorAction Stop
     $script:rdpClientProcess = $client
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
+    $activeSince = $null
     while ([DateTime]::UtcNow -lt $deadline) {
         if ((Get-Date) - $script:lastRdpDiagnosticAt -gt [TimeSpan]::FromSeconds(5)) {
             Capture-RdpDiagnostics 'rdp_poll' $Name
@@ -605,7 +623,18 @@ function Start-LocalRdpSession([string] $Name) {
         if (Test-UnexpectedRunnerSession) {
             throw 'local RDP authenticated as the interactive runner identity'
         }
+        if ($client.HasExited) {
+            Capture-RdpDiagnostics 'mstsc_exited' $Name
+            throw 'local RDP client exited before the managed session stabilized'
+        }
         if (Test-ActiveManagedSession $Name) {
+            if ($null -eq $activeSince) {
+                $activeSince = [DateTime]::UtcNow
+            }
+            if (([DateTime]::UtcNow - $activeSince).TotalSeconds -lt 3) {
+                Start-Sleep -Milliseconds 250
+                continue
+            }
             $userProfile = Wait-SmokeUserProfile $targetUser.SID.Value
             if ($null -eq $userProfile) {
                 throw 'local RDP user profile did not initialize'
@@ -616,6 +645,7 @@ function Start-LocalRdpSession([string] $Name) {
             $script:rdpCredentialOwned = $false
             return
         }
+        $activeSince = $null
         Start-Sleep -Seconds 1
     }
     Capture-RdpDiagnostics 'rdp_timeout' $Name
