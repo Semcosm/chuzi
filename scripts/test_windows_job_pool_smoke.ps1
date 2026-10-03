@@ -99,7 +99,7 @@ function Convert-SmokeSecureStringToPlainText([System.Security.SecureString] $Va
 }
 
 function Initialize-SmokeNativeHelpers {
-    if ('ChuziSmokeCredentialStore' -as [type]) {
+    if ('ChuziSmokeProfileBootstrap' -as [type]) {
         return
     }
     Add-Type -TypeDefinition @'
@@ -108,6 +108,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Text;
 
 public static class ChuziSmokeCredentialStore
 {
@@ -191,6 +192,104 @@ public static class ChuziSmokeCredentialStore
             int error = Marshal.GetLastWin32Error();
             if (error != 1168)
                 throw new Win32Exception(error);
+        }
+    }
+}
+
+public static class ChuziSmokeProfileBootstrap
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StartupInfo
+    {
+        public int cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public int dwX;
+        public int dwY;
+        public int dwXSize;
+        public int dwYSize;
+        public int dwXCountChars;
+        public int dwYCountChars;
+        public int dwFillAttribute;
+        public int dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInformation
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public int processId;
+        public int threadId;
+    }
+
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CreateProcessWithLogonW(
+        string userName,
+        string domain,
+        string password,
+        uint logonFlags,
+        string applicationName,
+        StringBuilder commandLine,
+        uint creationFlags,
+        IntPtr environment,
+        string currentDirectory,
+        ref StartupInfo startupInfo,
+        out ProcessInformation processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+
+    private const uint LogonWithProfile = 0x00000001;
+    private const uint CreateUnicodeEnvironment = 0x00000400;
+    private const uint CreateNoWindow = 0x08000000;
+    private const uint Infinite = 0xFFFFFFFF;
+
+    public static void Run(string userName, string domain, string password)
+    {
+        string systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
+        string applicationName = System.IO.Path.Combine(systemDirectory, "cmd.exe");
+        StartupInfo startupInfo = new StartupInfo
+        {
+            cb = Marshal.SizeOf(typeof(StartupInfo))
+        };
+        ProcessInformation processInformation;
+        StringBuilder commandLine = new StringBuilder("cmd.exe /c exit");
+        bool created = CreateProcessWithLogonW(
+            userName,
+            domain,
+            password,
+            LogonWithProfile,
+            applicationName,
+            commandLine,
+            CreateUnicodeEnvironment | CreateNoWindow,
+            IntPtr.Zero,
+            systemDirectory,
+            ref startupInfo,
+            out processInformation);
+        if (!created)
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+
+        try
+        {
+            WaitForSingleObject(processInformation.hProcess, Infinite);
+        }
+        finally
+        {
+            if (processInformation.hThread != IntPtr.Zero)
+                CloseHandle(processInformation.hThread);
+            if (processInformation.hProcess != IntPtr.Zero)
+                CloseHandle(processInformation.hProcess);
         }
     }
 }
@@ -292,6 +391,22 @@ function Wait-SmokeUserProfile([string] $Sid, [int] $TimeoutSeconds = 30) {
     return $null
 }
 
+function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureString] $Password) {
+    $plainPassword = Convert-SmokeSecureStringToPlainText $Password
+    try {
+        [ChuziSmokeProfileBootstrap]::Run($Name, $env:COMPUTERNAME, $plainPassword)
+    } finally {
+        $plainPassword = $null
+    }
+    $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
+    $profile = Wait-SmokeUserProfile $targetUser.SID.Value
+    if ($null -eq $profile) {
+        throw 'local RDP user profile did not initialize'
+    }
+    Write-Host ('RDP DEBUG: preinitialized_user_profile=' + $profile.LocalPath)
+    Write-Host ('RDP DEBUG: preinitialized_user_ntuser_dat=' + (Join-Path $profile.LocalPath 'NTUSER.DAT'))
+}
+
 function Write-RdpDiagnostic([string] $Line) {
     if ([string]::IsNullOrWhiteSpace($script:rdpDiagnosticsPath)) {
         return
@@ -357,21 +472,7 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
 }
 
 function Get-LocalRdpTarget {
-    $configurations = @(Get-NetIPConfiguration -ErrorAction SilentlyContinue)
-    foreach ($configuration in $configurations) {
-        if ($null -eq $configuration.IPv4DefaultGateway) {
-            continue
-        }
-        foreach ($address in @($configuration.IPv4Address)) {
-            $value = [string]$address.IPAddress
-            if (-not [string]::IsNullOrWhiteSpace($value) -and
-                $value -notmatch '^127[.]' -and
-                $value -notmatch '^169[.]254[.]') {
-                return $value
-            }
-        }
-    }
-    throw 'local RDP requires an active non-loopback IPv4 address'
+    return 'localhost'
 }
 
 function Start-LocalRdpSession([string] $Name) {
@@ -385,7 +486,7 @@ function Start-LocalRdpSession([string] $Name) {
         throw 'local RDP credential target already exists'
     }
 
-    $targetUsername = $env:COMPUTERNAME + '\' + $Name
+    $targetUsername = '.\' + $Name
     $password = New-SmokePassword
     $debugPassword = Convert-SmokeSecureStringToPlainText $password
     try {
@@ -397,6 +498,7 @@ function Start-LocalRdpSession([string] $Name) {
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
         [ChuziSmokeCredentialStore]::Write($script:rdpCredentialTarget, $targetUsername, $password)
         $script:rdpCredentialOwned = $true
+        Initialize-SmokeUserProfile $Name $password
     } finally {
         $password.Dispose()
     }
@@ -443,7 +545,9 @@ function Start-LocalRdpSession([string] $Name) {
     Capture-RdpDiagnostics 'before_mstsc' $Name
     $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
     $script:rdpStartTime = Get-Date
-    $client = Start-Process -FilePath $mstsc -ArgumentList @($rdpProfile) -PassThru -ErrorAction Stop
+    $mstscArguments = @('"' + $rdpProfile + '"')
+    Write-RdpDiagnostic ('MSTSC_LAUNCH=' + $mstsc + ' ' + ($mstscArguments -join ' '))
+    $client = Start-Process -FilePath $mstsc -ArgumentList $mstscArguments -PassThru -ErrorAction Stop
     $script:rdpClientProcess = $client
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     while ([DateTime]::UtcNow -lt $deadline) {
