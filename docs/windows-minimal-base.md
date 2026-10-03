@@ -3,7 +3,7 @@
 状态：设计基线
 基线日期：2026-10-03
 
-这份文档从 Chuzi 当前代码和运行边界反推 Windows 主机的最小可用集合。目标是先得到一个能稳定创建用户、建立 RDP/WTS Session、启动受控 agent、运行 Node.js + Chromium/CDP 的基座，再逐项裁剪无关组件。
+这份文档从 Chuzi 当前代码和运行边界反推 Windows 主机的最小可用集合。目标是先得到一个能稳定创建用户、建立 RDP/WTS Session、启动受控 agent、运行 Node.js + Chromium/CDP 的基座，再逐项裁剪无关组件。用户级 Winlogon Shell 使用固定、签名的 Windows PowerShell 5.1 supervisor；agent 生命周期仍由服务拥有。
 
 ## 先定边界
 
@@ -47,10 +47,15 @@ Chuzi service
 
 - 普通本地用户；只加入 `Remote Desktop Users`。
 - 已成功创建 Profile，至少存在 `NTUSER.DAT`；完成一次交互式登录后通常还会有 `AppData\Local\Microsoft\Windows\UsrClass.dat`。
-- 用户级 Winlogon Shell 指向签名的 `chuzi-user-agent.exe` 或受控启动入口；不把 `explorer.exe` 作为生产作业 Shell。
+- 用户级 Winlogon Shell 固定为 `powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "<service-runtime>\session-shell.ps1"`；脚本由安装流程签名，安装目录 ACL 禁止受管用户修改。不把 `explorer.exe` 或 `chuzi-user-agent.exe` 作为本次方案的 Shell。
 - 不保存真实账号 Cookie、Matrix token、RDP 密码或业务数据。
 - 密码由 provisioner 生成并保存到受保护的凭据边界；不进入脚本、日志、RDP DTO 或普通配置。
 - Shell、启动项和用户级策略只写入该用户自己的 hive。
+
+Profile policy/bootstrap 只对目标 SID 的用户 hive 生效。首次初始化使用
+`CreateProcessWithLogonW(LOGON_WITH_PROFILE)` 创建该用户自己的 Profile，不复制其他用户的
+`NTUSER.DAT` 或 `UsrClass.dat`。Shell policy 幂等地更新同一个 `Shell` 值，不添加启动项；
+不修改 HKLM，也不接受调用方传入 executable、脚本、命令或 Profile 路径。
 
 不要直接复制一个正在使用的模板用户目录覆盖其他用户。Windows 首次登录会从默认 Profile 派生用户文件；`NTUSER.DAT`/`UsrClass.dat` 必须由目标用户拥有并可写，否则 Profile 可能加载失败。
 
@@ -77,6 +82,8 @@ Chuzi service
 - Node.js 20+，用于 browser worker 和显式适配器进程。
 - 外部提供的 Chromium 或 Edge；Chuzi 不自动下载浏览器。
 - `chuzi-user-agent.exe`，用于 named pipe、作业进程、heartbeat 和回收。
+- 固定的 `session-shell.ps1`，只报告用户/session readiness 并等待退出，不读取业务凭证、Cookie、
+  Matrix token 或账号 Profile，也不启动 agent、worker、浏览器或任意命令。
 - 服务派生 data dir：bbolt、profiles、plugins、logs、diagnostics、backups。
 - 受保护的凭据密钥来源；Windows RDP 自动登录使用 `TERMSRV/<host>` 的 Credential Manager 项，但密码不回显。
 - 如果使用 headed/CDP：DWM、图形驱动和目标浏览器所需的显示能力。
@@ -140,7 +147,14 @@ Chuzi service
 6. **业务探针**：只使用测试页或已授权测试 Profile，最后才接业务适配器。
 7. **裁剪回归**：每关闭一项，重复 1-6；失败就恢复上一项。
 
-验收的最小成功标准是：目标用户的 WTS Session 为 active、`whoami` 是目标用户、agent 能通过 named pipe 回复、Node worker 能完成 hello、浏览器能在服务派生 Profile 上建立 CDP 连接。
+验收的最小成功标准是：目标用户的 WTS Session 为 active、PowerShell Shell readiness 已报告、
+`whoami` 是目标用户、agent 能通过 named pipe 回复、Node worker 能完成 hello、浏览器能在
+服务派生 Profile 上建立 CDP 连接。
+
+Winlogon PowerShell 通常运行在用户默认 desktop；服务通过现有 `ensureAgent` 和
+`CreateProcessAsUser` 在服务派生的 `winsta0\ChuziSlot<hash>` desktop 启动
+`chuzi-user-agent.exe`。两者有意分离；Shell 不选择 slot、desktop、worker、浏览器 executable
+或 Profile 路径，服务不放宽 agent executable、desktop 或环境校验。
 
 仓库提供只读 PowerShell 探针：
 

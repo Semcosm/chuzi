@@ -37,6 +37,7 @@ $script:runnerSID = $null
 $script:failureDetail = $null
 $script:rdpDiagnosticsPath = $null
 $script:rdpStartTime = $null
+$script:sessionShellSigningThumbprint = $null
 $script:lastRdpDiagnosticAt = [DateTime]::MinValue
 $script:preserveRootOnFailure = $false
 $failureStage = 'setup'
@@ -83,18 +84,6 @@ function New-SmokePassword {
     } finally {
         [Array]::Clear($sample, 0, $sample.Length)
         $random.Dispose()
-    }
-}
-
-function Convert-SmokeSecureStringToPlainText([System.Security.SecureString] $Value) {
-    $buffer = [IntPtr]::Zero
-    try {
-        $buffer = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
-        return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($buffer)
-    } finally {
-        if ($buffer -ne [IntPtr]::Zero) {
-            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($buffer)
-        }
     }
 }
 
@@ -234,7 +223,7 @@ public static class ChuziSmokeProfileBootstrap
     private static extern bool CreateProcessWithLogonW(
         string userName,
         string domain,
-        string password,
+        IntPtr password,
         uint logonFlags,
         string applicationName,
         StringBuilder commandLine,
@@ -255,7 +244,7 @@ public static class ChuziSmokeProfileBootstrap
     private const uint CreateNoWindow = 0x08000000;
     private const uint Infinite = 0xFFFFFFFF;
 
-    public static void Run(string userName, string domain, string password)
+    public static void Run(string userName, string domain, SecureString password)
     {
         string systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
         string applicationName = System.IO.Path.Combine(systemDirectory, "cmd.exe");
@@ -265,20 +254,29 @@ public static class ChuziSmokeProfileBootstrap
         };
         ProcessInformation processInformation;
         StringBuilder commandLine = new StringBuilder("cmd.exe /c exit");
-        bool created = CreateProcessWithLogonW(
-            userName,
-            domain,
-            password,
-            LogonWithProfile,
-            applicationName,
-            commandLine,
-            CreateUnicodeEnvironment | CreateNoWindow,
-            IntPtr.Zero,
-            systemDirectory,
-            ref startupInfo,
-            out processInformation);
-        if (!created)
-            throw new Win32Exception(Marshal.GetLastWin32Error());
+        IntPtr passwordBuffer = IntPtr.Zero;
+        bool created;
+        try
+        {
+            passwordBuffer = Marshal.SecureStringToGlobalAllocUnicode(password);
+            created = CreateProcessWithLogonW(
+                userName,
+                domain,
+                passwordBuffer,
+                LogonWithProfile,
+                applicationName,
+                commandLine,
+                CreateUnicodeEnvironment | CreateNoWindow,
+                IntPtr.Zero,
+                systemDirectory,
+                ref startupInfo,
+                out processInformation);
+        }
+        finally
+        {
+            if (passwordBuffer != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(passwordBuffer);
+        }
+        if (!created) throw new Win32Exception(Marshal.GetLastWin32Error());
 
         try
         {
@@ -368,6 +366,37 @@ public static class ChuziSmokeSessionQuery
 '@
 }
 
+function Sign-SmokeSessionShell([string] $ScriptPath) {
+    $certificate = New-SelfSignedCertificate `
+        -Type CodeSigningCert `
+        -Subject ('CN=Chuzi smoke ' + $runID) `
+        -CertStoreLocation 'Cert:\LocalMachine\My' `
+        -KeyExportPolicy Exportable `
+        -NotAfter (Get-Date).AddHours(4) `
+        -ErrorAction Stop
+    $script:sessionShellSigningThumbprint = $certificate.Thumbprint
+    $publicCertificate = Join-Path $runRoot 'smoke-code-signing.cer'
+    Export-Certificate -Cert $certificate -FilePath $publicCertificate -Force -ErrorAction Stop | Out-Null
+    Import-Certificate -FilePath $publicCertificate -CertStoreLocation 'Cert:\LocalMachine\Root' -ErrorAction Stop | Out-Null
+    Import-Certificate -FilePath $publicCertificate -CertStoreLocation 'Cert:\LocalMachine\TrustedPublisher' -ErrorAction Stop | Out-Null
+    Remove-Item -LiteralPath $publicCertificate -Force -ErrorAction Stop
+    $signature = Set-AuthenticodeSignature -FilePath $ScriptPath -Certificate $certificate -HashAlgorithm SHA256 -ErrorAction Stop
+    if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+        throw 'session shell Authenticode signature validation failed'
+    }
+}
+
+function Remove-SmokeSessionShellSigner {
+    if ([string]::IsNullOrWhiteSpace($script:sessionShellSigningThumbprint)) { return }
+    foreach ($store in @('Cert:\LocalMachine\My\', 'Cert:\LocalMachine\Root\', 'Cert:\LocalMachine\TrustedPublisher\')) {
+        $certificatePath = $store + $script:sessionShellSigningThumbprint
+        if (Test-Path -LiteralPath $certificatePath) {
+            Remove-Item -LiteralPath $certificatePath -Force -ErrorAction Stop
+        }
+    }
+    $script:sessionShellSigningThumbprint = $null
+}
+
 function Test-ActiveManagedSession([string] $Name) {
     foreach ($line in @(Get-MarkedUserSessions $Name)) {
         if ($line.State -eq 0) {
@@ -404,12 +433,7 @@ function Wait-SmokeUserProfileReleased([string] $Sid, [int] $TimeoutSeconds = 30
 }
 
 function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureString] $Password) {
-    $plainPassword = Convert-SmokeSecureStringToPlainText $Password
-    try {
-        [ChuziSmokeProfileBootstrap]::Run($Name, $env:COMPUTERNAME, $plainPassword)
-    } finally {
-        $plainPassword = $null
-    }
+    [ChuziSmokeProfileBootstrap]::Run($Name, $env:COMPUTERNAME, $Password)
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
     $profile = Wait-SmokeUserProfile $targetUser.SID.Value
     if ($null -eq $profile) {
@@ -419,8 +443,65 @@ function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureStri
         throw 'local RDP user profile remained loaded after bootstrap'
     }
     Start-Sleep -Milliseconds 500
-    Write-Host ('RDP DEBUG: preinitialized_user_profile=' + $profile.LocalPath)
-    Write-Host ('RDP DEBUG: preinitialized_user_ntuser_dat=' + (Join-Path $profile.LocalPath 'NTUSER.DAT'))
+}
+
+function Get-SmokeSessionShellCommand([string] $RuntimeRoot) {
+    $root = [System.IO.Path]::GetFullPath($RuntimeRoot)
+    $scriptPath = Join-Path $root 'session-shell.ps1'
+    if (-not [System.IO.Path]::IsPathFullyQualified($scriptPath) -or
+        [System.IO.Path]::GetFileName($scriptPath) -cne 'session-shell.ps1' -or
+        -not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
+        throw 'fixed session shell script is unavailable'
+    }
+    return 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "' + $scriptPath + '"'
+}
+
+function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
+    $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
+    $profile = Wait-SmokeUserProfile $targetUser.SID.Value
+    if ($null -eq $profile) {
+        throw 'local RDP user profile did not initialize'
+    }
+    $hive = 'HKEY_USERS\' + $targetUser.SID.Value
+    $hivePath = Join-Path $profile.LocalPath 'NTUSER.DAT'
+    $loaded = $false
+    try {
+        if (-not (Test-Path -LiteralPath ('Registry::' + $hive))) {
+            & reg.exe load $hive $hivePath 1>$null 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'target user hive load failed' }
+            $loaded = $true
+        }
+        $winlogon = 'Registry::' + $hive + '\Software\Microsoft\Windows NT\CurrentVersion\Winlogon'
+        New-Item -Path $winlogon -Force | Out-Null
+        $command = Get-SmokeSessionShellCommand $RuntimeRoot
+        New-ItemProperty -LiteralPath $winlogon -Name Shell -PropertyType String -Value $command -Force | Out-Null
+        $actual = (Get-ItemProperty -LiteralPath $winlogon -Name Shell -ErrorAction Stop).Shell
+        if ($actual -cne $command -or $actual -match '(?i)-Command|Bypass') {
+            throw 'target user Winlogon Shell policy mismatch'
+        }
+    } finally {
+        if ($loaded) {
+            & reg.exe unload $hive 1>$null 2>$null
+            if ($LASTEXITCODE -ne 0) { throw 'target user hive unload failed' }
+        }
+    }
+}
+
+function Test-SmokeSessionShellReady([string] $Sid, [int] $SessionId, [int] $TimeoutSeconds = 30) {
+    $name = 'Global\ChuziSessionShell-' + $Sid + '-' + $SessionId + '-ready'
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $event = $null
+        try {
+            $event = [System.Threading.EventWaitHandle]::OpenExisting($name)
+            if ($event.WaitOne(0)) { return $true }
+        } catch [System.Threading.WaitHandleCannotBeOpenedException] {
+        } finally {
+            if ($null -ne $event) { $event.Dispose() }
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    return $false
 }
 
 function Write-RdpDiagnostic([string] $Line) {
@@ -436,54 +517,42 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     }
     Write-RdpDiagnostic ("`n=== " + $Label + ' @ ' + (Get-Date -Format o) + ' ===')
     try {
-        Write-RdpDiagnostic ('RUNNER=' + [System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
-        Write-RdpDiagnostic ('RUNNER_SESSION=' + (Get-Process -Id $PID -ErrorAction Stop).SessionId)
-    } catch {
-        Write-RdpDiagnostic ('RUNNER_QUERY_ERROR=' + $_.Exception.Message)
-    }
-    try {
         Write-RdpDiagnostic 'MSTSC_PROCESSES:'
-        Write-RdpDiagnostic ((Get-CimInstance Win32_Process -Filter "Name='mstsc.exe'" -ErrorAction SilentlyContinue |
-            Select-Object ProcessId, SessionId, CommandLine | Format-List | Out-String).TrimEnd())
+        $mstscCount = @(Get-CimInstance Win32_Process -Filter "Name='mstsc.exe'" -ErrorAction SilentlyContinue).Count
+        Write-RdpDiagnostic ('MSTSC_PROCESS_COUNT=' + $mstscCount)
     } catch {
-        Write-RdpDiagnostic ('MSTSC_QUERY_ERROR=' + $_.Exception.Message)
+        Write-RdpDiagnostic 'MSTSC_QUERY_ERROR=unavailable'
     }
     try {
         Write-RdpDiagnostic 'WTS_SESSIONS:'
-        Write-RdpDiagnostic ((& qwinsta 2>&1 | Out-String).TrimEnd())
         $managedSessions = @(Get-MarkedUserSessions $Name)
-        Write-RdpDiagnostic ('TARGET_WTS=' + (($managedSessions | ForEach-Object { $_.SessionId.ToString() + ':' + $_.UserName + ':' + $_.State }) -join ','))
-        if (-not [string]::IsNullOrWhiteSpace($script:runnerUserName)) {
-            $runnerSessions = @(Get-MarkedUserSessions $script:runnerUserName)
-            Write-RdpDiagnostic ('RUNNER_WTS=' + (($runnerSessions | ForEach-Object { $_.SessionId.ToString() + ':' + $_.UserName + ':' + $_.State }) -join ','))
-        }
+        Write-RdpDiagnostic ('TARGET_WTS_COUNT=' + $managedSessions.Count)
+        Write-RdpDiagnostic ('TARGET_ACTIVE_COUNT=' + @($managedSessions | Where-Object { $_.State -eq 0 }).Count)
     } catch {
-        Write-RdpDiagnostic ('WTS_QUERY_ERROR=' + $_.Exception.Message)
+        Write-RdpDiagnostic 'WTS_QUERY_ERROR=unavailable'
     }
     try {
-        Write-RdpDiagnostic 'CREDENTIAL_TARGET:'
-        Write-RdpDiagnostic ((& cmdkey.exe /list:$script:rdpCredentialTarget 2>&1 | Out-String).TrimEnd())
+        Write-RdpDiagnostic ('RDP_CREDENTIAL_PRESENT=' + [ChuziSmokeCredentialStore]::Exists($script:rdpCredentialTarget))
     } catch {
-        Write-RdpDiagnostic ('CREDENTIAL_QUERY_ERROR=' + $_.Exception.Message)
+        Write-RdpDiagnostic 'CREDENTIAL_QUERY_ERROR=unavailable'
     }
     $since = if ($null -ne $script:rdpStartTime) { $script:rdpStartTime } else { (Get-Date).AddMinutes(-2) }
     $channels = @(
         'Microsoft-Windows-TerminalServices-RDPClient/Operational',
         'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational',
         'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational',
-        'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational',
-        'Microsoft-Windows-User Profiles Service/Operational'
+        'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational'
     )
     foreach ($channel in $channels) {
         try {
             $events = @(Get-WinEvent -FilterHashtable @{ LogName = $channel; StartTime = $since } -ErrorAction SilentlyContinue |
-                Select-Object -First 20 TimeCreated, Id, Message)
+                Select-Object -First 20 TimeCreated, Id)
             if ($events.Count -gt 0) {
                 Write-RdpDiagnostic ('EVENTS_' + $channel + ':')
                 Write-RdpDiagnostic (($events | Format-List | Out-String).TrimEnd())
             }
         } catch {
-            Write-RdpDiagnostic ('EVENT_QUERY_ERROR=' + $channel + ':' + $_.Exception.Message)
+            Write-RdpDiagnostic ('EVENT_QUERY_ERROR=' + $channel + ':unavailable')
         }
     }
 }
@@ -509,17 +578,8 @@ function Test-SmokeRdpCredential([string] $Target) {
     return $output.IndexOf($Target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
 }
 
-function Set-SmokeRdpCredential([string] $Target, [string] $UserName, [string] $Password) {
-    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
-    $argumentList = @(
-        ('/generic:' + $Target),
-        ('/user:' + $UserName),
-        ('/pass:"' + $Password + '"')
-    )
-    $process = Start-Process -FilePath $cmdkey -ArgumentList $argumentList -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
-    if ($process.ExitCode -ne 0) {
-        throw ('cmdkey credential write failed with exit code ' + $process.ExitCode)
-    }
+function Set-SmokeRdpCredential([string] $Target, [string] $UserName, [System.Security.SecureString] $Password) {
+    [ChuziSmokeCredentialStore]::Write($Target, $UserName, $Password)
 }
 
 function Remove-SmokeRdpCredential([string] $Target) {
@@ -530,7 +590,7 @@ function Remove-SmokeRdpCredential([string] $Target) {
     }
 }
 
-function Start-LocalRdpSession([string] $Name) {
+function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
     if (-not [Environment]::UserInteractive) {
         throw 'interactive smoke console required'
     }
@@ -547,7 +607,6 @@ function Start-LocalRdpSession([string] $Name) {
     $targetUsername = $env:COMPUTERNAME + '\' + $Name
     $credentialUsername = $targetUsername
     $password = New-SmokePassword
-    $debugPassword = Convert-SmokeSecureStringToPlainText $password
     try {
         if (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue) {
             throw 'temporary smoke user already exists'
@@ -555,9 +614,10 @@ function Start-LocalRdpSession([string] $Name) {
         New-LocalUser -Name $Name -Password $password -Description $marker -PasswordNeverExpires -ErrorAction Stop | Out-Null
         $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
-        Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $debugPassword
+        Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $password
         $script:rdpCredentialOwned = $true
         Initialize-SmokeUserProfile $Name $password
+        Apply-SmokeSessionShellPolicy $Name $RuntimeRoot
     } finally {
         $password.Dispose()
     }
@@ -575,20 +635,12 @@ function Start-LocalRdpSession([string] $Name) {
         throw 'local RDP target resolves to the interactive runner identity'
     }
     $script:rdpDebugSummary = @(
-        ('smoke_runner_user=' + $runnerIdentity),
-        ('smoke_runner_session_id=' + $runnerSessionID),
-        ('smoke_runner_sid=' + $script:runnerSID),
-        ('rdp_target_host=' + $targetHost),
-        ('rdp_target_user=' + $targetUsername),
-        ('rdp_target_sid=' + $targetUser.SID.Value),
-        ('rdp_credential_target=' + $script:rdpCredentialTarget),
-        ('rdp_profile=' + $rdpProfile),
-        'rdp_password=printed_to_console'
+        'rdp_target=loopback-redacted',
+        'rdp_identity=run-scoped',
+        'rdp_credential_target=redacted',
+        'rdp_profile=run-scoped-and-redacted',
+        'rdp_password=redacted'
     )
-    foreach ($line in $script:rdpDebugSummary) {
-        Write-Host ('RDP DEBUG: ' + $line)
-    }
-    Write-Host ('RDP DEBUG: rdp_password=' + $debugPassword)
     Write-Host ('RDP DEBUG: rdp_diagnostics=' + $script:rdpDiagnosticsPath)
     @("full address:s:${targetHost}:3389",
       "username:s:$targetUsername",
@@ -604,13 +656,13 @@ function Start-LocalRdpSession([string] $Name) {
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
     $script:rdpProfilePath = $rdpProfile
 
-    Write-Host ('Opening a local RDP session for the disposable smoke user at ' + $targetHost + '.')
+    Write-Host 'Opening the one-run local RDP session.'
     Write-Host 'If Windows shows a first-connection certificate prompt, verify the local target and accept it.'
     Capture-RdpDiagnostics 'before_mstsc' $Name
     $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
     $script:rdpStartTime = Get-Date
     $mstscArguments = @('"' + $rdpProfile + '"')
-    Write-RdpDiagnostic ('MSTSC_LAUNCH=' + $mstsc + ' ' + ($mstscArguments -join ' '))
+    Write-RdpDiagnostic 'MSTSC_LAUNCH=started'
     $client = Start-Process -FilePath $mstsc -ArgumentList $mstscArguments -PassThru -ErrorAction Stop
     $script:rdpClientProcess = $client
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
@@ -639,8 +691,10 @@ function Start-LocalRdpSession([string] $Name) {
             if ($null -eq $userProfile) {
                 throw 'local RDP user profile did not initialize'
             }
-            Write-Host ('RDP DEBUG: rdp_user_profile=' + $userProfile.LocalPath)
-            Write-Host ('RDP DEBUG: rdp_user_ntuser_dat=' + (Join-Path $userProfile.LocalPath 'NTUSER.DAT'))
+            $activeSessions = @(Get-MarkedUserSessions $Name | Where-Object { $_.State -eq 0 })
+            if ($activeSessions.Count -ne 1 -or -not (Test-SmokeSessionShellReady $targetUser.SID.Value $activeSessions[0].SessionId)) {
+                throw 'PowerShell session shell did not report readiness'
+            }
             Remove-SmokeRdpCredential $script:rdpCredentialTarget
             $script:rdpCredentialOwned = $false
             return
@@ -799,6 +853,11 @@ function Stop-SmokeResources {
             $rootClean = $false
         }
     }
+    try {
+        Remove-SmokeSessionShellSigner
+    } catch {
+        $cleanupErrors.Add('session_shell_signer_cleanup_failed')
+    }
     if (-not $rootClean -and $env:CHUZI_PRESERVE_WINDOWS_JOB_POOL_SMOKE_ROOT -ne '1') {
         $cleanupErrors.Add('root_cleanup_failed')
     }
@@ -860,6 +919,7 @@ try {
     $agentPath = Join-Path $runtimeRoot 'chuzi-user-agent.exe'
     $nodePath = Join-Path $runtimeRoot 'node.exe'
     $workerPath = Join-Path $workerRoot 'worker.mjs'
+    $sessionShellPath = Join-Path $runtimeRoot 'session-shell.ps1'
 
     $failureStage = 'build_agent'
     & $go build -trimpath -o $agentPath (Join-Path $repoRoot 'cmd/user-agent') 1>$null 2>$null
@@ -868,6 +928,8 @@ try {
     }
     Copy-Item -LiteralPath $node -Destination $nodePath -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'browser-worker/src/worker.mjs') -Destination $workerPath -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'scripts/session-shell.ps1') -Destination $sessionShellPath -Force
+    Sign-SmokeSessionShell $sessionShellPath
     $failureStage = 'runtime_acl'
     Invoke-Icacls $runtimeRoot
 
@@ -880,7 +942,7 @@ try {
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID = $runID
     if ($LocalRdp) {
         $failureStage = 'local_rdp_session'
-        Start-LocalRdpSession ($userPrefix + '0001')
+        Start-LocalRdpSession ($userPrefix + '0001') $runtimeRoot
         $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP = '1'
     }
 
@@ -895,7 +957,7 @@ try {
     }
     $smokePassed = $true
     } catch {
-        $script:failureDetail = ([string]$_.Exception.Message).Replace([Environment]::NewLine, ' ').Trim()
+        $script:failureDetail = 'redacted'
         if (Test-Path -LiteralPath $testLog -PathType Leaf) {
         try {
             Copy-Item -LiteralPath $testLog -Destination $preservedLog -Force

@@ -463,6 +463,9 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 		return slot.ProvisionResult{}, err
 	}
 	sid = managed.SID
+	if err := p.ensureManagedProfile(ctx, paths.UserName, managed); err != nil {
+		return slot.ProvisionResult{}, err
+	}
 	if p.options.RDPEnabled {
 		if err := ensureRemoteDesktopMembership(paths.UserName); err != nil {
 			return slot.ProvisionResult{}, err
@@ -493,6 +496,23 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	}
 	cleanupOnFailure = false
 	return slot.ProvisionResult{AgentHandle: "slot:" + request.SlotID, Summary: p.summary(request, sid)}, nil
+}
+
+// ensureManagedProfile initializes a newly created account through the
+// Winlogon profile path before any WTS session is requested, then applies the
+// fixed user-level PowerShell shell policy. Existing accounts are reconciled
+// from their SID-derived profile hive without receiving a new password.
+func (p *windowsProvisioner) ensureManagedProfile(ctx context.Context, username string, managed managedUserCredentials) error {
+	profilePath, profileErr := profilePathForSID(managed.SID)
+	if profileErr != nil || validateProfileHivePath(profilePath) != nil {
+		if len(managed.password) == 0 {
+			return ErrProfileBootstrap
+		}
+		if err := bootstrapProfileWithLogon(ctx, username, managed.password); err != nil {
+			return err
+		}
+	}
+	return applyProfilePolicy(ctx, managed.SID, filepath.Dir(filepath.Clean(p.options.AgentPath)))
 }
 
 func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.ProvisionRequest, sid string, removeUser, removeRoot bool) error {
@@ -995,7 +1015,7 @@ func (p *windowsProvisioner) ensureAgent(ctx context.Context, paths Paths, reque
 	if err := validateRuntimePaths(p.options); err != nil {
 		return err
 	}
-	for _, runtimeFile := range []string{p.options.AgentPath, p.options.WorkerCommand, p.options.WorkerScript, p.options.AdapterScript} {
+	for _, runtimeFile := range []string{p.options.AgentPath, p.options.WorkerCommand, p.options.WorkerScript, p.options.AdapterScript, filepath.Join(filepath.Dir(filepath.Clean(p.options.AgentPath)), SessionShellRelativePath)} {
 		if runtimeFile != "" {
 			if err := verifyRuntimeACL(runtimeFile, sid); err != nil {
 				return err
@@ -1115,6 +1135,13 @@ func validateRuntimePaths(options Options) error {
 	}
 	if !filepath.IsAbs(options.AgentPath) || !strings.EqualFold(filepath.Base(options.AgentPath), "chuzi-user-agent.exe") || !runtimeRegularNoReparse(options.AgentPath) {
 		return ErrACLDrift
+	}
+	serviceRoot := filepath.Dir(filepath.Clean(options.AgentPath))
+	if !filepath.IsAbs(serviceRoot) || !runtimeFileUnderRoot(serviceRoot, filepath.Join(serviceRoot, SessionShellRelativePath)) {
+		return ErrACLDrift
+	}
+	if verifySignedSessionShell(filepath.Join(serviceRoot, SessionShellRelativePath)) != nil {
+		return ErrProfilePolicySignature
 	}
 	if !runtimeFileUnderRoot(root, options.WorkerScript) {
 		return ErrACLDrift

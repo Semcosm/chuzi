@@ -16,6 +16,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/protocol"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/slotagent"
+	"golang.org/x/sys/windows/registry"
 )
 
 // TestWindowsJobPoolNativeSmoke is deliberately opt-in. The PowerShell entry
@@ -92,10 +93,17 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	if localRDP {
 		prepareLocalRDPTestSession(t, root, options, request, userPrefix)
 	}
+	machineShellBefore := readNativeMachineShell(t)
 
 	result, err := provisioner.Provision(ctx, request)
 	if err != nil {
 		t.Fatalf("native Windows provision failed: %s", nativeSmokeFailureClass(err))
+	}
+	provisioner.mu.Lock()
+	provisionedProcess := provisioner.agents[request.SlotID].process
+	provisioner.mu.Unlock()
+	if provisionedProcess == nil {
+		t.Fatal("native service did not retain the agent process")
 	}
 	retired := false
 	t.Cleanup(func() {
@@ -116,6 +124,37 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	if err != nil || record.SlotID != request.SlotID || record.Ordinal != request.Ordinal || record.Generation != request.EnvironmentGeneration || record.SID == "" {
 		t.Fatal("native ownership metadata did not reconcile")
 	}
+	policy, err := NewProfilePolicy(options.RuntimePath)
+	if err != nil {
+		t.Fatal("native profile policy setup failed")
+	}
+	wantShell, err := policy.ShellCommand()
+	if err != nil {
+		t.Fatal("native profile shell command derivation failed")
+	}
+	actualShell, err := ReadProfileShellCommand(record.SID)
+	if err != nil || actualShell != wantShell || ValidateSessionShellCommand(options.RuntimePath, actualShell) != nil {
+		t.Fatal("native profile policy did not apply to the target user HKCU")
+	}
+	if machineShellAfter := readNativeMachineShell(t); machineShellAfter != machineShellBefore {
+		t.Fatal("native profile policy changed the machine Winlogon Shell")
+	}
+	session, err := FindSession(record.SID)
+	if err != nil || verifySessionDesktop(record.SID, session.ID, paths.Desktop) != nil {
+		t.Fatal("native agent custom desktop was not verified")
+	}
+	provisioner.mu.Lock()
+	initialAgentProcess := provisioner.agents[request.SlotID].process
+	var jobAssigned bool
+	if initialAgentProcess != nil {
+		initialAgentProcess.mu.Lock()
+		jobAssigned = initialAgentProcess.job != 0
+		initialAgentProcess.mu.Unlock()
+	}
+	provisioner.mu.Unlock()
+	if !jobAssigned {
+		t.Fatal("native agent is not owned by a Job Object")
+	}
 	if hasAdministratorsMembership(paths.UserName) {
 		t.Fatal("managed smoke user belongs to Administrators")
 	}
@@ -134,11 +173,26 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	if _, err := provisioner.Inspect(ctx, request); err != nil {
 		t.Fatal("native inspect after profile grant failed")
 	}
+	provisioner.mu.Lock()
+	inspectedProcess := provisioner.agents[request.SlotID].process
+	provisioner.mu.Unlock()
+	if inspectedProcess != provisionedProcess {
+		t.Fatal("native inspect started another agent")
+	}
 	if err := provisioner.RevokeProfile(ctx, request.SlotID, profilePath); err != nil {
 		t.Fatal("native profile revoke failed")
 	}
+	provisioner.mu.Lock()
+	firstProcess := provisioner.agents[request.SlotID].process
+	provisioner.mu.Unlock()
 	if reused, err := provisioner.Provision(ctx, request); err != nil || reused.AgentHandle != result.AgentHandle {
 		t.Fatal("native managed user reuse failed")
+	}
+	provisioner.mu.Lock()
+	secondProcess := provisioner.agents[request.SlotID].process
+	provisioner.mu.Unlock()
+	if firstProcess == nil || firstProcess != secondProcess {
+		t.Fatal("native repeated provision started another agent")
 	}
 	if _, err := provisioner.validateProfilePath(filepath.Join(profileRoot, "..", "outside")); err == nil {
 		t.Fatal("profile path traversal was accepted")
@@ -325,6 +379,26 @@ func requiredSmokeEnv(t *testing.T, name string) string {
 		t.Fatal("native smoke configuration is unavailable")
 	}
 	return filepath.Clean(value)
+}
+
+func readNativeMachineShell(t *testing.T) string {
+	t.Helper()
+	key, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon`, registry.QUERY_VALUE|registry.WOW64_64KEY)
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return ""
+		}
+		t.Fatal("machine Winlogon policy could not be inspected")
+	}
+	defer key.Close()
+	value, _, err := key.GetStringValue("Shell")
+	if err != nil {
+		if errors.Is(err, registry.ErrNotExist) {
+			return ""
+		}
+		t.Fatal("machine Winlogon policy could not be inspected")
+	}
+	return value
 }
 
 func requiredSmokeValue(t *testing.T, name string) string {

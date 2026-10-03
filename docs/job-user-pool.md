@@ -18,6 +18,29 @@ pool/slot/environment 元数据，返回受控的 agent handle 和健康事实�
 接受任意路径、任意命令、PowerShell 文本、密码、Cookie、Profile 路径或真实账号
 数据作为 Core/API 输入。
 
+## 用户 Profile policy 和 Winlogon Shell
+
+每个受管用户的 Profile 由服务按 SID 派生。首次 Profile 初始化固定使用
+`CreateProcessWithLogonW(LOGON_WITH_PROFILE)`，随后 policy boundary 只操作目标用户的
+HKCU/hive，并幂等设置唯一的 Winlogon `Shell` 值：
+
+```text
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "<signed-service-runtime>\session-shell.ps1"
+```
+
+脚本由安装流程 Authenticode 签名，服务在执行前使用 Windows trust 验证签名；安装目录 ACL
+为受管用户只读/执行。安装还需向 Windows 部署受信任的签名者，使 PowerShell 5.1 的
+`AllSigned` 策略可以无交互地验证该发布者。Smoke 临时将证书加入本机 Root 与
+Trusted Publishers 存储，并在退出时移除。`-Command`、`-ExecutionPolicy Bypass`、用户 Profile 加载、任意
+executable/脚本/命令、任意 Profile 路径和 HKLM 写入均不进入该边界。首次初始化不复制其他
+用户的 `NTUSER.DAT` 或 `UsrClass.dat`。重复应用只更新同一个 `Shell` 值，不创建重复启动项。
+
+本方案采用 **PowerShell supervisor + 服务启动 agent**。Winlogon PowerShell 通常运行在用户
+默认 desktop；服务继续通过现有 `ensureAgent`、用户 token、lease、环境注入、Job Object 和
+服务派生的 `winsta0\ChuziSlot<hash>` desktop 启动及停止 `chuzi-user-agent.exe`。Shell 不
+选择 slot、desktop、worker、浏览器 executable 或账号 Profile 路径。未来“Shell 直接指向
+chuzi-user-agent.exe”仍是可选设计，本次不采用。
+
 ## 资源模型
 
 每个 slot 保存稳定 `slot_id`、`ordinal`、`pool_id`、`environment_id`、
@@ -144,14 +167,17 @@ fail-closed 行为。
 Windows 实验机可在仓库根目录以管理员 PowerShell 执行
 scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和 slot
 agent 链路。该模式创建本轮随机命名的普通本地用户，
-用系统随机密码，并把目标用户名、密码、SID 和连接诊断输出到当前交互控制台；凭据
-仅短暂写入当前交互用户的 session-scoped Windows Credential Manager。随后使用固定
+用系统随机密码，并把凭据仅短暂写入当前交互用户的 session-scoped Windows Credential
+Manager；密码、token 和 Profile 原始路径不写入普通日志或 Core/Matrix DTO。随后使用固定
 `127.0.0.2` RDPWrap 诊断地址启动 mstsc.exe，等待该用户对应的真实 active WTS
 session，再运行原生 provisioner 测试。RDP 配置显式指定本轮随机用户并关闭
 administrative session。测试按 SID、slot ownership 和 active session 重新校验身份；
 结束后注销 session、回收用户、profile、运行目录和临时 Credential Manager 凭据。
-session 查询使用 WTS API 和数值状态，不依赖系统显示语言。密码不进入命令行、环境变量、
-文件、Core、测试日志或保留输出，只在测试机的实时调试控制台显示。
+session 查询使用 WTS API 和数值状态，不依赖系统显示语言。自动 RDP 凭据只用于一次性本地诊断，
+不代表生产自动登录方案。密码不进入命令行、环境变量、
+文件、Core、测试日志、保留输出或普通控制台。Smoke 先验证目标用户 HKCU 的精确 Shell 命令，
+再等待 active WTS session 上的 PowerShell readiness，之后才继续服务侧 agent、named pipe、
+Node worker 和 browser handshake。
 
 连接失败时会保留带 ownership marker 的 smoke 根目录，并写出脱敏的
 `rdp-diagnostics.log`；其中记录 `mstsc` 命令行、Credential Manager 目标、WTS

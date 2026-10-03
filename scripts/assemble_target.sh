@@ -44,6 +44,7 @@ if [ "$target" = "windows-amd64" ]; then
     exit 1
   fi
   cp "$node_runtime" "$stage_dir/node.exe"
+  cp "$repo_root/scripts/session-shell.ps1" "$stage_dir/session-shell.ps1"
 fi
 adapter_extension=tar.gz
 if [ "$target" = "windows-amd64" ]; then

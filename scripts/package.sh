@@ -39,7 +39,7 @@ for component in launcher service browser-worker; do
     launcher) cp "$stage_dir/$launcher_binary" "$component_dir/"; cp "$stage_dir/release-manifest.json" "$component_dir/" ;;
     service)
       cp "$stage_dir/$service_binary" "$component_dir/"
-      if [ "$target" = "windows-amd64" ]; then cp "$stage_dir/chuzi-browser-launcher.exe" "$stage_dir/chuzi-user-agent.exe" "$stage_dir/node.exe" "$component_dir/"; fi
+      if [ "$target" = "windows-amd64" ]; then cp "$stage_dir/chuzi-browser-launcher.exe" "$stage_dir/chuzi-user-agent.exe" "$stage_dir/node.exe" "$stage_dir/session-shell.ps1" "$component_dir/"; fi
       ;;
     browser-worker) cp -R "$stage_dir/browser-worker" "$component_dir/" ;;
   esac

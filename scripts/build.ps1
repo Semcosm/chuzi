@@ -58,6 +58,7 @@ if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath 
     throw "Node.js executable could not be resolved for the Windows runtime package"
 }
 Copy-Item -Force $nodePath (Join-Path $stageDir "node.exe")
+Copy-Item -Force (Join-Path $repoRoot "scripts/session-shell.ps1") (Join-Path $stageDir "session-shell.ps1")
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
 $adapterManifest = Join-Path $targetDir "genshin-cloudgame-adapter-manifest.json"
 & python (Join-Path $repoRoot "scripts/build_adapter_package.py") `

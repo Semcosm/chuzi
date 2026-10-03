@@ -141,7 +141,7 @@ def main() -> int:
     archive_extension = "zip" if args.target == "windows-amd64" else "tar.gz"
     service_files = [binary]
     if args.target == "windows-amd64":
-        service_files.extend([browser_launcher, user_agent, node_runtime])
+        service_files.extend([browser_launcher, user_agent, node_runtime, "session-shell.ps1"])
     groups = {
         "launcher": ([launcher,], True),
         "service": (service_files, False),

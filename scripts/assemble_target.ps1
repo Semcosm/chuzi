@@ -29,6 +29,7 @@ if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath 
     throw "Node.js executable could not be resolved for the Windows runtime package"
 }
 Copy-Item -Force $nodePath (Join-Path $stageDir "node.exe")
+Copy-Item -Force (Join-Path $repoRoot "scripts/session-shell.ps1") (Join-Path $stageDir "session-shell.ps1")
 tar -xzf $WorkerArchive -C (Join-Path $stageDir "browser-worker")
 if ($LASTEXITCODE -ne 0) { throw "browser worker archive extraction failed" }
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
