@@ -176,7 +176,8 @@ Domain Password 凭据类型）；随后在 smoke
 `administrative session`、显示、压缩、剪贴板、自动重连、认证级别和协商安全层字段，
 只动态写入 endpoint 与本轮用户名。已有的 Credential Manager 记录会在测试期间暂存并于退出时恢复，
 生成的 profile 使用后删除。随后等待该用户对应的真实 active WTS
-session，再运行原生 provisioner 测试。RDP 配置显式指定本轮随机用户并关闭
+session；凭据写入后和 WTS session 建立后分别核对用户名必须匹配本轮临时用户，
+并核对 PowerShell readiness，再运行原生 provisioner 测试。RDP 配置显式指定本轮随机用户并关闭
 administrative session。测试按 SID、slot ownership 和 active session 重新校验身份；
 结束后注销 session、回收用户、profile、运行目录和临时 Credential Manager 凭据。
 session 查询使用 WTS API 和数值状态，不依赖系统显示语言。自动 RDP 凭据只用于一次性本地诊断，

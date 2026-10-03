@@ -1101,7 +1101,10 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
         $script:rdpCredentialOwned = $true
         $script:rdpCredentialUserName = $credentialUsername
         Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $password
-        if (-not [ChuziSmokeRdpCredentialOverrideV3]::UserNameMatches($script:rdpCredentialTarget, $credentialUsername)) {
+        $credentialUsernameMatches = [ChuziSmokeRdpCredentialOverrideV3]::UserNameMatches($script:rdpCredentialTarget, $credentialUsername)
+        Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_MATCHES=' + $credentialUsernameMatches)
+        Write-Host ('RDP DEBUG: credential_username_matches=' + $credentialUsernameMatches)
+        if (-not $credentialUsernameMatches) {
             throw 'RDP credential identity did not match the target user'
         }
         Set-RdpFailurePhase 'profile_initialize'
@@ -1174,8 +1177,20 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
             if ($null -eq $userProfile) {
                 throw 'local RDP user profile did not initialize'
             }
+            Set-RdpFailurePhase 'rdp_session_identity_verify'
             $activeSessions = @(Get-MarkedUserSessions $Name | Where-Object { $_.State -eq 0 })
-            if ($activeSessions.Count -ne 1 -or -not (Test-SmokeSessionShellReady $targetUser.SID.Value $activeSessions[0].SessionId)) {
+            $sessionUsernameMatches = $activeSessions.Count -eq 1 -and
+                $activeSessions[0].UserName -ieq $Name
+            Write-RdpDiagnostic ('RDP_WTS_USERNAME_MATCHES=' + $sessionUsernameMatches)
+            Write-Host ('RDP DEBUG: wts_username_matches=' + $sessionUsernameMatches)
+            if (-not $sessionUsernameMatches) {
+                throw 'local RDP session identity did not match the managed user'
+            }
+            Set-RdpFailurePhase 'rdp_session_shell_readiness'
+            $sessionShellReady = Test-SmokeSessionShellReady $targetUser.SID.Value $activeSessions[0].SessionId
+            Write-RdpDiagnostic ('SESSION_SHELL_READY=' + $sessionShellReady)
+            Write-Host ('RDP DEBUG: session_shell_ready=' + $sessionShellReady)
+            if (-not $sessionShellReady) {
                 throw 'PowerShell session shell did not report readiness'
             }
             Remove-SmokeRdpCredential $script:rdpCredentialTarget

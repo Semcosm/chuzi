@@ -5,7 +5,7 @@ Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..ec87e23842d9c7f48a91df3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 13
+Revision: 14
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -132,6 +132,13 @@ credential helper to read and temporarily replace both Generic and Domain
 Password records, preserving the original credential type for restoration.
 This keeps endpoint selection evidence-based without embedding the observed
 address in the harness.
+
+The next operator run confirmed the saved `TERMSRV/127.0.0.2` username is the
+prototype `SEMCOSM\MiniSession`. During the smoke, the temporary credential
+override matched the generated user and WTS reported one active session for that
+user; the remaining failure was the session-shell readiness event. Revision 14
+adds explicit credential-user, WTS-user, and readiness checks with safe debug
+booleans, so a mismatch stops before the native smoke continues.
 
 ## Risk
 

@@ -101,6 +101,8 @@ scripts/test_windows_job_pool_smoke.ps1 -LocalRdp
 `negotiate security layer:i:1`。Credential Manager 项会在测试期间暂存并在退出时恢复，
 生成的 profile 使用后删除。`-RdpProfileTemplatePath` 仍可用于显式验证一个操作者提供的
 loopback/3389 profile，但不是默认路径。
+凭据写入后会立即核对保存用户名是否等于本轮临时用户；WTS active session 建立后还会再次核对
+session 用户名和 Shell readiness，任一检查失败都会在启动后续 smoke 前停止。
 
 脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
 `chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，
