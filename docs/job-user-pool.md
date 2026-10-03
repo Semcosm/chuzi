@@ -169,13 +169,12 @@ scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和
 agent 链路。该模式创建本轮随机命名的普通本地用户，
 用系统随机密码，并把凭据仅短暂写入当前交互用户的 session-scoped Windows Credential
 Manager；密码、token 和 Profile 原始路径不写入普通日志或 Core/Matrix DTO。`-LocalRdp`
-扫描 `127.0.0.2` 到 `127.0.0.254`，以端口 3389 可达和唯一已有的
-`TERMSRV/127.0.0.x` Credential Manager 记录确认已验证的 loopback 路由（兼容 Generic 和
-Domain Password 凭据类型）；随后在 smoke
+解析 `cmdkey /list` 中已占用的 `TERMSRV/127.0.0.x`，从 `127.0.0.2` 到
+`127.0.0.254` 选择最低的未占用 loopback alias；随后在 smoke
 目录生成一次性 profile。profile 固定保留已验证的 `prompt for credentials`、
 `administrative session`、显示、压缩、剪贴板、自动重连、认证级别和协商安全层字段，
 只动态写入 endpoint 与本轮用户名。已有的 Credential Manager 记录会在测试期间暂存并于退出时恢复，
-生成的 profile 使用后删除。随后等待该用户对应的真实 active WTS
+生成的 profile 使用后删除，测试凭据 target 在退出时删除，原有 target 会恢复。随后等待该用户对应的真实 active WTS
 session；凭据写入后和 WTS session 建立后分别核对用户名必须匹配本轮临时用户，
 并核对 PowerShell readiness，再运行原生 provisioner 测试。RDP 配置显式指定本轮随机用户并关闭
 administrative session。测试按 SID、slot ownership 和 active session 重新校验身份；

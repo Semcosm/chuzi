@@ -5,7 +5,7 @@ Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..ec87e23842d9c7f48a91df3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 14
+Revision: 15
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -139,6 +139,12 @@ override matched the generated user and WTS reported one active session for that
 user; the remaining failure was the session-shell readiness event. Revision 14
 adds explicit credential-user, WTS-user, and readiness checks with safe debug
 booleans, so a mismatch stops before the native smoke continues.
+
+The endpoint allocation rule is now explicit: parse `cmdkey /list`, reserve the
+lowest unoccupied loopback alias in the test range, write the disposable Chuzi
+credential for that target, and delete it after the run. Existing user-owned
+targets remain untouched; an explicitly supplied verified profile still uses the
+same save-and-restore guard.
 
 ## Risk
 

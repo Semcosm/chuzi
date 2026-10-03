@@ -945,19 +945,9 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     }
 }
 
-function Test-SmokeRdpPort([string] $TargetHost) {
-    $client = [System.Net.Sockets.TcpClient]::new()
-    try {
-        $connection = $client.ConnectAsync($TargetHost, 3389)
-        if (-not $connection.Wait(250)) {
-            return $false
-        }
-        return $client.Connected
-    } catch {
-        return $false
-    } finally {
-        $client.Dispose()
-    }
+function Get-SmokeRdpCredentialListing {
+    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
+    return (& $cmdkey '/list' 2>&1 | Out-String)
 }
 
 function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
@@ -999,39 +989,22 @@ function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
         return $parsedAddress.ToString()
     }
 
-    Initialize-SmokeNativeHelpers
-    $runnerName = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-    $runnerShortName = ($runnerName -split '\\')[-1]
-    $candidates = @(foreach ($octet in 2..254) {
-        $candidate = '127.0.0.' + $octet
-        if (-not (Test-SmokeRdpPort $candidate)) {
-            continue
+    $listing = Get-SmokeRdpCredentialListing
+    $occupiedOctets = [System.Collections.Generic.HashSet[int]]::new()
+    foreach ($match in [regex]::Matches($listing, '(?i)TERMSRV/127\.0\.0\.(\d{1,3})(?::\d+)?')) {
+        $octet = [int]$match.Groups[1].Value
+        if ($octet -ge 2 -and $octet -le 254) {
+            [void]$occupiedOctets.Add($octet)
         }
-        $credentialTarget = 'TERMSRV/' + $candidate
-        try {
-            $credentialUser = [ChuziSmokeRdpCredentialOverrideV3]::ReadUserName($credentialTarget)
-        } catch {
-            continue
-        }
-        if ([string]::IsNullOrWhiteSpace($credentialUser)) {
-            continue
-        }
-        $credentialShortName = ($credentialUser -split '\\')[-1]
-        if ($credentialShortName -ieq $runnerShortName) {
-            continue
-        }
-        [pscustomobject]@{
-            Address = $candidate
-            CredentialTarget = $credentialTarget
-        }
-    })
-    if ($candidates.Count -eq 0) {
-        throw 'no verified loopback RDP endpoint was discovered'
     }
-    if ($candidates.Count -ne 1) {
-        throw 'multiple verified loopback RDP endpoints were discovered'
+    Write-Host ('RDP DEBUG: occupied_loopback_targets=' + $occupiedOctets.Count)
+    foreach ($octet in 2..254) {
+        if (-not $occupiedOctets.Contains($octet)) {
+            Write-Host 'RDP DEBUG: rdp_target_selection=lowest_unoccupied_loopback'
+            return '127.0.0.' + $octet
+        }
     }
-    return [string]$candidates[0].Address
+    throw 'no unoccupied loopback RDP endpoint is available'
 }
 
 # Evidence from the operator-verified MiniSession profile. The endpoint and

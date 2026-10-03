@@ -90,15 +90,15 @@ scripts/test_windows_job_pool_smoke.ps1 -ValidateOnly
 scripts/test_windows_job_pool_smoke.ps1 -LocalRdp
 ```
 
-`-LocalRdp` 扫描 `127.0.0.2` 到 `127.0.0.254`，只接受端口 3389 可达且已有
-`TERMSRV/127.0.0.x` Credential Manager 记录的唯一候选（兼容 Generic 和 Domain Password
-凭据类型）；没有候选或候选不唯一时 fail closed，
+`-LocalRdp` 解析 `cmdkey /list` 中已占用的 `TERMSRV/127.0.0.x`，从
+`127.0.0.2` 到 `127.0.0.254` 选择最低的未占用 alias；没有可用 alias 时 fail closed，
 不会回退到主机名、LAN 地址或当前交互用户。脚本在 run-scoped smoke 目录生成一次性 `.rdp`，
 只把 endpoint 和本轮临时用户名写入动态字段。已验证 MiniSession profile 的固定证据字段为：
 `prompt for credentials:i:0`、`administrative session:i:0`、`screen mode id:i:2`、
 `session bpp:i:32`、`compression:i:1`、`redirectclipboard:i:1`、
 `autoreconnection enabled:i:1`、`authentication level:i:2`、
-`negotiate security layer:i:1`。Credential Manager 项会在测试期间暂存并在退出时恢复，
+`negotiate security layer:i:1`。目标 Credential Manager 项会在测试期间暂存并在退出时恢复；
+新建的测试项会在退出时删除，
 生成的 profile 使用后删除。`-RdpProfileTemplatePath` 仍可用于显式验证一个操作者提供的
 loopback/3389 profile，但不是默认路径。
 凭据写入后会立即核对保存用户名是否等于本轮临时用户；WTS active session 建立后还会再次核对
