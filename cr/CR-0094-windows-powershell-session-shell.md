@@ -5,7 +5,7 @@ Head or Range: aa7e4b348f5d51bcd4e24f378fb0c5a4231e1d9d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -24,9 +24,10 @@ readiness and waits; it does not launch agents or workers. Windows build,
 assembly, manifest, and service package paths now include the script.
 The local RDP smoke records its current setup phase and safe exception metadata
 from the beginning of account preparation. Profile bootstrap uses the local
-machine domain alias used by the production Windows boundary, captures the
-native error before clearing the password buffer, and maps failures to a small
-set of categories without persisting raw Win32 codes, messages, or credentials.
+machine domain alias and standard Unicode string marshaling for the native logon
+API. The disposable password exists briefly in managed memory during this call;
+it is not printed or persisted. Failures are mapped to safe categories without
+persisting raw Win32 codes, messages, or credentials.
 
 ## Motivation
 
@@ -54,12 +55,12 @@ then reported a local RDP smoke failure during profile initialization. The
 smoke summary exposed only the outer PowerShell exception, so the harness now
 records the setup phase, exception metadata, and a safe category mapped from
 known native failures. The latest operator query found a Security 4625 event
-classified as bad_password with LogonType 2 during profile initialization. The
-bootstrap now uses the local domain alias from the production boundary and
-preserves the original Win32 error before password-buffer cleanup. This change
-has not yet been verified on the Windows workstation. Authenticode trust, WTS
-readiness, native provisioner smoke, and local RDP behavior remain pending
-operator verification.
+classified as bad_password with LogonType 2 during profile initialization. A
+follow-up run after aligning the local domain alias failed the same way, so the
+smoke bootstrap now restores the standard Unicode string marshaling used by an
+earlier implementation. The exact failing run has not yet been tested against
+this update. Authenticode trust, WTS readiness, native provisioner smoke, and
+local RDP behavior remain pending operator verification.
 
 ## Risk
 
@@ -72,6 +73,9 @@ AllSigned execution. A Windows host must verify that AllSigned permits the
 trusted script and that its interactive session reaches readiness. Failed
 smoke cleanup may leave only the run-marked disposable user or diagnostics for
 operator cleanup.
+The smoke profile bootstrap briefly materializes the generated disposable
+password as a managed string for the native logon call; it must remain confined
+to process memory and must never enter output or files.
 
 ## Rollback
 
