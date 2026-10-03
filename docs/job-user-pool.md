@@ -153,6 +153,11 @@ administrative session。测试按 SID、slot ownership 和 active session 重�
 session 查询使用 WTS API 和数值状态，不依赖系统显示语言。密码不进入命令行、环境变量、
 文件、Core、测试日志或保留输出，只在测试机的实时调试控制台显示。
 
+连接失败时会保留带 ownership marker 的 smoke 根目录，并写出脱敏的
+`rdp-diagnostics.log`；其中记录 `mstsc` 命令行、Credential Manager 目标、WTS
+session 和可用的 RDP/Security 事件，便于区分凭据选择、loopback console 重连和
+目标登录失败。
+
 Windows hosted preflight 使用 -ValidateOnly 解析 smoke 脚本并编译 Credential Manager
 与 WTS API helper，不创建用户、session 或临时目录。
 

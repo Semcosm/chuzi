@@ -35,6 +35,10 @@ $script:runnerUserName = $null
 $script:runnerSessionID = -1
 $script:runnerSID = $null
 $script:failureDetail = $null
+$script:rdpDiagnosticsPath = $null
+$script:rdpStartTime = $null
+$script:lastRdpDiagnosticAt = [DateTime]::MinValue
+$script:preserveRootOnFailure = $false
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
 $preservedLog = Join-Path $tempRoot 'chuzi-job-pool-smoke-test-output.log'
@@ -288,6 +292,70 @@ function Wait-SmokeUserProfile([string] $Sid, [int] $TimeoutSeconds = 30) {
     return $null
 }
 
+function Write-RdpDiagnostic([string] $Line) {
+    if ([string]::IsNullOrWhiteSpace($script:rdpDiagnosticsPath)) {
+        return
+    }
+    Add-Content -LiteralPath $script:rdpDiagnosticsPath -Value $Line -Encoding UTF8
+}
+
+function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
+    if ([string]::IsNullOrWhiteSpace($script:rdpDiagnosticsPath)) {
+        return
+    }
+    Write-RdpDiagnostic ('`n=== ' + $Label + ' @ ' + (Get-Date -Format o) + ' ===')
+    try {
+        Write-RdpDiagnostic ('RUNNER=' + [System.Security.Principal.WindowsIdentity]::GetCurrent().Name)
+        Write-RdpDiagnostic ('RUNNER_SESSION=' + (Get-Process -Id $PID -ErrorAction Stop).SessionId)
+    } catch {
+        Write-RdpDiagnostic ('RUNNER_QUERY_ERROR=' + $_.Exception.Message)
+    }
+    try {
+        Write-RdpDiagnostic 'MSTSC_PROCESSES:'
+        Write-RdpDiagnostic ((Get-CimInstance Win32_Process -Filter "Name='mstsc.exe'" -ErrorAction SilentlyContinue |
+            Select-Object ProcessId, SessionId, CommandLine | Format-List | Out-String).TrimEnd())
+    } catch {
+        Write-RdpDiagnostic ('MSTSC_QUERY_ERROR=' + $_.Exception.Message)
+    }
+    try {
+        Write-RdpDiagnostic 'WTS_SESSIONS:'
+        Write-RdpDiagnostic ((& qwinsta 2>&1 | Out-String).TrimEnd())
+        $managedSessions = @(Get-MarkedUserSessions $Name)
+        Write-RdpDiagnostic ('TARGET_WTS=' + (($managedSessions | ForEach-Object { $_.SessionId.ToString() + ':' + $_.UserName + ':' + $_.State }) -join ','))
+        if (-not [string]::IsNullOrWhiteSpace($script:runnerUserName)) {
+            $runnerSessions = @(Get-MarkedUserSessions $script:runnerUserName)
+            Write-RdpDiagnostic ('RUNNER_WTS=' + (($runnerSessions | ForEach-Object { $_.SessionId.ToString() + ':' + $_.UserName + ':' + $_.State }) -join ','))
+        }
+    } catch {
+        Write-RdpDiagnostic ('WTS_QUERY_ERROR=' + $_.Exception.Message)
+    }
+    try {
+        Write-RdpDiagnostic 'CREDENTIAL_TARGET:'
+        Write-RdpDiagnostic ((& cmdkey.exe /list:$script:rdpCredentialTarget 2>&1 | Out-String).TrimEnd())
+    } catch {
+        Write-RdpDiagnostic ('CREDENTIAL_QUERY_ERROR=' + $_.Exception.Message)
+    }
+    $since = if ($null -ne $script:rdpStartTime) { $script:rdpStartTime } else { (Get-Date).AddMinutes(-2) }
+    $channels = @(
+        'Microsoft-Windows-TerminalServices-RDPClient/Operational',
+        'Microsoft-Windows-TerminalServices-LocalSessionManager/Operational',
+        'Microsoft-Windows-TerminalServices-RemoteConnectionManager/Operational',
+        'Microsoft-Windows-RemoteDesktopServices-RdpCoreTS/Operational'
+    )
+    foreach ($channel in $channels) {
+        try {
+            $events = @(Get-WinEvent -FilterHashtable @{ LogName = $channel; StartTime = $since } -ErrorAction SilentlyContinue |
+                Select-Object -First 20 TimeCreated, Id, Message)
+            if ($events.Count -gt 0) {
+                Write-RdpDiagnostic ('EVENTS_' + $channel + ':')
+                Write-RdpDiagnostic (($events | Format-List | Out-String).TrimEnd())
+            }
+        } catch {
+            Write-RdpDiagnostic ('EVENT_QUERY_ERROR=' + $channel + ':' + $_.Exception.Message)
+        }
+    }
+}
+
 function Get-LocalRdpTarget {
     # RDPWrap's own RDP_CnC mstsc checks use 127.0.0.2. On supported
     # patched hosts this loopback alias enters the RDP listener without
@@ -323,6 +391,8 @@ function Start-LocalRdpSession([string] $Name) {
     }
 
     $rdpProfile = Join-Path $runRoot 'local-rdp.rdp'
+    $script:rdpDiagnosticsPath = Join-Path $runRoot 'rdp-diagnostics.log'
+    New-Item -ItemType File -Path $script:rdpDiagnosticsPath -Force | Out-Null
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
     $runnerIdentityObject = [System.Security.Principal.WindowsIdentity]::GetCurrent()
     $runnerIdentity = $runnerIdentityObject.Name
@@ -347,6 +417,7 @@ function Start-LocalRdpSession([string] $Name) {
         Write-Host ('RDP DEBUG: ' + $line)
     }
     Write-Host ('RDP DEBUG: rdp_password=' + $debugPassword)
+    Write-Host ('RDP DEBUG: rdp_diagnostics=' + $script:rdpDiagnosticsPath)
     @("full address:s:$targetHost",
       "username:s:$targetUsername",
       'prompt for credentials:i:0',
@@ -358,11 +429,17 @@ function Start-LocalRdpSession([string] $Name) {
 
     Write-Host ('Opening a local RDP session for the disposable smoke user at ' + $targetHost + '.')
     Write-Host 'If Windows shows a first-connection certificate prompt, verify the local target and accept it.'
+    Capture-RdpDiagnostics 'before_mstsc' $Name
     $mstsc = Join-Path $env:SystemRoot 'System32\mstsc.exe'
+    $script:rdpStartTime = Get-Date
     $client = Start-Process -FilePath $mstsc -ArgumentList @($rdpProfile) -PassThru -ErrorAction Stop
     $script:rdpClientProcess = $client
     $deadline = [DateTime]::UtcNow.AddSeconds(90)
     while ([DateTime]::UtcNow -lt $deadline) {
+        if ((Get-Date) - $script:lastRdpDiagnosticAt -gt [TimeSpan]::FromSeconds(5)) {
+            Capture-RdpDiagnostics 'rdp_poll' $Name
+            $script:lastRdpDiagnosticAt = Get-Date
+        }
         if (Test-UnexpectedRunnerSession) {
             throw 'local RDP authenticated as the interactive runner identity'
         }
@@ -379,6 +456,7 @@ function Start-LocalRdpSession([string] $Name) {
         }
         Start-Sleep -Seconds 1
     }
+    Capture-RdpDiagnostics 'rdp_timeout' $Name
     throw 'local RDP session did not become active'
 }
 
@@ -516,6 +594,8 @@ function Stop-SmokeResources {
 
     if ($env:CHUZI_PRESERVE_WINDOWS_JOB_POOL_SMOKE_ROOT -eq '1') {
         $script:rootPreserved = $true
+    } elseif ($script:preserveRootOnFailure) {
+        $script:rootPreserved = $true
     } elseif (-not $usersClean -and (Test-RunOwnership)) {
         # Keep the ownership marker and diagnostics when a managed account or
         # session could not be removed.
@@ -638,6 +718,13 @@ try {
             $cleanupErrors.Add('test_log_preservation_failed')
         }
     }
+    if (-not [string]::IsNullOrWhiteSpace($script:rdpDiagnosticsPath)) {
+        try {
+            Add-Content -LiteralPath $preservedLog -Value ('rdp_diagnostics=' + $script:rdpDiagnosticsPath) -Encoding ASCII
+        } catch {
+            $cleanupErrors.Add('rdp_diagnostics_reference_failed')
+        }
+    }
 } finally {
     Remove-Item Env:CHUZI_RUN_WINDOWS_JOB_POOL_SMOKE -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_ROOT -ErrorAction SilentlyContinue
@@ -661,6 +748,9 @@ try {
     if ($null -ne $script:rdpProfilePath) {
         Remove-Item -LiteralPath $script:rdpProfilePath -Force -ErrorAction SilentlyContinue
         $script:rdpProfilePath = $null
+    }
+    if (-not $smokePassed -and $failureStage -eq 'local_rdp_session') {
+        $script:preserveRootOnFailure = $true
     }
     $cleanupResult = Stop-SmokeResources
     Write-Host ('RemainingSmokeUsers = ' + $script:remainingSmokeUsers)
