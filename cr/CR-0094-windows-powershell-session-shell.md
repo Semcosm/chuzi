@@ -38,9 +38,14 @@ GOOS=windows GOARCH=amd64 go build ./..., GOOS=windows GOARCH=amd64 go vet
 ./..., Windows slotwindows test compilation, repository policy/profile/action
 validators, build contract, nightly package contract, nightly artifact
 validator, npm test --prefix browser-worker (22 tests), and git diff --check.
-PowerShell -ValidateOnly, Authenticode trust, WTS readiness, native provisioner
-smoke, and local RDP behavior have not run on Windows. Real-machine smoke
-remains pending operator assistance.
+On the Windows workstation, go vet ./..., npm test --prefix browser-worker
+(22 tests), and PowerShell -ValidateOnly passed. The first go test ./... run
+exposed a POSIX file-mode assertion, an environment package-path rejection,
+and an SDDL deny-ACE fixture error. The follow-up corrects the two
+cross-platform test assumptions and adds non-path stage labels for the
+environment rejection; a targeted Windows rerun is pending. Authenticode trust,
+WTS readiness, native provisioner smoke, and local RDP behavior also remain
+pending operator assistance.
 
 ## Risk
 

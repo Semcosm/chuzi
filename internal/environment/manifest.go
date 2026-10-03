@@ -328,7 +328,7 @@ func ReadManifest(root string) (Manifest, error) {
 }
 func pathInPackage(root, rel string) (string, error) {
 	if err := validateRelative(rel); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: resource-relative-path", err)
 	}
 	joined := filepath.Join(root, filepath.FromSlash(rel))
 	base, err := filepath.Abs(root)
@@ -341,7 +341,7 @@ func pathInPackage(root, rel string) (string, error) {
 	}
 	relative, err := filepath.Rel(base, target)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", ErrInvalidPath
+		return "", fmt.Errorf("%w: resource-containment", ErrInvalidPath)
 	}
 	cur := base
 	for _, part := range strings.Split(relative, string(filepath.Separator)) {
@@ -352,7 +352,7 @@ func pathInPackage(root, rel string) (string, error) {
 		}
 		reparse, reparseErr := isReparsePoint(cur)
 		if reparseErr != nil || reparse || info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeIrregular != 0 {
-			return "", ErrInvalidPath
+			return "", fmt.Errorf("%w: resource-reparse-check", ErrInvalidPath)
 		}
 	}
 	return target, nil
@@ -409,20 +409,20 @@ func executableHeader(path string) (bool, error) {
 // unlisted file permitted is the manifest itself.
 func ValidatePackage(root, target string, trust TrustStore) (Manifest, error) {
 	if strings.TrimSpace(root) == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
-		return Manifest{}, ErrInvalidPath
+		return Manifest{}, fmt.Errorf("%w: package-root-form", ErrInvalidPath)
 	}
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return Manifest{}, ErrInvalidPath
+		return Manifest{}, fmt.Errorf("%w: package-root-type", ErrInvalidPath)
 	}
 	if reparse, reparseErr := isReparsePoint(root); reparseErr != nil || reparse {
-		return Manifest{}, ErrInvalidPath
+		return Manifest{}, fmt.Errorf("%w: package-root-reparse-check", ErrInvalidPath)
 	}
 	// A package root can itself be ordinary while a parent directory is a
 	// symlink/junction. Resolve the complete chain before reading any resource.
 	resolved, resolveErr := filepath.EvalSymlinks(root)
 	if resolveErr != nil || !sameResolvedPath(filepath.Clean(resolved), filepath.Clean(root)) {
-		return Manifest{}, ErrInvalidPath
+		return Manifest{}, fmt.Errorf("%w: package-root-resolution", ErrInvalidPath)
 	}
 	m, err := ReadManifest(root)
 	if err != nil {
@@ -444,7 +444,7 @@ func ValidatePackage(root, target string, trust TrustStore) (Manifest, error) {
 		declared[r.Path] = struct{}{}
 		path, err := pathInPackage(root, r.Path)
 		if err != nil {
-			return Manifest{}, err
+			return Manifest{}, fmt.Errorf("package resource path: %w", err)
 		}
 		info, err := os.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModePerm&0o111 != 0 {
@@ -471,7 +471,7 @@ func ValidatePackage(root, target string, trust TrustStore) (Manifest, error) {
 		}
 		reparse, reparseErr := isReparsePoint(path)
 		if reparseErr != nil || reparse || entry.Type()&os.ModeSymlink != 0 || entry.Type()&os.ModeIrregular != 0 {
-			return ErrInvalidPath
+			return fmt.Errorf("%w: package-entry-reparse-check", ErrInvalidPath)
 		}
 		if !entry.Type().IsRegular() {
 			return nil
