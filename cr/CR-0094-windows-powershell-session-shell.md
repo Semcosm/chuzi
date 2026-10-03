@@ -42,10 +42,12 @@ On the Windows workstation, go vet ./..., npm test --prefix browser-worker
 (22 tests), and PowerShell -ValidateOnly passed. The first go test ./... run
 exposed a POSIX file-mode assertion, an environment package-path rejection,
 and an SDDL deny-ACE fixture error. The follow-up corrects the two
-cross-platform test assumptions and adds non-path stage labels for the
-environment rejection; a targeted Windows rerun is pending. Authenticode trust,
-WTS readiness, native provisioner smoke, and local RDP behavior also remain
-pending operator assistance.
+cross-platform test assumptions. The package-path failure came from Windows
+EvalSymlinks normalizing 8.3 aliases; path validation now compares long-path
+forms after checking each component for reparse points, with a Windows
+short-name regression test. Windows execution of that test and the full suite
+is pending. Authenticode trust, WTS readiness, native provisioner smoke, and
+local RDP behavior also remain pending operator assistance.
 
 ## Risk
 

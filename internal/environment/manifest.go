@@ -415,7 +415,7 @@ func ValidatePackage(root, target string, trust TrustStore) (Manifest, error) {
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return Manifest{}, fmt.Errorf("%w: package-root-type", ErrInvalidPath)
 	}
-	if reparse, reparseErr := isReparsePoint(root); reparseErr != nil || reparse {
+	if reparse, reparseErr := isReparsePath(root); reparseErr != nil || reparse {
 		return Manifest{}, fmt.Errorf("%w: package-root-reparse-check", ErrInvalidPath)
 	}
 	// A package root can itself be ordinary while a parent directory is a
