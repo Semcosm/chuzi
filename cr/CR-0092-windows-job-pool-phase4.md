@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: c0c630800bc73e1ddc5e60e8a4f2828625e1f107
+Head or Range: 78cbe00c4e53184233cb34a725f2b6772d1431b1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 27
+Revision: 28
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: c0c630800bc73e1ddc5e60e8a4f2828625e1f107
+Head OID: 78cbe00c4e53184233cb34a725f2b6772d1431b1
 Integrated Result: pending
 
 ## Summary
@@ -244,6 +244,12 @@ Revision 27 restores the default disableconnectionsharing:i:0 behavior used
 by the successful interactive mstsc flow. On local RDP/RDPWrap hosts,
 forcing a new connection with value 1 can produce console-session error
 0x708 before credentials are evaluated.
+
+Revision 28 aligns the automatic profile with the verified MiniSession flow:
+the endpoint is 127.0.0.2:3389, the credential target is
+TERMSRV/127.0.0.2, and the profile carries the tested authentication,
+clipboard, reconnect, and display settings. The profile no longer adds
+session-sharing or credential-prompt overrides absent from the working file.
 
 ## Risk
 
