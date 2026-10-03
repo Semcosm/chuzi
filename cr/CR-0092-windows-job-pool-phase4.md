@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 46e896a64e88d33b969eadf2dc20dda96f2fd32a
+Head or Range: 6d11cdafd5913eeedbdc416880a9ff83909aed06
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 31
+Revision: 32
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 46e896a64e88d33b969eadf2dc20dda96f2fd32a
+Head OID: 6d11cdafd5913eeedbdc416880a9ff83909aed06
 Integrated Result: pending
 
 ## Summary
@@ -265,6 +265,12 @@ Revision 31 reads the complete cmdkey listing for availability checks instead
 of relying on filtered cmdkey queries, which can return ambiguous results on
 localized Windows hosts. Only an actually listed TERMSRV target is treated as
 occupied.
+
+Revision 32 waits up to 30 seconds for the authenticated local RDP user to
+reach active WTS state before native provisioning. The RDP client can report
+authentication success while the session is briefly in connection-query
+state; this wait preserves the production FindSession fence without treating
+that normal transition as a failed login.
 
 ## Risk
 
