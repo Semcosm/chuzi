@@ -936,13 +936,13 @@ function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
     if ($addressValue -notmatch '^(?<host>\d{1,3}(?:\.\d{1,3}){3})(?::(?<port>\d+))?$') {
         throw 'verified profile address must be an IPv4 loopback endpoint'
     }
-    $host = $Matches['host']
+    $targetAddress = $Matches['host']
     $port = if ($Matches['port']) { [int]$Matches['port'] } elseif ($portValues.Count -eq 1) { $portValues[0] } else { 3389 }
     if ($Matches['port'] -and $portValues.Count -eq 1 -and $portValues[0] -ne $port) {
         throw 'verified profile contains conflicting server ports'
     }
     $parsedAddress = $null
-    if (-not [System.Net.IPAddress]::TryParse($host, [ref]$parsedAddress) -or
+    if (-not [System.Net.IPAddress]::TryParse($targetAddress, [ref]$parsedAddress) -or
         $parsedAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
         $parsedAddress.GetAddressBytes()[0] -ne 127) {
         throw 'verified profile address must be an IPv4 loopback endpoint'
