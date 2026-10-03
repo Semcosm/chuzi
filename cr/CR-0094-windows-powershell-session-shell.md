@@ -1,16 +1,16 @@
 # CR-0094: add fixed PowerShell session shell supervisor
 
 Base: main
-Head or Range: aa7e4b348f5d51bcd4e24f378fb0c5a4231e1d9d
+Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..709c34d4b2a93a2c77dbe0adea4cbe85578cc91d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 7
+Revision: 8
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: aa7e4b348f5d51bcd4e24f378fb0c5a4231e1d9d
+Head OID: 709c34d4b2a93a2c77dbe0adea4cbe85578cc91d
 Integrated Result: pending
 
 ## Summary
@@ -76,6 +76,15 @@ HRESULT, and a safe category without the exception message. Microsoft
 documentation lists permission and security exceptions for RegistryKey writes
 and documents process-specific registry views; the access behavior remains
 unchanged until the specific failure is known. Windows retest is pending.
+
+On commit 336cd5e, -ValidateOnly passed and LocalRdp advanced to
+session_shell_policy_hive_unload, but the outer failure still reported an
+unavailable operation and did not show the expected unload-failed phase. The
+Revision 8 records each reg.exe unload exit code and whether the target hive
+remains mounted, and makes unload failure metadata explicit. Microsoft Learn
+documents that RegUnLoadKey requires SE_RESTORE_NAME and SE_BACKUP_NAME; this
+does not establish the cause because the current path uses reg.exe and its load
+step succeeded. Windows verification is pending.
 
 ## Risk
 
