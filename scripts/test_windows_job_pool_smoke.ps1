@@ -828,18 +828,49 @@ function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
 function Test-SmokeSessionShellReady([string] $Sid, [int] $SessionId, [int] $TimeoutSeconds = 30) {
     $name = 'Global\ChuziSessionShell-' + $Sid + '-' + $SessionId + '-ready'
     $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    $lastError = 'not_found'
     while ([DateTime]::UtcNow -lt $deadline) {
         $event = $null
         try {
             $event = [System.Threading.EventWaitHandle]::OpenExisting($name)
-            if ($event.WaitOne(0)) { return $true }
+            $lastError = 'opened_not_signaled'
+            if ($event.WaitOne(0)) {
+                Write-RdpDiagnostic 'SESSION_SHELL_READY_LAST_ERROR=none'
+                return $true
+            }
         } catch [System.Threading.WaitHandleCannotBeOpenedException] {
+            $lastError = 'not_found'
+        } catch {
+            $lastError = Get-RdpFailureCategory $_.Exception
         } finally {
             if ($null -ne $event) { $event.Dispose() }
         }
         Start-Sleep -Milliseconds 250
     }
+    Write-RdpDiagnostic ('SESSION_SHELL_READY_LAST_ERROR=' + $lastError)
     return $false
+}
+
+function Capture-SmokeSessionShellDiagnostics([string] $Sid, [int] $SessionId) {
+    $winlogonPath = 'Registry::HKEY_USERS\' + $Sid + '\Software\Microsoft\Windows NT\CurrentVersion\Winlogon'
+    try {
+        $shell = [string](Get-ItemProperty -LiteralPath $winlogonPath -Name Shell -ErrorAction Stop).Shell
+        Write-RdpDiagnostic ('SESSION_SHELL_REGISTRY_PRESENT=' + $true)
+        Write-RdpDiagnostic ('SESSION_SHELL_REGISTRY_VALUE_IS_FIXED=' + ($shell -match '(?i)session-shell\.ps1'))
+    } catch {
+        Write-RdpDiagnostic 'SESSION_SHELL_REGISTRY_PRESENT=False'
+        Write-RdpDiagnostic ('SESSION_SHELL_REGISTRY_ERROR=' + (Get-RdpFailureCategory $_.Exception))
+    }
+    try {
+        $processes = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop | Where-Object {
+            $_.SessionId -eq $SessionId -and
+            ([string]$_.CommandLine) -match '(?i)(^|[\\/\"\s])session-shell\.ps1([\"\s]|$)'
+        })
+        Write-RdpDiagnostic ('SESSION_SHELL_PROCESS_COUNT=' + $processes.Count)
+    } catch {
+        Write-RdpDiagnostic 'SESSION_SHELL_PROCESS_COUNT=unavailable'
+        Write-RdpDiagnostic ('SESSION_SHELL_PROCESS_ERROR=' + (Get-RdpFailureCategory $_.Exception))
+    }
 }
 
 function Write-RdpDiagnostic([string] $Line) {
@@ -1188,6 +1219,8 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
             Write-RdpDiagnostic ('SESSION_SHELL_READY=' + $sessionShellReady)
             Write-Host ('RDP DEBUG: session_shell_ready=' + $sessionShellReady)
             if (-not $sessionShellReady) {
+                Capture-SmokeSessionShellDiagnostics $targetUser.SID.Value $activeSessions[0].SessionId
+                Capture-RdpDiagnostics 'session_shell_not_ready' $Name
                 throw 'PowerShell session shell did not report readiness'
             }
             Remove-SmokeRdpCredential $script:rdpCredentialTarget
