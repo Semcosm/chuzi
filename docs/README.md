@@ -17,6 +17,8 @@
 | [operations.md](operations.md) | 配置、部署、备份、监控和故障恢复 |
 | [ui/README.md](ui/README.md) | Windows Slint UI 设计、交互和组件契约 |
 | [ui/tooling.md](ui/tooling.md) | Arch + Codex UI 工具链与验收流程 |
+| [windows-minimal-base.md](windows-minimal-base.md) | Windows Session 基座、运行模式和裁剪边界 |
+| [windows-minimal-base.md](windows-minimal-base.md) | Windows Session 基座、运行模式和裁剪边界 |
 
 ## 术语
 
