@@ -42,6 +42,9 @@ $script:rdpFailureHResult = 'unavailable'
 $script:rdpFailureCategory = 'unavailable'
 $script:rdpFailureOperation = 'unavailable'
 $script:rdpFailureDetailsCaptured = $false
+$script:rdpFailureUnloadExitCode = 'unavailable'
+$script:rdpFailureUnloadHiveMounted = 'unavailable'
+$script:rdpFailureUnloadAttempts = 'unavailable'
 $script:rdpStartTime = $null
 $script:sessionShellSigningThumbprint = $null
 $script:lastRdpDiagnosticAt = [DateTime]::MinValue
@@ -63,6 +66,56 @@ function Invoke-SmokeRetry([scriptblock] $Action, [int] $Attempts = 6) {
         }
     }
     return $false
+}
+
+function Invoke-SmokeHiveUnload([string] $Hive, [int] $Attempts = 6) {
+    $result = [pscustomobject]@{
+        Succeeded = $false
+        Attempts = 0
+        ExitCode = 'unavailable'
+        HiveMounted = 'unavailable'
+        ExceptionType = 'none'
+        HResult = 'unavailable'
+    }
+    for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
+        $result.Attempts = $attempt
+        $result.ExceptionType = 'none'
+        $result.HResult = 'unavailable'
+        try {
+            & reg.exe unload $Hive 1>$null 2>$null
+            $result.ExitCode = [string]$LASTEXITCODE
+        } catch {
+            $result.ExitCode = [string]$LASTEXITCODE
+            $cause = $_.Exception
+            while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+            $result.ExceptionType = $cause.GetType().FullName
+            $result.HResult = '0x{0:X8}' -f $cause.HResult
+        }
+        try {
+            $result.HiveMounted = [string](Test-Path -LiteralPath ('Registry::' + $Hive) -ErrorAction Stop)
+        } catch {
+            $cause = $_.Exception
+            while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+            $result.HiveMounted = 'unknown'
+            if ($result.ExceptionType -eq 'none') {
+                $result.ExceptionType = $cause.GetType().FullName
+                $result.HResult = '0x{0:X8}' -f $cause.HResult
+            }
+        }
+        Write-RdpDiagnostic ('HIVE_UNLOAD_ATTEMPT=' + $attempt +
+            ' EXIT_CODE=' + $result.ExitCode +
+            ' MOUNTED=' + $result.HiveMounted +
+            ' EXCEPTION_TYPE=' + $result.ExceptionType +
+            ' HRESULT=' + $result.HResult)
+        if ($result.ExitCode -eq '0' -and $result.HiveMounted -eq 'False' -and $result.ExceptionType -eq 'none') {
+            $result.Succeeded = $true
+            return $result
+        }
+        if ($attempt -lt $Attempts) {
+            Start-Sleep -Milliseconds ([Math]::Min(2000, 250 * [Math]::Pow(2, $attempt - 1)))
+        }
+    }
+    return $result
 }
 
 function New-SmokePassword {
@@ -544,11 +597,29 @@ function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
     } finally {
         if ($loaded) {
             Set-RdpFailurePhase 'session_shell_policy_hive_unload'
-            if (-not (Invoke-SmokeRetry {
-                & reg.exe unload $hive 1>$null 2>$null
-                if ($LASTEXITCODE -ne 0) { throw 'target user hive unload failed' }
-            })) {
+            try {
+                $unload = Invoke-SmokeHiveUnload $hive
+            } catch {
                 Set-RdpFailurePhase 'session_shell_policy_hive_unload_failed'
+                $cause = $_.Exception
+                while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+                $script:rdpFailureOperation = 'reg_unload_diagnostic'
+                $script:rdpFailureExceptionType = $cause.GetType().FullName
+                $script:rdpFailureHResult = '0x{0:X8}' -f $cause.HResult
+                $script:rdpFailureCategory = Get-RdpFailureCategory $_.Exception
+                $script:rdpFailureDetailsCaptured = $true
+                throw 'target user hive unload failed'
+            }
+            $script:rdpFailureUnloadAttempts = [string]$unload.Attempts
+            $script:rdpFailureUnloadExitCode = [string]$unload.ExitCode
+            $script:rdpFailureUnloadHiveMounted = [string]$unload.HiveMounted
+            if (-not $unload.Succeeded) {
+                Set-RdpFailurePhase 'session_shell_policy_hive_unload_failed'
+                $script:rdpFailureOperation = 'reg_unload'
+                $script:rdpFailureExceptionType = $unload.ExceptionType
+                $script:rdpFailureHResult = $unload.HResult
+                $script:rdpFailureCategory = 'registry_unload_failed'
+                $script:rdpFailureDetailsCaptured = $true
                 throw 'target user hive unload failed'
             }
         }
@@ -1106,6 +1177,9 @@ try {
             Write-RdpDiagnostic ('FAILURE_EXCEPTION_TYPE=' + $script:rdpFailureExceptionType)
             Write-RdpDiagnostic ('FAILURE_HRESULT=' + $script:rdpFailureHResult)
             Write-RdpDiagnostic ('FAILURE_CATEGORY=' + $script:rdpFailureCategory)
+            Write-RdpDiagnostic ('FAILURE_UNLOAD_ATTEMPTS=' + $script:rdpFailureUnloadAttempts)
+            Write-RdpDiagnostic ('FAILURE_UNLOAD_EXIT_CODE=' + $script:rdpFailureUnloadExitCode)
+            Write-RdpDiagnostic ('FAILURE_UNLOAD_HIVE_MOUNTED=' + $script:rdpFailureUnloadHiveMounted)
         }
         if (Test-Path -LiteralPath $testLog -PathType Leaf) {
         try {
@@ -1122,6 +1196,9 @@ try {
                 $failureRecord += 'local_rdp_hresult=' + $script:rdpFailureHResult
                 $failureRecord += 'local_rdp_failure_category=' + $script:rdpFailureCategory
                 $failureRecord += 'local_rdp_failure_operation=' + $script:rdpFailureOperation
+                $failureRecord += 'local_rdp_unload_attempts=' + $script:rdpFailureUnloadAttempts
+                $failureRecord += 'local_rdp_unload_exit_code=' + $script:rdpFailureUnloadExitCode
+                $failureRecord += 'local_rdp_unload_hive_mounted=' + $script:rdpFailureUnloadHiveMounted
             }
             if (-not [string]::IsNullOrWhiteSpace($script:failureDetail)) {
                 $failureRecord += 'failure_detail=' + $script:failureDetail
