@@ -475,6 +475,33 @@ function Get-LocalRdpTarget {
     return '127.0.0.2'
 }
 
+function Test-SmokeRdpCredential([string] $Target) {
+    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
+    $output = (& $cmdkey (('/list:' + $Target)) 2>&1 | Out-String)
+    return $output.IndexOf($Target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+}
+
+function Set-SmokeRdpCredential([string] $Target, [string] $UserName, [string] $Password) {
+    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
+    $argumentList = @(
+        ('/generic:' + $Target),
+        ('/user:' + $UserName),
+        ('/pass:"' + $Password + '"')
+    )
+    $process = Start-Process -FilePath $cmdkey -ArgumentList $argumentList -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+    if ($process.ExitCode -ne 0) {
+        throw ('cmdkey credential write failed with exit code ' + $process.ExitCode)
+    }
+}
+
+function Remove-SmokeRdpCredential([string] $Target) {
+    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
+    $process = Start-Process -FilePath $cmdkey -ArgumentList @('/delete:' + $Target) -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
+    if ($process.ExitCode -ne 0 -and (Test-SmokeRdpCredential $Target)) {
+        throw ('cmdkey credential delete failed with exit code ' + $process.ExitCode)
+    }
+}
+
 function Start-LocalRdpSession([string] $Name) {
     if (-not [Environment]::UserInteractive) {
         throw 'interactive smoke console required'
@@ -482,7 +509,7 @@ function Start-LocalRdpSession([string] $Name) {
     Initialize-SmokeNativeHelpers
     $targetHost = Get-LocalRdpTarget
     $script:rdpCredentialTarget = 'TERMSRV/' + $targetHost
-    if ([ChuziSmokeCredentialStore]::Exists($script:rdpCredentialTarget)) {
+    if (Test-SmokeRdpCredential $script:rdpCredentialTarget) {
         throw 'local RDP credential target already exists'
     }
 
@@ -500,7 +527,7 @@ function Start-LocalRdpSession([string] $Name) {
         New-LocalUser -Name $Name -Password $password -Description $marker -PasswordNeverExpires -ErrorAction Stop | Out-Null
         $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
-        [ChuziSmokeCredentialStore]::Write($script:rdpCredentialTarget, $credentialUsername, $password)
+        Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $debugPassword
         $script:rdpCredentialOwned = $true
         Initialize-SmokeUserProfile $Name $password
     } finally {
@@ -574,7 +601,7 @@ function Start-LocalRdpSession([string] $Name) {
             }
             Write-Host ('RDP DEBUG: rdp_user_profile=' + $userProfile.LocalPath)
             Write-Host ('RDP DEBUG: rdp_user_ntuser_dat=' + (Join-Path $userProfile.LocalPath 'NTUSER.DAT'))
-            [ChuziSmokeCredentialStore]::Delete($script:rdpCredentialTarget)
+            Remove-SmokeRdpCredential $script:rdpCredentialTarget
             $script:rdpCredentialOwned = $false
             return
         }
@@ -863,7 +890,7 @@ try {
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP -ErrorAction SilentlyContinue
     if ($script:rdpCredentialOwned) {
         try {
-            [ChuziSmokeCredentialStore]::Delete($script:rdpCredentialTarget)
+            Remove-SmokeRdpCredential $script:rdpCredentialTarget
             $script:rdpCredentialOwned = $false
         } catch {
             $cleanupErrors.Add('rdp_credential_cleanup_failed')
