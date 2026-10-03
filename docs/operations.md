@@ -83,17 +83,23 @@ ready。这样 OS 边界故障既会继续按固定间隔重试，也会出现�
 阶段 4 的原生 smoke 只能在受控 Windows runner 上运行。runner 必须使用管理员权限、
 可创建 disposable 本地用户、可查询 WTS session，并带有 `go.exe`、Node.js 20+ 和
 当前 checkout；专用 runner 标签为 `self-hosted`, `windows`, `chuzi-job-pool`。测试脚本不接受
-用户名、命令或 executable 参数；`-LocalRdp` 只接受操作者已经验证过的 `.rdp` 模板路径：
+用户名、命令或 executable 参数；`-LocalRdp` 默认扫描本机 loopback RDP endpoint：
 
 ```powershell
 scripts/test_windows_job_pool_smoke.ps1 -ValidateOnly
-scripts/test_windows_job_pool_smoke.ps1 -ValidateOnly -RdpProfileTemplatePath .\MiniSession-1272.rdp
-scripts/test_windows_job_pool_smoke.ps1 -LocalRdp -RdpProfileTemplatePath .\MiniSession-1272.rdp
+scripts/test_windows_job_pool_smoke.ps1 -LocalRdp
 ```
 
-`-LocalRdp` 从模板读取并校验 loopback IPv4 endpoint 与标准 RDP 端口，保留模板的连接选项，
-只替换本轮用户名和 endpoint；它不会解析或回退到主机名、LAN 地址或其他动态 endpoint。
-模板不能包含保存的密码；匹配的 Credential Manager 项会在测试期间暂存并在退出时恢复。
+`-LocalRdp` 扫描 `127.0.0.2` 到 `127.0.0.254`，只接受端口 3389 可达且已有
+`TERMSRV/127.0.0.x` Credential Manager 记录的唯一候选；没有候选或候选不唯一时 fail closed，
+不会回退到主机名、LAN 地址或当前交互用户。脚本在 run-scoped smoke 目录生成一次性 `.rdp`，
+只把 endpoint 和本轮临时用户名写入动态字段。已验证 MiniSession profile 的固定证据字段为：
+`prompt for credentials:i:0`、`administrative session:i:0`、`screen mode id:i:2`、
+`session bpp:i:32`、`compression:i:1`、`redirectclipboard:i:1`、
+`autoreconnection enabled:i:1`、`authentication level:i:2`、
+`negotiate security layer:i:1`。Credential Manager 项会在测试期间暂存并在退出时恢复，
+生成的 profile 使用后删除。`-RdpProfileTemplatePath` 仍可用于显式验证一个操作者提供的
+loopback/3389 profile，但不是默认路径。
 
 脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
 `chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，

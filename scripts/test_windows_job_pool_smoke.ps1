@@ -209,7 +209,7 @@ public static class ChuziSmokeSessionShellRegistryV2
 }
 
 function Initialize-SmokeRdpCredentialOverrideHelper {
-    if ('ChuziSmokeRdpCredentialOverrideV1' -as [type]) {
+    if ('ChuziSmokeRdpCredentialOverrideV2' -as [type]) {
         return
     }
     Add-Type -TypeDefinition @'
@@ -218,7 +218,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security;
 
-public static class ChuziSmokeRdpCredentialOverrideV1
+public static class ChuziSmokeRdpCredentialOverrideV2
 {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct NativeCredential
@@ -267,6 +267,26 @@ public static class ChuziSmokeRdpCredentialOverrideV1
             NativeCredential value = (NativeCredential)Marshal.PtrToStructure(credential, typeof(NativeCredential));
             string actualUserName = Marshal.PtrToStringUni(value.UserName) ?? String.Empty;
             return String.Equals(actualUserName, expectedUserName, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            CredFree(credential);
+        }
+    }
+
+    public static string ReadUserName(string targetName)
+    {
+        IntPtr credential;
+        if (!CredRead(targetName, 2, 0, out credential))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 1168) return String.Empty;
+            throw new Win32Exception(error);
+        }
+        try
+        {
+            NativeCredential value = (NativeCredential)Marshal.PtrToStructure(credential, typeof(NativeCredential));
+            return Marshal.PtrToStringUni(value.UserName) ?? String.Empty;
         }
         finally
         {
@@ -886,7 +906,7 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     try {
         Write-RdpDiagnostic ('RDP_CREDENTIAL_PRESENT=' + [ChuziSmokeCredentialStore]::Exists($script:rdpCredentialTarget))
         if (-not [string]::IsNullOrWhiteSpace($script:rdpCredentialUserName)) {
-            Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_MATCHES=' + [ChuziSmokeRdpCredentialOverrideV1]::UserNameMatches($script:rdpCredentialTarget, $script:rdpCredentialUserName))
+            Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_MATCHES=' + [ChuziSmokeRdpCredentialOverrideV2]::UserNameMatches($script:rdpCredentialTarget, $script:rdpCredentialUserName))
         }
     } catch {
         Write-RdpDiagnostic 'CREDENTIAL_QUERY_ERROR=unavailable'
@@ -912,72 +932,125 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     }
 }
 
-function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
-    if ([string]::IsNullOrWhiteSpace($ProfileTemplatePath)) {
-        throw 'local RDP requires a verified profile template'
-    }
-    $resolvedPath = (Resolve-Path -LiteralPath $ProfileTemplatePath -ErrorAction Stop).Path
-    $addresses = @()
-    $portValues = @()
-    foreach ($line in Get-Content -LiteralPath $resolvedPath -ErrorAction Stop) {
-        if ($line -match '^\s*full address:s:(.*?)\s*$') {
-            $addresses += $Matches[1]
-        } elseif ($line -match '^\s*server port:i:(\d+)\s*$') {
-            $portValues += [int]$Matches[1]
+function Test-SmokeRdpPort([string] $TargetHost) {
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $connection = $client.ConnectAsync($TargetHost, 3389)
+        if (-not $connection.Wait(250)) {
+            return $false
         }
+        return $client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
     }
-    if ($addresses.Count -ne 1) {
-        throw 'verified profile must contain exactly one full address'
-    }
-    if ($portValues.Count -gt 1) {
-        throw 'verified profile contains multiple server ports'
-    }
-    $addressValue = $addresses[0].Trim()
-    if ($addressValue -notmatch '^(?<host>\d{1,3}(?:\.\d{1,3}){3})(?::(?<port>\d+))?$') {
-        throw 'verified profile address must be an IPv4 loopback endpoint'
-    }
-    $targetAddress = $Matches['host']
-    $port = if ($Matches['port']) { [int]$Matches['port'] } elseif ($portValues.Count -eq 1) { $portValues[0] } else { 3389 }
-    if ($Matches['port'] -and $portValues.Count -eq 1 -and $portValues[0] -ne $port) {
-        throw 'verified profile contains conflicting server ports'
-    }
-    $parsedAddress = $null
-    if (-not [System.Net.IPAddress]::TryParse($targetAddress, [ref]$parsedAddress) -or
-        $parsedAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
-        $parsedAddress.GetAddressBytes()[0] -ne 127) {
-        throw 'verified profile address must be an IPv4 loopback endpoint'
-    }
-    if ($port -ne 3389) {
-        throw 'verified profile must use the standard RDP port'
-    }
-    return $parsedAddress.ToString()
 }
 
-function Get-SmokeRdpProfileLines([string] $ProfileTemplatePath, [string] $TargetHost, [string] $TargetUsername) {
-    $resolvedPath = (Resolve-Path -LiteralPath $ProfileTemplatePath -ErrorAction Stop).Path
-    $lines = @(Get-Content -LiteralPath $resolvedPath -ErrorAction Stop)
-    if (@($lines | Where-Object { $_ -match '^\s*password(?: 51)?:' }).Count -gt 0) {
-        throw 'verified profile must not contain a saved password'
+function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
+    if (-not [string]::IsNullOrWhiteSpace($ProfileTemplatePath)) {
+        $resolvedPath = (Resolve-Path -LiteralPath $ProfileTemplatePath -ErrorAction Stop).Path
+        $addresses = @()
+        $portValues = @()
+        foreach ($line in Get-Content -LiteralPath $resolvedPath -ErrorAction Stop) {
+            if ($line -match '^\s*full address:s:(.*?)\s*$') {
+                $addresses += $Matches[1]
+            } elseif ($line -match '^\s*server port:i:(\d+)\s*$') {
+                $portValues += [int]$Matches[1]
+            }
+        }
+        if ($addresses.Count -ne 1) {
+            throw 'verified profile must contain exactly one full address'
+        }
+        if ($portValues.Count -gt 1) {
+            throw 'verified profile contains multiple server ports'
+        }
+        $addressValue = $addresses[0].Trim()
+        if ($addressValue -notmatch '^(?<host>\d{1,3}(?:\.\d{1,3}){3})(?::(?<port>\d+))?$') {
+            throw 'verified profile address must be an IPv4 loopback endpoint'
+        }
+        $targetAddress = $Matches['host']
+        $port = if ($Matches['port']) { [int]$Matches['port'] } elseif ($portValues.Count -eq 1) { $portValues[0] } else { 3389 }
+        if ($Matches['port'] -and $portValues.Count -eq 1 -and $portValues[0] -ne $port) {
+            throw 'verified profile contains conflicting server ports'
+        }
+        $parsedAddress = $null
+        if (-not [System.Net.IPAddress]::TryParse($targetAddress, [ref]$parsedAddress) -or
+            $parsedAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
+            $parsedAddress.GetAddressBytes()[0] -ne 127) {
+            throw 'verified profile address must be an IPv4 loopback endpoint'
+        }
+        if ($port -ne 3389) {
+            throw 'verified profile must use the standard RDP port'
+        }
+        return $parsedAddress.ToString()
     }
-    $preserved = @($lines | Where-Object {
-        $_ -notmatch '^\s*full address:s:' -and
-        $_ -notmatch '^\s*username:s:' -and
-        $_ -notmatch '^\s*prompt for credentials:i:' -and
-        $_ -notmatch '^\s*administrative session:i:' -and
-        $_ -notmatch '^\s*server port:i:'
+
+    Initialize-SmokeNativeHelpers
+    $runnerName = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $runnerShortName = ($runnerName -split '\\')[-1]
+    $candidates = @(foreach ($octet in 2..254) {
+        $candidate = '127.0.0.' + $octet
+        if (-not (Test-SmokeRdpPort $candidate)) {
+            continue
+        }
+        $credentialTarget = 'TERMSRV/' + $candidate
+        try {
+            $credentialUser = [ChuziSmokeRdpCredentialOverrideV2]::ReadUserName($credentialTarget)
+        } catch {
+            continue
+        }
+        if ([string]::IsNullOrWhiteSpace($credentialUser)) {
+            continue
+        }
+        $credentialShortName = ($credentialUser -split '\\')[-1]
+        if ($credentialShortName -ieq $runnerShortName) {
+            continue
+        }
+        [pscustomobject]@{
+            Address = $candidate
+            CredentialTarget = $credentialTarget
+        }
     })
-    return @("full address:s:${TargetHost}:3389", "username:s:$TargetUsername", 'prompt for credentials:i:0', 'administrative session:i:0') + $preserved
+    if ($candidates.Count -eq 0) {
+        throw 'no verified loopback RDP endpoint was discovered'
+    }
+    if ($candidates.Count -ne 1) {
+        throw 'multiple verified loopback RDP endpoints were discovered'
+    }
+    return [string]$candidates[0].Address
+}
+
+# Evidence from the operator-verified MiniSession profile. The endpoint and
+# username stay run-scoped; only these transport options are fixed.
+function Get-SmokeRdpProfileLines([string] $TargetHost, [string] $TargetUsername) {
+    if ([string]::IsNullOrWhiteSpace($TargetHost) -or [string]::IsNullOrWhiteSpace($TargetUsername)) {
+        throw 'smoke RDP profile requires a target and username'
+    }
+    return @(
+        "full address:s:${TargetHost}:3389",
+        "username:s:$TargetUsername",
+        'prompt for credentials:i:0',
+        'administrative session:i:0',
+        'screen mode id:i:2',
+        'session bpp:i:32',
+        'compression:i:1',
+        'redirectclipboard:i:1',
+        'autoreconnection enabled:i:1',
+        'authentication level:i:2',
+        'negotiate security layer:i:1'
+    )
 }
 
 function Set-SmokeRdpCredential([string] $Target, [string] $UserName, [System.Security.SecureString] $Password) {
-    [ChuziSmokeRdpCredentialOverrideV1]::Write($Target, $UserName, $Password)
+    [ChuziSmokeRdpCredentialOverrideV2]::Write($Target, $UserName, $Password)
 }
 
 function Remove-SmokeRdpCredential([string] $Target) {
-    [ChuziSmokeRdpCredentialOverrideV1]::Restore($Target)
+    [ChuziSmokeRdpCredentialOverrideV2]::Restore($Target)
 }
 
-function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $TargetHost, [string] $ProfileTemplatePath) {
+function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $TargetHost) {
     $script:rdpFailurePhase = 'diagnostics_initialize'
     $script:rdpDiagnosticsPath = Join-Path $runRoot 'rdp-diagnostics.log'
     New-Item -ItemType File -Path $script:rdpDiagnosticsPath -Force | Out-Null
@@ -1015,7 +1088,7 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
         $script:rdpCredentialOwned = $true
         $script:rdpCredentialUserName = $credentialUsername
         Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $password
-        if (-not [ChuziSmokeRdpCredentialOverrideV1]::UserNameMatches($script:rdpCredentialTarget, $credentialUsername)) {
+        if (-not [ChuziSmokeRdpCredentialOverrideV2]::UserNameMatches($script:rdpCredentialTarget, $credentialUsername)) {
             throw 'RDP credential identity did not match the target user'
         }
         Set-RdpFailurePhase 'profile_initialize'
@@ -1047,7 +1120,7 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
     )
     Set-RdpFailurePhase 'rdp_profile_setup'
     Write-Host ('RDP DEBUG: rdp_diagnostics=' + $script:rdpDiagnosticsPath)
-    Get-SmokeRdpProfileLines $ProfileTemplatePath $targetHost $targetUsername |
+    Get-SmokeRdpProfileLines $targetHost $targetUsername |
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
     $script:rdpProfilePath = $rdpProfile
 
@@ -1292,12 +1365,21 @@ if ($ValidateOnly) {
         $null -eq $registryHelperType.GetMethod('SetShell')) {
         throw 'session shell registry helper contract validation failed'
     }
-    $credentialHelperType = 'ChuziSmokeRdpCredentialOverrideV1' -as [type]
+    $credentialHelperType = 'ChuziSmokeRdpCredentialOverrideV2' -as [type]
     if ($null -eq $credentialHelperType -or
         $null -eq $credentialHelperType.GetMethod('UserNameMatches') -or
+        $null -eq $credentialHelperType.GetMethod('ReadUserName') -or
         $null -eq $credentialHelperType.GetMethod('Write') -or
         $null -eq $credentialHelperType.GetMethod('Restore')) {
         throw 'RDP credential override helper contract validation failed'
+    }
+    $profileEvidence = @(Get-SmokeRdpProfileLines 'loopback-target' 'smoke-user')
+    if ($profileEvidence.Count -ne 11 -or
+        $profileEvidence[0] -ne 'full address:s:loopback-target:3389' -or
+        $profileEvidence[2] -ne 'prompt for credentials:i:0' -or
+        $profileEvidence[3] -ne 'administrative session:i:0' -or
+        @($profileEvidence | Where-Object { $_ -match '^password(?: 51)?:' }).Count -ne 0) {
+        throw 'RDP profile evidence contract validation failed'
     }
     if (-not [string]::IsNullOrWhiteSpace($RdpProfileTemplatePath)) {
         [void](Get-LocalRdpTarget $RdpProfileTemplatePath)
@@ -1318,7 +1400,7 @@ try {
         throw 'Windows native smoke requires an administrator runner'
     }
     if ($LocalRdp) {
-        $failureStage = 'rdp_profile_template'
+        $failureStage = 'rdp_endpoint_discovery'
         $script:rdpTargetHost = Get-LocalRdpTarget $RdpProfileTemplatePath
     }
     $failureStage = 'root_setup'
@@ -1362,7 +1444,7 @@ try {
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID = $runID
     if ($LocalRdp) {
         $failureStage = 'local_rdp_session'
-        Start-LocalRdpSession ($userPrefix + '0001') $runtimeRoot $script:rdpTargetHost $RdpProfileTemplatePath
+        Start-LocalRdpSession ($userPrefix + '0001') $runtimeRoot $script:rdpTargetHost
         $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP = '1'
     }
 

@@ -5,7 +5,7 @@ Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..ec87e23842d9c7f48a91df3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 11
+Revision: 12
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -114,6 +114,16 @@ already exists, the harness retains its native credential record in process
 memory, temporarily writes the one-run identity, verifies the saved username,
 then restores the original record during normal success or failure cleanup.
 Windows `-ValidateOnly` and LocalRdp verification are pending.
+
+On revision 12, the operator confirmed that the verified MiniSession profile
+starts RDP without disconnecting the interactive runner. The harness now keeps
+the verified transport fields as an internal evidence contract, scans the
+loopback aliases for the unique reachable endpoint with an existing
+`TERMSRV/127.0.0.x` credential, and generates the run-scoped `.rdp` file in the
+smoke directory. The endpoint and disposable Chuzi username remain dynamic;
+the generated profile is removed during cleanup. The explicit template path is
+retained only as an optional diagnostic override. Windows validation after this
+change is pending.
 
 ## Risk
 

@@ -165,13 +165,16 @@ interactive session，找不到 session 时保持 `session_unavailable`/quaranti
 fail-closed 行为。
 
 Windows 实验机可在仓库根目录以管理员 PowerShell 执行
-scripts/test_windows_job_pool_smoke.ps1 -LocalRdp -RdpProfileTemplatePath .\MiniSession-1272.rdp，诊断本机 RDP session 和 slot
+scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和 slot
 agent 链路。该模式创建本轮随机命名的普通本地用户，
 用系统随机密码，并把凭据仅短暂写入当前交互用户的 session-scoped Windows Credential
 Manager；密码、token 和 Profile 原始路径不写入普通日志或 Core/Matrix DTO。`-LocalRdp`
-要求传入已验证的 `.rdp` 模板；脚本从模板读取 endpoint，只接受 IPv4 loopback 与 3389
-端口，并使用该 endpoint 生成本轮 profile，不自行替换为主机名或其他地址。已有的
-Credential Manager 记录会在测试期间暂存并于退出时恢复。随后等待该用户对应的真实 active WTS
+扫描 `127.0.0.2` 到 `127.0.0.254`，以端口 3389 可达和唯一已有的
+`TERMSRV/127.0.0.x` Credential Manager 记录确认已验证的 loopback 路由；随后在 smoke
+目录生成一次性 profile。profile 固定保留已验证的 `prompt for credentials`、
+`administrative session`、显示、压缩、剪贴板、自动重连、认证级别和协商安全层字段，
+只动态写入 endpoint 与本轮用户名。已有的 Credential Manager 记录会在测试期间暂存并于退出时恢复，
+生成的 profile 使用后删除。随后等待该用户对应的真实 active WTS
 session，再运行原生 provisioner 测试。RDP 配置显式指定本轮随机用户并关闭
 administrative session。测试按 SID、slot ownership 和 active session 重新校验身份；
 结束后注销 session、回收用户、profile、运行目录和临时 Credential Manager 凭据。
