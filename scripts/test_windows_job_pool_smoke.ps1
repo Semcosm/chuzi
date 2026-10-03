@@ -539,7 +539,9 @@ function Start-LocalRdpSession([string] $Name) {
       "username:s:$targetUsername",
       'prompt for credentials:i:0',
       'administrative session:i:0',
-      'disableconnectionsharing:i:1',
+      # Match the default interactive mstsc behavior. For local RDP/RDPWrap,
+      # forcing a new connection can be rejected as console error 0x708.
+      'disableconnectionsharing:i:0',
       'promptcredentialonce:i:0') |
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
     $script:rdpProfilePath = $rdpProfile
