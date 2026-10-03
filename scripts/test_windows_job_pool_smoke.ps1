@@ -159,8 +159,56 @@ function Convert-SmokeSecureStringToPlainText([System.Security.SecureString] $Va
     }
 }
 
+function Initialize-SmokeSessionShellRegistryHelper {
+    if ('ChuziSmokeSessionShellRegistryV2' -as [type]) {
+        return
+    }
+    # Add-Type classes persist in a PowerShell process; version this helper so an older session cannot reuse stale code.
+    Add-Type -TypeDefinition @'
+using System;
+using System.Security.Principal;
+using Microsoft.Win32;
+
+public static class ChuziSmokeSessionShellRegistryV2
+{
+    public static string LastOperation { get; private set; }
+
+    public static void SetShell(string sid, string command)
+    {
+        LastOperation = "validate_command";
+        if (String.IsNullOrWhiteSpace(command))
+            throw new ArgumentException("session shell command is required");
+        LastOperation = "normalize_sid";
+        string userSid = new SecurityIdentifier(sid).Value;
+        string path = userSid + @"\Software\Microsoft\Windows NT\CurrentVersion\Winlogon";
+        LastOperation = "open_users";
+        using (RegistryKey users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default))
+        {
+            LastOperation = "create_winlogon_key";
+            using (RegistryKey winlogon = users.CreateSubKey(path, RegistryKeyPermissionCheck.ReadWriteSubTree))
+            {
+                if (winlogon == null)
+                    throw new InvalidOperationException("session shell registry key is unavailable");
+                LastOperation = "set_shell";
+                winlogon.SetValue("Shell", command, RegistryValueKind.String);
+                LastOperation = "read_shell";
+                object actual = winlogon.GetValue("Shell", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                LastOperation = "verify_shell";
+                if (!(actual is string) || !String.Equals((string)actual, command, StringComparison.Ordinal) ||
+                    command.IndexOf("-Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    command.IndexOf("Bypass", StringComparison.OrdinalIgnoreCase) >= 0)
+                    throw new InvalidOperationException("session shell registry value mismatch");
+                LastOperation = "complete";
+            }
+        }
+    }
+}
+'@
+}
+
 function Initialize-SmokeNativeHelpers {
     if ('ChuziSmokeCredentialStore' -as [type]) {
+        Initialize-SmokeSessionShellRegistryHelper
         return
     }
     Add-Type -TypeDefinition @'
@@ -169,9 +217,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security;
-using System.Security.Principal;
 using System.Text;
-using Microsoft.Win32;
 
 public static class ChuziSmokeCredentialStore
 {
@@ -357,41 +403,6 @@ public static class ChuziSmokeProfileBootstrap
     }
 }
 
-public static class ChuziSmokeSessionShellRegistry
-{
-    public static string LastOperation { get; private set; }
-
-    public static void SetShell(string sid, string command)
-    {
-        LastOperation = "validate_command";
-        if (String.IsNullOrWhiteSpace(command))
-            throw new ArgumentException("session shell command is required");
-        LastOperation = "normalize_sid";
-        string userSid = new SecurityIdentifier(sid).Value;
-        string path = userSid + @"\Software\Microsoft\Windows NT\CurrentVersion\Winlogon";
-        LastOperation = "open_users";
-        using (RegistryKey users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default))
-        {
-            LastOperation = "create_winlogon_key";
-            using (RegistryKey winlogon = users.CreateSubKey(path, RegistryKeyPermissionCheck.ReadWriteSubTree))
-            {
-                if (winlogon == null)
-                    throw new InvalidOperationException("session shell registry key is unavailable");
-                LastOperation = "set_shell";
-                winlogon.SetValue("Shell", command, RegistryValueKind.String);
-                LastOperation = "read_shell";
-                object actual = winlogon.GetValue("Shell", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-                LastOperation = "verify_shell";
-                if (!(actual is string) || !String.Equals((string)actual, command, StringComparison.Ordinal) ||
-                    command.IndexOf("-Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    command.IndexOf("Bypass", StringComparison.OrdinalIgnoreCase) >= 0)
-                    throw new InvalidOperationException("session shell registry value mismatch");
-                LastOperation = "complete";
-            }
-        }
-    }
-}
-
 public sealed class ChuziSmokeSession
 {
     public int SessionId { get; set; }
@@ -464,6 +475,7 @@ public static class ChuziSmokeSessionQuery
     }
 }
 '@
+    Initialize-SmokeSessionShellRegistryHelper
 }
 
 function Sign-SmokeSessionShell([string] $ScriptPath) {
@@ -584,7 +596,7 @@ function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
         Set-RdpFailurePhase 'session_shell_policy_command_validation'
         $command = Get-SmokeSessionShellCommand $RuntimeRoot
         Set-RdpFailurePhase 'session_shell_policy_write_verify'
-        [ChuziSmokeSessionShellRegistry]::SetShell($targetUser.SID.Value, $command)
+        [ChuziSmokeSessionShellRegistryV2]::SetShell($targetUser.SID.Value, $command)
     } catch {
         $operationFailed = $true
         $operationFailurePhase = $script:rdpFailurePhase
@@ -593,7 +605,11 @@ function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
         $script:rdpFailureExceptionType = $cause.GetType().FullName
         $script:rdpFailureHResult = '0x{0:X8}' -f $cause.HResult
         $script:rdpFailureCategory = Get-RdpFailureCategory $_.Exception
-        $script:rdpFailureOperation = [ChuziSmokeSessionShellRegistry]::LastOperation
+        try {
+            $script:rdpFailureOperation = [ChuziSmokeSessionShellRegistryV2]::LastOperation
+        } catch {
+            $script:rdpFailureOperation = 'registry_operation_unavailable'
+        }
         $script:rdpFailureDetailsCaptured = $true
     } finally {
         if ($loaded) {
@@ -1095,6 +1111,14 @@ if ($ValidateOnly) {
         throw 'PowerShell result collection validation failed'
     }
     Initialize-SmokeNativeHelpers
+    $registryHelperType = 'ChuziSmokeSessionShellRegistryV2' -as [type]
+    if ($null -eq $registryHelperType) {
+        throw 'session shell registry helper validation failed'
+    }
+    if ($null -eq $registryHelperType.GetProperty('LastOperation') -or
+        $null -eq $registryHelperType.GetMethod('SetShell')) {
+        throw 'session shell registry helper contract validation failed'
+    }
     Write-Host 'Windows job-pool smoke script validation passed'
     return
 }
