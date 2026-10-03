@@ -1,11 +1,11 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: f2d5f6e47e5afcd013adc3805022b04f5be98b92
+Head or Range: c28794d1db90707d2a27f244e7f05900814d3e52
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 22
+Revision: 23
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -218,6 +218,11 @@ CreateProcessWithLogonW(LOGON_WITH_PROFILE) initializes the disposable user's
 Profile and NTUSER.DAT before mstsc starts. The generated RDP file is passed as
 an explicitly quoted mstsc argument, and the exact launch command is preserved
 in the redacted diagnostics.
+
+Revision 23 makes the native PowerShell helper initialization idempotent across
+sequential ValidateOnly and LocalRdp invocations in the same PowerShell session.
+The script now reuses an already loaded ChuziSmokeCredentialStore type instead
+of attempting a second Add-Type definition.
 
 ## Risk
 
