@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [switch] $LocalRdp,
-    [switch] $ValidateOnly
+    [switch] $ValidateOnly,
+    [string] $RdpProfileTemplatePath
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,7 @@ $script:unownedSmokeUsers = 0
 $script:remainingSmokeUsers = -1
 $script:rdpCredentialOwned = $false
 $script:rdpCredentialTarget = $null
+$script:rdpCredentialUserName = $null
 $script:rdpProfilePath = $null
 $script:rdpDebugSummary = @()
 $script:rdpClientProcess = $null
@@ -206,9 +208,150 @@ public static class ChuziSmokeSessionShellRegistryV2
 '@
 }
 
+function Initialize-SmokeRdpCredentialOverrideHelper {
+    if ('ChuziSmokeRdpCredentialOverrideV1' -as [type]) {
+        return
+    }
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security;
+
+public static class ChuziSmokeRdpCredentialOverrideV1
+{
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct NativeCredential
+    {
+        public uint Flags;
+        public uint Type;
+        public IntPtr TargetName;
+        public IntPtr Comment;
+        public long LastWritten;
+        public uint CredentialBlobSize;
+        public IntPtr CredentialBlob;
+        public uint Persist;
+        public uint AttributeCount;
+        public IntPtr Attributes;
+        public IntPtr TargetAlias;
+        public IntPtr UserName;
+    }
+
+    [DllImport("advapi32.dll", EntryPoint = "CredReadW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredRead(string targetName, uint type, uint flags, out IntPtr credential);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredWriteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredWrite(ref NativeCredential credential, uint flags);
+
+    [DllImport("advapi32.dll", EntryPoint = "CredDeleteW", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredDelete(string targetName, uint type, uint flags);
+
+    [DllImport("advapi32.dll")]
+    private static extern void CredFree(IntPtr credential);
+
+    private static IntPtr previousCredential = IntPtr.Zero;
+    private static string activeTarget;
+    private static bool replacementWritten;
+
+    public static bool UserNameMatches(string targetName, string expectedUserName)
+    {
+        IntPtr credential;
+        if (!CredRead(targetName, 2, 0, out credential))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error == 1168) return false;
+            throw new Win32Exception(error);
+        }
+        try
+        {
+            NativeCredential value = (NativeCredential)Marshal.PtrToStructure(credential, typeof(NativeCredential));
+            string actualUserName = Marshal.PtrToStringUni(value.UserName) ?? String.Empty;
+            return String.Equals(actualUserName, expectedUserName, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            CredFree(credential);
+        }
+    }
+
+    public static void Write(string targetName, string userName, SecureString password)
+    {
+        if (activeTarget != null) throw new InvalidOperationException("credential override is already active");
+        IntPtr existing;
+        if (CredRead(targetName, 2, 0, out existing))
+        {
+            previousCredential = existing;
+        }
+        else
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error != 1168) throw new Win32Exception(error);
+        }
+        activeTarget = targetName;
+
+        IntPtr target = IntPtr.Zero;
+        IntPtr user = IntPtr.Zero;
+        IntPtr blob = IntPtr.Zero;
+        try
+        {
+            target = Marshal.StringToHGlobalUni(targetName);
+            user = Marshal.StringToHGlobalUni(userName);
+            blob = Marshal.SecureStringToGlobalAllocUnicode(password);
+            NativeCredential credential = new NativeCredential
+            {
+                Type = 2,
+                TargetName = target,
+                CredentialBlob = blob,
+                CredentialBlobSize = checked((uint)(password.Length * 2)),
+                Persist = 1,
+                UserName = user
+            };
+            if (!CredWrite(ref credential, 0))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            replacementWritten = true;
+        }
+        finally
+        {
+            if (blob != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(blob);
+            if (user != IntPtr.Zero) Marshal.FreeHGlobal(user);
+            if (target != IntPtr.Zero) Marshal.FreeHGlobal(target);
+        }
+    }
+
+    public static void Restore(string targetName)
+    {
+        if (activeTarget == null) return;
+        if (!String.Equals(activeTarget, targetName, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("credential override target mismatch");
+
+        if (previousCredential != IntPtr.Zero)
+        {
+            NativeCredential previous = (NativeCredential)Marshal.PtrToStructure(previousCredential, typeof(NativeCredential));
+            if (!CredWrite(ref previous, 0))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+        }
+        else if (replacementWritten && !CredDelete(targetName, 2, 0))
+        {
+            int error = Marshal.GetLastWin32Error();
+            if (error != 1168) throw new Win32Exception(error);
+        }
+
+        if (previousCredential != IntPtr.Zero)
+        {
+            CredFree(previousCredential);
+            previousCredential = IntPtr.Zero;
+        }
+        activeTarget = null;
+        replacementWritten = false;
+    }
+}
+'@
+}
+
 function Initialize-SmokeNativeHelpers {
     if ('ChuziSmokeCredentialStore' -as [type]) {
         Initialize-SmokeSessionShellRegistryHelper
+        Initialize-SmokeRdpCredentialOverrideHelper
         return
     }
     Add-Type -TypeDefinition @'
@@ -476,6 +619,7 @@ public static class ChuziSmokeSessionQuery
 }
 '@
     Initialize-SmokeSessionShellRegistryHelper
+    Initialize-SmokeRdpCredentialOverrideHelper
 }
 
 function Sign-SmokeSessionShell([string] $ScriptPath) {
@@ -741,6 +885,9 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     }
     try {
         Write-RdpDiagnostic ('RDP_CREDENTIAL_PRESENT=' + [ChuziSmokeCredentialStore]::Exists($script:rdpCredentialTarget))
+        if (-not [string]::IsNullOrWhiteSpace($script:rdpCredentialUserName)) {
+            Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_MATCHES=' + [ChuziSmokeRdpCredentialOverrideV1]::UserNameMatches($script:rdpCredentialTarget, $script:rdpCredentialUserName))
+        }
     } catch {
         Write-RdpDiagnostic 'CREDENTIAL_QUERY_ERROR=unavailable'
     }
@@ -765,40 +912,72 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     }
 }
 
-function Get-LocalRdpTarget {
-    foreach ($octet in 2..254) {
-        $candidate = '127.0.0.' + $octet
-        $credentialTarget = 'TERMSRV/' + $candidate
-        if (-not (Test-SmokeRdpCredential $credentialTarget)) {
-            return $candidate
+function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
+    if ([string]::IsNullOrWhiteSpace($ProfileTemplatePath)) {
+        throw 'local RDP requires a verified profile template'
+    }
+    $resolvedPath = (Resolve-Path -LiteralPath $ProfileTemplatePath -ErrorAction Stop).Path
+    $addresses = @()
+    $portValues = @()
+    foreach ($line in Get-Content -LiteralPath $resolvedPath -ErrorAction Stop) {
+        if ($line -match '^\s*full address:s:(.*?)\s*$') {
+            $addresses += $Matches[1]
+        } elseif ($line -match '^\s*server port:i:(\d+)\s*$') {
+            $portValues += [int]$Matches[1]
         }
     }
-    throw 'no unused loopback RDP credential target is available'
+    if ($addresses.Count -ne 1) {
+        throw 'verified profile must contain exactly one full address'
+    }
+    if ($portValues.Count -gt 1) {
+        throw 'verified profile contains multiple server ports'
+    }
+    $addressValue = $addresses[0].Trim()
+    if ($addressValue -notmatch '^(?<host>\d{1,3}(?:\.\d{1,3}){3})(?::(?<port>\d+))?$') {
+        throw 'verified profile address must be an IPv4 loopback endpoint'
+    }
+    $host = $Matches['host']
+    $port = if ($Matches['port']) { [int]$Matches['port'] } elseif ($portValues.Count -eq 1) { $portValues[0] } else { 3389 }
+    if ($Matches['port'] -and $portValues.Count -eq 1 -and $portValues[0] -ne $port) {
+        throw 'verified profile contains conflicting server ports'
+    }
+    $parsedAddress = $null
+    if (-not [System.Net.IPAddress]::TryParse($host, [ref]$parsedAddress) -or
+        $parsedAddress.AddressFamily -ne [System.Net.Sockets.AddressFamily]::InterNetwork -or
+        $parsedAddress.GetAddressBytes()[0] -ne 127) {
+        throw 'verified profile address must be an IPv4 loopback endpoint'
+    }
+    if ($port -ne 3389) {
+        throw 'verified profile must use the standard RDP port'
+    }
+    return $parsedAddress.ToString()
 }
 
-function Get-SmokeRdpCredentialListing {
-    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
-    return (& $cmdkey '/list' 2>&1 | Out-String)
-}
-
-function Test-SmokeRdpCredential([string] $Target) {
-    $output = Get-SmokeRdpCredentialListing
-    return $output.IndexOf($Target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+function Get-SmokeRdpProfileLines([string] $ProfileTemplatePath, [string] $TargetHost, [string] $TargetUsername) {
+    $resolvedPath = (Resolve-Path -LiteralPath $ProfileTemplatePath -ErrorAction Stop).Path
+    $lines = @(Get-Content -LiteralPath $resolvedPath -ErrorAction Stop)
+    if (@($lines | Where-Object { $_ -match '^\s*password(?: 51)?:' }).Count -gt 0) {
+        throw 'verified profile must not contain a saved password'
+    }
+    $preserved = @($lines | Where-Object {
+        $_ -notmatch '^\s*full address:s:' -and
+        $_ -notmatch '^\s*username:s:' -and
+        $_ -notmatch '^\s*prompt for credentials:i:' -and
+        $_ -notmatch '^\s*administrative session:i:' -and
+        $_ -notmatch '^\s*server port:i:'
+    })
+    return @("full address:s:${TargetHost}:3389", "username:s:$TargetUsername", 'prompt for credentials:i:0', 'administrative session:i:0') + $preserved
 }
 
 function Set-SmokeRdpCredential([string] $Target, [string] $UserName, [System.Security.SecureString] $Password) {
-    [ChuziSmokeCredentialStore]::Write($Target, $UserName, $Password)
+    [ChuziSmokeRdpCredentialOverrideV1]::Write($Target, $UserName, $Password)
 }
 
 function Remove-SmokeRdpCredential([string] $Target) {
-    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
-    $process = Start-Process -FilePath $cmdkey -ArgumentList @('/delete:' + $Target) -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
-    if ($process.ExitCode -ne 0 -and (Test-SmokeRdpCredential $Target)) {
-        throw ('cmdkey credential delete failed with exit code ' + $process.ExitCode)
-    }
+    [ChuziSmokeRdpCredentialOverrideV1]::Restore($Target)
 }
 
-function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
+function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $TargetHost, [string] $ProfileTemplatePath) {
     $script:rdpFailurePhase = 'diagnostics_initialize'
     $script:rdpDiagnosticsPath = Join-Path $runRoot 'rdp-diagnostics.log'
     New-Item -ItemType File -Path $script:rdpDiagnosticsPath -Force | Out-Null
@@ -809,12 +988,12 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
     Set-RdpFailurePhase 'native_helpers'
     Initialize-SmokeNativeHelpers
     Set-RdpFailurePhase 'target_selection'
-    $targetHost = Get-LocalRdpTarget
+    if ([string]::IsNullOrWhiteSpace($TargetHost)) {
+        throw 'verified RDP profile target was not initialized'
+    }
+    $targetHost = $TargetHost
     $script:rdpCredentialTarget = 'TERMSRV/' + $targetHost
     Set-RdpFailurePhase 'credential_precheck'
-    if (Test-SmokeRdpCredential $script:rdpCredentialTarget) {
-        throw 'local RDP credential target already exists'
-    }
 
     # Credential Manager stores the canonical computer-qualified identity. Keep
     # the same form in the RDP profile so mstsc does not fall back to the
@@ -833,8 +1012,12 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
         $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
         Set-RdpFailurePhase 'credential_write'
-        Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $password
         $script:rdpCredentialOwned = $true
+        $script:rdpCredentialUserName = $credentialUsername
+        Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $password
+        if (-not [ChuziSmokeRdpCredentialOverrideV1]::UserNameMatches($script:rdpCredentialTarget, $credentialUsername)) {
+            throw 'RDP credential identity did not match the target user'
+        }
         Set-RdpFailurePhase 'profile_initialize'
         Initialize-SmokeUserProfile $Name $password
         Set-RdpFailurePhase 'session_shell_policy'
@@ -864,17 +1047,7 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot) {
     )
     Set-RdpFailurePhase 'rdp_profile_setup'
     Write-Host ('RDP DEBUG: rdp_diagnostics=' + $script:rdpDiagnosticsPath)
-    @("full address:s:${targetHost}:3389",
-      "username:s:$targetUsername",
-      'prompt for credentials:i:0',
-      'administrative session:i:0',
-      'screen mode id:i:2',
-      'session bpp:i:32',
-      'compression:i:1',
-      'redirectclipboard:i:1',
-      'autoreconnection enabled:i:1',
-      'authentication level:i:2',
-      'negotiate security layer:i:1') |
+    Get-SmokeRdpProfileLines $ProfileTemplatePath $targetHost $targetUsername |
         Set-Content -LiteralPath $rdpProfile -Encoding ASCII
     $script:rdpProfilePath = $rdpProfile
 
@@ -1119,6 +1292,16 @@ if ($ValidateOnly) {
         $null -eq $registryHelperType.GetMethod('SetShell')) {
         throw 'session shell registry helper contract validation failed'
     }
+    $credentialHelperType = 'ChuziSmokeRdpCredentialOverrideV1' -as [type]
+    if ($null -eq $credentialHelperType -or
+        $null -eq $credentialHelperType.GetMethod('UserNameMatches') -or
+        $null -eq $credentialHelperType.GetMethod('Write') -or
+        $null -eq $credentialHelperType.GetMethod('Restore')) {
+        throw 'RDP credential override helper contract validation failed'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($RdpProfileTemplatePath)) {
+        [void](Get-LocalRdpTarget $RdpProfileTemplatePath)
+    }
     Write-Host 'Windows job-pool smoke script validation passed'
     return
 }
@@ -1133,6 +1316,10 @@ try {
     $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
     if (-not $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)) {
         throw 'Windows native smoke requires an administrator runner'
+    }
+    if ($LocalRdp) {
+        $failureStage = 'rdp_profile_template'
+        $script:rdpTargetHost = Get-LocalRdpTarget $RdpProfileTemplatePath
     }
     $failureStage = 'root_setup'
     New-Item -ItemType Directory -Path $runRoot -Force | Out-Null
@@ -1175,7 +1362,7 @@ try {
     $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID = $runID
     if ($LocalRdp) {
         $failureStage = 'local_rdp_session'
-        Start-LocalRdpSession ($userPrefix + '0001') $runtimeRoot
+        Start-LocalRdpSession ($userPrefix + '0001') $runtimeRoot $script:rdpTargetHost $RdpProfileTemplatePath
         $env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP = '1'
     }
 
@@ -1256,6 +1443,9 @@ try {
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_USER_PREFIX -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_RUN_ID -ErrorAction SilentlyContinue
     Remove-Item Env:CHUZI_WINDOWS_JOB_POOL_SMOKE_LOCAL_RDP -ErrorAction SilentlyContinue
+    if ($null -ne $script:rdpClientProcess -and -not $script:rdpClientProcess.HasExited) {
+        Stop-Process -InputObject $script:rdpClientProcess -Force -ErrorAction SilentlyContinue
+    }
     if ($script:rdpCredentialOwned) {
         try {
             Remove-SmokeRdpCredential $script:rdpCredentialTarget
@@ -1263,9 +1453,6 @@ try {
         } catch {
             $cleanupErrors.Add('rdp_credential_cleanup_failed')
         }
-    }
-    if ($null -ne $script:rdpClientProcess -and -not $script:rdpClientProcess.HasExited) {
-        Stop-Process -InputObject $script:rdpClientProcess -Force -ErrorAction SilentlyContinue
     }
     if ($null -ne $script:rdpProfilePath) {
         Remove-Item -LiteralPath $script:rdpProfilePath -Force -ErrorAction SilentlyContinue

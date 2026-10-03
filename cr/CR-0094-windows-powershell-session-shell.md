@@ -5,7 +5,7 @@ Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..ec87e23842d9c7f48a91df3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 10
+Revision: 11
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -102,6 +102,18 @@ credential store type. Revision 10 uses a separately versioned registry helper,
 loads it even when older helpers are already cached, makes the operation lookup
 fail closed to a safe marker, and validates its required members in -ValidateOnly.
 Windows verification is pending.
+
+On revision 10, the local RDP smoke disconnected the operator session. Review
+found that the harness had moved from the previously verified RDP profile
+endpoint to scanning other loopback aliases to avoid Credential Manager
+collisions. Revision 11 requires an operator-supplied verified `.rdp` template,
+derives the loopback IPv4 endpoint from that file, and rejects non-loopback
+addresses and nonstandard ports. The generated smoke profile continues to use
+the profile-based mstsc invocation. If the matching Credential Manager target
+already exists, the harness retains its native credential record in process
+memory, temporarily writes the one-run identity, verifies the saved username,
+then restores the original record during normal success or failure cleanup.
+Windows `-ValidateOnly` and LocalRdp verification are pending.
 
 ## Risk
 

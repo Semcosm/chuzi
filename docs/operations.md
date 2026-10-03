@@ -83,11 +83,17 @@ ready。这样 OS 边界故障既会继续按固定间隔重试，也会出现�
 阶段 4 的原生 smoke 只能在受控 Windows runner 上运行。runner 必须使用管理员权限、
 可创建 disposable 本地用户、可查询 WTS session，并带有 `go.exe`、Node.js 20+ 和
 当前 checkout；专用 runner 标签为 `self-hosted`, `windows`, `chuzi-job-pool`。测试脚本不接受
-用户名、路径、命令或 executable 参数：
+用户名、命令或 executable 参数；`-LocalRdp` 只接受操作者已经验证过的 `.rdp` 模板路径：
 
 ```powershell
-scripts/test_windows_job_pool_smoke.ps1
+scripts/test_windows_job_pool_smoke.ps1 -ValidateOnly
+scripts/test_windows_job_pool_smoke.ps1 -ValidateOnly -RdpProfileTemplatePath .\MiniSession-1272.rdp
+scripts/test_windows_job_pool_smoke.ps1 -LocalRdp -RdpProfileTemplatePath .\MiniSession-1272.rdp
 ```
+
+`-LocalRdp` 从模板读取并校验 loopback IPv4 endpoint 与标准 RDP 端口，保留模板的连接选项，
+只替换本轮用户名和 endpoint；它不会解析或回退到主机名、LAN 地址或其他动态 endpoint。
+模板不能包含保存的密码；匹配的 Credential Manager 项会在测试期间暂存并在退出时恢复。
 
 脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
 `chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，

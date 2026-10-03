@@ -122,8 +122,8 @@ Profile policy/bootstrap 只对目标 SID 的用户 hive 生效。首次初始�
 
 1. TermService、RDP listener 和 Remote Desktop firewall rules 已启用。
 2. 为目标用户创建 Profile 并加入 Remote Desktop Users。
-3. 在 `127.0.0.2` 到 `127.0.0.254` 中扫描未占用的 `TERMSRV/<loopback>` 目标，再通过 `cmdkey /generic` 写入已保存凭据；地址不固定为某一个八位组。
-4. `.rdp` 只包含地址、用户名和 `prompt for credentials:i:0`，密码不写入文件。
+3. 本地 smoke 必须传入人工验证过的 `.rdp` 模板；脚本读取其中的 loopback IPv4 endpoint，拒绝主机名、LAN 地址和非标准端口。
+4. `.rdp` 只包含从模板确认的 endpoint、用户名和 `prompt for credentials:i:0`，密码不写入文件；同名 Credential Manager 项只在测试期间替换并在退出时恢复。
 5. 启动 `mstsc` 后等待 WTS Session 从连接查询变为 active。
 6. 由 session broker 校验 SID、Session、desktop、agent heartbeat 和浏览器启动。
 
