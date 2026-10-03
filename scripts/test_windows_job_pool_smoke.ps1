@@ -486,8 +486,11 @@ function Start-LocalRdpSession([string] $Name) {
         throw 'local RDP credential target already exists'
     }
 
-    $targetUsername = '.\' + $Name
-    $credentialUsername = $env:COMPUTERNAME + '\' + $Name
+    # Credential Manager stores the canonical computer-qualified identity. Keep
+    # the same form in the RDP profile so mstsc does not fall back to the
+    # interactive runner when the saved credential username differs.
+    $targetUsername = $env:COMPUTERNAME + '\' + $Name
+    $credentialUsername = $targetUsername
     $password = New-SmokePassword
     $debugPassword = Convert-SmokeSecureStringToPlainText $password
     try {
