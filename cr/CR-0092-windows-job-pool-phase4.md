@@ -5,7 +5,7 @@ Head or Range: bfcf31fe612a96010df96f18944f5aa1ae878154
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 18
+Revision: 19
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -42,7 +42,8 @@ CHUZI ownership marker. Revision 2 adds the SessionBootstrapper
 contract: a runner-owned provider may establish the disposable user's WTS
 session, but `Provision` always re-runs `FindSession(managed SID)` before
 starting the agent. No password crosses the contract or enters Core, logs,
-environment files, or test output. Cleanup stops worker/agent trees before
+environment files, or preserved test artifacts; the local diagnostic console
+is the explicit test-machine exception. Cleanup stops worker/agent trees before
 session logoff and user/root removal, uses bounded retry/backoff, keeps user and
 root results separate, preserves a redacted `test-output.log` on failure, and
 refuses unknown ownership entries. The Windows-only test still covers
@@ -156,7 +157,8 @@ and SID, Credential Manager target, temporary RDP profile path, and an explicit
 password-printed-to-console marker. The generated one-time password is printed
 only to the interactive console by the local diagnostic path; the same
 redacted summary is preserved in the failure log when the RDP session cannot be
-established. No credential material is written to the summary or output.
+established. No credential material is written to the summary or preserved
+output.
 
 Revision 13 changes the diagnostic `-LocalRdp` target to `127.0.0.2`, matching
 the `mstsc` target used by the sebaxakerhtc RDPWrap `RDP_CnC` self-test. The
