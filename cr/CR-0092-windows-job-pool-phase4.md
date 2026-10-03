@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 8b551fb5f690c61648cce5d2e0b89795b23f7e93
+Head or Range: bfcf31fe612a96010df96f18944f5aa1ae878154
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 17
+Revision: 18
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 8b551fb5f690c61648cce5d2e0b89795b23f7e93
+Head OID: bfcf31fe612a96010df96f18944f5aa1ae878154
 Integrated Result: pending
 
 ## Summary
@@ -153,9 +153,10 @@ session was created before this change, so native acceptance remains pending.
 Revision 12 adds pre-connect identity diagnostics. The script prints the
 interactive runner username and session ID, target host, exact target username
 and SID, Credential Manager target, temporary RDP profile path, and an explicit
-password-not-printed marker. The same redacted summary is preserved in the
-failure log when the RDP session cannot be established. No credential material
-is written to the summary or output.
+password-printed-to-console marker. The generated one-time password is printed
+only to the interactive console by the local diagnostic path; the same
+redacted summary is preserved in the failure log when the RDP session cannot be
+established. No credential material is written to the summary or output.
 
 Revision 13 changes the diagnostic `-LocalRdp` target to `127.0.0.2`, matching
 the `mstsc` target used by the sebaxakerhtc RDPWrap `RDP_CnC` self-test. The
@@ -180,19 +181,17 @@ session. The explicit settings close that profile-level session-reuse path while
 the exact username, Credential Manager target, runner identity fence, and
 production WTS `FindSession` validation remain unchanged.
 
-Revision 16 adds an opt-in `-ManualRdp` diagnostic mode. It creates the same
-disposable local user but asks the operator for its one-time password through a
-SecureString prompt, without printing or logging the password. The script then
-prints the target username, SID, and `127.0.0.2` address and waits while the
-operator uses RDP_CnC to enter those credentials manually. After an explicit
-`YES` confirmation, the script requires the exact target user to have an active
-WTS session and rejects any runner-account session before native provisioning.
-
-Revision 17 preserves the manual mode's redacted exception detail. Failures
-before the operator handoff now report a single-line stage detail (for example,
-user creation, group membership, or target-user lookup) without exposing the
-SecureString password or any credential material. The wrapper still preserves
-the existing redacted diagnostics and cleanup ownership markers.
+Revision 18 removes the manual RDP branch. The local diagnostic now always
+generates one disposable password, prints the exact target username, password,
+SID, address, and profile path for test-machine debugging, stores the same
+password only in the current interactive user's Credential Manager, and starts
+the generated RDP profile through `mstsc.exe`. Failure summaries and preserved
+logs continue to contain only the redacted
+`rdp_password=printed_to_console` marker; the password is never written to the
+profile, test log, or CR. After the target WTS session becomes active, the
+harness also waits for the user's Profile and `NTUSER.DAT` to exist before
+starting native provisioning, matching the disposable-user initialization
+sequence used by the Windows session experiment.
 
 ## Risk
 
