@@ -5,7 +5,7 @@ Head or Range: aa7e4b348f5d51bcd4e24f378fb0c5a4231e1d9d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 6
+Revision: 7
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -67,6 +67,15 @@ Framework; the smoke now uses the compatible `IsPathRooted` check, records safe
 subphases, and writes through a disposed registry handle. This update remains
 pending Windows verification. Authenticode trust, WTS readiness, and native
 provisioner smoke remain pending operator verification.
+
+On commit 4abc14d, Windows -ValidateOnly passed, but LocalRdp failed during
+session_shell_policy_write_verify after loading the target hive and validating
+the command. The PowerShell wrapper discarded the original registry exception.
+Revision 7 records the fixed registry operation, unwrapped exception type and
+HRESULT, and a safe category without the exception message. Microsoft
+documentation lists permission and security exceptions for RegistryKey writes
+and documents process-specific registry views; the access behavior remains
+unchanged until the specific failure is known. Windows retest is pending.
 
 ## Risk
 

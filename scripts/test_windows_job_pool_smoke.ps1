@@ -40,6 +40,8 @@ $script:rdpFailurePhase = 'not_started'
 $script:rdpFailureExceptionType = 'unavailable'
 $script:rdpFailureHResult = 'unavailable'
 $script:rdpFailureCategory = 'unavailable'
+$script:rdpFailureOperation = 'unavailable'
+$script:rdpFailureDetailsCaptured = $false
 $script:rdpStartTime = $null
 $script:sessionShellSigningThumbprint = $null
 $script:lastRdpDiagnosticAt = [DateTime]::MinValue
@@ -303,23 +305,35 @@ public static class ChuziSmokeProfileBootstrap
 
 public static class ChuziSmokeSessionShellRegistry
 {
+    public static string LastOperation { get; private set; }
+
     public static void SetShell(string sid, string command)
     {
+        LastOperation = "validate_command";
         if (String.IsNullOrWhiteSpace(command))
             throw new ArgumentException("session shell command is required");
+        LastOperation = "normalize_sid";
         string userSid = new SecurityIdentifier(sid).Value;
         string path = userSid + @"\Software\Microsoft\Windows NT\CurrentVersion\Winlogon";
+        LastOperation = "open_users";
         using (RegistryKey users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default))
-        using (RegistryKey winlogon = users.CreateSubKey(path, RegistryKeyPermissionCheck.ReadWriteSubTree))
         {
-            if (winlogon == null)
-                throw new InvalidOperationException("session shell registry key is unavailable");
-            winlogon.SetValue("Shell", command, RegistryValueKind.String);
-            object actual = winlogon.GetValue("Shell", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-            if (!(actual is string) || !String.Equals((string)actual, command, StringComparison.Ordinal) ||
-                command.IndexOf("-Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                command.IndexOf("Bypass", StringComparison.OrdinalIgnoreCase) >= 0)
-                throw new InvalidOperationException("session shell registry value mismatch");
+            LastOperation = "create_winlogon_key";
+            using (RegistryKey winlogon = users.CreateSubKey(path, RegistryKeyPermissionCheck.ReadWriteSubTree))
+            {
+                if (winlogon == null)
+                    throw new InvalidOperationException("session shell registry key is unavailable");
+                LastOperation = "set_shell";
+                winlogon.SetValue("Shell", command, RegistryValueKind.String);
+                LastOperation = "read_shell";
+                object actual = winlogon.GetValue("Shell", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+                LastOperation = "verify_shell";
+                if (!(actual is string) || !String.Equals((string)actual, command, StringComparison.Ordinal) ||
+                    command.IndexOf("-Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    command.IndexOf("Bypass", StringComparison.OrdinalIgnoreCase) >= 0)
+                    throw new InvalidOperationException("session shell registry value mismatch");
+                LastOperation = "complete";
+            }
         }
     }
 }
@@ -520,6 +534,13 @@ function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
     } catch {
         $operationFailed = $true
         $operationFailurePhase = $script:rdpFailurePhase
+        $cause = $_.Exception
+        while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+        $script:rdpFailureExceptionType = $cause.GetType().FullName
+        $script:rdpFailureHResult = '0x{0:X8}' -f $cause.HResult
+        $script:rdpFailureCategory = Get-RdpFailureCategory $_.Exception
+        $script:rdpFailureOperation = [ChuziSmokeSessionShellRegistry]::LastOperation
+        $script:rdpFailureDetailsCaptured = $true
     } finally {
         if ($loaded) {
             Set-RdpFailurePhase 'session_shell_policy_hive_unload'
@@ -574,6 +595,18 @@ function Set-RdpFailurePhase([string] $Phase) {
 function Get-RdpFailureCategory([System.Exception] $Exception) {
     $current = $Exception
     while ($null -ne $current) {
+        if ($current -is [System.UnauthorizedAccessException]) {
+            return 'access_denied'
+        }
+        if ($current -is [System.Security.SecurityException]) {
+            return 'security_denied'
+        }
+        if ($current -is [System.IO.IOException]) {
+            return 'io_error'
+        }
+        if ($current -is [System.ArgumentException]) {
+            return 'invalid_argument'
+        }
         if ($current -is [System.ComponentModel.Win32Exception]) {
             switch ($current.NativeErrorCode) {
                 2 { return 'system_file_missing' }
@@ -1061,10 +1094,15 @@ try {
     } catch {
         $script:failureDetail = 'redacted'
         if ($failureStage -eq 'local_rdp_session') {
-            $script:rdpFailureExceptionType = $_.Exception.GetType().FullName
-            $script:rdpFailureHResult = '0x{0:X8}' -f $_.Exception.HResult
-            $script:rdpFailureCategory = Get-RdpFailureCategory ($_.Exception)
+            if (-not $script:rdpFailureDetailsCaptured) {
+                $cause = $_.Exception
+                while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+                $script:rdpFailureExceptionType = $cause.GetType().FullName
+                $script:rdpFailureHResult = '0x{0:X8}' -f $cause.HResult
+                $script:rdpFailureCategory = Get-RdpFailureCategory $_.Exception
+            }
             Write-RdpDiagnostic ('FAILURE_PHASE=' + $script:rdpFailurePhase)
+            Write-RdpDiagnostic ('FAILURE_OPERATION=' + $script:rdpFailureOperation)
             Write-RdpDiagnostic ('FAILURE_EXCEPTION_TYPE=' + $script:rdpFailureExceptionType)
             Write-RdpDiagnostic ('FAILURE_HRESULT=' + $script:rdpFailureHResult)
             Write-RdpDiagnostic ('FAILURE_CATEGORY=' + $script:rdpFailureCategory)
@@ -1083,6 +1121,7 @@ try {
                 $failureRecord += 'local_rdp_exception_type=' + $script:rdpFailureExceptionType
                 $failureRecord += 'local_rdp_hresult=' + $script:rdpFailureHResult
                 $failureRecord += 'local_rdp_failure_category=' + $script:rdpFailureCategory
+                $failureRecord += 'local_rdp_failure_operation=' + $script:rdpFailureOperation
             }
             if (-not [string]::IsNullOrWhiteSpace($script:failureDetail)) {
                 $failureRecord += 'failure_detail=' + $script:failureDetail
