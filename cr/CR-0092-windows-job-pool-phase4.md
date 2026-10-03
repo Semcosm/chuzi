@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 0711651e35cd4a28cdf637ff12dd4da4977f31ba
+Head or Range: 2f120ad41a2f9401fb83c9525d508829f563a455
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 20
+Revision: 21
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 0711651e35cd4a28cdf637ff12dd4da4977f31ba
+Head OID: 2f120ad41a2f9401fb83c9525d508829f563a455
 Integrated Result: pending
 
 ## Summary
@@ -76,12 +76,12 @@ native acceptance.
 The opt-in -LocalRdp mode can validate a host with multiple local RDP sessions
 without a second device: the smoke script creates the disposable standard user,
 stores a random password in the current interactive user's session-scoped
-Credential Manager, starts a loopback RDP client, and the Windows test confirms
-the exact managed SID has an active WTS session. It then exercises the native
-agent, profile ACL, worker lifecycle, and retirement cleanup. This diagnostic
-does not validate the session broker listener, pipe ACL, broker ownership
-lifecycle, or production RDP authorizer. It has not yet run on the target host;
-CR-0092 remains pending.
+Credential Manager, starts an RDP client against the host's active default-route
+non-loopback IPv4 address, and the Windows test confirms the exact managed SID
+has an active WTS session. It then exercises the native agent, profile ACL,
+worker lifecycle, and retirement cleanup. This diagnostic does not validate the
+session broker listener, pipe ACL, broker ownership lifecycle, or production RDP
+authorizer. It has not yet run on the target host; CR-0092 remains pending.
 
 Cross-platform tests cover unknown fields/operations/versions, identity and
 generation validation, credential omission, narrow ACL identities, duplicate
@@ -201,6 +201,15 @@ process command line, `cmdkey` target state, WTS and `qwinsta` snapshots, and
 available RDP/Security events around the connection attempt. This makes a
 loopback console reconnect distinguishable from ignored credentials or a target
 authentication failure without putting the password in the diagnostic file.
+
+Revision 21 changes the automatic diagnostic target back from the loopback alias
+to the host's active default-route non-loopback IPv4 address. The preceding
+loopback run authenticated successfully but never created the disposable user's
+WTS session; the RDP client then disconnected during SSL/session establishment
+and the server reported the loopback source address. The generated profile and
+Credential Manager entry now use the selected interface address, while the
+exact username, target SID fence, automatic-only flow, and redacted diagnostics
+remain unchanged.
 
 ## Risk
 
