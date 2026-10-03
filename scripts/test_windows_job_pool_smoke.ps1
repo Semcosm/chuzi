@@ -99,7 +99,7 @@ function Convert-SmokeSecureStringToPlainText([System.Security.SecureString] $Va
 }
 
 function Initialize-SmokeNativeHelpers {
-    if ('ChuziSmokeProfileBootstrap' -as [type]) {
+    if ('ChuziSmokeCredentialStore' -as [type]) {
         return
     }
     Add-Type -TypeDefinition @'
