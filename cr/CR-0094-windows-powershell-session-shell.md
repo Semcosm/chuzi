@@ -1,16 +1,16 @@
 # CR-0094: add fixed PowerShell session shell supervisor
 
 Base: main
-Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..001d075118687ec327ad3aa2df9d91b512ce2b28
+Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..ec87e23842d9c7f48a91df3954b56f8515dcb0b4
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 9
+Revision: 10
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: 001d075118687ec327ad3aa2df9d91b512ce2b28
+Head OID: ec87e23842d9c7f48a91df3954b56f8515dcb0b4
 Integrated Result: pending
 
 ## Summary
@@ -93,6 +93,15 @@ marks completion of the shell policy call, and captures the PowerShell script
 line for the outer failure. This narrows the next run to the actual failing
 statement without storing exception messages or paths. Windows verification is
 pending.
+
+On revision 9, the captured failure line was the catch block's read of the
+registry helper's LastOperation property, so that metadata lookup masked the
+original shell registry error. Add-Type definitions persist for the lifetime
+of a PowerShell process, while the old helper initializer only checked for the
+credential store type. Revision 10 uses a separately versioned registry helper,
+loads it even when older helpers are already cached, makes the operation lookup
+fail closed to a safe marker, and validates its required members in -ValidateOnly.
+Windows verification is pending.
 
 ## Risk
 
