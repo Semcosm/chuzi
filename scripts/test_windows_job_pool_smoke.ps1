@@ -828,6 +828,9 @@ try {
     } else {
         try {
             $failureRecord = @('failure_stage=' + $failureStage) + @($script:rdpDebugSummary)
+            if (-not [string]::IsNullOrWhiteSpace($script:failureDetail)) {
+                $failureRecord += 'failure_detail=' + $script:failureDetail
+            }
             Set-Content -LiteralPath $preservedLog -Value $failureRecord -Encoding ASCII
         } catch {
             $cleanupErrors.Add('test_log_preservation_failed')
@@ -883,15 +886,15 @@ try {
         exit 0
     }
     if ($smokePassed) {
-        Write-Error 'Windows job-pool native smoke failed: cleanup_failed'
+        [Console]::Error.WriteLine('Windows job-pool native smoke failed: cleanup_failed')
     } else {
-        Write-Error ('Windows job-pool native smoke failed: ' + $failureStage)
+        [Console]::Error.WriteLine('Windows job-pool native smoke failed: ' + $failureStage)
         if (-not [string]::IsNullOrWhiteSpace($script:failureDetail)) {
-            Write-Error ('Failure detail: ' + $script:failureDetail)
+            [Console]::Error.WriteLine('Failure detail: ' + $script:failureDetail)
         }
     }
     foreach ($cleanupError in $cleanupErrors) {
-        Write-Error $cleanupError
+        [Console]::Error.WriteLine($cleanupError)
     }
     exit 1
 }
