@@ -1,16 +1,16 @@
 # CR-0094: add fixed PowerShell session shell supervisor
 
 Base: main
-Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..709c34d4b2a93a2c77dbe0adea4cbe85578cc91d
+Head or Range: 000086c232ed46c07b4a8e493b14e240f845f2c4..001d075118687ec327ad3aa2df9d91b512ce2b28
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 8
+Revision: 9
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 000086c232ed46c07b4a8e493b14e240f845f2c4
-Head OID: 709c34d4b2a93a2c77dbe0adea4cbe85578cc91d
+Head OID: 001d075118687ec327ad3aa2df9d91b512ce2b28
 Integrated Result: pending
 
 ## Summary
@@ -85,6 +85,14 @@ remains mounted, and makes unload failure metadata explicit. Microsoft Learn
 documents that RegUnLoadKey requires SE_RESTORE_NAME and SE_BACKUP_NAME; this
 does not establish the cause because the current path uses reg.exe and its load
 step succeeded. Windows verification is pending.
+
+On revision 8, Windows reported unload exit code 0 and confirmed that the hive
+was no longer mounted, while the smoke still failed with the stale
+session_shell_policy_hive_unload phase. Revision 9 records a post-unload phase,
+marks completion of the shell policy call, and captures the PowerShell script
+line for the outer failure. This narrows the next run to the actual failing
+statement without storing exception messages or paths. Windows verification is
+pending.
 
 ## Risk
 
