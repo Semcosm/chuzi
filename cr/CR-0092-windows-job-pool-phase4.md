@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: 78cbe00c4e53184233cb34a725f2b6772d1431b1
+Head or Range: d1eec88f49657060c6f927a82be7454b7de068d6
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 28
+Revision: 29
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: 78cbe00c4e53184233cb34a725f2b6772d1431b1
+Head OID: d1eec88f49657060c6f927a82be7454b7de068d6
 Integrated Result: pending
 
 ## Summary
@@ -250,6 +250,11 @@ the endpoint is 127.0.0.2:3389, the credential target is
 TERMSRV/127.0.0.2, and the profile carries the tested authentication,
 clipboard, reconnect, and display settings. The profile no longer adds
 session-sharing or credential-prompt overrides absent from the working file.
+
+Revision 29 writes the disposable RDP credential through cmdkey using the
+verified /generic:TERMSRV/127.0.0.2, /user, and /pass contract. Existing
+credential detection and cleanup use cmdkey as well, so the smoke follows the
+same Credential Manager path as the successful MiniSession flow.
 
 ## Risk
 
