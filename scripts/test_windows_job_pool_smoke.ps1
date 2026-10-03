@@ -35,6 +35,7 @@ $script:rdpClientProcess = $null
 $script:runnerUserName = $null
 $script:runnerSessionID = -1
 $script:runnerSID = $null
+$script:failureDetail = $null
 $failureStage = 'setup'
 $testLog = Join-Path $runRoot 'test-output.log'
 $preservedLog = Join-Path $tempRoot 'chuzi-job-pool-smoke-test-output.log'
@@ -616,8 +617,9 @@ try {
         throw 'Windows job-pool native smoke failed'
     }
     $smokePassed = $true
-} catch {
-    if (Test-Path -LiteralPath $testLog -PathType Leaf) {
+    } catch {
+        $script:failureDetail = ([string]$_.Exception.Message).Replace([Environment]::NewLine, ' ').Trim()
+        if (Test-Path -LiteralPath $testLog -PathType Leaf) {
         try {
             Copy-Item -LiteralPath $testLog -Destination $preservedLog -Force
         } catch {
@@ -674,6 +676,9 @@ try {
         Write-Error 'Windows job-pool native smoke failed: cleanup_failed'
     } else {
         Write-Error ('Windows job-pool native smoke failed: ' + $failureStage)
+        if (-not [string]::IsNullOrWhiteSpace($script:failureDetail)) {
+            Write-Error ('Failure detail: ' + $script:failureDetail)
+        }
     }
     foreach ($cleanupError in $cleanupErrors) {
         Write-Error $cleanupError

@@ -5,7 +5,7 @@ Head or Range: 7d8939608f16912e9e8921aa6b1c9787a9bb080b
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 16
+Revision: 17
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -187,6 +187,12 @@ prints the target username, SID, and `127.0.0.2` address and waits while the
 operator uses RDP_CnC to enter those credentials manually. After an explicit
 `YES` confirmation, the script requires the exact target user to have an active
 WTS session and rejects any runner-account session before native provisioning.
+
+Revision 17 preserves the manual mode's redacted exception detail. Failures
+before the operator handoff now report a single-line stage detail (for example,
+user creation, group membership, or target-user lookup) without exposing the
+SecureString password or any credential material. The wrapper still preserves
+the existing redacted diagnostics and cleanup ownership markers.
 
 ## Risk
 
