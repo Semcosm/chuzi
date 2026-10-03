@@ -113,7 +113,9 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security;
+using System.Security.Principal;
 using System.Text;
+using Microsoft.Win32;
 
 public static class ChuziSmokeCredentialStore
 {
@@ -299,6 +301,29 @@ public static class ChuziSmokeProfileBootstrap
     }
 }
 
+public static class ChuziSmokeSessionShellRegistry
+{
+    public static void SetShell(string sid, string command)
+    {
+        if (String.IsNullOrWhiteSpace(command))
+            throw new ArgumentException("session shell command is required");
+        string userSid = new SecurityIdentifier(sid).Value;
+        string path = userSid + @"\Software\Microsoft\Windows NT\CurrentVersion\Winlogon";
+        using (RegistryKey users = RegistryKey.OpenBaseKey(RegistryHive.Users, RegistryView.Default))
+        using (RegistryKey winlogon = users.CreateSubKey(path, RegistryKeyPermissionCheck.ReadWriteSubTree))
+        {
+            if (winlogon == null)
+                throw new InvalidOperationException("session shell registry key is unavailable");
+            winlogon.SetValue("Shell", command, RegistryValueKind.String);
+            object actual = winlogon.GetValue("Shell", null, RegistryValueOptions.DoNotExpandEnvironmentNames);
+            if (!(actual is string) || !String.Equals((string)actual, command, StringComparison.Ordinal) ||
+                command.IndexOf("-Command", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                command.IndexOf("Bypass", StringComparison.OrdinalIgnoreCase) >= 0)
+                throw new InvalidOperationException("session shell registry value mismatch");
+        }
+    }
+}
+
 public sealed class ChuziSmokeSession
 {
     public int SessionId { get; set; }
@@ -459,8 +484,8 @@ function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureStri
 
 function Get-SmokeSessionShellCommand([string] $RuntimeRoot) {
     $root = [System.IO.Path]::GetFullPath($RuntimeRoot)
-    $scriptPath = Join-Path $root 'session-shell.ps1'
-    if (-not [System.IO.Path]::IsPathFullyQualified($scriptPath) -or
+    $scriptPath = [System.IO.Path]::GetFullPath((Join-Path $root 'session-shell.ps1'))
+    if (-not [System.IO.Path]::IsPathRooted($scriptPath) -or
         [System.IO.Path]::GetFileName($scriptPath) -cne 'session-shell.ps1' -or
         -not (Test-Path -LiteralPath $scriptPath -PathType Leaf)) {
         throw 'fixed session shell script is unavailable'
@@ -469,6 +494,7 @@ function Get-SmokeSessionShellCommand([string] $RuntimeRoot) {
 }
 
 function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
+    Set-RdpFailurePhase 'session_shell_policy_profile_lookup'
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
     $profile = Wait-SmokeUserProfile $targetUser.SID.Value
     if ($null -eq $profile) {
@@ -477,25 +503,38 @@ function Apply-SmokeSessionShellPolicy([string] $Name, [string] $RuntimeRoot) {
     $hive = 'HKEY_USERS\' + $targetUser.SID.Value
     $hivePath = Join-Path $profile.LocalPath 'NTUSER.DAT'
     $loaded = $false
+    $operationFailed = $false
+    $operationFailurePhase = $null
     try {
+        Set-RdpFailurePhase 'session_shell_policy_hive_check'
         if (-not (Test-Path -LiteralPath ('Registry::' + $hive))) {
+            Set-RdpFailurePhase 'session_shell_policy_hive_load'
             & reg.exe load $hive $hivePath 1>$null 2>$null
             if ($LASTEXITCODE -ne 0) { throw 'target user hive load failed' }
             $loaded = $true
         }
-        $winlogon = 'Registry::' + $hive + '\Software\Microsoft\Windows NT\CurrentVersion\Winlogon'
-        New-Item -Path $winlogon -Force | Out-Null
+        Set-RdpFailurePhase 'session_shell_policy_command_validation'
         $command = Get-SmokeSessionShellCommand $RuntimeRoot
-        New-ItemProperty -LiteralPath $winlogon -Name Shell -PropertyType String -Value $command -Force | Out-Null
-        $actual = (Get-ItemProperty -LiteralPath $winlogon -Name Shell -ErrorAction Stop).Shell
-        if ($actual -cne $command -or $actual -match '(?i)-Command|Bypass') {
-            throw 'target user Winlogon Shell policy mismatch'
-        }
+        Set-RdpFailurePhase 'session_shell_policy_write_verify'
+        [ChuziSmokeSessionShellRegistry]::SetShell($targetUser.SID.Value, $command)
+    } catch {
+        $operationFailed = $true
+        $operationFailurePhase = $script:rdpFailurePhase
     } finally {
         if ($loaded) {
-            & reg.exe unload $hive 1>$null 2>$null
-            if ($LASTEXITCODE -ne 0) { throw 'target user hive unload failed' }
+            Set-RdpFailurePhase 'session_shell_policy_hive_unload'
+            if (-not (Invoke-SmokeRetry {
+                & reg.exe unload $hive 1>$null 2>$null
+                if ($LASTEXITCODE -ne 0) { throw 'target user hive unload failed' }
+            })) {
+                Set-RdpFailurePhase 'session_shell_policy_hive_unload_failed'
+                throw 'target user hive unload failed'
+            }
         }
+    }
+    if ($operationFailed) {
+        Set-RdpFailurePhase $operationFailurePhase
+        throw 'target user shell policy setup failed'
     }
 }
 

@@ -5,7 +5,7 @@ Head or Range: aa7e4b348f5d51bcd4e24f378fb0c5a4231e1d9d
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add fixed PowerShell session shell supervisor
-Revision: 5
+Revision: 6
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -25,7 +25,9 @@ assembly, manifest, and service package paths now include the script.
 The local RDP smoke records its current setup phase and safe exception metadata
 from the beginning of account preparation. Profile bootstrap uses the local
 machine domain alias and standard Unicode string marshaling for the native logon
-API. The disposable password exists briefly in managed memory during this call;
+API. The session-shell smoke uses APIs available to Windows PowerShell 5.1/.NET
+Framework and disposes registry handles before unloading the target hive. The
+disposable password exists briefly in managed memory during profile bootstrap;
 it is not printed or persisted. Failures are mapped to safe categories without
 persisting raw Win32 codes, messages, or credentials.
 
@@ -58,9 +60,13 @@ known native failures. The latest operator query found a Security 4625 event
 classified as bad_password with LogonType 2 during profile initialization. A
 follow-up run after aligning the local domain alias failed the same way, so the
 smoke bootstrap now restores the standard Unicode string marshaling used by an
-earlier implementation. The exact failing run has not yet been tested against
-this update. Authenticode trust, WTS readiness, native provisioner smoke, and
-local RDP behavior remain pending operator verification.
+earlier implementation. The next Windows run reached session-shell policy but
+failed there with the hive still loaded and the Shell value absent. Microsoft
+API documentation confirms `Path.IsPathFullyQualified` is unavailable on .NET
+Framework; the smoke now uses the compatible `IsPathRooted` check, records safe
+subphases, and writes through a disposed registry handle. This update remains
+pending Windows verification. Authenticode trust, WTS readiness, and native
+provisioner smoke remain pending operator verification.
 
 ## Risk
 
