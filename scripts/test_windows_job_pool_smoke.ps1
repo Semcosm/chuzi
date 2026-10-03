@@ -39,6 +39,7 @@ $script:rdpDiagnosticsPath = $null
 $script:rdpFailurePhase = 'not_started'
 $script:rdpFailureExceptionType = 'unavailable'
 $script:rdpFailureHResult = 'unavailable'
+$script:rdpFailureCategory = 'unavailable'
 $script:rdpStartTime = $null
 $script:sessionShellSigningThumbprint = $null
 $script:lastRdpDiagnosticAt = [DateTime]::MinValue
@@ -523,6 +524,32 @@ function Set-RdpFailurePhase([string] $Phase) {
     Write-RdpDiagnostic ('PHASE=' + $Phase)
 }
 
+function Get-RdpFailureCategory([System.Exception] $Exception) {
+    $current = $Exception
+    while ($null -ne $current) {
+        if ($current -is [System.ComponentModel.Win32Exception]) {
+            switch ($current.NativeErrorCode) {
+                2 { return 'system_file_missing' }
+                5 { return 'access_denied' }
+                87 { return 'invalid_parameter' }
+                1314 { return 'privilege_not_held' }
+                1326 { return 'logon_rejected' }
+                1327 { return 'account_restricted' }
+                1328 { return 'logon_hours_restricted' }
+                1329 { return 'workstation_restricted' }
+                1330 { return 'password_expired' }
+                1331 { return 'account_disabled' }
+                1385 { return 'logon_policy_denied' }
+                1816 { return 'resource_quota_exhausted' }
+                1907 { return 'password_change_required' }
+                default { return 'other_win32_error' }
+            }
+        }
+        $current = $current.InnerException
+    }
+    return 'non_win32_error'
+}
+
 function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     if ([string]::IsNullOrWhiteSpace($script:rdpDiagnosticsPath)) {
         return
@@ -989,9 +1016,11 @@ try {
         if ($failureStage -eq 'local_rdp_session') {
             $script:rdpFailureExceptionType = $_.Exception.GetType().FullName
             $script:rdpFailureHResult = '0x{0:X8}' -f $_.Exception.HResult
+            $script:rdpFailureCategory = Get-RdpFailureCategory ($_.Exception)
             Write-RdpDiagnostic ('FAILURE_PHASE=' + $script:rdpFailurePhase)
             Write-RdpDiagnostic ('FAILURE_EXCEPTION_TYPE=' + $script:rdpFailureExceptionType)
             Write-RdpDiagnostic ('FAILURE_HRESULT=' + $script:rdpFailureHResult)
+            Write-RdpDiagnostic ('FAILURE_CATEGORY=' + $script:rdpFailureCategory)
         }
         if (Test-Path -LiteralPath $testLog -PathType Leaf) {
         try {
@@ -1006,6 +1035,7 @@ try {
                 $failureRecord += 'local_rdp_phase=' + $script:rdpFailurePhase
                 $failureRecord += 'local_rdp_exception_type=' + $script:rdpFailureExceptionType
                 $failureRecord += 'local_rdp_hresult=' + $script:rdpFailureHResult
+                $failureRecord += 'local_rdp_failure_category=' + $script:rdpFailureCategory
             }
             if (-not [string]::IsNullOrWhiteSpace($script:failureDetail)) {
                 $failureRecord += 'failure_detail=' + $script:failureDetail
