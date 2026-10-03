@@ -1,16 +1,16 @@
 # CR-0092: add Windows native job-pool acceptance gate
 
 Base: main
-Head or Range: bfcf31fe612a96010df96f18944f5aa1ae878154
+Head or Range: 0711651e35cd4a28cdf637ff12dd4da4977f31ba
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 19
+Revision: 20
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: b57ce246ea8dbf64ad642414a096f4e9ada3e60a
-Head OID: bfcf31fe612a96010df96f18944f5aa1ae878154
+Head OID: 0711651e35cd4a28cdf637ff12dd4da4977f31ba
 Integrated Result: pending
 
 ## Summary
@@ -194,6 +194,13 @@ profile, test log, or CR. After the target WTS session becomes active, the
 harness also waits for the user's Profile and `NTUSER.DAT` to exist before
 starting native provisioning, matching the disposable-user initialization
 sequence used by the Windows session experiment.
+
+Revision 20 preserves an `rdp-diagnostics.log` under the run-owned smoke root
+when the local RDP stage fails. The diagnostic captures the actual `mstsc`
+process command line, `cmdkey` target state, WTS and `qwinsta` snapshots, and
+available RDP/Security events around the connection attempt. This makes a
+loopback console reconnect distinguishable from ignored credentials or a target
+authentication failure without putting the password in the diagnostic file.
 
 ## Risk
 
