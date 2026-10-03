@@ -472,7 +472,14 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
 }
 
 function Get-LocalRdpTarget {
-    return '127.0.0.2'
+    foreach ($octet in 2..254) {
+        $candidate = '127.0.0.' + $octet
+        $credentialTarget = 'TERMSRV/' + $candidate
+        if (-not (Test-SmokeRdpCredential $credentialTarget)) {
+            return $candidate
+        }
+    }
+    throw 'no unused loopback RDP credential target is available'
 }
 
 function Test-SmokeRdpCredential([string] $Target) {
