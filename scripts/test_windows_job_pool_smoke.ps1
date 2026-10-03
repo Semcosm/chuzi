@@ -487,6 +487,7 @@ function Start-LocalRdpSession([string] $Name) {
     }
 
     $targetUsername = '.\' + $Name
+    $credentialUsername = $env:COMPUTERNAME + '\' + $Name
     $password = New-SmokePassword
     $debugPassword = Convert-SmokeSecureStringToPlainText $password
     try {
@@ -496,7 +497,7 @@ function Start-LocalRdpSession([string] $Name) {
         New-LocalUser -Name $Name -Password $password -Description $marker -PasswordNeverExpires -ErrorAction Stop | Out-Null
         $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
-        [ChuziSmokeCredentialStore]::Write($script:rdpCredentialTarget, $targetUsername, $password)
+        [ChuziSmokeCredentialStore]::Write($script:rdpCredentialTarget, $credentialUsername, $password)
         $script:rdpCredentialOwned = $true
         Initialize-SmokeUserProfile $Name $password
     } finally {
