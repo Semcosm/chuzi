@@ -39,15 +39,14 @@ GOOS=windows GOARCH=amd64 go build ./..., GOOS=windows GOARCH=amd64 go vet
 validators, build contract, nightly package contract, nightly artifact
 validator, npm test --prefix browser-worker (22 tests), and git diff --check.
 On the Windows workstation, go vet ./..., npm test --prefix browser-worker
-(22 tests), and PowerShell -ValidateOnly passed. The first go test ./... run
-exposed a POSIX file-mode assertion, an environment package-path rejection,
-and an SDDL deny-ACE fixture error. The follow-up corrects the two
-cross-platform test assumptions. The package-path failure came from Windows
-EvalSymlinks normalizing 8.3 aliases; path validation now compares long-path
+(22 tests), PowerShell -ValidateOnly, the targeted environment package test,
+and all packages except slotwindows in go test ./... passed. Windows
+EvalSymlinks normalized an 8.3 alias; path validation now compares long-path
 forms after checking each component for reparse points, with a Windows
-short-name regression test. Windows execution of that test and the full suite
-is pending. Authenticode trust, WTS readiness, native provisioner smoke, and
-local RDP behavior also remain pending operator assistance.
+short-name regression test. A malformed deny-ACE test fixture was corrected;
+the Windows slotwindows rerun and full suite are pending. Authenticode trust,
+WTS readiness, native provisioner smoke, and local RDP behavior also remain
+pending operator assistance.
 
 ## Risk
 

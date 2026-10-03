@@ -74,7 +74,7 @@ func TestRuntimeACLRejectsBroadWriteAccess(t *testing.T) {
 }
 
 func TestControlPlaneDenySDDLParsing(t *testing.T) {
-	if !sddlHasFullDeny("D:PD(OICI;0x001f01ff;;;S-1-5-21-100-200-300-400)", "S-1-5-21-100-200-300-400") {
+	if !sddlHasFullDeny("D:P(D;OICI;0x001f01ff;;;S-1-5-21-100-200-300-400)", "S-1-5-21-100-200-300-400") {
 		t.Fatal("full deny ACE was not recognized")
 	}
 	if sddlHasFullDeny("D:P(A;OICI;0x001200a9;;;S-1-5-21-100-200-300-400)", "S-1-5-21-100-200-300-400") {
