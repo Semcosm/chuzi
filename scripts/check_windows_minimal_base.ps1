@@ -72,6 +72,45 @@ function Get-ProfilePath {
     return [Environment]::ExpandEnvironmentVariables($raw)
 }
 
+function Get-RdpCredentialListing {
+    $cmdkey = Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop
+    return (& $cmdkey.Source '/list' 2>&1 | Out-String)
+}
+
+function Get-AvailableRdpLoopbackHost {
+    $listing = Get-RdpCredentialListing
+    for ($octet = 2; $octet -le 254; $octet++) {
+        $candidate = "127.0.0.$octet"
+        $target = "TERMSRV/$candidate"
+        if ($listing.IndexOf($target, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Test-RdpFirewallRule {
+    try {
+        $rules = @(Get-NetFirewallRule -Enabled True -Direction Inbound -Action Allow -ErrorAction Stop)
+        foreach ($rule in $rules) {
+            $filters = @(Get-NetFirewallPortFilter -AssociatedNetFirewallRule $rule -ErrorAction SilentlyContinue)
+            foreach ($filter in $filters) {
+                $localPort = [string]$filter.LocalPort
+                $protocol = [string]$filter.Protocol
+                if (($protocol -eq 'TCP' -or $protocol -eq 'Any') -and ($localPort -eq '3389' -or $localPort -match '(^|[,\s])3389([,\s]|$)')) {
+                    return $true
+                }
+            }
+        }
+    }
+    catch {
+        return $false
+    }
+
+    return $false
+}
+
 Write-Host "Chuzi Windows minimal base check ($Mode)" -ForegroundColor Cyan
 Write-Host "DataDir: $DataDir"
 
@@ -98,13 +137,8 @@ if ($Mode -eq 'Headed') {
     $deny = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -ErrorAction SilentlyContinue).fDenyTSConnections
     Write-Check -Name 'RDP enabled' -Passed ($deny -eq 0) -Detail ("fDenyTSConnections=$deny")
 
-    try {
-        $rules = @(Get-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction Stop | Where-Object Enabled -eq 'True')
-        Write-Check -Name 'RDP firewall' -Passed ($rules.Count -gt 0) -Detail ("enabled_rules=$($rules.Count)")
-    }
-    catch {
-        Write-Check -Name 'RDP firewall' -Passed $false -Detail $_.Exception.Message
-    }
+    $firewallPassed = Test-RdpFirewallRule
+    Write-Check -Name 'RDP firewall' -Passed $firewallPassed -Detail 'enabled inbound allow rule for TCP 3389'
 }
 
 $dataAbsolute = [IO.Path]::GetFullPath($DataDir)
@@ -161,8 +195,15 @@ if (-not [string]::IsNullOrWhiteSpace($UserName)) {
 }
 
 if ($Mode -eq 'Headed') {
-    $loopback = Test-NetConnection -ComputerName '127.0.0.2' -Port 3389 -WarningAction SilentlyContinue
-    Write-Check -Name 'RDP loopback' -Passed $loopback.TcpTestSucceeded -Detail "127.0.0.2:3389=$($loopback.TcpTestSucceeded)"
+    $rdpHost = Get-AvailableRdpLoopbackHost
+    if ([string]::IsNullOrWhiteSpace($rdpHost)) {
+        Write-Check -Name 'RDP loopback target' -Passed $false -Detail 'no unused TERMSRV/127.0.0.2..254 credential target is available'
+    }
+    else {
+        Write-Observation -Name 'RDP loopback target' -Detail "selected=$rdpHost; credential target=TERMSRV/$rdpHost"
+        $loopback = Test-NetConnection -ComputerName $rdpHost -Port 3389 -WarningAction SilentlyContinue
+        Write-Check -Name 'RDP loopback' -Passed $loopback.TcpTestSucceeded -Detail "${rdpHost}:3389=$($loopback.TcpTestSucceeded)"
+    }
 }
 
 if ($failed) {

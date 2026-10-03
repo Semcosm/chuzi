@@ -115,7 +115,7 @@ Chuzi service
 
 1. TermService、RDP listener 和 Remote Desktop firewall rules 已启用。
 2. 为目标用户创建 Profile 并加入 Remote Desktop Users。
-3. 通过 `cmdkey /generic:TERMSRV/<loopback>` 写入已保存凭据。
+3. 在 `127.0.0.2` 到 `127.0.0.254` 中扫描未占用的 `TERMSRV/<loopback>` 目标，再通过 `cmdkey /generic` 写入已保存凭据；地址不固定为某一个八位组。
 4. `.rdp` 只包含地址、用户名和 `prompt for credentials:i:0`，密码不写入文件。
 5. 启动 `mstsc` 后等待 WTS Session 从连接查询变为 active。
 6. 由 session broker 校验 SID、Session、desktop、agent heartbeat 和浏览器启动。
