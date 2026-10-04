@@ -1,0 +1,164 @@
+{
+  "format": "chuzi-release-index/v1",
+  "channel": "nightly",
+  "version": "nightly-561-2400241812dd",
+  "commit": "2400241812dda68ee2000b4e38e935b783de11ef",
+  "target": "linux-arm64",
+  "generated_at": "2026-10-04T08:32:13.231984Z",
+  "manifest": {
+    "format": "chuzi-release/v1",
+    "channel": "nightly",
+    "version": "nightly-561-2400241812dd",
+    "commit": "2400241812dda68ee2000b4e38e935b783de11ef",
+    "target": "linux-arm64",
+    "generated_at": "2026-10-04T08:32:13.231984Z",
+    "components": [
+      {
+        "id": "launcher",
+        "version": "nightly-561-2400241812dd",
+        "required": true,
+        "dependencies": [],
+        "artifact": "chuzi-nightly-561-2400241812dd-linux-arm64-launcher.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi-launcher",
+            "sha256": "04be4a1937f7c5f91a5899efe1d738927bbfef16dc9150ada0a18246d54ee298",
+            "size": 6422712
+          }
+        ]
+      },
+      {
+        "id": "service",
+        "version": "nightly-561-2400241812dd",
+        "required": false,
+        "dependencies": [
+          "browser-worker"
+        ],
+        "artifact": "chuzi-nightly-561-2400241812dd-linux-arm64-service.tar.gz",
+        "resources": [
+          {
+            "path": "chuzi",
+            "sha256": "01b85e51da362cfe088545c7c820acf33616caa6e32e9a5e8d63e4c6041b32c9",
+            "size": 7340216
+          }
+        ]
+      },
+      {
+        "id": "browser-worker",
+        "version": "nightly-561-2400241812dd",
+        "required": false,
+        "dependencies": [],
+        "artifact": "chuzi-nightly-561-2400241812dd-linux-arm64-browser-worker.tar.gz",
+        "resources": [
+          {
+            "path": "browser-worker/src/cdp-runtime.mjs",
+            "sha256": "0cbf8bca821e05499db6125aef265ac5f90bc283f36e787f6ec311fe35749165",
+            "size": 10614
+          },
+          {
+            "path": "browser-worker/src/headless-adapter.mjs",
+            "sha256": "626e8145b237af9d4fab9c6b9bee9e29fe39e6f3d196b8d89fc260e99c5c0e50",
+            "size": 28201
+          },
+          {
+            "path": "browser-worker/src/headless.mjs",
+            "sha256": "dc8d201b35f7a70674d6b83af28b5b37bf222e449a4de033e31fcaf541b97373",
+            "size": 14202
+          },
+          {
+            "path": "browser-worker/src/local-test-page.html",
+            "sha256": "ef36a1f687c6a3a0d9fa8e5caf87ea92bfb0b82f13575eeebb3b3b2aa8104327",
+            "size": 397
+          },
+          {
+            "path": "browser-worker/src/worker.mjs",
+            "sha256": "525df2cd04f12f7682bbbdd230df0780aefe36f573563fd7191bec5f35b8a2e6",
+            "size": 3421
+          },
+          {
+            "path": "browser-worker/worker-manifest.json",
+            "sha256": "b514d60399b3a8865ae004a0e6195bc6d8436f629df74373ee246c078478f17f",
+            "size": 434
+          }
+        ]
+      }
+    ],
+    "plugins": [
+      {
+        "id": "chuzi.headless-cdp",
+        "version": "nightly-561-2400241812dd",
+        "api": "chuzi.adapter/v1",
+        "distribution": "builtin",
+        "source_component": "browser-worker",
+        "capabilities": [
+          "cdp@1",
+          "headless-cdp@1",
+          "headed-cdp@1",
+          "browser-view@1",
+          "local.test-page@1"
+        ],
+        "installable": false
+      },
+      {
+        "id": "genshin-cloudgame",
+        "version": "nightly-561-2400241812dd",
+        "api": "chuzi.adapter/v1",
+        "entry": "adapter.mjs",
+        "distribution": "package",
+        "target": "linux-arm64",
+        "archive": "chuzi-nightly-561-2400241812dd-linux-arm64-genshin-cloudgame.tar.gz",
+        "sha256": "4b7d494c38a33e8af41e76e0f3f1e55a32353dc462c3d0a8f9ebcb47668151d0",
+        "capabilities": [
+          "genshin-cloudgame@1"
+        ],
+        "permissions": [
+          "browser.cdp.loopback"
+        ],
+        "signed_by": "chuzi-release",
+        "installable": true
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "component": "bundle",
+      "target": "linux-arm64",
+      "version": "nightly-561-2400241812dd",
+      "path": "chuzi-nightly-561-2400241812dd-linux-arm64.tar.gz",
+      "size": 5580200,
+      "sha256": "ee5f9a76bc4198eb599b689c7402c5f035e6a7de5b2d7f0d697a377a4dfe6689"
+    },
+    {
+      "component": "launcher",
+      "target": "linux-arm64",
+      "version": "nightly-561-2400241812dd",
+      "path": "chuzi-nightly-561-2400241812dd-linux-arm64-launcher.tar.gz",
+      "size": 2616337,
+      "sha256": "33c6fb4f69f655874d7bb2785972f8778e6e84b90436d8a3d671c0feb2ea210a"
+    },
+    {
+      "component": "service",
+      "target": "linux-arm64",
+      "version": "nightly-561-2400241812dd",
+      "path": "chuzi-nightly-561-2400241812dd-linux-arm64-service.tar.gz",
+      "size": 2952157,
+      "sha256": "0df467b7c40c2b1300b6f5f6cc2869bab7ce492dee9d1168f05e670a4b994261"
+    },
+    {
+      "component": "browser-worker",
+      "target": "linux-arm64",
+      "version": "nightly-561-2400241812dd",
+      "path": "chuzi-nightly-561-2400241812dd-linux-arm64-browser-worker.tar.gz",
+      "size": 13302,
+      "sha256": "74324dba2e4fa43bfc6877d02c767c3de2b604900ec32dcbb982589b1455f117"
+    },
+    {
+      "component": "genshin-cloudgame",
+      "target": "linux-arm64",
+      "version": "nightly-561-2400241812dd",
+      "path": "chuzi-nightly-561-2400241812dd-linux-arm64-genshin-cloudgame.tar.gz",
+      "size": 6477,
+      "sha256": "4b7d494c38a33e8af41e76e0f3f1e55a32353dc462c3d0a8f9ebcb47668151d0"
+    }
+  ]
+}
