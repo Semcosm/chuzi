@@ -4,6 +4,7 @@
 package request
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strings"
@@ -29,8 +30,13 @@ type Clock func() time.Time
 // Config controls optional request-service behavior. Rate limiting applies
 // only to new submissions; Status and Cancel remain read/control operations.
 type Config struct {
-	RateLimit RateLimitConfig
-	Sink      observability.Sink
+	RateLimit    RateLimitConfig
+	Sink         observability.Sink
+	Capabilities CapabilityRevoker
+}
+
+type CapabilityRevoker interface {
+	RevokeRequest(context.Context, string) error
 }
 
 // StorePort is the durable request capability consumed by this package. It
@@ -54,6 +60,7 @@ type Service struct {
 	defaultActor string
 	limiter      *rateLimiter
 	sink         observability.Sink
+	capabilities CapabilityRevoker
 }
 
 // New constructs a request service with explicit time and ID dependencies.
@@ -74,7 +81,7 @@ func NewWithConfig(database StorePort, clock Clock, newID IDGenerator, defaultAc
 	if config.Sink == nil {
 		config.Sink = observability.NopSink{}
 	}
-	return &Service{store: database, clock: clock, newID: newID, defaultActor: defaultActor, limiter: limiter, sink: config.Sink}, nil
+	return &Service{store: database, clock: clock, newID: newID, defaultActor: defaultActor, limiter: limiter, sink: config.Sink, capabilities: config.Capabilities}, nil
 }
 
 // SubmitInput describes one login request. RequestID is supplied by the
@@ -216,6 +223,11 @@ func (s *Service) Cancel(requestID, actor, reason string) (store.Request, error)
 		}
 	} else if _, err := s.store.CancelRequest(event); err != nil {
 		return store.Request{}, err
+	}
+	if s.capabilities != nil {
+		if err := s.capabilities.RevokeRequest(context.Background(), requestID); err != nil {
+			return store.Request{}, err
+		}
 	}
 	return s.store.GetRequest(requestID)
 }

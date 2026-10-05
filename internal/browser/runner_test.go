@@ -76,6 +76,21 @@ type fakeLeases struct {
 	err    error
 }
 
+type fakeProfileAccess struct {
+	granted []string
+	revoked []string
+}
+
+func (f *fakeProfileAccess) GrantProfile(_ context.Context, slotID, profile string) error {
+	f.granted = append(f.granted, slotID+"|"+profile)
+	return nil
+}
+
+func (f *fakeProfileAccess) RevokeProfile(_ context.Context, slotID, profile string) error {
+	f.revoked = append(f.revoked, slotID+"|"+profile)
+	return nil
+}
+
 func (l *fakeLeases) HeartbeatLease(_ string, now time.Time, leaseID, owner string, ttl time.Duration) (account.Lease, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -164,6 +179,28 @@ func TestRunnerUsesIsolatedGeneratedProfileAndReportsSuccess(t *testing.T) {
 	case <-worker.closed:
 	default:
 		t.Fatal("runner did not close worker")
+	}
+}
+
+func TestRunnerGrantsAndRevokesManagedSlotProfile(t *testing.T) {
+	worker := &fakeWorker{result: WorkerResult{Succeeded: true}, cancelled: make(chan struct{}), closed: make(chan struct{})}
+	access := &fakeProfileAccess{}
+	profiles := newBrowserProfiles(t)
+	runner, err := New(&fakeFactory{worker: worker}, nil, profiles, Config{
+		LeaseTTL: time.Minute, CancelTimeout: 100 * time.Millisecond, ShutdownTimeout: 100 * time.Millisecond,
+		Clock: func() time.Time { return browserTestTime }, ProfileAccess: access,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	work := newBrowserWork(t, browserTestTime, time.Minute)
+	work.SlotID = "pool-001"
+	work.EnvironmentGeneration = 1
+	if result, runErr := runner.Run(context.Background(), work); runErr != nil || !result.Succeeded {
+		t.Fatalf("Run() = %#v, %v", result, runErr)
+	}
+	if len(access.granted) != 1 || len(access.revoked) != 1 || access.granted[0] != access.revoked[0] {
+		t.Fatalf("profile access calls: granted=%v revoked=%v", access.granted, access.revoked)
 	}
 }
 

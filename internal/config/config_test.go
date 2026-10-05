@@ -55,7 +55,7 @@ func TestLoadRejectsUnknownFieldsAndTrailingData(t *testing.T) {
 }
 
 func TestValidateRejectsRootAndRelativeLiteralPaths(t *testing.T) {
-	for _, candidate := range []Config{{DataDir: "/"}, {DataDir: "relative"}} {
+	for _, candidate := range []Config{{DataDir: "/"}, {DataDir: "relative"}, {DataDir: "/tmp/chuzi\nstate"}, {DataDir: "/tmp/chuzi\x00state"}} {
 		if err := candidate.Validate(); err == nil {
 			t.Errorf("config %#v should be invalid", candidate)
 		}
@@ -122,5 +122,62 @@ func TestConfigValidatesRequestRateLimits(t *testing.T) {
 	cfg.RateLimit.GlobalWindowSeconds = 0
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("enabled rate limit without a window was accepted")
+	}
+}
+
+func TestConfigValidatesLogicalJobPoolAndTreatsAllMetadataAsEnabled(t *testing.T) {
+	cfg, err := New(filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.JobPool = JobPoolConfig{RequireTrusted: true}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("trust-only job pool configuration was silently disabled")
+	}
+	cfg.JobPool = JobPoolConfig{
+		PoolID: "pool-test", EnvironmentID: "chuzi-environment/v1",
+		EnvironmentVersion: "1.0.0", DesiredSlots: 2, Capabilities: []string{"cdp"},
+		ManifestDigest: "sha256:test", Signer: "signer", RequireTrusted: true,
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.EnvironmentPackage = EnvironmentPackageConfig{EnvironmentID: "chuzi-environment/v1", Version: "1.0.0", ManifestDigest: "sha256:test", Signer: "signer"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("matching environment package rejected: %v", err)
+	}
+	cfg.EnvironmentPackage.Version = "2.0.0"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("environment package escaped the pool target")
+	}
+	cfg.JobPool.Capabilities = []string{"cdp", "cdp"}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("duplicate job pool capability was accepted")
+	}
+}
+
+func TestWindowsJobPoolConfigIsSeparateAndConstrained(t *testing.T) {
+	cfg, err := New(filepath.Join(t.TempDir(), "runtime"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.JobPool = JobPoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0", DesiredSlots: 2}
+	cfg.WindowsJobPool = WindowsJobPoolConfig{Enabled: true, DesiredSlots: 2, UserPrefix: "ChuziJob", RDPEnabled: true, SessionIdleTimeoutSeconds: 300, AgentHeartbeatSeconds: 10, ProvisionTimeoutSeconds: 120, CleanupTimeoutSeconds: 60, EnvironmentID: "env/v1", EnvironmentVersion: "1.0"}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	cfg.WindowsJobPool.UserPrefix = "bad;prefix"
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("unsafe user prefix accepted")
+	}
+	cfg.WindowsJobPool.UserPrefix = "ChuziJob"
+	cfg.WindowsJobPool.DesiredSlots = 3
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("logical and Windows pool capacity mismatch accepted")
+	}
+	cfg.WindowsJobPool.DesiredSlots = 2
+	cfg.WindowsJobPool.AgentHeartbeatSeconds = 0
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("zero agent heartbeat accepted")
 	}
 }

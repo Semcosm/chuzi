@@ -32,6 +32,9 @@ foreach ($component in $components) {
         "service" {
             Copy-Item -Force (Join-Path $stageDir "chuzi.exe") $componentRoot
             Copy-Item -Force (Join-Path $stageDir "chuzi-browser-launcher.exe") $componentRoot
+            Copy-Item -Force (Join-Path $stageDir "chuzi-user-agent.exe") $componentRoot
+            Copy-Item -Force (Join-Path $stageDir "node.exe") $componentRoot
+            Copy-Item -Force (Join-Path $stageDir "session-shell.ps1") $componentRoot
         }
         "browser-worker" { Copy-Item -Recurse -Force (Join-Path $stageDir "browser-worker") $componentRoot }
         "presentmon" { Copy-Item -Force (Join-Path $stageDir "PresentMon.exe") $componentRoot; Copy-Item -Force (Join-Path $stageDir "PresentMon-LICENSE.txt") $componentRoot }

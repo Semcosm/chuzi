@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
@@ -26,12 +25,14 @@ import (
 	"github.com/Semcosm/chuzi/internal/coretransport"
 	"github.com/Semcosm/chuzi/internal/credential"
 	"github.com/Semcosm/chuzi/internal/diagnostics"
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/health"
 	"github.com/Semcosm/chuzi/internal/matrix"
 	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/plugin"
 	"github.com/Semcosm/chuzi/internal/queue"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -78,24 +79,32 @@ type serviceOptions struct {
 }
 
 type serviceRuntime struct {
-	store         *store.Store
-	requests      *requestservice.Service
-	credentials   *credential.Service
-	runner        queue.Runner
-	automation    automation.Adapter
-	scheduler     *queue.Scheduler
-	notifier      *matrix.Notifier
-	gateway       *matrix.Gateway
-	matrixClient  *matrix.HTTPClient
-	health        *health.Checker
-	healthListen  string
-	metrics       *observability.Metrics
-	logger        *observability.JSONLogger
-	diagnostics   *diagnostics.Service
-	eventBuffer   *observability.EventBuffer
-	metricsListen string
-	coreAPI       coreapi.API
-	coreServer    *coretransport.Server
+	store              *store.Store
+	environment        *environment.Manager
+	environmentID      string
+	environmentVersion string
+	jobPoolID          string
+	requests           *requestservice.Service
+	credentials        *credential.Service
+	runner             queue.Runner
+	automation         automation.Adapter
+	scheduler          *queue.Scheduler
+	notifier           *matrix.Notifier
+	gateway            *matrix.Gateway
+	matrixClient       *matrix.HTTPClient
+	health             *health.Checker
+	healthListen       string
+	metrics            *observability.Metrics
+	logger             *observability.JSONLogger
+	diagnostics        *diagnostics.Service
+	eventBuffer        *observability.EventBuffer
+	metricsListen      string
+	coreAPI            coreapi.API
+	coreServer         *coretransport.Server
+	slotReconciler     slotReconciler
+	slotInterval       time.Duration
+	slotHealth         *slotLifecycleHealth
+	rdp                *rdpCapabilityBridge
 }
 
 func (r *serviceRuntime) refreshMetrics(at time.Time) {
@@ -120,6 +129,60 @@ func (r *serviceRuntime) refreshMetrics(at time.Time) {
 	r.metrics.Set("chuzi_notifications_claimed", float64(snapshot.ClaimedNotifications))
 	r.metrics.Set("chuzi_notifications_expired_claims", float64(snapshot.ExpiredNotificationClaims))
 	r.metrics.Set("chuzi_notifications_delivered", float64(snapshot.DeliveredNotifications))
+	r.metrics.Set("chuzi_job_pools", float64(snapshot.JobPools))
+	r.metrics.Set("chuzi_slots_desired", float64(snapshot.DesiredSlots))
+	r.metrics.Set("chuzi_slots_ready", float64(snapshot.ReadySlots))
+	r.metrics.Set("chuzi_slots_leased", float64(snapshot.LeasedSlots))
+	r.metrics.Set("chuzi_slots_quarantined", float64(snapshot.QuarantinedSlots))
+	r.metrics.Set("chuzi_slots_draining", float64(snapshot.DrainingSlots))
+	r.metrics.Set("chuzi_slots_provisioning", float64(snapshot.ProvisioningSlots))
+	r.metrics.Set("chuzi_slots_retiring", float64(snapshot.RetiringSlots))
+	r.metrics.Set("chuzi_slots_unprovisioned", float64(snapshot.UnprovisionedSlots))
+}
+
+func (r *serviceRuntime) recordSlotReconcile(at time.Time, err error) {
+	if r == nil {
+		return
+	}
+	if r.slotHealth != nil {
+		r.slotHealth.set(err)
+	}
+	if err == nil {
+		return
+	}
+	event := observability.Event{
+		At:        at.UTC(),
+		Component: "slot",
+		Operation: "reconcile",
+		Resource:  "execution_slots",
+	}
+	event.Outcome = "failed"
+	event.ErrorClass = slotReconcileErrorClass(err)
+	if r.metrics != nil {
+		r.metrics.Inc("chuzi_slot_reconcile_errors_total")
+	}
+	observability.MultiSink{r.metrics, r.logger, r.eventBuffer}.Record(event)
+}
+
+func slotReconcileErrorClass(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "trusted environment"):
+		return "trust"
+	case strings.Contains(message, "cleanup"):
+		return "cleanup"
+	case strings.Contains(message, "provisioning"), strings.Contains(message, "session"), strings.Contains(message, "health"):
+		return "health"
+	case strings.Contains(message, "permission"):
+		return "permission"
+	case strings.Contains(message, "config"):
+		return "configuration"
+	default:
+		return "reconcile_failed"
+	}
 }
 
 func defaultServiceOptions() serviceOptions {
@@ -290,6 +353,86 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return nil, err
 	}
+	var environmentManager *environment.Manager
+	var environmentRuntime *serviceEnvironmentRuntime
+	var poolConfig slot.PoolConfig
+	if cfg.JobPool.Enabled() {
+		poolConfig = slot.PoolConfig{
+			PoolID:             cfg.JobPool.PoolID,
+			EnvironmentID:      cfg.JobPool.EnvironmentID,
+			EnvironmentVersion: cfg.JobPool.EnvironmentVersion,
+			DesiredSlots:       cfg.JobPool.DesiredSlots,
+			Capabilities:       append([]string(nil), cfg.JobPool.Capabilities...),
+			ManifestDigest:     cfg.JobPool.ManifestDigest,
+			Signer:             cfg.JobPool.Signer,
+			RequireTrusted:     cfg.JobPool.RequireTrusted,
+		}
+	}
+	if cfg.WindowsJobPool.Enabled {
+		environmentManager, err = newConfiguredEnvironmentManager(cfg, serviceTarget())
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+		if err := environmentManager.SyncRecords(database); err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+	}
+	// A crash can leave a package operation in requested/provisioning. Resolve
+	// that durable state before exposing the Core endpoint on restart.
+	if err := database.RecoverEnvironmentOperations(now()); err != nil {
+		_ = database.Close()
+		return nil, err
+	}
+	if cfg.JobPool.Enabled() {
+		existing, getErr := database.GetJobPool(poolConfig.PoolID)
+		if getErr == nil {
+			// The durable control-plane revision is authoritative after the first
+			// boot. A restart must not overwrite it from deployment config.
+			poolConfig = existing
+		} else if errors.Is(getErr, slot.ErrPoolNotFound) {
+			if err := database.ReconcileTrustedJobPool(poolConfig, now()); err != nil {
+				_ = database.Close()
+				return nil, err
+			}
+		} else {
+			_ = database.Close()
+			return nil, getErr
+		}
+	}
+	if cfg.WindowsJobPool.Enabled {
+		entryName := "headless"
+		if options.backend == backendNode {
+			entryName = "worker"
+		}
+		environmentRuntime, err = resolveServiceEnvironment(cfg, environmentManager, poolConfig, entryName)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+	}
+	// Slot lease recovery runs from Scheduler.RunOnce after the provisioner
+	// and capability revoker are wired, so stale agents are fenced before the
+	// durable lease is removed.
+	var rdpBridge *rdpCapabilityBridge
+	if cfg.WindowsJobPool.Enabled && cfg.WindowsJobPool.RDPEnabled {
+		rdpBridge, err = newRDPCapabilityBridge(now)
+		if err != nil {
+			_ = database.Close()
+			return nil, err
+		}
+	}
+	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge, environmentRuntime, poolConfig)
+	if err != nil {
+		_ = database.Close()
+		return nil, err
+	}
+	factory, err = configureWorkerFactory(cfg, options, factory, slotProfileAccess)
+	if err != nil {
+		_ = database.Close()
+		return nil, err
+	}
 	var logger *observability.JSONLogger
 	var automationAdapter automation.Adapter
 	closeOnError := func(closeErr error) (*serviceRuntime, error) {
@@ -307,6 +450,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		{Name: "chuzi_events_total", Help: "Classified chuzi operational events", Kind: observability.Counter},
 		{Name: "chuzi_event_duration_seconds", Help: "Duration of classified chuzi operations", Kind: observability.Histogram},
 		{Name: "chuzi_operational_errors_total", Help: "Operational snapshot failures", Kind: observability.Counter},
+		{Name: "chuzi_slot_reconcile_errors_total", Help: "Slot lifecycle reconciliation failures", Kind: observability.Counter},
 		{Name: "chuzi_rate_limited_requests_total", Help: "New request submissions rejected by service rate limits", Kind: observability.Counter},
 		{Name: "chuzi_database_bytes", Help: "Active database file size", Kind: observability.Gauge},
 		{Name: "chuzi_accounts", Help: "Accounts in the active store", Kind: observability.Gauge},
@@ -321,6 +465,15 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		{Name: "chuzi_notifications_claimed", Help: "Claimed Matrix notifications", Kind: observability.Gauge},
 		{Name: "chuzi_notifications_expired_claims", Help: "Expired Matrix notification claims", Kind: observability.Gauge},
 		{Name: "chuzi_notifications_delivered", Help: "Delivered Matrix notifications", Kind: observability.Gauge},
+		{Name: "chuzi_job_pools", Help: "Configured logical job pools", Kind: observability.Gauge},
+		{Name: "chuzi_slots_desired", Help: "Desired logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_ready", Help: "Ready logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_leased", Help: "Leased logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_quarantined", Help: "Quarantined logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_draining", Help: "Draining logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_provisioning", Help: "Provisioning logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_retiring", Help: "Retiring logical execution slots", Kind: observability.Gauge},
+		{Name: "chuzi_slots_unprovisioned", Help: "Unprovisioned logical execution slots", Kind: observability.Gauge},
 	} {
 		if err := metrics.Register(definition); err != nil {
 			return closeOnError(err)
@@ -384,7 +537,8 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			RoomLimit: cfg.RateLimit.RoomLimit, RoomWindow: time.Duration(cfg.RateLimit.RoomWindowSeconds) * time.Second,
 			AccountLimit: cfg.RateLimit.AccountLimit, AccountWindow: time.Duration(cfg.RateLimit.AccountWindowSeconds) * time.Second,
 		},
-		Sink: sink,
+		Sink:         sink,
+		Capabilities: rdpBridge,
 	})
 	if err != nil {
 		return closeOnError(err)
@@ -400,7 +554,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		if packageErr != nil {
 			return closeOnError(errAdapterUnavailable)
 		}
-		node, lookErr := exec.LookPath(options.workerCommand)
+		node, lookErr := resolveServiceWorkerCommand(options, cfg.WindowsJobPool.Enabled)
 		if lookErr != nil {
 			return closeOnError(fmt.Errorf("service: automation adapter runtime unavailable"))
 		}
@@ -428,7 +582,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		}
 		pipelineRunner, pipelineErr := core.NewPipelineRunner(database, core.PipelineConfig{
 			Factory: factory, Credentials: credentials, Automation: client, Profiles: profiles,
-			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", ViewRegistry: viewRegistry, CancellationObserver: database, Clock: now, Sink: sink},
+			Browser: browser.Config{LeaseTTL: options.leaseTTL, HeartbeatInterval: options.heartbeat, CancelTimeout: options.cancelTimeout, ShutdownTimeout: options.shutdownTimeout, WorkerMode: "adapter", ViewRegistry: viewRegistry, CancellationObserver: database, SlotLeases: database, ProfileAccess: slotProfileAccess, Clock: now, Sink: sink},
 			Clock:   now, Actor: options.owner,
 			Operation:          automation.Operation{Name: "genshin.cloudgame.session_probe"},
 			CredentialOptional: true,
@@ -445,12 +599,33 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			ShutdownTimeout:      options.shutdownTimeout,
 			ViewRegistry:         viewRegistry,
 			CancellationObserver: database,
+			SlotLeases:           database,
+			ProfileAccess:        slotProfileAccess,
 			Clock:                now,
 			Sink:                 sink,
 		})
 	}
 	if err != nil {
 		return closeOnError(err)
+	}
+	var slotLeaseStopper queue.SlotLeaseStopper
+	if candidate, ok := slotProfileAccess.(queue.SlotLeaseStopper); ok {
+		slotLeaseStopper = candidate
+	}
+	staticRuntimeConfig := queue.RuntimeConfig{SlotPoolID: poolConfig.PoolID, SlotRequirement: poolConfig.Requirement(), MaxGlobalConcurrency: options.maxConcurrency}
+	runtimeConfig := func() (queue.RuntimeConfig, error) {
+		if staticRuntimeConfig.SlotPoolID == "" {
+			return staticRuntimeConfig, nil
+		}
+		current, getErr := database.GetJobPool(staticRuntimeConfig.SlotPoolID)
+		if getErr != nil {
+			return queue.RuntimeConfig{}, getErr
+		}
+		maxConcurrency := current.MaxConcurrency
+		if maxConcurrency < 1 {
+			maxConcurrency = options.maxConcurrency
+		}
+		return queue.RuntimeConfig{SlotPoolID: current.PoolID, SlotRequirement: current.Requirement(), MaxGlobalConcurrency: maxConcurrency}, nil
 	}
 	scheduler, err := queue.New(database, sessionRunner, queue.Config{
 		Owner:                options.owner,
@@ -462,20 +637,40 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			BaseDelay:   options.retryBaseDelay,
 			MaxDelay:    options.retryMaxDelay,
 		},
-		Clock: now,
-		NewID: newID,
-		Sink:  sink,
+		Clock:            now,
+		NewID:            newID,
+		Sink:             sink,
+		SlotPoolID:       staticRuntimeConfig.SlotPoolID,
+		SlotRequirement:  staticRuntimeConfig.SlotRequirement,
+		RuntimeConfig:    runtimeConfig,
+		Capabilities:     rdpBridge,
+		SlotLeaseStopper: slotLeaseStopper,
 	})
 	if err != nil {
 		return closeOnError(err)
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, Diagnostics: diagnosticService})
+	var environmentExecutor core.EnvironmentExecutor
+	var environmentControl core.EnvironmentControlPort = database
+	if environmentManager != nil {
+		environmentExecutor = serviceEnvironmentExecutor{manager: environmentManager, store: database}
+		environmentControl = serviceEnvironmentControl{manager: environmentManager, store: database}
+	}
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}
 	runtime := &serviceRuntime{
-		store: database, requests: requestService, credentials: credentials,
+		store: database, environment: environmentManager, environmentID: poolConfig.EnvironmentID, environmentVersion: poolConfig.EnvironmentVersion, jobPoolID: poolConfig.PoolID, requests: requestService, credentials: credentials,
 		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, diagnostics: diagnosticService, eventBuffer: eventBuffer, coreAPI: coreAPI,
+		rdp: rdpBridge,
+	}
+	runtime.slotReconciler = slotReconciler
+	if slotReconciler != nil {
+		runtime.slotHealth = newSlotLifecycleHealth()
+	}
+	runtime.slotInterval = 5 * time.Second
+	if cfg.WindowsJobPool.Enabled {
+		runtime.slotInterval = time.Duration(cfg.WindowsJobPool.AgentHeartbeatSeconds) * time.Second
 	}
 	runtime.metricsListen = cfg.Observability.MetricsListen
 	if strings.TrimSpace(options.metricsListen) != "" {
@@ -539,6 +734,9 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return err
 		},
 		"worker": health.StaticProbe(nil),
+	}
+	if runtime.slotHealth != nil {
+		probes["slot_lifecycle"] = runtime.slotHealth.probe
 	}
 	if runtime.matrixClient != nil {
 		probes["matrix"] = func(ctx context.Context) error {
@@ -647,6 +845,16 @@ func main() {
 	auditAccount := flag.String("audit-account", "", "optional account filter for -audit")
 	auditLimit := flag.Int("audit-limit", 1000, "maximum entries returned by -audit")
 	validateBackupPath := flag.String("validate-backup", "", "validate a backup database without restoring it")
+	environmentInstall := flag.String("environment-install", "", "install a signed environment package source")
+	environmentUpgrade := flag.String("environment-upgrade", "", "upgrade from a signed environment package source")
+	environmentTrust := flag.Bool("environment-trust", false, "trust an installed environment")
+	environmentEnable := flag.Bool("environment-enable", false, "enable a trusted environment")
+	environmentDisable := flag.Bool("environment-disable", false, "disable an environment")
+	environmentHealth := flag.Bool("environment-health", false, "health-check an enabled environment")
+	environmentRollback := flag.Bool("environment-rollback", false, "rollback an environment package")
+	environmentPromote := flag.Bool("environment-promote", false, "promote manager-ready environment records into Store")
+	environmentID := flag.String("environment-id", "", "environment ID for a lifecycle operation")
+	environmentVersion := flag.String("environment-version", "", "environment version for a lifecycle operation")
 	flag.Parse()
 
 	if *showVersion {
@@ -658,9 +866,27 @@ func main() {
 	defer stop()
 
 	var err error
-	if *backup || strings.TrimSpace(*restorePath) != "" || strings.TrimSpace(*injectAccount) != "" || strings.TrimSpace(*rotateAccount) != "" || strings.TrimSpace(*revokeAccount) != "" || *diagnostics || *audit || strings.TrimSpace(*validateBackupPath) != "" {
+	environmentOperation := ""
+	environmentSource := ""
+	for operation, enabled := range map[string]bool{"install": strings.TrimSpace(*environmentInstall) != "", "upgrade": strings.TrimSpace(*environmentUpgrade) != "", "trust": *environmentTrust, "enable": *environmentEnable, "disable": *environmentDisable, "health": *environmentHealth, "rollback": *environmentRollback, "promote": *environmentPromote} {
+		if enabled {
+			if environmentOperation != "" {
+				err = fmt.Errorf("service: multiple environment operations")
+				break
+			}
+			environmentOperation = operation
+		}
+	}
+	if environmentOperation == "install" {
+		environmentSource = *environmentInstall
+	} else if environmentOperation == "upgrade" {
+		environmentSource = *environmentUpgrade
+	}
+	if err == nil && environmentOperation != "" {
+		err = runEnvironmentMaintenance(ctx, options, environmentOperation, environmentSource, *environmentID, *environmentVersion)
+	} else if err == nil && (*backup || strings.TrimSpace(*restorePath) != "" || strings.TrimSpace(*injectAccount) != "" || strings.TrimSpace(*rotateAccount) != "" || strings.TrimSpace(*revokeAccount) != "" || *diagnostics || *audit || strings.TrimSpace(*validateBackupPath) != "") {
 		err = runMaintenance(ctx, options, *backup, *restorePath, *injectAccount, *rotateAccount, *revokeAccount, *credentialEnv, *credentialActor, *diagnostics, *audit, *auditAccount, *validateBackupPath, *auditLimit)
-	} else if *selfTest {
+	} else if err == nil && *selfTest {
 		err = runSelfTest(ctx, options.workerCommand, options.workerScript)
 	} else {
 		err = run(ctx, options)

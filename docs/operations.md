@@ -3,7 +3,8 @@
 ## 配置分类
 
 - 普通配置：`data_dir`、Matrix homeserver/user/policy、同步时序、凭证 key 环境变量
-  名称、健康监听地址和新请求限流窗口。`configs/example.json` 不包含任何 Secret 值。
+  名称、健康监听地址、新请求限流窗口和可选逻辑 `job_pool` 的环境元数据/
+  `desired_slots`。`configs/example.json` 不包含任何 Secret 值。
 - Secret 配置：Matrix access token、凭证加密主密钥（只由环境/Secret manager 注入）。
 - 运行数据：数据库、浏览器 Profile、审计日志、待发送事件和用户同意后的诊断队列。
 
@@ -13,6 +14,170 @@
 输入不能覆盖这些路径。`cmd/service` 普通启动默认加载该文件，也可通过 `-config`
 指定路径；Store、Profile 和队列都从同一 `data_dir` 派生。Secret 不进入 Git。
 生产环境至少限制服务账户、数据库和 Profile 目录的文件权限。
+
+启用逻辑执行槽位池时，配置只填写 pool ID、environment manifest 摘要、能力和
+`desired_slots`，例如：
+
+```json
+{
+  "job_pool": {
+    "pool_id": "windows-cloudgame",
+    "environment_id": "chuzi-environment/v1",
+    "environment_version": "1.0.0",
+    "desired_slots": 2,
+    "capabilities": ["windows-desktop", "cdp"],
+    "require_trusted": true
+  }
+}
+```
+
+环境 manifest 摘要只是选择约束，不是信任凭证。启用 Windows slot lifecycle 前，
+必须通过环境包管理边界安装并验证对应版本，并将验证后的 Record 通过 Store API
+持久化为同一 bbolt 数据目录中的 `environment_packages` 记录；只有
+`trusted`、`enabled`、`healthy` 和 `ready` 全部成立时才可使用。服务启动时
+若找不到完全匹配的 ready 记录会 fail closed，slot 保持 unprovisioned/provisioning，不会仅凭配置
+或调用方 requirement 运行。
+
+服务提供显式环境维护入口：`-environment-install`/`-environment-upgrade`
+安装签名包，随后使用 `-environment-id`、`-environment-version` 配合
+`-environment-trust`、`-environment-enable`、`-environment-health` 和
+`-environment-promote` 完成生命周期门；`-environment-disable` 和
+`-environment-rollback` 用于停用及回滚。部署 signer 公钥放在
+`<data_dir>/.chuzi/environment-trust.json`，服务不从普通配置或命令行读取
+私钥、runtime executable 或任意路径。
+
+Windows 主机若启用 OS 用户池，还需在同一配置中声明与 `job_pool` 容量和环境版本
+一致的 `windows_job_pool`：
+
+```json
+{
+  "windows_job_pool": {
+    "enabled": true,
+    "desired_slots": 2,
+    "user_prefix": "ChuziJob",
+    "rdp_enabled": false,
+    "session_idle_timeout_seconds": 300,
+    "agent_heartbeat_seconds": 10,
+    "provision_timeout_seconds": 120,
+    "cleanup_timeout_seconds": 60,
+    "environment_id": "chuzi-environment/v1",
+    "environment_version": "1.0.0"
+  }
+}
+```
+
+服务启动时先 reconcile 逻辑 slot 记录。Windows 构建在 `windows_job_pool.enabled`
+时继续运行受控 provisioner：它创建/修复带 CHUZI 标记的普通本地用户、受限目录 ACL、
+session-aware `chuzi-user-agent.exe` 和 per-slot Job Object；没有 active session 或
+agent heartbeat 时 slot 保持 provisioning/quarantined，不会参与调度。非 Windows 构建
+返回 `slotwindows.ErrUnsupported`，只运行逻辑 slot。
+
+每次 lifecycle reconcile 失败都会写入脱敏的 `slot/reconcile` 事件，并递增
+`chuzi_slot_reconcile_errors_total`；错误正文、SID、路径和凭证不会写入日志。最近一次
+失败会让 health endpoint 的 `slot_lifecycle` 检查返回 503，下一次成功 reconcile 后恢复
+ready。这样 OS 边界故障既会继续按固定间隔重试，也会出现在指标、结构化日志和 readiness
+投影中。
+
+## Windows job pool 原生验收
+
+阶段 4 的原生 smoke 只能在受控 Windows runner 上运行。runner 必须使用管理员权限、
+可创建 disposable 本地用户、可查询 WTS session，并带有 `go.exe`、Node.js 20+ 和
+当前 checkout；专用 runner 标签为 `self-hosted`, `windows`, `chuzi-job-pool`。管理员 PowerShell
+负责准备测试并编译 Go 测试二进制；脚本通过本轮随机命名的临时 Task Scheduler task
+以 `NT AUTHORITY\SYSTEM` 执行该二进制，因为 slot provisioner 使用的 WTS token API 需要
+SYSTEM 的 TCB 权限。SYSTEM 子进程只接收本轮临时路径和标识，不接收 RDP 密码或 Credential
+Manager 内容；任务在测试结束后注销。测试脚本不接受
+用户名、命令或 executable 参数；`-LocalRdp` 默认扫描本机 loopback RDP endpoint：
+
+```powershell
+scripts/test_windows_job_pool_smoke.ps1 -ValidateOnly
+scripts/test_windows_job_pool_smoke.ps1 -LocalRdp
+```
+
+`-LocalRdp` 解析 `cmdkey /list` 中已占用的 `TERMSRV/127.0.0.x`，从
+`127.0.0.2` 到 `127.0.0.254` 选择最低的未占用 alias；没有可用 alias 时 fail closed，
+不会回退到主机名、LAN 地址或当前交互用户。脚本在 run-scoped smoke 目录生成一次性 `.rdp`，
+只把 endpoint 和本轮临时用户名写入动态字段。已验证 MiniSession profile 的固定证据字段为：
+`prompt for credentials:i:0`、`administrative session:i:0`、`screen mode id:i:2`、
+`session bpp:i:32`、`compression:i:1`、`redirectclipboard:i:1`、
+`autoreconnection enabled:i:1`、`authentication level:i:2`、
+`negotiate security layer:i:1`。目标 Credential Manager 项会在测试期间暂存并在退出时恢复；
+新建的测试项会在退出时删除，
+生成的 profile 使用后删除。`-RdpProfileTemplatePath` 仍可用于显式验证一个操作者提供的
+loopback/3389 profile，但不是默认路径。
+凭据写入后会立即核对保存用户名是否等于本轮临时用户；WTS active session 建立后还会再次核对
+session 用户名和 Shell readiness，任一检查失败都会在启动后续 smoke 前停止。
+
+脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
+`chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，
+并复制固定 `session-shell.ps1`，为 smoke 创建一次性签名证书，将其加入本机 Root 与
+Trusted Publishers 存储后签署脚本；退出时删除证书和信任项。
+并在退出时只删除带有本轮 user ownership marker 且名称与本轮随机前缀完全匹配的测试用户和临时目录；
+历史运行留下的 marker 用户只计数报告，不会被当前运行自动删除。输出不得包含密码、
+SID、用户名、Profile 路径、pipe 路径或原始 Win32 错误。Smoke 用
+`CreateProcessWithLogonW(LOGON_WITH_PROFILE)` 初始化 Profile，设置并核对目标 HKCU 的
+PowerShell Shell，等待默认 desktop 中的 readiness event，再由服务在
+`winsta0\ChuziSlot<hash>` desktop 启动 agent。native smoke 需要一个能为
+managed user 建立真实 active WTS session 的受控 session provider；只有 Remote Desktop
+Users 成员资格并不会建立 session。provider 缺失或 session 复核失败时，smoke 应返回
+稳定的 `session_unavailable`/`session_changed` 分类，不能跳过 `FindSession` 或将
+`CreateProcessAsUser` 当作 WTS session。
+
+agent/worker 停止、进程句柄释放、session stop/logoff、用户清理和 root 清理按固定顺序
+执行，每一阶段使用有限 retry/backoff 和总超时。失败保留脱敏 `test-output.log`；user
+cleanup 与 root cleanup 分别报告；未知 ownership 或未知目录不会被删除。默认关闭的
+`CHUZI_PRESERVE_WINDOWS_JOB_POOL_SMOKE_ROOT=1` 只用于本地诊断保留一次性 root，不会
+保留真实用户或密码，也不会被生产服务读取。成功运行必须输出
+`RemainingSmokeUsers = 0`、`RemainingSmokeRoots = 0` 和
+`Windows job-pool native smoke passed`。
+
+`chuzi-build-windows-job-pool-preflight` 在 GitHub-hosted `windows-2022` 上编译所有
+Windows Go 包、运行 `go vet`、检查 native smoke 测试入口并构建固定 user-agent。手动
+`test` 通道使用这个 preflight 完成可安装包的 CI 验证，并明确跳过需要受管用户真实 WTS
+session 的 native smoke；`nightly`、`stable` 和主分支构建仍要求专用 native runner。
+因此 test 包通过不代表 Windows 用户/session/desktop 已完成生产验收，安装后的真机 smoke
+仍是后续验收步骤。
+
+原生 smoke 覆盖受管用户创建/复用/删除、Remote Desktop Users 成员和
+Administrators 排除、ownership/SID 对账、Profile ACL、reparse/path traversal 拒绝、
+agent named pipe/token、session-aware worker 启动、browser worker handshake、worker
+停止、active session health、过期 lease fence、service shutdown agent cleanup、未知
+ownership 项保护和资源退休。发布 workflow 的
+`chuzi-build-windows-job-pool-smoke` job 使用专用 runner；对 nightly/stable 该 job 失败或
+排队不可用时，`chuzi-build` 聚合检查失败或保持等待，发布不能继续。
+
+## Windows readiness 和故障处理
+
+Windows job pool 的 readiness 必须按以下分类投影，不能将计数非零直接解释为生产 ready：
+
+| 分类 | 含义 | 处理 |
+| --- | --- | --- |
+| `slot_pool_disabled` | 未启用逻辑或 Windows pool | 不调度作业 |
+| `provisioning` | 正在创建或修复 slot/agent | 等待 reconcile |
+| `ready` | trusted environment、session、desktop、agent health 均通过 | 允许调度 |
+| `degraded` | reconcile、health 或容量部分失败 | 保留可用 slot，限制新作业并告警 |
+| `quarantined` | agent/ACL/session 故障隔离 | 不调度，按 ownership 检查修复 |
+| `draining` | 缩容或 generation 升级等待 lease 释放 | 不接新作业 |
+| `rdp_unavailable` | RDP 未启用或无受控 authorizer/broker | 仅允许非交互能力 |
+| `environment_untrusted` | manifest、digest、signer 或 ready record 不匹配 | fail closed |
+| `windows_platform_unavailable` | 非 Windows、权限不足或原生 smoke 未通过 | 不启用 OS 用户池 |
+
+RDP capability 仍由 credential boundary 管理，并只向 Core/UI 返回 opaque token。当前默认
+authorizer 是 deny-by-default；在提供受控 RDP broker、Windows API 权限和测试凭证边界之前，
+生产交互式 RDP 必须保持 `rdp_unavailable`。
+
+## 扩缩容、升级和恢复
+
+扩容先增加 `desired_slots`，由 reconcile 创建新的 generation；缩容将 leased slot 标为
+`draining`，释放 lease 后才进入 `retiring`。环境升级必须先安装、验证、trust、health 和
+promote 新 package；旧 generation 继续服务已有 lease，释放后才切换。升级失败或回滚期间
+保持旧的 ready record，不删除未知目录或用户。
+
+服务重启或断电恢复时，agent Job Object 和 lease fence 优先处理；过期 account/slot lease
+不得直接恢复为 Ready，残留 agent 必须先停止，generation 不匹配的 agent 不能接收新 request。
+quarantine 只能在 ownership、ACL、环境和 agent health 全部重新通过后显式恢复。紧急停用时
+先禁用 pool 和 RDP authorizer，再停止服务；恢复按 package promote、reconcile、health、
+readiness 顺序执行。
 
 ## 目标部署的最低运行要求
 
@@ -41,6 +206,31 @@ pipe、bbolt 或读取 Profile。
 响应只含 Core DTO 和稳定错误码，禁止返回 store、凭证、Profile 路径或底层错误文本。
 契约测试覆盖版本拒绝、未知方法、握手前访问、敏感字段脱敏、取消、并发多路复用、超大
 帧、socket 权限和 endpoint 占用。
+
+### Job pool 和环境控制面
+
+Launcher 是运维脚本和 Native UI 的唯一入口。可用命令为
+`job-pool-list`、`job-pool-get`、`job-pool-apply`、`job-pool-scale`、
+`job-pool-drain`、`job-pool-resume`、`job-pool-operation`，以及
+`environment-list`、`environment-install`、`environment-upgrade`、
+`environment-verify`、`environment-trust`、`environment-enable`、
+`environment-disable`、`environment-health`、`environment-rollback` 和
+`environment-operation`。这些命令都通过 Core IPC，不直接打开 bbolt 或调用
+Windows API；写命令返回 operation ID，状态可重复查询。
+
+Job pool 配置在 Store 中使用递增 `config_revision`。`expected_revision` 必须匹配
+当前版本；`idempotency_key` 与请求 payload 绑定，重复请求返回相同 operation，改变
+payload 会返回稳定 `conflict`。每个写操作同时写入 metadata-only audit event。审计和
+Core/Launcher 投影只允许稳定 ID、计数、状态、时间、revision、operation ID 和失败分类，
+不会包含 actor 原文、SID、用户名、Profile、pipe、RDP endpoint、package 本地路径、
+命令、Cookie、token 或密码。
+
+环境 package 操作只能引用服务拥有的 catalog entry。长期运行的 service 将
+`PackageRef` 解析为 `<data_dir>/.chuzi/environment-catalog/<ref>`，再由签名
+`environment.Manager` 执行 install/upgrade/rollback 和 Store 同步；缺失 catalog entry
+时以稳定的 `package_unavailable` 完成失败。既有 `cmd/service -environment-install`
+等维护入口继续调用签名 `environment.Manager`，并要求受控本地 source。Core 或 Launcher
+不会接收任意路径。
 
 首个 Windows Slint 客户端在 `ui/windows`，构建脚本为
 `scripts/build_windows_slint.ps1`，Actions 任务 `chuzi-build-windows-slint` 生成并上传
@@ -152,7 +342,8 @@ Test 允许新代码带有未知问题，只能发布 test catalog。Nightly 只
 完整包内的 `release-manifest.json` 是启动器 CLI 和原生客户端的稳定输入，声明目标平台、
 版本、组件资源 SHA-256/大小、适配器描述和更新 channel。`cmd/launcher` 提供 manifest
 展示、校验、`initialize`/`initialize-complete` 首次启动状态、基于本地或 HTTPS index
-的更新检查、资源修复、组件启停、适配器安装/更新/信任/启停/移除和 `settings`/`settings-save` CLI。
+的更新检查、资源修复、组件启停、适配器安装/更新/信任/启停/移除和 `settings`/`settings-save` CLI。设置中的
+的更新检查、资源修复、组件启停、适配器安装/更新/信任/启停/移除和 `settings`/`settings-save` CLI。设置中的
 `start_core_on_launch` 只允许客户端在应用启动时启动已经安装的 Core，不会隐式安装或修改组件。
 修改安装目录或设置前会取得 `.chuzi/launcher.lock`，`-progress` 可将脱敏的阶段事件
 写到 stderr，Ctrl-C 会通过 context 取消当前操作。显式 `-release-index` 时，下载器
@@ -195,7 +386,9 @@ scripts/assemble_target.sh <target> <version> <go-dir> <worker-archive> <dist-ro
 ```
 
 Windows runner 使用对应的 `*.ps1` 脚本。`build.sh`/`build.ps1` 保留为本地一体化构建入口，
-并行 CI 使用组件构建和 `assemble_target` 脚本。构建产物必须包含 Go 服务、Worker 文件
+并行 CI 使用组件构建和 `assemble_target` 脚本。Windows 目标会把 Node.js `node.exe`
+一并放入安装目录；在 Unix 主机组装 Windows 目标时，必须通过 `CHUZI_NODE_RUNTIME`
+指定同架构的 `node.exe`。构建产物必须包含 Go 服务、Worker 文件
 和 `build-manifest.json`，并生成 SHA256 校验文件。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 

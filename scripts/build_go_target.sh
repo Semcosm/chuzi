@@ -44,6 +44,7 @@ if [ "$target" = "windows-amd64" ]; then
     -trimpath \
     -o "$output_dir/chuzi-browser-launcher.exe" \
     "$repo_root/cmd/browser-launcher"
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -o "$output_dir/chuzi-user-agent.exe" "$repo_root/cmd/user-agent"
 fi
 
 echo "built Go components for $target at $output_dir"

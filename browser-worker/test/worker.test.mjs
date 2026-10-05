@@ -43,13 +43,13 @@ function spawnHeadless(mode = "valid", timeoutMs = "1000", extraEnv = {}, browse
 test("headed worker keeps the CDP lifecycle while omitting headless mode", async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-headed-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
-  const child = spawnHeadless("valid", "1000", {}, "headed");
+  const child = spawnHeadless("valid", "1000", { CHUZI_SESSION_PROFILE_DIR: profile }, "headed");
   const lines = createReader(child, "headed-worker");
   cleanupChild(t, child, lines);
   sendMessage(child, "headed-worker", { protocol: "v1", id: "hello-1", type: "hello" });
   assert.equal((await readMessage(lines)).payload.browserRuntime, "headed-cdp");
   sendMessage(child, "headed-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
-    session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "success",
+    session_id: "session-1", account_id: "account-1", request_id: "request-1", mode: "success",
   } });
   const started = await readMessage(lines);
   assert.equal(started.payload.runtime, "headed-cdp");
@@ -103,7 +103,6 @@ test("worker exposes session start, cancellation, and shutdown lifecycle", async
       session_id: "session-1",
       account_id: "account-1",
       request_id: "request-1",
-      profile_dir: "/service-generated/profile",
       mode: "hold",
     },
   });
@@ -142,7 +141,6 @@ test("worker reports deferred browser runtime as a classified failure", async ()
       session_id: "session-1",
       account_id: "account-1",
       request_id: "request-1",
-      profile_dir: "/service-generated/profile",
     },
   });
   assert.equal((await readMessage(lines)).type, "session_started");
@@ -159,14 +157,14 @@ test("worker reports deferred browser runtime as a classified failure", async ()
 test("headless worker discovers a loopback CDP endpoint and exposes a session handle", async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
-  const child = spawnHeadless("valid");
+  const child = spawnHeadless("valid", "1000", { CHUZI_SESSION_PROFILE_DIR: profile });
   const lines = createReader(child, "headless-worker");
   cleanupChild(t, child, lines);
   sendMessage(child, "headless-worker", { protocol: "v1", id: "hello-1", type: "hello" });
   const hello = await readMessage(lines);
   assert.equal(hello.payload.browserRuntime, "headless-cdp");
   sendMessage(child, "headless-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
-    session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "success",
+    session_id: "session-1", account_id: "account-1", request_id: "request-1", mode: "success",
   } });
   const started = await readMessage(lines);
   assert.equal(started.type, "session_started");
@@ -182,11 +180,11 @@ test("headless worker discovers a loopback CDP endpoint and exposes a session ha
 test("headless worker waits for a delayed CDP endpoint before starting the session", async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-delayed-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
-  const child = spawnHeadless("valid", "2000", { FAKE_CDP_START_DELAY_MS: "750" });
+  const child = spawnHeadless("valid", "2000", { FAKE_CDP_START_DELAY_MS: "750", CHUZI_SESSION_PROFILE_DIR: profile });
   const lines = createReader(child, "headless-worker-delayed");
   cleanupChild(t, child, lines);
   sendMessage(child, "headless-worker-delayed", { protocol: "v1", id: "session-1", type: "session_start", payload: {
-    session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "success",
+    session_id: "session-1", account_id: "account-1", request_id: "request-1", mode: "success",
   } });
   const started = await readMessage(lines);
   assert.equal(started.type, "session_started");
@@ -199,11 +197,11 @@ test("headless worker fails closed for invalid or unavailable CDP endpoints", as
     await t.test(mode, async () => {
       const profile = await mkdtemp(resolve(root, `test-profile-${mode}-`));
       t.after(() => rm(profile, { recursive: true, force: true }));
-      const child = spawnHeadless(mode, mode === "invalid" ? "1000" : "250");
+      const child = spawnHeadless(mode, mode === "invalid" ? "1000" : "250", { CHUZI_SESSION_PROFILE_DIR: profile });
       const lines = createReader(child, `headless-worker-${mode}`);
       cleanupChild(t, child, lines);
       sendMessage(child, `headless-worker-${mode}`, { protocol: "v1", id: "session-1", type: "session_start", payload: {
-        session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile,
+        session_id: "session-1", account_id: "account-1", request_id: "request-1",
       } });
       const failed = await readMessage(lines);
       assert.equal(failed.type, "session_failed");
@@ -217,11 +215,11 @@ test("headless worker fails closed for invalid or unavailable CDP endpoints", as
 test("headless worker cancellation terminates the external browser", async (t) => {
   const profile = await mkdtemp(resolve(root, "test-profile-hold-"));
   t.after(() => rm(profile, { recursive: true, force: true }));
-  const child = spawnHeadless("valid");
+  const child = spawnHeadless("valid", "1000", { CHUZI_SESSION_PROFILE_DIR: profile });
   const lines = createReader(child, "headless-worker");
   cleanupChild(t, child, lines);
   sendMessage(child, "headless-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
-    session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: profile, mode: "hold",
+    session_id: "session-1", account_id: "account-1", request_id: "request-1", mode: "hold",
   } });
   assert.equal((await readMessage(lines)).type, "session_started");
   sendMessage(child, "headless-worker", { protocol: "v1", id: "cancel-1", type: "session_cancel", payload: { session_id: "session-1" } });
@@ -231,11 +229,11 @@ test("headless worker cancellation terminates the external browser", async (t) =
 });
 
 test("headless worker rejects caller-provided relative Profile paths", async (t) => {
-  const child = spawnHeadless("valid");
+  const child = spawnHeadless("valid", "1000", { CHUZI_SESSION_PROFILE_DIR: "./not-allowed" });
   const lines = createReader(child, "headless-worker");
   cleanupChild(t, child, lines);
   sendMessage(child, "headless-worker", { protocol: "v1", id: "session-1", type: "session_start", payload: {
-    session_id: "session-1", account_id: "account-1", request_id: "request-1", profile_dir: "./not-allowed",
+    session_id: "session-1", account_id: "account-1", request_id: "request-1",
   } });
   const failed = await readMessage(lines);
   assert.equal(failed.type, "session_failed");

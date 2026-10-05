@@ -69,8 +69,8 @@ input.on("line", (line) => {
       break;
     case "session_start": {
       const sessionID = value(request, "session_id");
-      if (!sessionID || !value(request, "account_id") || !value(request, "request_id") || !value(request, "profile_dir")) {
-        error(request, "session_start requires session_id, account_id, request_id, and profile_dir");
+      if (!sessionID || !value(request, "account_id") || !value(request, "request_id")) {
+        error(request, "session_start requires session_id, account_id, and request_id");
         break;
       }
       if (sessions.has(sessionID)) {

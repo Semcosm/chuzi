@@ -44,6 +44,10 @@ func TestApplyIsRepeatableAndRecordsVersion(t *testing.T) {
 			MatrixNotificationsBucket,
 			AccountDeletionsBucket,
 			MatrixSyncCursorsBucket,
+			JobPoolsBucket,
+			ExecutionSlotsBucket,
+			SlotLeasesBucket,
+			EnvironmentSummariesBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				t.Errorf("bucket %q is missing", name)
@@ -52,6 +56,47 @@ func TestApplyIsRepeatableAndRecordsVersion(t *testing.T) {
 		return nil
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestApplyUpgradesVersionFiveWithExecutionSlotBuckets(t *testing.T) {
+	db, err := bbolt.Open(filepath.Join(t.TempDir(), "schema-v5.db"), 0o600, &bbolt.Options{Timeout: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := db.Update(func(tx *bbolt.Tx) error {
+		meta, err := tx.CreateBucket([]byte(MetaBucket))
+		if err != nil {
+			return err
+		}
+		if err := writeVersion(meta, 5); err != nil {
+			return err
+		}
+		for _, name := range []string{AccountsBucket, RequestsBucket, RequestIdempotencyBucket, AuditsBucket, EventsBucket, LeasesBucket, QueueBucket, CredentialsBucket, CredentialAuditsBucket, MatrixNotificationsBucket, AccountDeletionsBucket, MatrixSyncCursorsBucket} {
+			if _, err := tx.CreateBucket([]byte(name)); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(db); err != nil {
+		t.Fatal(err)
+	}
+	if version, err := Version(db); err != nil || version != CurrentVersion {
+		t.Fatalf("upgraded version = %d, %v", version, err)
+	}
+	if err := db.View(func(tx *bbolt.Tx) error {
+		for _, name := range []string{JobPoolsBucket, ExecutionSlotsBucket, SlotLeasesBucket, EnvironmentSummariesBucket} {
+			if tx.Bucket([]byte(name)) == nil {
+				return fmt.Errorf("%s bucket missing after v5 upgrade", name)
+			}
+		}
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
 }

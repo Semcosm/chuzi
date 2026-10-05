@@ -49,11 +49,24 @@ if [ "$target" = "windows-amd64" ]; then
     -trimpath \
     -o "$stage_dir/chuzi-browser-launcher.exe" \
     "$repo_root/cmd/browser-launcher"
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+    -trimpath \
+    -o "$stage_dir/chuzi-user-agent.exe" \
+    "$repo_root/cmd/user-agent"
 fi
 
 npm --prefix "$repo_root/browser-worker" ci --ignore-scripts
 npm --prefix "$repo_root/browser-worker" run build
 cp -R "$repo_root/browser-worker/dist/." "$stage_dir/browser-worker/"
+if [ "$target" = "windows-amd64" ]; then
+  node_runtime="${CHUZI_NODE_RUNTIME:-}"
+  if [ -z "$node_runtime" ] || [ ! -f "$node_runtime" ] || [ "${node_runtime##*/}" != "node.exe" ]; then
+    echo "windows-amd64 packaging requires CHUZI_NODE_RUNTIME to point to node.exe" >&2
+    exit 1
+  fi
+  cp "$node_runtime" "$stage_dir/node.exe"
+  cp "$repo_root/scripts/session-shell.ps1" "$stage_dir/session-shell.ps1"
+fi
 adapter_extension=tar.gz
 if [ "$target" = "windows-amd64" ]; then
   adapter_extension=zip
