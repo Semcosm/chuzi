@@ -5,12 +5,12 @@ Head or Range: 1fd826029ce456f254907d8c4a57819c4307a5b6
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows job user pool and controlled slot agent
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 2400241812dda68ee2000b4e38e935b783de11ef
-Head OID: adc938f199faa194425f2c9d89c9782c45a06c79
+Base OID: 762a44ac441fc7d646059564098593d11c208dd1
+Head OID: 762a44ac441fc7d646059564098593d11c208dd1
 Integrated Result: pending
 
 ## Summary
