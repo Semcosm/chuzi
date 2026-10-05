@@ -5,12 +5,12 @@ Head or Range: ef44b3550cefa146a0d5a117443210a41e1b1184
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add Windows native job pool smoke gate
-Revision: 33
+Revision: 34
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 2400241812dda68ee2000b4e38e935b783de11ef
-Head OID: adc938f199faa194425f2c9d89c9782c45a06c79
+Base OID: 762a44ac441fc7d646059564098593d11c208dd1
+Head OID: 762a44ac441fc7d646059564098593d11c208dd1
 Integrated Result: pending
 
 ## Summary
@@ -294,6 +294,13 @@ authorizer/broker, installation and execution of a signed trusted environment
 package, a real adapter execution, service restart and power-loss recovery,
 and default cleanup without a preserved root remain unexecuted. CR-0092 stays
 pending until those deployment-owned phase 4 conditions are demonstrated.
+
+Revision 34 records PR #170's actual main merge result as
+`762a44ac441fc7d646059564098593d11c208dd1`. The local native smoke subgate
+is closed; production RDP broker/authorizer, signed package end-to-end
+execution, real adapter execution, restart and power-loss recovery, and
+default cleanup remain pending. The CR remains pending until those
+deployment-owned conditions are demonstrated.
 
 ## Risk
 
