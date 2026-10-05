@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/launcher"
 )
 
@@ -24,7 +25,7 @@ func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
 	verify := flag.Bool("verify", false, "verify declared resources under root")
-	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
+	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, job-pool-list, job-pool-get, job-pool-apply, job-pool-scale, job-pool-drain, job-pool-resume, job-pool-operation, environment-list, environment-install, environment-upgrade, environment-verify, environment-trust, environment-enable, environment-disable, environment-health, environment-rollback, environment-operation, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
 	sourceRoot := flag.String("source-root", "", "trusted local source root for repair/install")
 	updateManifest := flag.String("update-manifest", "", "candidate manifest for check-update")
 	releaseIndexURL := flag.String("release-index", "", "HTTPS release index URL for update and component downloads")
@@ -38,6 +39,16 @@ func main() {
 	settingsInput := flag.String("settings-input", "", "JSON file for settings-save")
 	coreMethod := flag.String("core-method", "", "Core API method for core-call")
 	coreParamsJSON := flag.String("core-params-json", "{}", "JSON parameters for core-call")
+	jobPoolInput := flag.String("job-pool-input", "", "typed JSON file for job-pool-apply")
+	poolID := flag.String("pool-id", "", "job pool identifier")
+	desiredSlots := flag.Int("desired-slots", -1, "desired job pool slots")
+	expectedRevision := flag.Uint64("expected-revision", 0, "expected config revision")
+	idempotencyKey := flag.String("idempotency-key", "", "idempotency key for control operation")
+	actor := flag.String("actor", "", "operator actor identifier")
+	operationID := flag.String("operation-id", "", "operation identifier")
+	environmentID := flag.String("environment-id", "", "environment identifier")
+	environmentVersion := flag.String("environment-version", "", "environment version")
+	packageRef := flag.String("package-ref", "", "controlled package reference")
 	lockPath := flag.String("lock-path", "", "launcher mutation lock path (default: <root>/.chuzi/launcher.lock)")
 	progress := flag.Bool("progress", false, "write operation progress to stderr")
 	allowRequiredRemoval := flag.Bool("allow-required-removal", false, "allow removal of required components (only for explicit Core uninstall)")
@@ -265,6 +276,14 @@ func main() {
 			}
 			return
 		}
+	case "job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-operation", "environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
+		handled, err := runControlCommand(ctx, *command, root, *jobPoolInput, *poolID, *desiredSlots, *expectedRevision, *idempotencyKey, *actor, *operationID, *environmentID, *environmentVersion, *packageRef)
+		if handled {
+			if err != nil {
+				fatal(err)
+			}
+			return
+		}
 	default:
 		source, err := resolveSourceRoot(root, *sourceRoot)
 		if err != nil {
@@ -355,6 +374,79 @@ func runCoreCommand(ctx context.Context, command, root, method, paramsJSON strin
 		return false, nil
 	}
 }
+
+func runControlCommand(ctx context.Context, command, root, jobPoolInput, poolID string, desiredSlots int, expectedRevision uint64, idempotencyKey, actor, operationID, environmentID, environmentVersion, packageRef string) (bool, error) {
+	manager, err := launcher.NewCoreManager(root)
+	if err != nil {
+		return true, err
+	}
+	method := ""
+	var params any = struct{}{}
+	switch command {
+	case "job-pool-list":
+		method = "list_job_pools"
+	case "job-pool-get":
+		method, params = "get_job_pool", struct {
+			PoolID string `json:"pool_id"`
+		}{poolID}
+	case "job-pool-apply":
+		if strings.TrimSpace(jobPoolInput) == "" {
+			return true, fmt.Errorf("-job-pool-input is required")
+		}
+		data, readErr := os.ReadFile(jobPoolInput)
+		if readErr != nil {
+			return true, readErr
+		}
+		decoder := json.NewDecoder(strings.NewReader(string(data)))
+		decoder.DisallowUnknownFields()
+		var input coreapi.JobPoolApplyRequest
+		if err := decoder.Decode(&input); err != nil {
+			return true, fmt.Errorf("decode job pool input: %w", err)
+		}
+		if input.IdempotencyKey == "" {
+			input.IdempotencyKey = idempotencyKey
+		}
+		if input.Actor == "" {
+			input.Actor = actor
+		}
+		if input.ExpectedRevision == 0 {
+			input.ExpectedRevision = expectedRevision
+		}
+		params, method = input, "apply_job_pool"
+	case "job-pool-scale":
+		method, params = "scale_job_pool", coreapi.JobPoolScaleRequest{PoolID: poolID, DesiredSlots: desiredSlots, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
+	case "job-pool-drain":
+		method, params = "drain_job_pool", coreapi.JobPoolActionRequest{PoolID: poolID, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
+	case "job-pool-resume":
+		method, params = "resume_job_pool", coreapi.JobPoolActionRequest{PoolID: poolID, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
+	case "job-pool-operation":
+		method, params = "get_job_pool_operation", struct {
+			OperationID string `json:"operation_id"`
+		}{operationID}
+	case "environment-list":
+		method = "list_environments"
+	case "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback":
+		if strings.ContainsAny(packageRef, "/\\\\") {
+			return true, fmt.Errorf("-package-ref must be a controlled reference")
+		}
+		op := strings.TrimPrefix(command, "environment-")
+		params, method = coreapi.EnvironmentOperationRequest{EnvironmentID: environmentID, Version: environmentVersion, Operation: op, PackageRef: packageRef, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}, "environment_operation"
+	case "environment-operation":
+		method, params = "get_environment_operation", struct {
+			OperationID string `json:"operation_id"`
+		}{operationID}
+	default:
+		return false, nil
+	}
+	result, err := manager.Call(ctx, method, mustJSON(params))
+	if err != nil {
+		return true, err
+	}
+	writeJSON(json.RawMessage(result))
+	return true, nil
+}
+
+func mustJSON(value any) json.RawMessage { raw, _ := json.Marshal(value); return raw }
 
 func runtimeTarget() string {
 	switch runtime.GOOS + "/" + runtime.GOARCH {

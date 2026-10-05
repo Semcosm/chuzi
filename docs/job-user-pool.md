@@ -1,0 +1,240 @@
+# 作业专用 Windows 用户池
+
+## 逻辑资源模型
+
+Job pool 的运维配置由 Core/Launcher 持久化，包括 `desired_slots`、
+`max_concurrency`、environment ID/version、manifest digest、signer、capabilities、
+`require_trusted`、`desired_state`、`config_revision` 和更新时间。配置变更先创建
+operation，再由 reconcile 驱动 slot 生命周期；不会直接覆盖运行中的 leased slot。
+
+阶段 1 引入逻辑 `Execution Slot` / `SlotPool`，把业务账号、队列并发和
+执行资源解耦。slot 是可以复用的执行资源，不代表一个固定 account，也不保存
+业务账号凭据。逻辑层只持久化槽位和环境元数据；Windows-only provisioner 负责
+受控创建、检查和回收真实用户、目录、session 与 agent。
+
+Windows provisioner 对应 `internal/slot.EnvironmentProvisioner` 接口，通过
+`Provision`、`Inspect` 和 `Retire` 实现资源生命周期；它接收已验证的
+pool/slot/environment 元数据，返回受控的 agent handle 和健康事实。该接口不能
+接受任意路径、任意命令、PowerShell 文本、密码、Cookie、Profile 路径或真实账号
+数据作为 Core/API 输入。
+
+## 用户 Profile policy 和 Winlogon Shell
+
+每个受管用户的 Profile 由服务按 SID 派生。首次 Profile 初始化固定使用
+`CreateProcessWithLogonW(LOGON_WITH_PROFILE)`，随后 policy boundary 只操作目标用户的
+HKCU/hive，并幂等设置唯一的 Winlogon `Shell` 值：
+
+```text
+powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "<signed-service-runtime>\session-shell.ps1"
+```
+
+脚本由安装流程 Authenticode 签名，服务在执行前使用 Windows trust 验证签名；安装目录 ACL
+为受管用户只读/执行。安装还需向 Windows 部署受信任的签名者，使 PowerShell 5.1 的
+`AllSigned` 策略可以无交互地验证该发布者。Smoke 临时将证书加入本机 Root 与
+Trusted Publishers 存储，并在退出时移除。`-Command`、`-ExecutionPolicy Bypass`、用户 Profile 加载、任意
+executable/脚本/命令、任意 Profile 路径和 HKLM 写入均不进入该边界。首次初始化不复制其他
+用户的 `NTUSER.DAT` 或 `UsrClass.dat`。重复应用只更新同一个 `Shell` 值，不创建重复启动项。
+
+本方案采用 **PowerShell supervisor + 服务启动 agent**。Winlogon PowerShell 通常运行在用户
+默认 desktop；服务继续通过现有 `ensureAgent`、用户 token、lease、环境注入、Job Object 和
+服务派生的 `winsta0\ChuziSlot<hash>` desktop 启动及停止 `chuzi-user-agent.exe`。Shell 不
+选择 slot、desktop、worker、浏览器 executable 或账号 Profile 路径。未来“Shell 直接指向
+chuzi-user-agent.exe”仍是可选设计，本次不采用。
+
+## 资源模型
+
+每个 slot 保存稳定 `slot_id`、`ordinal`、`pool_id`、`environment_id`、
+`environment_generation`、capabilities、manifest digest、signer/trust 结果、
+最近健康时间、失败计数和状态。状态为：
+
+`unprovisioned`、`provisioning`、`ready`、`leased`、`quarantined`、
+`draining`、`retiring`、`deleted`。
+
+pool 的 `desired_slots` 表示目标数量。启动时 reconcile 只补齐逻辑
+`unprovisioned` 记录；缩容时 leased slot 进入 `draining`，其他超出目标的 slot
+进入 `retiring`，不会删除未知资源。只有状态为 `ready`、且环境要求匹配的 slot
+才能被调度。环境匹配使用 environment ID、版本、capability、manifest digest、
+签名者和可选 trust 要求；这些字段沿用 adapter/plugin manifest 的验证语义，
+而非执行任意插件脚本。
+环境版本升级也会先 drain 仍持有 lease 的旧 slot；lease 释放后才按新的 generation
+重新 provision，旧环境不会接收新作业。
+
+## 租约和恢复
+
+slot lease 绑定 `request_id`、`account_id`、`owner`、`lease_id`、环境 generation
+和 `expires_at`。Acquire、Heartbeat、Release、Quarantine 都在存储层执行。
+同一 slot 同时最多有一个 lease；重复 release 在 lease 已不存在时是幂等的，
+stale owner 不能释放新 lease。过期 lease 可以由新 owner 回收，回收按 slot key
+和当前 lease 校验，不能覆盖之后写入的新 lease。agent 错误或超时会将对应
+slot quarantine 并增加失败计数；明确的用户取消释放 slot，不把资源故障伪装成
+凭据失败。服务重启后会恢复持久化状态，下一次调度会回收过期 lease；状态读取保持无副作用。
+
+账号 lease 仍然由 account/store/queue 负责业务账号并发，slot lease 只表达
+执行资源占用。启用 pool 时，账号 claim 和 slot claim 在一个 bbolt 事务中提交；
+没有 ready slot 时请求保持 queued/可重试，不转换为 credential failure。session
+runner 只接收内部的 slot ID、环境 generation 和可选 agent handle。Core、日志、
+诊断和 Matrix 投影只暴露脱敏的 pool 数量和业务状态。
+存储诊断会交叉检查 slot lease、account lease、request 和 account snapshot：
+两类 lease 必须属于同一 owner、请求和生命周期时间窗，request/account 状态必须仍处于
+`STARTING` 或 `LOGGING_IN`，并且一个 account/request 不能绑定多个 slot。发现不一致时
+`ValidateDatabase` 和备份校验会拒绝数据库，避免把恢复后的半个 claim 当作可运行状态。
+
+## 容量和观测
+
+`desired` 是配置目标，`ready` 是当前可调度数量，`leased`、`quarantined` 和
+`draining` 是运行状态计数。有效槽位容量为 `min(max_concurrency, ready)`。
+Core 的 `get_job_pool_status`、运维快照和 `chuzi_slots_*` metrics 只包含这些
+计数；不返回 Windows 用户名、SID、密码、Profile 路径、RDP endpoint 或命令行。
+`list_job_pools` 和 `get_job_pool` 还返回 environment readiness、reconcile state、
+operation ID、last failure code 和 last successful reconcile time。扩缩容、排空、恢复和
+环境目标变化都要求乐观 revision 校验；同一 idempotency key 重放不会重复创建 operation。
+
+这一阶段刻意不声明多节点协调，也不改变现有 launcher、browser、credential、
+Core 或生产 RDP 边界。Windows provisioner 和 agent 只在本机受控边界内运行，
+跨主机资源回收不属于当前拓扑。
+
+当前服务实例仍在启动时绑定部署配置中的一个 `pool_id`。Core/Launcher 可以
+持久化和查询多个逻辑 pool，但运行中的 Scheduler 和 Windows provisioner 只会
+接管该启动 pool；运行中新增 pool 的自动 reconciler/OS 资源接管不属于本阶段
+完成条件。
+
+## Windows 阶段 2
+
+Windows 构建包含 `chuzi-user-agent.exe`。服务在 Windows-only provisioner 中按
+`data_dir/job-slots/<slot-id>/generation-<generation>` 派生目录和本地用户；用户备注
+保存 `CHUZI-MANAGED:<slot-id>:<ordinal>` 标记，SID 与该标记一起写入受保护的
+`ownership.json`。创建使用每次随机生成的密码，密码只在 `NetUserAdd` 调用期间存在，
+不会进入配置、命令行、Core、Matrix 或日志。未知用户、SID 漂移、非 normal-account 标记、禁用用户、
+Administrators 成员和 reparse point 都会使 provision 失败。
+
+服务只为受管目录授予最小 ACL；每个 slot 的 Win32 desktop 由 `slot_id` 的
+SHA-256 前 8 字节派生为固定的 `ChuziSlot` 加 16 位小写十六进制名称，调用方不能
+传入 desktop 字符串。账号 Profile 的 ACL 在运行前由
+`GrantProfile` 授予，worker 关闭后由 `RevokeProfile` 撤销。回收顺序是 agent/job
+进程、RDP session、Profile、受管目录、最后本地用户；所有对象必须先通过 ownership
+校验，未知对象不会删除。
+
+Agent 通过服务派生的 named pipe 使用闭合命令枚举（`prepare_slot`、`start_job`、
+`cancel_job`、`stop_job`、`health`、`shutdown`）。每个命令带 request、slot、lease
+和 environment generation；重复命令、过期 lease、超大 JSONL frame 和未知字段会被
+拒绝。worker 参数、executable、desktop、Profile 路径和 shell 文本不在协议中。
+`start_job` 只选择固定的 browser-worker 或 adapter 枚举；agent 使用启动时注入的
+服务配置派生 Profile，子进程加入该 slot 独立的 Job Object，pipe 断开、取消、超时
+或 token 失效时终止整棵进程树。
+user agent 本身也由服务持有的独立 Job Object 管理，并启用
+`KILL_ON_JOB_CLOSE`；服务退出或重启时句柄关闭会回收残留 agent 及其子进程，新的
+reconcile 通过新的 token 和 lease 建立健康连接。
+
+named pipe ACL 包含 SYSTEM、当前 slot 用户和启动服务进程的实际 SID；服务可以由
+SYSTEM、LocalService 或专用 Windows 服务账号运行。该 SID 只作为受控启动环境的一部分
+传给 agent，worker 环境过滤不会继承它。服务传入的 worker runtime 也经过固定 allowlist：
+Windows slot 只运行安装目录下的 `browser-worker/src/worker.mjs` 或
+`browser-worker/src/headless.mjs`，命令必须解析为安装目录内随包发布的 `node.exe`，请求协议不能改变这些值。Windows service component 会同时携带该 Node runtime。
+
+请求完成、取消、超时或 slot quarantine 会调用 credential boundary 的 request/slot
+lease capability revocation；用户回收前先停止 agent 和 session，再删除受管对象。
+服务组装会始终把 capability revocation 接口接入 request、scheduler、Core 和
+Windows provisioner。默认 RDP authorizer 是 deny-by-default；部署若要提供真实
+RDP 连接材料，必须在 credential boundary 内注入受控的 authorizer，不能把 endpoint、
+用户名或密码加入配置、命令行或 Core DTO。
+
+slot 用户对 `<data_dir>/chuzi.db` 和 `backups/` 的 ACL 会显式拒绝访问；slot 目录的 ACL
+同时保留服务 SID、SYSTEM 和 Administrators 的管理入口。部署仍必须把安装目录配置为服务可写、
+slot 用户只读/执行；provisioner 不会把安装目录写权限授予受管用户。
+
+启用 OS 用户池时，`windows_job_pool` 必须与 `job_pool` 的容量和环境版本一致，
+并设置 `provision_timeout_seconds`、`cleanup_timeout_seconds`、`agent_heartbeat_seconds`
+和可选的 `rdp_enabled`。非 Windows 构建保留逻辑 slot 行为并返回
+`slotwindows.ErrUnsupported`，不会尝试创建操作系统用户。
+
+阶段 2 的生产验收仍需在 Windows runner 完成原生 smoke：本地用户和密码生命周期、
+ACL/reparse point、Profile、RDP session/desktop、named pipe ACL、
+`CreateProcessAsUser`、Job Object 回收、服务重启/断电恢复和 disposable user 清理。
+当前默认 RDP authorizer 仍为 deny-by-default；通用 `chuzi-environment/v1` manifest、
+资源 digest/签名 trust store、插件注入、滚动升级和回滚属于阶段 3。
+
+## 阶段 4 session bootstrap 边界
+
+阶段 4 native smoke 在调用 `Provision` 前必须拥有真实的 managed-user WTS
+session。`SessionBootstrapper` 是受控注入边界，只接收由 provisioner 从 slot
+ownership 派生的 slot、ordinal、generation 和 SID；接口不接收密码、用户名、Profile
+路径、RDP endpoint、命令或 executable。provider 建立 session 后，provisioner 仍会重新
+调用 `FindSession(managed SID)`，并校验 session ID 和 active 状态；provider 返回值或
+`CreateProcessAsUser` 不能替代 WTS 校验。生产默认不配置 bootstrapper，继续依赖外部受控
+interactive session，找不到 session 时保持 `session_unavailable`/quarantine 的
+fail-closed 行为。
+
+Windows 实验机可在仓库根目录以管理员 PowerShell 执行
+scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和 slot
+agent 链路。该模式创建本轮随机命名的普通本地用户，
+用系统随机密码，并把凭据仅短暂写入当前交互用户的 session-scoped Windows Credential
+Manager；密码、token 和 Profile 原始路径不写入普通日志或 Core/Matrix DTO。`-LocalRdp`
+解析 `cmdkey /list` 中已占用的 `TERMSRV/127.0.0.x`，从 `127.0.0.2` 到
+`127.0.0.254` 选择最低的未占用 loopback alias；随后在 smoke
+目录生成一次性 profile。profile 固定保留已验证的 `prompt for credentials`、
+`administrative session`、显示、压缩、剪贴板、自动重连、认证级别和协商安全层字段，
+只动态写入 endpoint 与本轮用户名。已有的 Credential Manager 记录会在测试期间暂存并于退出时恢复，
+生成的 profile 使用后删除，测试凭据 target 在退出时删除，原有 target 会恢复。随后等待该用户对应的真实 active WTS
+session；凭据写入后和 WTS session 建立后分别核对用户名必须匹配本轮临时用户，
+并核对 PowerShell readiness，再运行原生 provisioner 测试。RDP 配置显式指定本轮随机用户并关闭
+administrative session。测试按 SID、slot ownership 和 active session 重新校验身份；
+管理员上下文只负责准备并编译 smoke；原生 Go 测试由本轮临时的 Task Scheduler task 以
+`NT AUTHORITY\SYSTEM` 运行，以满足 WTS token API 的 TCB 权限要求。该 task 只接收 smoke
+临时路径和标识，不接收 RDP 密码或凭据库内容，并在测试后注销。
+结束后注销 session、回收用户、profile、运行目录和临时 Credential Manager 凭据。
+session 查询使用 WTS API 和数值状态，不依赖系统显示语言。自动 RDP 凭据只用于一次性本地诊断，
+不代表生产自动登录方案。密码不进入命令行、环境变量、
+文件、Core、测试日志、保留输出或普通控制台。Smoke 先验证目标用户 HKCU 的精确 Shell 命令，
+再等待 active WTS session 上的 PowerShell readiness，之后才继续服务侧 agent、named pipe、
+Node worker 和 browser handshake。
+
+连接失败时会保留带 ownership marker 的 smoke 根目录，并写出脱敏的
+`rdp-diagnostics.log`；其中记录 `mstsc` 启动阶段、Credential Manager 身份匹配结果、WTS
+session 和可用的 RDP/Security 事件，便于区分凭据选择、loopback console 重连和
+目标登录失败。
+
+Windows hosted preflight 使用 -ValidateOnly 解析 smoke 脚本并编译 Credential Manager
+与 WTS API helper，不创建用户、session 或临时目录。
+
+-LocalRdp 是本机诊断路径，不启动或模拟 session broker，也不验证 broker pipe
+ACL、协议 ownership 生命周期或生产 RDP authorizer；不能单独作为阶段 4 生产验收。
+默认 smoke 路径仍使用固定 session broker pipe。
+
+bootstrap 退出时先停止 worker 和 agent，再调用 provider 的幂等 `Stop`，等待
+`FindSession` 不再发现该 SID，最后由 provisioner 执行 logoff、Profile/ACL、目录和用户
+回收。smoke harness 的 user cleanup 与 root cleanup 分阶段重试并分别报告。user cleanup 只处理本轮
+随机前缀和 user ownership marker 同时匹配的账户；历史运行留下的 marker 用户只报告数量，未知用户、
+ownership marker 不匹配的 root 或未知目录永远不会删除。失败会保留脱敏
+`test-output.log`，成功运行必须报告 `RemainingSmokeUsers = 0` 和
+`RemainingSmokeRoots = 0`。
+
+### 固定 session broker 协议
+
+部署侧 broker 只能监听编译期固定的
+`\\.\pipe\chuzi-session-bootstrap-v1`。JSONL 协议版本为 `1`，操作只有 `start`
+和 `stop`。请求字段是 `version`、`operation`、`slot_id`、`ordinal`、`generation`、
+`sid`、`owner`，`stop` 另外必须带非零 `session_id`；响应字段是 `version`、`operation`、
+`code`、`session_id` 和 `state`。协议解码拒绝未知字段、未知操作、错误版本、空 slot、
+非法 SID/ordinal、零 generation、缺失 owner、start 携带 session ID 和 stop 缺失
+session ID。稳定错误码包括 `invalid_version`、`invalid_request`、`unknown_operation`、
+`ownership_mismatch`、`ownership_unknown`、`stale_generation`、`session_unavailable`、
+`session_changed` 和 `stop_timeout`。
+
+broker 只在内存中保存自己创建的 `(slot_id, ordinal, generation, sid, session_id, owner)`
+记录。重复 start 只在 ownership 和仍为 active 的同一 session 完全匹配时幂等成功；旧 generation、
+错误 owner/SID/session ID 和重复使用未知 ownership 都被拒绝。broker 重启后不会接管现有
+session，也不能停止未知 session。stop 会调用部署适配器并等待 `FindSession(sid)` 不再发现
+该 session；等待受 context 总超时约束，重复 stop 仅对本次 broker 已确认的 tombstone 幂等成功。
+
+pipe listener 必须在解析 JSON 前使用显式 ACL，只允许 chuzi 服务 SID 和部署侧 broker SID，
+拒绝 Everyone、Users、Remote Desktop Users 等宽泛主体。仓库提供协议/ACL 验证和
+`SessionBroker` ownership 状态机，但不伪造 broker listener；真实 listener、ACL、RDP/Winlogon
+authorizer 和 WTS 建立动作属于部署适配器。Windows SDK 没有可直接替代真实登录的
+`WTSLogonUser` API，这不允许改用 `runas`、`CreateProcessAsUser`、`tscon` 或伪造 pipe 响应。
+
+需要一次性密码的部署实现必须使用 `SessionLoginAdapter`：密码只作为短生命周期的内存
+UTF-16 buffer 在同一受 ACL 保护的服务进程内传递，并在调用返回后清零；它不会进入 broker JSON、
+Core、UI、Matrix、日志、诊断、环境变量、临时文件或持久化状态。固定 pipe 客户端不接受
+用户名/密码字段。适配器返回的 session ID 也不能作为事实，provisioner 必须再次执行
+`FindSession(managed SID)` 并确认 SID 和 active 状态。没有真实适配器时稳定返回
+`session_unavailable`，阶段 4 不得声称 native acceptance 完成。

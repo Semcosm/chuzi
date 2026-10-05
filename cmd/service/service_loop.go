@@ -28,6 +28,9 @@ func run(ctx context.Context, options serviceOptions) error {
 		return err
 	}
 	defer func() {
+		if runtime.rdp != nil {
+			_ = runtime.rdp.Close()
+		}
 		if runtime.coreServer != nil {
 			_ = runtime.coreServer.Close()
 		}
@@ -89,9 +92,63 @@ func run(ctx context.Context, options serviceOptions) error {
 			}
 		})
 	}
+	if runtime.slotReconciler != nil || runtime.jobPoolID != "" {
+		startBackground("slot lifecycle", func(workerCtx context.Context) error {
+			reconcile := func() {
+				var err error
+				environmentID, environmentVersion := runtime.environmentID, runtime.environmentVersion
+				if runtime.jobPoolID != "" {
+					if current, getErr := runtime.store.GetJobPool(runtime.jobPoolID); getErr == nil {
+						environmentID, environmentVersion = current.EnvironmentID, current.EnvironmentVersion
+					}
+					if _, controlErr := runtime.store.ReconcileJobPoolControl(runtime.jobPoolID, time.Now().UTC()); controlErr != nil {
+						err = controlErr
+					}
+				}
+				if runtime.environment != nil {
+					// Revalidate the signed tree before each slot pass. Store remains
+					// the projection used by claims and capacity, so an external
+					// package edit immediately removes readiness from both views.
+					if _, healthErr := runtime.environment.HealthCheck(workerCtx, environmentID, environmentVersion); healthErr != nil {
+						err = healthErr
+					}
+					// HealthCheck may downgrade a tampered or missing package. Always
+					// mirror that result before the next control reconcile so a pending
+					// pool operation can roll back instead of remaining provisioning.
+					if syncErr := runtime.environment.SyncRecords(runtime.store); syncErr != nil && err == nil {
+						err = syncErr
+					}
+				}
+				if err == nil && runtime.slotReconciler != nil {
+					err = runtime.slotReconciler.Reconcile(workerCtx)
+				}
+				runtime.recordSlotReconcile(time.Now().UTC(), err)
+			}
+			reconcile()
+			interval := runtime.slotInterval
+			if interval <= 0 {
+				interval = 5 * time.Second
+			}
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-workerCtx.Done():
+					return nil
+				case <-ticker.C:
+					reconcile()
+				}
+			}
+		})
+	}
 	defer func() {
 		cancelBackground()
 		background.Wait()
+		if shutdowner, ok := runtime.slotReconciler.(interface{ Shutdown(context.Context) error }); ok {
+			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = shutdowner.Shutdown(shutdownCtx)
+			shutdownCancel()
+		}
 	}()
 	runtime.refreshMetrics(time.Now().UTC())
 	runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "startup", Outcome: "ready", Resource: options.backend})

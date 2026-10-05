@@ -136,10 +136,15 @@ def main() -> int:
     binary = "chuzi.exe" if args.target == "windows-amd64" else "chuzi"
     launcher = "chuzi-launcher.exe" if args.target == "windows-amd64" else "chuzi-launcher"
     browser_launcher = "chuzi-browser-launcher.exe"
+    user_agent = "chuzi-user-agent.exe"
+    node_runtime = "node.exe"
     archive_extension = "zip" if args.target == "windows-amd64" else "tar.gz"
+    service_files = [binary]
+    if args.target == "windows-amd64":
+        service_files.extend([browser_launcher, user_agent, node_runtime, "session-shell.ps1"])
     groups = {
         "launcher": ([launcher,], True),
-        "service": ([binary] + ([browser_launcher] if args.target == "windows-amd64" else []), False),
+        "service": (service_files, False),
         "browser-worker": (sorted(
             "browser-worker/" + str(path.relative_to(stage / "browser-worker")).replace(os.sep, "/")
             for path in (stage / "browser-worker").rglob("*") if path.is_file()

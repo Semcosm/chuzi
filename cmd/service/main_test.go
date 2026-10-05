@@ -18,6 +18,9 @@ import (
 	adapterpkg "github.com/Semcosm/chuzi/internal/adapter"
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/environment"
+	"github.com/Semcosm/chuzi/internal/observability"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -31,6 +34,31 @@ func TestWorkerStderrRequiresExplicitDebugOptIn(t *testing.T) {
 	t.Setenv("CHUZI_WORKER_DEBUG", "1")
 	if got := workerStderr(); got != os.Stderr {
 		t.Fatalf("workerStderr() with opt-in = %T, want os.Stderr", got)
+	}
+}
+
+func TestSlotLifecycleFailureIsClassifiedAndAffectsReadiness(t *testing.T) {
+	metrics := observability.NewMetrics()
+	if err := metrics.Register(observability.MetricDefinition{Name: "chuzi_slot_reconcile_errors_total", Kind: observability.Counter}); err != nil {
+		t.Fatal(err)
+	}
+	healthState := newSlotLifecycleHealth()
+	events := observability.NewEventBuffer(8)
+	runtime := &serviceRuntime{metrics: metrics, eventBuffer: events, slotHealth: healthState}
+	runtime.recordSlotReconcile(time.Date(2026, time.September, 12, 1, 2, 3, 0, time.UTC), errors.New("SID and password must never leave the OS boundary"))
+	if err := healthState.probe(context.Background()); err == nil {
+		t.Fatal("failed reconcile did not mark slot lifecycle unhealthy")
+	}
+	if got := metrics.Prometheus(); !strings.Contains(got, "chuzi_slot_reconcile_errors_total 1") {
+		t.Fatalf("reconcile metric = %q", got)
+	}
+	window := events.Snapshot(8)
+	if len(window) != 1 || window[0].ErrorClass != "reconcile_failed" || strings.Contains(window[0].ErrorClass, "password") {
+		t.Fatalf("classified reconcile event = %#v", window)
+	}
+	runtime.recordSlotReconcile(time.Date(2026, time.September, 12, 1, 2, 4, 0, time.UTC), nil)
+	if err := healthState.probe(context.Background()); err != nil {
+		t.Fatalf("successful reconcile left readiness unhealthy: %v", err)
 	}
 }
 
@@ -93,6 +121,80 @@ func TestAssembleRuntimeOpensPersistentStoreAndBuildsBoundaries(t *testing.T) {
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAssembleRuntimeRequiresDurableReadyEnvironmentForPool(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg, err := config.New(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("a", 64)
+	cfg.JobPool = config.JobPoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, Capabilities: []string{"desktop"}, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}
+	cfg.EnvironmentPackage = config.EnvironmentPackageConfig{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: digest, Signer: "signer"}
+	if _, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), time.Now, testFactory{}); !errors.Is(err, store.ErrEnvironmentUnavailable) {
+		t.Fatalf("missing ready environment error = %v", err)
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record := environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", Capabilities: []string{"desktop"}, ManifestDigest: digest, Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: time.Now().UTC()}
+	if err := database.PutEnvironmentRecord(record); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), time.Now, testFactory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.store == nil {
+		t.Fatal("trusted pool runtime did not open store")
+	}
+	if slots, err := runtime.store.ListSlots("pool"); err != nil || len(slots) != 1 || slots[0].Status != slot.Unprovisioned {
+		t.Fatalf("trusted pool slots = %#v, %v", slots, err)
+	}
+	if err := runtime.store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestAssembleRuntimePreservesDurablePoolAfterRestart(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg, err := config.New(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("f", 64)
+	cfg.JobPool = config.JobPoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	if err := database.PutEnvironmentRecord(environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: digest, Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: now}); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.ReconcileJobPool(slot.PoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 3, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}, now); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), func() time.Time { return now.Add(time.Minute) }, testFactory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.store.Close()
+	current, err := runtime.store.GetJobPool("pool")
+	if err != nil || current.DesiredSlots != 3 {
+		t.Fatalf("durable pool after restart = %#v, err=%v", current, err)
 	}
 }
 

@@ -304,6 +304,127 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return diagnosticsAPI.SubmitDiagnosticReport(ctx, params)
+	case methodGetJobPoolStatus:
+		statusAPI, ok := s.api.(coreapi.JobPoolStatusAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool status is unavailable")
+		}
+		var params struct {
+			PoolID string `json:"pool_id"`
+		}
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		status, err := statusAPI.GetJobPoolStatus(ctx, params.PoolID)
+		return JobPoolStatusResult{Status: status}, err
+	case methodListJobPools:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		items, err := api.ListJobPools(ctx)
+		return JobPoolsResult{JobPools: items}, err
+	case methodGetJobPool:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		var params struct {
+			PoolID string `json:"pool_id"`
+		}
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.GetJobPool(ctx, params.PoolID)
+		return JobPoolResult{JobPool: item}, err
+	case methodApplyJobPool:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		var params coreapi.JobPoolApplyRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.ApplyJobPool(ctx, params)
+		return JobPoolOperationResult{Operation: item}, err
+	case methodScaleJobPool:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		var params coreapi.JobPoolScaleRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.ScaleJobPool(ctx, params)
+		return JobPoolOperationResult{Operation: item}, err
+	case methodDrainJobPool:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		var params coreapi.JobPoolActionRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.DrainJobPool(ctx, params)
+		return JobPoolOperationResult{Operation: item}, err
+	case methodResumeJobPool:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		var params coreapi.JobPoolActionRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.ResumeJobPool(ctx, params)
+		return JobPoolOperationResult{Operation: item}, err
+	case methodGetJobPoolOperation:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		var params struct {
+			OperationID string `json:"operation_id"`
+		}
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.GetJobPoolOperation(ctx, params.OperationID)
+		return JobPoolOperationResult{Operation: item}, err
+	case methodListEnvironments:
+		api, ok := s.api.(coreapi.EnvironmentAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "environment control is unavailable")
+		}
+		items, err := api.ListEnvironments(ctx)
+		return EnvironmentsResult{Environments: items}, err
+	case methodEnvironmentOperation:
+		api, ok := s.api.(coreapi.EnvironmentAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "environment control is unavailable")
+		}
+		var params coreapi.EnvironmentOperationRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.EnvironmentOperation(ctx, params)
+		return EnvironmentOperationResult{Operation: item}, err
+	case methodGetEnvironmentOperation:
+		api, ok := s.api.(coreapi.EnvironmentAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "environment control is unavailable")
+		}
+		var params struct {
+			OperationID string `json:"operation_id"`
+		}
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.GetEnvironmentOperation(ctx, params.OperationID)
+		return EnvironmentOperationResult{Operation: item}, err
 	default:
 		return nil, invalidMethodError(method)
 	}

@@ -28,7 +28,7 @@ Darwin arm64 的构建契约。
 自行创建账号或请求，因此已有的排队请求可在重启后由 Scheduler 按租约状态恢复。
 迁移、事务、恢复和备份契约仍由 `internal/store` 库层及其测试作为事实来源。
 
-## Schema v5
+## Schema v7
 
 迁移在数据库的 `meta/version` 中记录当前版本，并可重复执行。v1 建立
 以下 bbolt bucket：
@@ -95,6 +95,43 @@ v5 增加账号删除生命周期记录：
 删除记录不会保存凭证、Profile 路径、worker handle、Matrix 原始房间 ID 或命令文本。
 当前实现提供状态机、持久化和恢复边界；Session Runner、Matrix/Core 双确认以及最终 tombstone/outbox
 编排仍需后续实现 CR 接入。
+
+v6 增加逻辑作业专用执行槽位，不创建或删除 Windows 用户、目录或其他外部资源：
+
+| Bucket | 内容 |
+| --- | --- |
+| `job_pools` | pool ID、环境 manifest 摘要和 `desired_slots` 目标容量 |
+| `execution_slots` | 稳定 slot ID、ordinal、pool、环境 generation/capabilities、状态、健康时间和失败计数 |
+| `slot_leases` | 按 slot 保存绑定 request/account/owner/lease ID、心跳和过期时间的资源租约 |
+| `environment_summaries` | 用于筛选的 environment ID、版本、generation、capabilities、manifest digest、signer 和 trust 结果 |
+
+`desired_slots` 是目标容量；只有 `ready` 槽位计入可调度容量，有效容量为
+`min(max_concurrency, ready_slots)`。`provisioning`、`draining`、
+`quarantined` 和 `retiring` 不计入 ready。slot 记录不保存业务账号、凭据、
+Windows 用户名、SID、Profile 路径、RDP endpoint 或命令。
+
+账号 claim 与 slot claim 在启用槽位池时由同一个 bbolt write transaction
+提交，事务同时写入账号 lease、slot lease、请求/账号状态和 slot 状态；任意
+一步失败都不会留下半个 claim。slot 的 acquire、heartbeat、release、
+quarantine 也使用单事务更新 slot lease 与 slot 状态。重启时可以继续读取
+ready/quarantined 状态；调度或诊断读取时回收 `now >= expires_at` 的旧 slot
+lease，并且只清理仍对应的 lease，不覆盖新 owner 的 lease。
+`ValidateDatabase` 和 `ValidateBackup` 还会检查 slot lease 对应的 pool、slot、
+account lease、request 和 account snapshot；owner、request ID、account ID、lease
+时间窗以及 `STARTING`/`LOGGING_IN` 状态必须一致，同一 account/request 不能出现
+多个 slot lease。校验失败会返回 `ErrCorruptData`，恢复流程不能把不完整 claim
+当作健康资源。
+
+v7 增加签名环境包生命周期桶：
+
+| Bucket | 内容 |
+| --- | --- |
+| `environment_packages` | environment ID、版本、能力、manifest digest、signer，以及 installed/verified/trusted/enabled/healthy/ready 独立生命周期门和 generation |
+
+环境包记录只在显式验证、信任、启用和健康检查完成后才可成为 `ready`。Windows
+slot lifecycle 将该桶作为环境权威来源，要求 pool 的 environment、版本、能力、
+ digest 和 signer 完全匹配；缺少 ready 记录时服务保持 unprovisioned/provisioning/unhealthy，
+不会把仅安装或仅配置的包当作可调度资源。
 
 ## 事务边界与幂等
 

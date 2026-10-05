@@ -74,6 +74,7 @@ func (f *ProcessFactory) Start(ctx context.Context, spec WorkerSpec) (Worker, er
 		spec.Mode = f.workerMode
 	}
 	command := exec.Command(f.command, f.args...)
+	command.Env = replaceEnv(os.Environ(), "CHUZI_SESSION_PROFILE_DIR", spec.ProfileDir)
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return nil, fmt.Errorf("create worker stdout pipe: %w", err)
@@ -224,10 +225,9 @@ func (w *processWorker) Run(ctx context.Context) (WorkerResult, error) {
 		return WorkerResult{}, ErrWorkerNotRunning
 	}
 	request := protocol.Request(w.nextID("session"), protocol.SessionStart, map[string]string{
-		"session_id":  w.spec.SessionID,
-		"account_id":  w.spec.AccountID,
-		"request_id":  w.spec.RequestID,
-		"profile_dir": w.spec.ProfileDir,
+		"session_id": w.spec.SessionID,
+		"account_id": w.spec.AccountID,
+		"request_id": w.spec.RequestID,
 	})
 	if w.spec.Mode != "" {
 		request.Payload["mode"] = w.spec.Mode
@@ -292,6 +292,17 @@ func (w *processWorker) Run(ctx context.Context) (WorkerResult, error) {
 			return WorkerResult{}, ErrWorkerCrashed
 		}
 	}
+}
+
+func replaceEnv(environment []string, key, value string) []string {
+	prefix := key + "="
+	result := make([]string, 0, len(environment)+1)
+	for _, entry := range environment {
+		if !strings.HasPrefix(entry, prefix) {
+			result = append(result, entry)
+		}
+	}
+	return append(result, prefix+value)
 }
 
 func validCDPPort(value string) bool {

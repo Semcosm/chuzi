@@ -364,8 +364,9 @@ input.on("line", (line) => {
       break;
     case "session_start": {
       const sessionID = value(request, "session_id");
-      if (!sessionID || !value(request, "account_id") || !value(request, "request_id") || !value(request, "profile_dir")) {
-        error(request, "session_start requires session_id, account_id, request_id, and profile_dir");
+      const profileDir = process.env.CHUZI_SESSION_PROFILE_DIR || "";
+      if (!sessionID || !value(request, "account_id") || !value(request, "request_id") || !profileDir) {
+        error(request, "session_start requires session_id, account_id, request_id, and service profile context");
         break;
       }
       if (sessions.has(sessionID)) {
@@ -374,7 +375,7 @@ input.on("line", (line) => {
       }
       const session = {
         sessionID,
-        profileDir: value(request, "profile_dir"),
+        profileDir,
         request,
         child: null,
         port: 0,

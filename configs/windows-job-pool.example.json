@@ -1,0 +1,23 @@
+{
+  "data_dir": "C:\\ProgramData\\chuzi",
+  "job_pool": {
+    "pool_id": "windows-default",
+    "environment_id": "browser-worker",
+    "environment_version": "1",
+    "desired_slots": 1,
+    "capabilities": ["browser_worker"],
+    "require_trusted": false
+  },
+  "windows_job_pool": {
+    "enabled": true,
+    "desired_slots": 1,
+    "user_prefix": "ChuziJob",
+    "rdp_enabled": false,
+    "session_idle_timeout_seconds": 300,
+    "agent_heartbeat_seconds": 10,
+    "provision_timeout_seconds": 120,
+    "cleanup_timeout_seconds": 60,
+    "environment_id": "browser-worker",
+    "environment_version": "1"
+  }
+}

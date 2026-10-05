@@ -48,6 +48,11 @@ Profile。Windows 首个 Slint 客户端位于 `ui/windows`，只调用 launcher
 浏览器运行时只保留 Node.js Worker：默认 deferred 生命周期替身，以及可配置的
 headed-CDP/headless-CDP Worker。Windows headed 模式可通过 `-windows-desktop`
 指定当前 Windows session 内的 Win32 desktop；headless 模式不使用可见窗口。
+逻辑作业专用执行槽位池：`desired_slots` 表达目标容量，只有 ready slot 参与调度。
+Windows 构建在显式启用 `windows_job_pool` 后由受管 provisioner 创建普通本地用户、
+ACL、session-aware agent 和 Job Object；Linux/macOS 只保留逻辑 slot 行为。
+阶段 2 的逻辑边界已完成，但生产验收仍以 Windows 原生 smoke 和受控 RDP authorizer
+接入为门槛；环境 manifest、信任和插件生命周期属于阶段 3。
 
 GitHub Actions 当前构建目标固定为 `windows-amd64`、`linux-amd64`、`linux-arm64` 和 `darwin-arm64`。CI 不使用真实账号、Token 或生产 Matrix 凭证。
 
@@ -87,6 +92,8 @@ Test 版本格式为 `test-<run-number>-<commit-short-hash>`，nightly 版本格
 - [Core API v1](docs/core-api.md)
 - [账号状态机](docs/account-state-machine.md)
 - [状态存储与恢复](docs/storage.md)
+- [作业专用 Windows 用户池](docs/job-user-pool.md)
+- [签名环境包](docs/environment-package.md)
 - [安全与凭证管理](docs/security.md)
 - [Matrix 服务接口](docs/matrix-api.md)
 - [部署与运维](docs/operations.md)

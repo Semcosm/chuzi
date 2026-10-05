@@ -44,12 +44,21 @@ $launcherLdflags = "-s -w -X main.version=$Version"
 if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
 & go build -trimpath -o (Join-Path $stageDir "chuzi-browser-launcher.exe") ./cmd/browser-launcher
 if ($LASTEXITCODE -ne 0) { throw "browser launcher build failed" }
+& go build -trimpath -o (Join-Path $stageDir "chuzi-user-agent.exe") ./cmd/user-agent
+if ($LASTEXITCODE -ne 0) { throw "user agent build failed" }
 
 & npm --prefix (Join-Path $repoRoot "browser-worker") ci --ignore-scripts
 if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
 & npm --prefix (Join-Path $repoRoot "browser-worker") run build
 if ($LASTEXITCODE -ne 0) { throw "browser worker build failed" }
 Copy-Item -Recurse -Force (Join-Path $repoRoot "browser-worker/dist/*") (Join-Path $stageDir "browser-worker")
+$nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction Stop
+$nodePath = $nodeCommand.Source
+if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath -PathType Leaf)) {
+    throw "Node.js executable could not be resolved for the Windows runtime package"
+}
+Copy-Item -Force $nodePath (Join-Path $stageDir "node.exe")
+Copy-Item -Force (Join-Path $repoRoot "scripts/session-shell.ps1") (Join-Path $stageDir "session-shell.ps1")
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
 $adapterManifest = Join-Path $targetDir "genshin-cloudgame-adapter-manifest.json"
 & python (Join-Path $repoRoot "scripts/build_adapter_package.py") `

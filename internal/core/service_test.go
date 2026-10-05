@@ -14,6 +14,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/diagnostics"
 	"github.com/Semcosm/chuzi/internal/request"
+	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -100,6 +101,38 @@ type testDiagnosticsPort struct{}
 
 func (testDiagnosticsPort) Submit(context.Context, diagnostics.ReportInput) (diagnostics.Status, error) {
 	return diagnostics.Status{ID: "diag-1", State: "queued", CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC()}, nil
+}
+
+type testJobPoolPort struct{}
+
+func (testJobPoolPort) SlotPoolStatus(string, time.Time) (slot.StatusCounts, error) {
+	return slot.StatusCounts{PoolID: "pool-test", Desired: 5, Ready: 3, Leased: 1, Quarantined: 1, Draining: 1}, nil
+}
+
+func TestGetJobPoolStatusProjectsCapacityWithoutSensitiveFields(t *testing.T) {
+	service, err := New(Dependencies{
+		Requests: viewServiceRequests{}, Store: viewServiceStore{}, JobPools: testJobPoolPort{},
+		JobPoolID: "pool-test", MaxConcurrency: 2, Clock: func() time.Time { return time.Unix(100, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := service.GetJobPoolStatus(context.Background(), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.PoolID != "pool-test" || status.Desired != 5 || status.Ready != 3 || status.Leased != 1 || status.Quarantined != 1 || status.Draining != 1 || status.EffectiveCapacity != 2 {
+		t.Fatalf("job pool status = %#v", status)
+	}
+	raw, err := json.Marshal(status)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"password", "username", "sid", "Profile", "rdp", "cmd.exe"} {
+		if strings.Contains(strings.ToLower(string(raw)), strings.ToLower(secret)) {
+			t.Fatalf("job pool status leaked %q: %s", secret, raw)
+		}
+	}
 }
 
 func TestSubmitDiagnosticReportUsesOptionalPort(t *testing.T) {
