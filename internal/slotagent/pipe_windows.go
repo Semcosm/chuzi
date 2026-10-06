@@ -165,9 +165,16 @@ type RuntimeHandler struct {
 	Launcher         JobLauncher
 	active           bool
 	closed           bool
-	jobs             map[string]Job
+	jobs             map[agentJobKey]Job
 	bootstrap        leaseSnapshot
 	bootstrapSet     bool
+}
+
+// agentJobKey permits the browser worker and adapter bridge to share one
+// request while still rejecting duplicate starts of the same job kind.
+type agentJobKey struct {
+	requestID string
+	kind      JobKind
 }
 
 // JobLauncher starts only the fixed worker runtimes configured by the
@@ -230,9 +237,10 @@ func (h *RuntimeHandler) HandleAgentCommand(ctx context.Context, request Request
 			return Response{}, err
 		}
 		if h.jobs == nil {
-			h.jobs = make(map[string]Job)
+			h.jobs = make(map[agentJobKey]Job)
 		}
-		if _, exists := h.jobs[request.RequestID]; exists {
+		key := agentJobKey{requestID: request.RequestID, kind: request.JobKind}
+		if _, exists := h.jobs[key]; exists {
 			err := ErrDuplicate
 			writeRuntimeStartDiagnostic("handler_duplicate", err, nil)
 			return Response{}, err
@@ -247,15 +255,10 @@ func (h *RuntimeHandler) HandleAgentCommand(ctx context.Context, request Request
 			writeRuntimeStartDiagnostic("handler_nil_job", err, nil)
 			return Response{}, err
 		}
-		h.jobs[request.RequestID] = job
+		h.jobs[key] = job
 		h.active = true
 	case CancelJob, StopJob:
-		var stopErr error
-		if job := h.jobs[request.RequestID]; job != nil {
-			stopErr = job.Stop()
-			delete(h.jobs, request.RequestID)
-		}
-		h.active = false
+		stopErr := h.stopRequestJobs(request.RequestID)
 		if h.bootstrapSet {
 			h.Leases.restore(h.bootstrap)
 		}
@@ -291,7 +294,7 @@ func (h *RuntimeHandler) HandleWorkerFrame(ctx context.Context, frame Frame) (Fr
 		return Frame{}, err
 	}
 	h.mu.Lock()
-	job := h.jobs[frame.RequestID]
+	job := h.jobs[agentJobKey{requestID: frame.RequestID, kind: BrowserWorker}]
 	h.mu.Unlock()
 	if job == nil {
 		return Frame{}, ErrAgentStopped
@@ -302,6 +305,19 @@ func (h *RuntimeHandler) HandleWorkerFrame(ctx context.Context, frame Frame) (Fr
 		return Frame{}, err
 	}
 	return Frame{Kind: "worker_event", SlotID: frame.SlotID, RequestID: frame.RequestID, Owner: frame.Owner, LeaseID: frame.LeaseID, EnvironmentGeneration: frame.EnvironmentGeneration, Worker: &response}, nil
+}
+
+func (h *RuntimeHandler) stopRequestJobs(requestID string) error {
+	var stopErr error
+	for key, job := range h.jobs {
+		if key.requestID != requestID {
+			continue
+		}
+		stopErr = errors.Join(stopErr, job.Stop())
+		delete(h.jobs, key)
+	}
+	h.active = len(h.jobs) > 0
+	return stopErr
 }
 
 func (h *RuntimeHandler) DisconnectJobs(_ context.Context) {
