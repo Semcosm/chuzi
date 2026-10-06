@@ -1,16 +1,16 @@
 # CR-0098: add durable session lifecycle and Windows session product flow
 
 Base: main
-Head or Range: a547945110537a0a7b8975eba6f25534c3539e84..65345f43c000e646d04f4a4decf8db2ae34e0e6b
+Head or Range: a547945110537a0a7b8975eba6f25534c3539e84..30bd856c91d2570eb9de1339c8636b75e0a46115
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add durable session lifecycle and Windows session flow
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: a547945110537a0a7b8975eba6f25534c3539e84
-Head OID: 65345f43c000e646d04f4a4decf8db2ae34e0e6b
+Head OID: 30bd856c91d2570eb9de1339c8636b75e0a46115
 Integrated Result: pending
 
 ## Summary
@@ -70,6 +70,8 @@ four local transport session methods, and UI workspace/session projections.
 The Windows slot-agent coverage also permits one browser-worker and one adapter
 job for the same request, rejects same-kind duplicates, routes worker frames to
 the browser-worker job, and stops both jobs together.
+The dedicated Windows job-pool smoke is now explicit opt-in; ordinary builds
+use the hosted preflight and do not wait for a developer-owned runner.
 The optional document-map validator was not applicable because this checkout
 has no .ugs/document-map.json. Native Windows user/session/ACL/RDP smoke,
 production RDP authorization, live account automation, and a production
