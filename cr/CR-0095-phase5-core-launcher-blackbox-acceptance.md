@@ -5,12 +5,12 @@ Head or Range: 8370e73d4b70a5fc894e0efe0f4356438651355b..76774bbc1b1cbfed37810e2
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: test(service): record Phase 5 Core and Launcher black-box acceptance
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 8370e73d4b70a5fc894e0efe0f4356438651355b
-Head OID: 76774bbc1b1cbfed37810e2d81380465631c9bbf
+Head OID: 805747589895a40c9f941764dc59265ab80c4b20
 Integrated Result: pending
 
 ## Summary
