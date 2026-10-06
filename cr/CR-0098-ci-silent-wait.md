@@ -5,7 +5,7 @@ Head or Range: a87074a510fd37cdf9ef9ba9aeee836227b060a0
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(ci): add silent GitHub Actions wait helper
-Revision: 2
+Revision: 3
 Status: integrated
 Decision: accepted
 Policy Version: v0.3
@@ -31,7 +31,10 @@ timeout.
 `bash -n scripts/ci-wait`, fake-`gh` success and failure scenarios, missing-`gh`
 failure, bounded timeout termination, `git diff --check`,
 `./scripts/validate_action_pinning.sh`, `./scripts/validate_repository_shape.sh`,
-and `./scripts/test_build_contract.sh`.
+and `./scripts/test_build_contract.sh`. The merged `chuzi-build` run
+`37480429439` passed all build stages; its native Windows job-pool smoke was
+skipped because the `ci` channel does not require the dedicated self-hosted
+runner.
 
 ## Risk
 
