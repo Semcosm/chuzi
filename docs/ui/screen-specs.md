@@ -18,6 +18,31 @@ The Core section can opt into starting an already installed Core service when
 the application launches; it never installs Core implicitly.
 launcher behavior settings remain separate from the UI-local theme preference.
 
+### Job-pool and environment operations
+
+Settings also contains structured job-pool cards and environment cards. Each
+pool card shows the redacted pool and environment identity, desired/ready/
+leased/quarantined/draining/provisioning/retiring counts, effective capacity,
+environment readiness, reconcile state, last failure class, config revision,
+and any current operation ID. Apply, scale, drain, resume, refresh, and
+operation polling remain launcher/Core operations; the UI does not read Store
+or choose a runtime slot.
+
+Pool writes read the current revision immediately before dispatch and derive a
+deterministic idempotency key from the operation payload. Apply, scale, drain,
+and environment changes use a confirmation dialog. The operation panel shows
+the Core state while polling (requested, validating, draining, provisioning,
+health_check, committing, applied, or failed) and maps stable failure classes
+to bounded recovery text. A stale revision refreshes the projection before
+retry.
+
+Environment cards and the environment form expose install, verify, trust,
+enable, disable, health, upgrade, and rollback. Package input is an opaque
+service-owned reference; local paths, commands, executable names, credentials,
+Windows identities, RDP endpoints, and named pipes are rejected or never
+represented. Audit history remains outside this screen until Core provides a
+redacted audit projection.
+
 ## Sessions
 
 ~~~text
