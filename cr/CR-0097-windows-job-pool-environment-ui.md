@@ -5,13 +5,13 @@ Head or Range: 8217e85fecba7221ee71eb14dff53f0bc4aa089e
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add Windows job-pool and environment operations
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
 Base OID: 01b1890b07e9a93577a9940939a80c4f7f0c750a
-Head OID: 8217e85fecba7221ee71eb14dff53f0bc4aa089e
-Integrated Result: pending
+Head OID: 0105038813cc241cda65c31ccfb22ef2244d6c11
+Integrated Result: main@0105038813cc241cda65c31ccfb22ef2244d6c11
 
 ## Summary
 
