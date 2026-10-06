@@ -1,5 +1,13 @@
 # BetterGI communication plugin
 
+## Design record
+
+See [design.md](design.md) for the researched design of a future Windows
+Genshin adapter. It covers native and cloud-game startup, BetterGI task plans,
+session isolation, operator takeover, and the existing RDP workspace boundary.
+The record is planning material only; this directory does not currently claim
+that BetterGI automation is implemented or that an RDP authorizer is available.
+
 This directory reserves the first chuzi automation plugin: a bridge that
 speaks `chuzi.adapter/v1` to the control service and the official/public
 integration interface exposed by a user-installed BetterGI instance.
