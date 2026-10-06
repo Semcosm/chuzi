@@ -1,7 +1,7 @@
-# CR-0096: extend Windows UI with job-pool and environment operations
+# CR-0097: extend Windows UI with job-pool and environment operations
 
 Base: main
-Head or Range: 41ca06a3f7dff466beb3ee5828a8ec5f24dab37f
+Head or Range: pending implementation head
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add Windows job-pool and environment operations
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 01b1890b07e9a93577a9940939a80c4f7f0c750a
-Head OID: 41ca06a3f7dff466beb3ee5828a8ec5f24dab37f
+Head OID: pending implementation head
 Integrated Result: pending
 
 ## Summary
@@ -31,14 +31,15 @@ credential, profile, named-pipe, Windows identity, or RDP access.
 
 ## Test Evidence
 
-The UI Rust tests cover redaction, fixed Core method names, opaque package
-references, stable failure classification, operation states, and idempotency
-key shape. Deterministic Slint snapshots cover empty/single/mixed pools,
+The UI Rust tests (26 passing) cover redaction, fixed Core method names, opaque
+package references, stable failure classification, operation envelope states,
+service-restart classification, and deterministic payload-derived idempotency
+keys. Deterministic Slint snapshots cover empty/single/mixed pools,
 provisioning, draining, quarantined, failed reconcile, untrusted environments,
 operation polling, stale revision, package unavailable, unavailable Core, and
 narrow confirmation fixtures at 800x600, 1120x760, and 1440x900 in Light and
-Dark. `cargo test --manifest-path ui/windows/Cargo.toml` and the layout snapshot
-example pass when using the documented shared Cargo target cache.
+Dark. The cargo test command and layout snapshot example pass when using the
+documented shared Cargo target cache.
 
 ## Risk
 

@@ -16,7 +16,6 @@ use slint::{ComponentHandle, Image, ModelRc, SharedString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -763,6 +762,7 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
 fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
     if let Some(window) = ui.upgrade() {
         window.set_job_pool_phase("loading".into());
+        window.set_environment_operation_phase("loading".into());
     }
     run_background_with_failure(
         ui,
@@ -871,10 +871,13 @@ fn environment_row(environment: &CoreEnvironment) -> EnvironmentRowData {
     }
 }
 
-static NEXT_IDEMPOTENCY_KEY: AtomicU64 = AtomicU64::new(1);
-
-fn idempotency_key(operation: &str, subject: &str, revision: u64) -> String {
-    let sequence = NEXT_IDEMPOTENCY_KEY.fetch_add(1, Ordering::Relaxed);
+fn idempotency_key(operation: &str, subject: &str, revision: u64, details: &str) -> String {
+    let fingerprint_input = format!("{operation}\0{subject}\0{revision}\0{details}");
+    let mut fingerprint = 14695981039346656037_u64;
+    for byte in fingerprint_input.bytes() {
+        fingerprint ^= u64::from(byte);
+        fingerprint = fingerprint.wrapping_mul(1099511628211);
+    }
     let subject = subject
         .chars()
         .map(|character| {
@@ -884,8 +887,9 @@ fn idempotency_key(operation: &str, subject: &str, revision: u64) -> String {
                 '-'
             }
         })
+        .take(48)
         .collect::<String>();
-    format!("windows-ui-{operation}-{subject}-{revision}-{sequence}")
+    format!("windows-ui-{operation}-{subject}-{revision}-{fingerprint:016x}")
 }
 
 fn pool_revision(state: &AppState, pool_id: &str) -> Result<u64, String> {
@@ -918,7 +922,8 @@ fn submit_job_pool_apply(
             return Err("invalid_argument".to_owned());
         }
         let revision = pool_revision(state, &pool_id)?;
-        let key = idempotency_key("apply", &pool_id_for_key, revision);
+        let details = format!("{environment_id}|{environment_version}|{desired}|{max_concurrency}");
+        let key = idempotency_key("apply", &pool_id_for_key, revision, &details);
         core_call(
             state,
             CoreMethod::ApplyJobPool,
@@ -954,7 +959,7 @@ fn submit_job_pool_scale(
             return Err("invalid_argument".to_owned());
         }
         let revision = pool_revision(state, &pool_id)?;
-        let key = idempotency_key("scale", &pool_id_for_key, revision);
+        let key = idempotency_key("scale", &pool_id_for_key, revision, &desired.to_string());
         core_call(
             state,
             CoreMethod::ScaleJobPool,
@@ -984,7 +989,7 @@ fn submit_job_pool_action(
     start_job_pool_operation(ui, state, pool_id.clone(), move |state| {
         validate_text(&pool_id, "pool ID")?;
         let revision = pool_revision(state, &pool_id)?;
-        let key = idempotency_key(&action, &pool_id_for_key, revision);
+        let key = idempotency_key(&action, &pool_id_for_key, revision, "");
         core_call(
             state,
             method,
@@ -1078,7 +1083,8 @@ fn submit_environment_operation(
         } else {
             environment_revision(state, &environment_id, &version)?
         };
-        let key = idempotency_key(&operation, &environment_id, revision);
+        let details = format!("{version}|{operation}|{package_ref}");
+        let key = idempotency_key(&operation, &environment_id, revision, &details);
         core_call(
             state,
             CoreMethod::EnvironmentOperation,
@@ -1280,7 +1286,13 @@ where
         + 'static,
 {
     for attempt in 0..40 {
-        let value = poll(&state.lock().unwrap(), operation_id)?;
+        let value = match poll(&state.lock().unwrap(), operation_id) {
+            Ok(value) => value,
+            Err(error) if is_core_unavailable(&error) => {
+                return Err("service_restarted".to_owned());
+            }
+            Err(error) => return Err(error),
+        };
         let (state_name, id, failure, result) = value;
         set_operation_progress(
             ui,
@@ -2001,6 +2013,9 @@ fn friendly_error(error: &str) -> String {
     if value.contains("environment_untrusted") || value.contains("not trusted") {
         return "The environment is not trusted. Trust it through the service before enabling the pool.".to_owned();
     }
+    if value.contains("environment_unverified") || value.contains("not verified") {
+        return "The environment has not passed verification. Verify it through the service before enabling the pool.".to_owned();
+    }
     if value.contains("environment_unhealthy") || value.contains("not healthy") {
         return "The environment health gate is not ready. Check the environment and try again."
             .to_owned();
@@ -2126,6 +2141,10 @@ mod tests {
             "environment unhealthy"
         );
         assert_eq!(operation_error_phase("core_unavailable"), "unavailable");
+        assert_eq!(
+            operation_error_phase("service_restarted"),
+            "service restarted"
+        );
         assert!(friendly_error("package_unavailable").contains("package"));
         assert!(friendly_error("stale_revision").contains("changed"));
     }
@@ -2157,8 +2176,12 @@ mod tests {
 
     #[test]
     fn idempotency_keys_are_stable_shape_without_user_paths() {
-        let key = idempotency_key("scale", "pool/one", 7);
+        let key = idempotency_key("scale", "pool/one", 7, "4");
+        let repeated = idempotency_key("scale", "pool/one", 7, "4");
+        let changed = idempotency_key("scale", "pool/one", 7, "5");
         assert!(key.starts_with("windows-ui-scale-pool-one-7-"));
+        assert_eq!(key, repeated);
+        assert_ne!(key, changed);
         assert!(!key.contains('/'));
         assert!(!key.contains('\\'));
     }
