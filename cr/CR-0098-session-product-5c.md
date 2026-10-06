@@ -1,16 +1,16 @@
 # CR-0098: add durable session lifecycle and Windows session product flow
 
 Base: main
-Head or Range: ca544f5d4fc448efbb610c41e146335358d282ee
+Head or Range: a547945110537a0a7b8975eba6f25534c3539e84..65345f43c000e646d04f4a4decf8db2ae34e0e6b
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add durable session lifecycle and Windows session flow
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: a547945110537a0a7b8975eba6f25534c3539e84
-Head OID: ca544f5d4fc448efbb610c41e146335358d282ee
+Head OID: 65345f43c000e646d04f4a4decf8db2ae34e0e6b
 Integrated Result: pending
 
 ## Summary
@@ -49,6 +49,7 @@ go test -race ./...
 go vet ./...
 GOOS=windows GOARCH=amd64 go build ./...
 GOOS=windows GOARCH=amd64 go vet ./...
+GOOS=windows GOARCH=amd64 go test -c ./internal/slotagent
 npm --prefix browser-worker test (22 tests)
 cargo fmt --manifest-path ui/windows/Cargo.toml -- --check
 cargo nextest run --manifest-path ui/windows/Cargo.toml --locked (26 tests)
@@ -66,6 +67,9 @@ Focused coverage includes atomic exact-request/slot claiming, request-account
 mismatch rejection, durable session validation, lease cleanup, generation
 fencing, RDP-unavailable degradation, restart recovery, Core redaction, all
 four local transport session methods, and UI workspace/session projections.
+The Windows slot-agent coverage also permits one browser-worker and one adapter
+job for the same request, rejects same-kind duplicates, routes worker frames to
+the browser-worker job, and stops both jobs together.
 The optional document-map validator was not applicable because this checkout
 has no .ugs/document-map.json. Native Windows user/session/ACL/RDP smoke,
 production RDP authorization, live account automation, and a production
