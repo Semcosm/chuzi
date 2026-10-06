@@ -64,6 +64,7 @@ func main() {
 	var manifest launcher.ReleaseManifest
 	var installedManifest *launcher.ReleaseManifest
 	var releaseIndex *launcher.ReleaseIndex
+	manifestRequired := launcherCommandNeedsManifest(*command, *verify)
 	if strings.TrimSpace(*releaseIndexURL) != "" {
 		source := launcher.HTTPReleaseIndexSource{URL: *releaseIndexURL, AllowHTTPForLoopback: *allowHTTPForLoopback}
 		index, err := source.FetchIndex(ctx)
@@ -94,7 +95,7 @@ func main() {
 			manifest = local
 		}
 		installedManifest = &local
-	} else if releaseIndex == nil {
+	} else if releaseIndex == nil && manifestRequired {
 		fatal(manifestErr)
 	}
 
@@ -494,6 +495,24 @@ func managerCommandNeedsItem(command string) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// Core and control-plane commands use the service-owned Core boundary. They
+// must remain usable from an installed launcher component even when the
+// release manifest is stored with a different component or has not yet been
+// materialized in the selected root.
+func launcherCommandNeedsManifest(command string, verify bool) bool {
+	if verify {
+		return true
+	}
+	switch command {
+	case "core-status", "core-start", "core-stop", "core-call",
+		"job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-operation",
+		"environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
+		return false
+	default:
+		return true
 	}
 }
 

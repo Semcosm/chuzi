@@ -93,3 +93,17 @@ func TestControlCommandRejectsPackagePathsBeforeCoreCall(t *testing.T) {
 		t.Fatalf("package path result = handled=%v err=%v", handled, err)
 	}
 }
+
+func TestControlCommandsDoNotRequireReleaseManifest(t *testing.T) {
+	for _, command := range []string{
+		"core-status", "core-start", "core-stop", "core-call",
+		"job-pool-list", "job-pool-apply", "environment-list", "environment-install",
+	} {
+		if launcherCommandNeedsManifest(command, false) {
+			t.Fatalf("%s unexpectedly requires a release manifest", command)
+		}
+	}
+	if !launcherCommandNeedsManifest("show", false) || !launcherCommandNeedsManifest("verify", true) {
+		t.Fatal("manifest-backed commands unexpectedly bypass manifest loading")
+	}
+}
