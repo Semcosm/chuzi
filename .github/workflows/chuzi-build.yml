@@ -570,7 +570,9 @@ jobs:
     name: chuzi-build-windows-job-pool-smoke
     runs-on: [self-hosted, windows, chuzi-job-pool]
     timeout-minutes: 20
-    if: needs.release_context.outputs.channel != 'test'
+    # Native WTS smoke requires the dedicated runner and is a release gate only
+    # for nightly/stable builds. CI and test builds use the hosted preflight.
+    if: needs.release_context.outputs.channel == 'nightly' || needs.release_context.outputs.channel == 'stable'
     needs: [release_context, contract_checks]
     permissions:
       contents: read
@@ -758,8 +760,8 @@ jobs:
           done
           channel="${{ needs.release_context.outputs.channel }}"
           native_result="${{ needs.windows_job_pool_smoke.result }}"
-          if [ "$channel" = test ]; then
-            test "$native_result" = skipped || { echo "test channel native smoke must be skipped, got $native_result" >&2; exit 1; }
+          if [ "$channel" = ci ] || [ "$channel" = test ]; then
+            test "$native_result" = skipped || { echo "$channel channel native smoke must be skipped, got $native_result" >&2; exit 1; }
           else
             test "$native_result" = success || { echo "native Windows job-pool smoke did not succeed: $native_result" >&2; exit 1; }
           fi
