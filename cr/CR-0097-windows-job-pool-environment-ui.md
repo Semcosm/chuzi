@@ -39,7 +39,11 @@ provisioning, draining, quarantined, failed reconcile, untrusted environments,
 operation polling, stale revision, package unavailable, unavailable Core, and
 narrow confirmation fixtures at 800x600, 1120x760, and 1440x900 in Light and
 Dark. The cargo test command and layout snapshot example pass when using the
-documented shared Cargo target cache.
+documented shared Cargo target cache. Repository validation also passed:
+go test ./..., go test -race ./..., go vet ./..., GOOS=windows GOARCH=amd64
+go build ./..., GOOS=windows GOARCH=amd64 go vet ./..., the 22-test
+browser-worker suite, all policy/quality/supply-chain/action-pinning/shape/
+build-contract validators, CR validation, and git diff --check.
 
 ## Risk
 
