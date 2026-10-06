@@ -24,6 +24,21 @@ type SlotClaim struct {
 // bbolt transaction. It never marks a request as credential-failed when no
 // matching slot is ready.
 func (s *Store) ClaimNextWithSlot(now time.Time, leaseID, owner string, ttl time.Duration, eventID, actor, reason string, options QueueOptions, poolID string, requirement slot.EnvironmentRequirement) (SlotClaim, error) {
+	return s.claimWithSlot(now, leaseID, owner, ttl, eventID, actor, reason, options, poolID, requirement, "")
+}
+
+// ClaimRequestWithSlot atomically claims the specified queued request and a
+// matching execution slot. It is the request-scoped form used by interactive
+// session starts; callers cannot accidentally consume another account's queue
+// item when multiple requests are ready.
+func (s *Store) ClaimRequestWithSlot(now time.Time, requestID, leaseID, owner string, ttl time.Duration, eventID, actor, reason string, options QueueOptions, poolID string, requirement slot.EnvironmentRequirement) (SlotClaim, error) {
+	if strings.TrimSpace(requestID) == "" {
+		return SlotClaim{}, ErrInvalidQueueOptions
+	}
+	return s.claimWithSlot(now, leaseID, owner, ttl, eventID, actor, reason, options, poolID, requirement, requestID)
+}
+
+func (s *Store) claimWithSlot(now time.Time, leaseID, owner string, ttl time.Duration, eventID, actor, reason string, options QueueOptions, poolID string, requirement slot.EnvironmentRequirement, targetRequestID string) (SlotClaim, error) {
 	if now.IsZero() || strings.TrimSpace(leaseID) == "" || strings.TrimSpace(owner) == "" || ttl <= 0 || strings.TrimSpace(eventID) == "" || strings.TrimSpace(actor) == "" || strings.TrimSpace(reason) == "" || strings.TrimSpace(poolID) == "" || options.MaxGlobalConcurrency < 1 {
 		return SlotClaim{}, ErrInvalidQueueOptions
 	}
@@ -124,6 +139,9 @@ func (s *Store) ClaimNextWithSlot(now time.Time, leaseID, owner string, ttl time
 		}
 
 		for _, request := range queued {
+			if targetRequestID != "" && request.RequestID != targetRequestID {
+				continue
+			}
 			if request.NotBefore.After(now) || (!request.Deadline.IsZero() && !now.Before(request.Deadline)) {
 				continue
 			}

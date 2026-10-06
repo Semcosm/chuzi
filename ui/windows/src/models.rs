@@ -19,6 +19,49 @@ pub(crate) struct CoreRequestList {
     pub(crate) requests: Vec<CoreRequest>,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub(crate) struct CoreSession {
+    pub(crate) session_id: String,
+    pub(crate) request_id: String,
+    #[serde(default)]
+    pub(crate) account: String,
+    #[serde(default)]
+    pub(crate) pool_id: String,
+    #[serde(default)]
+    pub(crate) environment_id: String,
+    #[serde(default)]
+    pub(crate) environment_version: String,
+    #[serde(default)]
+    pub(crate) adapter_id: String,
+    #[serde(default)]
+    pub(crate) adapter_version: String,
+    #[serde(default)]
+    pub(crate) phase: String,
+    #[serde(default)]
+    pub(crate) slot_state: String,
+    #[serde(default)]
+    pub(crate) environment_generation: u64,
+    #[serde(default)]
+    pub(crate) agent_ready: bool,
+    #[serde(default)]
+    pub(crate) worker_ready: bool,
+    #[serde(default)]
+    pub(crate) adapter_ready: bool,
+    #[serde(default)]
+    pub(crate) rdp_available: bool,
+    #[serde(default)]
+    pub(crate) failure: String,
+    #[serde(default)]
+    pub(crate) created_at: String,
+    #[serde(default)]
+    pub(crate) updated_at: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreSessionList {
+    pub(crate) sessions: Vec<CoreSession>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct CoreStatus {
     pub(crate) installed: bool,

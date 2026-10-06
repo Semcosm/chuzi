@@ -27,6 +27,7 @@ type viewTestAPI struct{ *testAPI }
 
 type diagnosticTestAPI struct{ *testAPI }
 type jobPoolTestAPI struct{ *testAPI }
+type sessionTestAPI struct{ *testAPI }
 
 func (a *jobPoolTestAPI) GetJobPoolStatus(context.Context, string) (coreapi.JobPoolStatus, error) {
 	return coreapi.JobPoolStatus{PoolID: "pool-test", Desired: 2, Ready: 1, Leased: 1, EffectiveCapacity: 1}, nil
@@ -34,6 +35,19 @@ func (a *jobPoolTestAPI) GetJobPoolStatus(context.Context, string) (coreapi.JobP
 
 func (a *diagnosticTestAPI) SubmitDiagnosticReport(context.Context, coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
 	return coreapi.DiagnosticStatus{ID: "diag-1", State: "queued"}, nil
+}
+
+func (a *sessionTestAPI) StartSession(context.Context, coreapi.SessionStartRequest) (coreapi.Session, error) {
+	return coreapi.Session{SessionID: "session-1", RequestID: "request-1", Phase: "running"}, nil
+}
+func (a *sessionTestAPI) GetSession(context.Context, string) (coreapi.Session, error) {
+	return coreapi.Session{SessionID: "session-1", RequestID: "request-1", Phase: "running"}, nil
+}
+func (a *sessionTestAPI) ListSessions(context.Context) ([]coreapi.Session, error) {
+	return []coreapi.Session{{SessionID: "session-1", RequestID: "request-1", Phase: "running"}}, nil
+}
+func (a *sessionTestAPI) StopSession(context.Context, coreapi.SessionStopRequest) (coreapi.Session, error) {
+	return coreapi.Session{SessionID: "session-1", RequestID: "request-1", Phase: "stopped"}, nil
 }
 
 func (a *viewTestAPI) GetBrowserView(context.Context, coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
@@ -185,6 +199,33 @@ func TestUnixContractDiagnosticReportMethod(t *testing.T) {
 	status, err := client.SubmitDiagnosticReport(context.Background(), coreapi.DiagnosticReport{Severity: "error", Category: "core", Summary: "Core unavailable"})
 	if err != nil || status.ID != "diag-1" || status.State != "queued" {
 		t.Fatalf("diagnostic status = %#v, err=%v", status, err)
+	}
+}
+
+func TestUnixContractSessionMethods(t *testing.T) {
+	api := &sessionTestAPI{testAPI: &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}}
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	started, err := client.StartSession(context.Background(), coreapi.SessionStartRequest{RequestID: "request-1", AccountID: "account-1", PoolID: "pool-1", EnvironmentID: "env-1", EnvironmentVersion: "1.0.0", AdapterID: "adapter-1", AdapterVersion: "1.0.0"})
+	if err != nil || started.Phase != "running" {
+		t.Fatalf("start session = %#v, err=%v", started, err)
+	}
+	fetched, err := client.GetSession(context.Background(), "session-1")
+	if err != nil || fetched.SessionID != "session-1" {
+		t.Fatalf("get session = %#v, err=%v", fetched, err)
+	}
+	listed, err := client.ListSessions(context.Background())
+	if err != nil || len(listed) != 1 || listed[0].SessionID != "session-1" {
+		t.Fatalf("list sessions = %#v, err=%v", listed, err)
+	}
+	stopped, err := client.StopSession(context.Background(), coreapi.SessionStopRequest{SessionID: "session-1", Reason: "cancelled"})
+	if err != nil || stopped.Phase != "stopped" {
+		t.Fatalf("stop session = %#v, err=%v", stopped, err)
 	}
 }
 

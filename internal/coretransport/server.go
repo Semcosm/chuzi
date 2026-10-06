@@ -425,6 +425,47 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		item, err := api.GetEnvironmentOperation(ctx, params.OperationID)
 		return EnvironmentOperationResult{Operation: item}, err
+	case methodStartSession:
+		api, ok := s.api.(coreapi.SessionAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "session service is unavailable")
+		}
+		var params coreapi.SessionStartRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.StartSession(ctx, params)
+		return SessionResult{Session: item}, err
+	case methodGetSession:
+		api, ok := s.api.(coreapi.SessionAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "session service is unavailable")
+		}
+		var params struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		return api.GetSession(ctx, params.SessionID)
+	case methodListSessions:
+		api, ok := s.api.(coreapi.SessionAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "session service is unavailable")
+		}
+		items, err := api.ListSessions(ctx)
+		return SessionsResult{Sessions: items}, err
+	case methodStopSession:
+		api, ok := s.api.(coreapi.SessionAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "session service is unavailable")
+		}
+		var params coreapi.SessionStopRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.StopSession(ctx, params)
+		return SessionResult{Session: item}, err
 	default:
 		return nil, invalidMethodError(method)
 	}

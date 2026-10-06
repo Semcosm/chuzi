@@ -8,7 +8,7 @@ use desktop_rdp::RdpHost;
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreEnvironment, CoreEnvironmentList,
     CoreEnvironmentOperation, CoreJobPool, CoreJobPoolList, CoreJobPoolOperation, CoreRequest,
-    CoreRequestList, CoreStatus, DiagnosticStatus, UiPreferences,
+    CoreRequestList, CoreSession, CoreSessionList, CoreStatus, DiagnosticStatus, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
@@ -33,6 +33,7 @@ struct AppState {
     busy: bool,
     settings: BehaviorSettings,
     session_view_model: SessionViewModel,
+    sessions: Vec<CoreSession>,
     workspace_host: RdpHost,
 }
 
@@ -88,6 +89,7 @@ impl AppState {
                 check_interval: 60 * 60 * 1_000_000_000,
             },
             session_view_model: SessionViewModel::default(),
+            sessions: Vec::new(),
             workspace_host: RdpHost::Docked,
         })
     }
@@ -218,6 +220,10 @@ enum CoreMethod {
     GetRequest,
     GetBrowserView,
     ListRequests,
+    StartSession,
+    GetSession,
+    ListSessions,
+    StopSession,
 }
 
 impl CoreMethod {
@@ -237,6 +243,10 @@ impl CoreMethod {
             Self::GetRequest => "get_request",
             Self::GetBrowserView => "get_browser_view",
             Self::ListRequests => "list_requests",
+            Self::StartSession => "start_session",
+            Self::GetSession => "get_session",
+            Self::ListSessions => "list_sessions",
+            Self::StopSession => "stop_session",
         }
     }
 }
@@ -491,6 +501,31 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     ui.on_refresh_sessions(move || refresh_sessions(&weak, Arc::clone(&session_state)));
     let weak = ui.as_weak();
     let session_state = Arc::clone(&state);
+    ui.on_session_start(
+        move |account,
+              request,
+              idempotency,
+              pool,
+              environment,
+              environment_version,
+              adapter,
+              adapter_version| {
+            start_session(
+                &weak,
+                Arc::clone(&session_state),
+                account.to_string(),
+                request.to_string(),
+                idempotency.to_string(),
+                pool.to_string(),
+                environment.to_string(),
+                environment_version.to_string(),
+                adapter.to_string(),
+                adapter_version.to_string(),
+            );
+        },
+    );
+    let weak = ui.as_weak();
+    let session_state = Arc::clone(&state);
     ui.on_load_more_sessions(move || load_more_sessions(&weak, Arc::clone(&session_state)));
     let weak = ui.as_weak();
     let session_state = Arc::clone(&state);
@@ -522,6 +557,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                 window.set_session_browser_view(Image::default());
                 window.set_session_browser_view_loaded(false);
                 window.set_session_browser_view_status(SharedString::default());
+                update_selected_workspace(&window, &mut state);
                 session_ui::render(&window, &state.session_view_model);
             }
         }
@@ -542,6 +578,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                 window.set_session_browser_view(Image::default());
                 window.set_session_browser_view_loaded(false);
                 window.set_session_browser_view_status(SharedString::default());
+                update_selected_workspace(&window, &mut state);
                 session_ui::render(&window, &state.session_view_model);
             }
         }
@@ -597,9 +634,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
     let weak = ui.as_weak();
     let workspace_state = Arc::clone(&state);
-    ui.on_session_workspace_stop(move || {
-        set_workspace_host(&weak, &workspace_state, RdpHost::Stopped)
-    });
+    ui.on_session_workspace_stop(move || stop_selected_session(&weak, &workspace_state));
 
     let weak = ui.as_weak();
     let theme_state = Arc::clone(&state);
@@ -683,6 +718,106 @@ fn set_workspace_host(ui: &slint::Weak<MainWindow>, state: &Arc<Mutex<AppState>>
             window.set_session_workspace_visible(false);
         }
     }
+}
+
+fn update_selected_workspace(window: &MainWindow, state: &mut AppState) {
+    let selected = state
+        .session_view_model
+        .selected_key()
+        .and_then(|request_id| {
+            state
+                .sessions
+                .iter()
+                .find(|item| item.request_id == request_id)
+        })
+        .cloned();
+    let Some(session) = selected else {
+        window.set_session_workspace_visible(false);
+        return;
+    };
+    if state.workspace_host == RdpHost::Stopped {
+        state.workspace_host = RdpHost::Docked;
+    }
+    window.set_session_workspace_host(state.workspace_host.as_str().into());
+    window.set_session_workspace_visible(session.phase != "stopped" && session.phase != "failed");
+    window.set_session_workspace_state(
+        if session.rdp_available {
+            "connected"
+        } else if session.phase == "failed" {
+            "failed"
+        } else {
+            "starting"
+        }
+        .into(),
+    );
+    window.set_session_workspace_status(
+        if !session.failure.is_empty() {
+            session.failure.as_str()
+        } else if session.rdp_available {
+            "Interactive workspace ready."
+        } else {
+            "Interactive workspace is starting."
+        }
+        .into(),
+    );
+}
+
+fn stop_selected_session(ui: &slint::Weak<MainWindow>, state: &Arc<Mutex<AppState>>) {
+    let session_id = {
+        let guard = state.lock().unwrap();
+        let Some(request_id) = guard.session_view_model.selected_key() else {
+            return;
+        };
+        guard
+            .sessions
+            .iter()
+            .find(|session| session.request_id == request_id)
+            .map(|session| session.session_id.clone())
+    };
+    let Some(session_id) = session_id else {
+        if let Some(window) = ui.upgrade() {
+            window.set_session_workspace_status("No active Core session is selected.".into());
+        }
+        return;
+    };
+    set_workspace_host(ui, state, RdpHost::Stopped);
+    let refresh_state = Arc::clone(state);
+    run_background_with_failure(
+        ui,
+        Arc::clone(state),
+        move |state| {
+            ensure_core_ready(state)?;
+            let value = core_call(
+                state,
+                CoreMethod::StopSession,
+                json!({"session_id": session_id, "actor": "windows-ui", "reason": "cancelled"}),
+            )?;
+            let session: CoreSession =
+                serde_json::from_value(value.get("session").cloned().unwrap_or(Value::Null))
+                    .map_err(|_| "invalid_session_projection".to_owned())?;
+            Ok(("Session stop requested.".to_owned(), session))
+        },
+        move |window, session: CoreSession| {
+            {
+                let mut guard = refresh_state.lock().unwrap();
+                if let Some(existing) = guard
+                    .sessions
+                    .iter_mut()
+                    .find(|item| item.session_id == session.session_id)
+                {
+                    *existing = session;
+                }
+            }
+            window.set_session_workspace_state("stopped".into());
+            window.set_message("Session stopped.".into());
+            window.set_message_kind("success".into());
+            refresh_sessions(&window.as_weak(), Arc::clone(&refresh_state));
+        },
+        move |window, error| {
+            window.set_session_workspace_state("failed".into());
+            window.set_session_workspace_status(friendly_error(error).into());
+        },
+    );
 }
 
 fn show_diagnostic_consent(window: &MainWindow, category: &str, severity: &str) {
@@ -1512,6 +1647,149 @@ mod job_pool_tests {
 
 const SESSION_PAGE_SIZE: usize = 100;
 
+fn start_session(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    account: String,
+    request: String,
+    idempotency: String,
+    pool: String,
+    environment: String,
+    environment_version: String,
+    adapter: String,
+    adapter_version: String,
+) {
+    let apply_state = Arc::clone(&state);
+    run_background_with_failure(
+        ui,
+        state,
+        move |state| {
+            for (value, label) in [
+                (&account, "account reference"),
+                (&pool, "pool ID"),
+                (&environment, "environment ID"),
+                (&environment_version, "environment version"),
+                (&adapter, "adapter ID"),
+                (&adapter_version, "adapter version"),
+            ] {
+                validate_session_identifier(value, label)?;
+            }
+            if request.is_empty() {
+                validate_session_identifier(&idempotency, "idempotency key")?;
+            } else {
+                validate_session_identifier(&request, "request reference")?;
+                if !idempotency.is_empty() {
+                    validate_session_identifier(&idempotency, "idempotency key")?;
+                }
+            }
+            ensure_core_ready(state)?;
+            let value = core_call(
+                state,
+                CoreMethod::StartSession,
+                json!({
+                    "request_id": request,
+                    "account_id": account,
+                    "idempotency_key": idempotency,
+                    "actor": "windows-ui",
+                    "pool_id": pool,
+                    "environment_id": environment,
+                    "environment_version": environment_version,
+                    "adapter_id": adapter,
+                    "adapter_version": adapter_version,
+                }),
+            )?;
+            let session: CoreSession =
+                serde_json::from_value(value.get("session").cloned().unwrap_or(Value::Null))
+                    .map_err(|_| "invalid_session_projection".to_owned())?;
+            Ok(("Session start requested.".to_owned(), session))
+        },
+        move |window, session: CoreSession| {
+            {
+                let mut guard = apply_state.lock().unwrap();
+                if let Some(existing) = guard
+                    .sessions
+                    .iter_mut()
+                    .find(|item| item.session_id == session.session_id)
+                {
+                    *existing = session.clone();
+                } else {
+                    guard.sessions.push(session.clone());
+                }
+                let _ = guard.session_view_model.select_key(&session.request_id);
+                update_selected_workspace(window, &mut guard);
+            }
+            window.set_message("Session start requested.".into());
+            window.set_message_kind("success".into());
+            poll_session(
+                &window.as_weak(),
+                Arc::clone(&apply_state),
+                session.session_id.clone(),
+            );
+            refresh_sessions(&window.as_weak(), Arc::clone(&apply_state));
+        },
+        move |window, error| {
+            window.set_message(friendly_error(error).into());
+            window.set_message_kind("error".into());
+        },
+    );
+}
+
+fn validate_session_identifier(value: &str, label: &str) -> Result<(), String> {
+    validate_text(value, label)?;
+    if value.len() > 256
+        || value != value.trim()
+        || value
+            .chars()
+            .any(|character| character.is_control() || matches!(character, '/' | '\\'))
+    {
+        return Err("invalid_argument".to_owned());
+    }
+    Ok(())
+}
+
+fn poll_session(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>, session_id: String) {
+    let weak = ui.clone();
+    thread::spawn(move || {
+        for _ in 0..40 {
+            thread::sleep(Duration::from_millis(500));
+            let result = {
+                let guard = state.lock().unwrap();
+                core_call(
+                    &guard,
+                    CoreMethod::GetSession,
+                    json!({"session_id": session_id.clone()}),
+                )
+            };
+            let Ok(value) = result else {
+                return;
+            };
+            let Ok(session) = serde_json::from_value::<CoreSession>(value) else {
+                return;
+            };
+            let terminal = matches!(session.phase.as_str(), "stopped" | "failed");
+            let next = session.clone();
+            let state_for_ui = Arc::clone(&state);
+            let weak_for_ui = weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(window) = weak_for_ui.upgrade() {
+                    let mut guard = state_for_ui.lock().unwrap();
+                    if let Some(existing) = guard
+                        .sessions
+                        .iter_mut()
+                        .find(|item| item.session_id == next.session_id)
+                    {
+                        *existing = next;
+                    }
+                    update_selected_workspace(&window, &mut guard);
+                }
+            });
+            if terminal {
+                return;
+            }
+        }
+    });
+}
+
 fn refresh_sessions(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
     if state.lock().unwrap().busy {
         return;
@@ -1542,17 +1820,26 @@ fn refresh_sessions(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
             if page.requests.len() > SESSION_PAGE_SIZE {
                 return Err("invalid_session_projection".to_owned());
             }
+            let sessions_value = core_call(state, CoreMethod::ListSessions, json!({}))?;
+            let sessions: CoreSessionList = serde_json::from_value(sessions_value)
+                .map_err(|_| "invalid_session_projection".to_owned())?;
+            if sessions.sessions.len() > 10_000 {
+                return Err("invalid_session_projection".to_owned());
+            }
             let has_more = page.requests.len() == SESSION_PAGE_SIZE;
             Ok((
                 "Session requests loaded.".to_owned(),
-                (page.requests, has_more),
+                (page.requests, sessions.sessions, has_more),
             ))
         },
-        move |window, (requests, has_more): (Vec<CoreRequest>, bool)| {
+        move |window,
+              (requests, sessions, has_more): (Vec<CoreRequest>, Vec<CoreSession>, bool)| {
             let mut state_guard = apply_state.lock().unwrap();
+            state_guard.sessions = sessions;
             state_guard
                 .session_view_model
                 .set_first_page(sessions_from_requests(&requests), has_more);
+            update_selected_workspace(window, &mut state_guard);
             session_ui::render(window, &state_guard.session_view_model);
         },
         move |window, error| {

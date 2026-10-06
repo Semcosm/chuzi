@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	CurrentVersion uint64 = 9
+	CurrentVersion uint64 = 10
 
 	MetaBucket                   = "meta"
 	AccountsBucket               = "accounts"
@@ -40,6 +40,7 @@ const (
 	EnvironmentOperationsBucket  = "environment_operations"
 	EnvironmentIdempotencyBucket = "environment_idempotency"
 	EnvironmentAuditBucket       = "environment_audit"
+	SessionsBucket               = "sessions"
 	VersionKey                   = "version"
 )
 
@@ -106,6 +107,10 @@ func Apply(db *bbolt.DB) error {
 				}
 			case 9:
 				if err := createVersionNine(tx); err != nil {
+					return err
+				}
+			case 10:
+				if err := createVersionTen(tx); err != nil {
 					return err
 				}
 			default:
@@ -182,6 +187,13 @@ func createVersionNine(tx *bbolt.Tx) error {
 		if _, err := tx.CreateBucketIfNotExists([]byte(name)); err != nil {
 			return fmt.Errorf("create %s bucket: %w", name, err)
 		}
+	}
+	return nil
+}
+
+func createVersionTen(tx *bbolt.Tx) error {
+	if _, err := tx.CreateBucketIfNotExists([]byte(SessionsBucket)); err != nil {
+		return fmt.Errorf("create %s bucket: %w", SessionsBucket, err)
 	}
 	return nil
 }

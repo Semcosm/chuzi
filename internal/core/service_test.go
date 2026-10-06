@@ -14,6 +14,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/diagnostics"
 	"github.com/Semcosm/chuzi/internal/request"
+	"github.com/Semcosm/chuzi/internal/session"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
@@ -107,6 +108,75 @@ type testJobPoolPort struct{}
 
 func (testJobPoolPort) SlotPoolStatus(string, time.Time) (slot.StatusCounts, error) {
 	return slot.StatusCounts{PoolID: "pool-test", Desired: 5, Ready: 3, Leased: 1, Quarantined: 1, Draining: 1}, nil
+}
+
+type sessionPortFixture struct {
+	record  store.SessionRecord
+	started int
+	stopped int
+}
+
+func (p *sessionPortFixture) Start(context.Context, session.StartInput) (store.SessionRecord, error) {
+	p.started++
+	return p.record, nil
+}
+func (p *sessionPortFixture) Get(string) (store.SessionRecord, error) { return p.record, nil }
+func (p *sessionPortFixture) List() ([]store.SessionRecord, error) {
+	return []store.SessionRecord{p.record}, nil
+}
+func (p *sessionPortFixture) Stop(context.Context, string, string) (store.SessionRecord, error) {
+	p.stopped++
+	p.record.Phase = string(session.Stopped)
+	return p.record, nil
+}
+
+func TestSessionAPIProjectsLifecycleWithoutRuntimeSecrets(t *testing.T) {
+	at := time.Date(2026, time.October, 6, 12, 0, 0, 0, time.UTC)
+	fixture := &sessionPortFixture{record: store.SessionRecord{
+		SessionID: "session-1", RequestID: "request-1", AccountID: "account-private", PoolID: "pool-1",
+		EnvironmentID: "env-1", EnvironmentVersion: "1.0.0", AdapterID: "adapter-1", AdapterVersion: "1.0.0",
+		Phase: string(session.RDPAvailable), SlotID: "slot-secret", SlotLeaseID: "lease-secret", AccountLeaseID: "account-lease-secret",
+		EnvironmentGeneration: 7, AgentReady: true, WorkerReady: true, AdapterReady: true, CreatedAt: at, UpdatedAt: at,
+	}}
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, Sessions: fixture, MaxConcurrency: 2, Clock: func() time.Time { return at }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	item, err := service.StartSession(context.Background(), coreapi.SessionStartRequest{
+		SessionID: "session-1", RequestID: "request-1", AccountID: "account-private", PoolID: "pool-1",
+		EnvironmentID: "env-1", EnvironmentVersion: "1.0.0", AdapterID: "adapter-1", AdapterVersion: "1.0.0",
+	})
+	if err != nil || item.SessionID != "session-1" || item.Account == "account-private" || !item.RDPAvailable || item.SlotState != "leased" {
+		t.Fatalf("start projection = %#v, err=%v", item, err)
+	}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, secret := range []string{"slot-secret", "lease-secret", "account-lease-secret", "account-private"} {
+		if strings.Contains(string(raw), secret) {
+			t.Fatalf("session projection leaked %q: %s", secret, raw)
+		}
+	}
+	items, err := service.ListSessions(context.Background())
+	if err != nil || len(items) != 1 {
+		t.Fatalf("list = %#v, err=%v", items, err)
+	}
+	stopped, err := service.StopSession(context.Background(), coreapi.SessionStopRequest{SessionID: "session-1", Reason: "operator request"})
+	if err != nil || stopped.Phase != string(session.Stopped) || fixture.stopped != 1 {
+		t.Fatalf("stop = %#v, err=%v, calls=%d", stopped, err, fixture.stopped)
+	}
+}
+
+func TestStartSessionRejectsInvalidInputsBeforeSubmittingRequest(t *testing.T) {
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, Sessions: &sessionPortFixture{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.StartSession(context.Background(), coreapi.SessionStartRequest{AccountID: "account-1", IdempotencyKey: "idem-1", PoolID: "pool/escape", EnvironmentID: "env-1", EnvironmentVersion: "1.0.0", AdapterID: "adapter-1", AdapterVersion: "1.0.0"})
+	if coreapi.CodeOf(err) != coreapi.CodeInvalidArgument {
+		t.Fatalf("invalid input error = %v, code=%q", err, coreapi.CodeOf(err))
+	}
 }
 
 func TestGetJobPoolStatusProjectsCapacityWithoutSensitiveFields(t *testing.T) {

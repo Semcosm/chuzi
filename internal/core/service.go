@@ -20,6 +20,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/observability"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
+	"github.com/Semcosm/chuzi/internal/session"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
@@ -111,6 +112,13 @@ type EnvironmentExecutor interface {
 	Execute(context.Context, store.EnvironmentMutation) (environment.Record, error)
 }
 
+type SessionPort interface {
+	Start(context.Context, session.StartInput) (store.SessionRecord, error)
+	Get(string) (store.SessionRecord, error)
+	List() ([]store.SessionRecord, error)
+	Stop(context.Context, string, string) (store.SessionRecord, error)
+}
+
 type Dependencies struct {
 	Requests            RequestPort
 	Store               StoreReader
@@ -121,6 +129,7 @@ type Dependencies struct {
 	JobPoolControl      JobPoolControlPort
 	Environments        EnvironmentControlPort
 	EnvironmentExecutor EnvironmentExecutor
+	Sessions            SessionPort
 	JobPoolID           string
 	MaxConcurrency      int
 	Clock               func() time.Time
@@ -136,6 +145,7 @@ type Service struct {
 	jobPoolControl      JobPoolControlPort
 	environments        EnvironmentControlPort
 	environmentExecutor EnvironmentExecutor
+	sessions            SessionPort
 	jobPoolID           string
 	maxConcurrency      int
 	clock               func() time.Time
@@ -144,6 +154,7 @@ type Service struct {
 var _ coreapi.API = (*Service)(nil)
 var _ coreapi.JobPoolAPI = (*Service)(nil)
 var _ coreapi.EnvironmentAPI = (*Service)(nil)
+var _ coreapi.SessionAPI = (*Service)(nil)
 
 func New(dependencies Dependencies) (*Service, error) {
 	if dependencies.Requests == nil || dependencies.Store == nil {
@@ -153,7 +164,136 @@ func New(dependencies Dependencies) (*Service, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, sessions: dependencies.Sessions, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+}
+
+func (s *Service) StartSession(ctx context.Context, input coreapi.SessionStartRequest) (coreapi.Session, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.Session{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.Session{}, err
+	}
+	if err := validateSessionStartInput(input); err != nil {
+		return coreapi.Session{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	if s.sessions == nil {
+		return coreapi.Session{}, coreapi.NewError(coreapi.CodeUnavailable, "session service is unavailable")
+	}
+	if input.RequestID == "" {
+		if !validToken(input.AccountID) || !validToken(input.IdempotencyKey) {
+			return coreapi.Session{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+		}
+		requestID := input.SessionID
+		if requestID == "" {
+			requestID = "req-" + input.IdempotencyKey
+		}
+		request, _, err := s.requests.Submit(requestservice.SubmitInput{RequestID: requestID, AccountID: input.AccountID, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, Deadline: input.Deadline})
+		if err != nil {
+			return coreapi.Session{}, classify(err)
+		}
+		input.RequestID = request.RequestID
+		if input.SessionID == "" {
+			input.SessionID = "session-" + request.RequestID
+		}
+	}
+	if input.SessionID == "" {
+		input.SessionID = "session-" + input.RequestID
+	}
+	if !validToken(input.SessionID) || !validToken(input.RequestID) || !validToken(input.AccountID) || !validToken(input.PoolID) || !validToken(input.EnvironmentID) || !validToken(input.EnvironmentVersion) || !validToken(input.AdapterID) || !validToken(input.AdapterVersion) {
+		return coreapi.Session{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	actor := input.Actor
+	if actor == "" {
+		actor = "core-ui"
+	}
+	record, err := s.sessions.Start(ctx, session.StartInput{SessionID: input.SessionID, RequestID: input.RequestID, AccountID: input.AccountID, PoolID: input.PoolID, EnvironmentID: input.EnvironmentID, EnvironmentVersion: input.EnvironmentVersion, AdapterID: input.AdapterID, AdapterVersion: input.AdapterVersion, Actor: actor, Now: s.clock(), LeaseTTL: 10 * time.Minute, MaxConcurrency: s.maxConcurrencyOrOne()})
+	if err != nil {
+		if record.SessionID != "" {
+			return projectSession(record), coreapi.NewError(coreapi.CodeUnavailable, "session failed")
+		}
+		return coreapi.Session{}, classify(err)
+	}
+	return projectSession(record), nil
+}
+
+func (s *Service) GetSession(ctx context.Context, id string) (coreapi.Session, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.Session{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.Session{}, err
+	}
+	if s.sessions == nil || !validToken(id) {
+		return coreapi.Session{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	record, err := s.sessions.Get(id)
+	if err != nil {
+		return coreapi.Session{}, classify(err)
+	}
+	return projectSession(record), nil
+}
+
+func (s *Service) ListSessions(ctx context.Context) ([]coreapi.Session, error) {
+	if err := s.ready(); err != nil {
+		return nil, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return nil, err
+	}
+	if s.sessions == nil {
+		return nil, coreapi.NewError(coreapi.CodeUnavailable, "session service is unavailable")
+	}
+	records, err := s.sessions.List()
+	if err != nil {
+		return nil, classify(err)
+	}
+	result := make([]coreapi.Session, 0, len(records))
+	for _, record := range records {
+		result = append(result, projectSession(record))
+	}
+	return result, nil
+}
+
+func (s *Service) StopSession(ctx context.Context, input coreapi.SessionStopRequest) (coreapi.Session, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.Session{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.Session{}, err
+	}
+	if s.sessions == nil || !validToken(input.SessionID) {
+		return coreapi.Session{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	record, err := s.sessions.Stop(ctx, input.SessionID, input.Reason)
+	if err != nil {
+		return projectSession(record), coreapi.NewError(coreapi.CodeUnavailable, "session stop failed")
+	}
+	return projectSession(record), nil
+}
+
+func (s *Service) maxConcurrencyOrOne() int {
+	if s.maxConcurrency > 0 {
+		return s.maxConcurrency
+	}
+	return 1
+}
+
+func validateSessionStartInput(input coreapi.SessionStartRequest) error {
+	if !validSessionIdentifier(input.AccountID) || !validSessionIdentifier(input.PoolID) || !validSessionIdentifier(input.EnvironmentID) || !validSessionIdentifier(input.EnvironmentVersion) || !validSessionIdentifier(input.AdapterID) || !validSessionIdentifier(input.AdapterVersion) {
+		return requestservice.ErrInvalidInput
+	}
+	if input.SessionID != "" && !validSessionIdentifier(input.SessionID) || input.RequestID != "" && !validSessionIdentifier(input.RequestID) || input.IdempotencyKey != "" && !validSessionIdentifier(input.IdempotencyKey) || input.Actor != "" && !validToken(input.Actor) {
+		return requestservice.ErrInvalidInput
+	}
+	if input.RequestID == "" && !validToken(input.IdempotencyKey) {
+		return requestservice.ErrInvalidInput
+	}
+	return nil
+}
+
+func validSessionIdentifier(value string) bool {
+	return validToken(value) && !strings.ContainsAny(value, "/\\")
 }
 
 func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
@@ -894,6 +1034,26 @@ func projectRequest(request store.Request) coreapi.Request {
 	}
 }
 
+func projectSession(record store.SessionRecord) coreapi.Session {
+	phase := record.Phase
+	return coreapi.Session{
+		SessionID: record.SessionID, RequestID: record.RequestID, Account: observability.RedactIdentifier(record.AccountID),
+		PoolID: record.PoolID, EnvironmentID: record.EnvironmentID, EnvironmentVersion: record.EnvironmentVersion,
+		AdapterID: record.AdapterID, AdapterVersion: record.AdapterVersion, Phase: phase,
+		SlotState: func() string {
+			if record.SlotID == "" {
+				return ""
+			}
+			if phase == string(session.Stopped) || phase == string(session.Failed) {
+				return "released"
+			}
+			return "leased"
+		}(),
+		EnvironmentGeneration: record.EnvironmentGeneration, AgentReady: record.AgentReady, WorkerReady: record.WorkerReady, AdapterReady: record.AdapterReady,
+		RDPAvailable: phase == string(session.RDPAvailable), Failure: record.FailureCode, CreatedAt: record.CreatedAt, UpdatedAt: record.UpdatedAt,
+	}
+}
+
 func projectAccount(snapshot account.Snapshot) coreapi.Account {
 	return coreapi.Account{
 		Account: observability.RedactIdentifier(snapshot.AccountID), State: string(snapshot.Status),
@@ -1032,13 +1192,14 @@ func classify(err error) error {
 		errors.Is(err, store.ErrInvalidNotification), errors.Is(err, account.ErrInvalidEvent),
 		errors.Is(err, slot.ErrInvalidConfig), errors.Is(err, slot.ErrInvalidRequest),
 		errors.Is(err, environment.ErrInvalidManifest),
-		errors.Is(err, account.ErrInvalidSnapshot):
+		errors.Is(err, account.ErrInvalidSnapshot), errors.Is(err, session.ErrInvalidInput),
+		errors.Is(err, store.ErrInvalidSession):
 		code = coreapi.CodeInvalidArgument
 	case errors.Is(err, requestservice.ErrNotAllowed):
 		code = coreapi.CodeForbidden
 	case errors.Is(err, requestservice.ErrRateLimited):
 		code = coreapi.CodeRateLimited
-	case errors.Is(err, store.ErrAccountNotFound), errors.Is(err, store.ErrRequestNotFound),
+	case errors.Is(err, store.ErrAccountNotFound), errors.Is(err, store.ErrRequestNotFound), errors.Is(err, store.ErrSessionNotFound),
 		errors.Is(err, store.ErrLeaseNotFound), errors.Is(err, store.ErrJobPoolNotFound), errors.Is(err, store.ErrJobPoolOperationNotFound), errors.Is(err, store.ErrEnvironmentOperationNotFound), errors.Is(err, slot.ErrPoolNotFound):
 		code = coreapi.CodeNotFound
 	case errors.Is(err, store.ErrAccountExists), errors.Is(err, store.ErrRequestExists),
@@ -1047,11 +1208,11 @@ func classify(err error) error {
 		errors.Is(err, store.ErrEnvironmentIdempotencyConflict), errors.Is(err, store.ErrEnvironmentStaleRevision),
 		errors.Is(err, store.ErrRequestStateMismatch), errors.Is(err, store.ErrAccountBusy),
 		errors.Is(err, account.ErrEventConflict), errors.Is(err, account.ErrStaleEvent),
-		errors.Is(err, account.ErrInvalidTransition):
+		errors.Is(err, account.ErrInvalidTransition), errors.Is(err, session.ErrDuplicate), errors.Is(err, session.ErrGenerationFence):
 		code = coreapi.CodeConflict
 	case errors.Is(err, store.ErrQueueCapacity):
 		code = coreapi.CodeUnavailable
-	case errors.Is(err, slot.ErrSlotUnavailable), errors.Is(err, slot.ErrPoolNotFound):
+	case errors.Is(err, slot.ErrSlotUnavailable), errors.Is(err, slot.ErrPoolNotFound), errors.Is(err, store.ErrEnvironmentUnavailable), errors.Is(err, session.ErrNotStoppable):
 		code = coreapi.CodeUnavailable
 	case errors.Is(err, browser.ErrViewUnavailable):
 		code = coreapi.CodeUnavailable

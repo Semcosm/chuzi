@@ -48,6 +48,7 @@ func TestApplyIsRepeatableAndRecordsVersion(t *testing.T) {
 			ExecutionSlotsBucket,
 			SlotLeasesBucket,
 			EnvironmentSummariesBucket,
+			SessionsBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				t.Errorf("bucket %q is missing", name)

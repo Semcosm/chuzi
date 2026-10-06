@@ -211,6 +211,60 @@ type RDPCapabilityAPI interface {
 	IssueRDPCapability(context.Context, RDPCapabilityRequest) (RDPCapability, error)
 }
 
+// SessionStartRequest is the controlled product entrypoint. All values are
+// opaque identifiers or versions; paths, commands, users, endpoints and
+// credentials are deliberately not representable.
+type SessionStartRequest struct {
+	SessionID          string    `json:"session_id,omitempty"`
+	RequestID          string    `json:"request_id,omitempty"`
+	AccountID          string    `json:"account_id"`
+	IdempotencyKey     string    `json:"idempotency_key"`
+	Actor              string    `json:"actor,omitempty"`
+	Deadline           time.Time `json:"deadline,omitempty"`
+	PoolID             string    `json:"pool_id"`
+	EnvironmentID      string    `json:"environment_id"`
+	EnvironmentVersion string    `json:"environment_version"`
+	AdapterID          string    `json:"adapter_id"`
+	AdapterVersion     string    `json:"adapter_version"`
+}
+
+// Session is a redacted runtime projection. SlotID, leases and raw runtime
+// handles are intentionally omitted; SlotState and generation are enough for
+// UI status and fencing diagnostics.
+type Session struct {
+	SessionID             string    `json:"session_id"`
+	RequestID             string    `json:"request_id"`
+	Account               string    `json:"account"`
+	PoolID                string    `json:"pool_id"`
+	EnvironmentID         string    `json:"environment_id"`
+	EnvironmentVersion    string    `json:"environment_version"`
+	AdapterID             string    `json:"adapter_id"`
+	AdapterVersion        string    `json:"adapter_version"`
+	Phase                 string    `json:"phase"`
+	SlotState             string    `json:"slot_state,omitempty"`
+	EnvironmentGeneration uint64    `json:"environment_generation,omitempty"`
+	AgentReady            bool      `json:"agent_ready"`
+	WorkerReady           bool      `json:"worker_ready"`
+	AdapterReady          bool      `json:"adapter_ready"`
+	RDPAvailable          bool      `json:"rdp_available"`
+	Failure               string    `json:"failure,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             time.Time `json:"updated_at"`
+}
+
+type SessionStopRequest struct {
+	SessionID string `json:"session_id"`
+	Actor     string `json:"actor,omitempty"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type SessionAPI interface {
+	StartSession(context.Context, SessionStartRequest) (Session, error)
+	GetSession(context.Context, string) (Session, error)
+	ListSessions(context.Context) ([]Session, error)
+	StopSession(context.Context, SessionStopRequest) (Session, error)
+}
+
 // DiagnosticReport is a user-consented, redaction-safe support submission.
 // The Core implementation collects only allow-listed local diagnostics.
 type DiagnosticReport struct {

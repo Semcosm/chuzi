@@ -56,26 +56,37 @@ type HealthProbe struct {
 	TimeoutSeconds int    `json:"timeout_seconds,omitempty"`
 }
 
+// RuntimeContract describes the fixed service-owned pieces of a base slot
+// environment. It contains identifiers only; executable and filesystem paths
+// remain installation-owned and cannot be selected by a package or caller.
+type RuntimeContract struct {
+	Kind         string   `json:"kind"`
+	ServiceOwned []string `json:"service_owned"`
+	Entrypoints  []string `json:"entrypoints"`
+	Isolation    []string `json:"isolation"`
+}
+
 // Manifest is the only metadata accepted as an environment package contract.
 // ManifestDigest is the SHA-256 of CanonicalBytes with digest/signature fields
 // omitted; this prevents a self-referential digest.
 type Manifest struct {
-	API                string        `json:"api"`
-	EnvironmentID      string        `json:"environment_id"`
-	Version            string        `json:"version"`
-	Targets            []string      `json:"targets"`
-	Capabilities       []string      `json:"capabilities"`
-	Permissions        []string      `json:"permissions"`
-	Resources          []Resource    `json:"resources"`
-	Dependencies       []string      `json:"dependencies"`
-	InstallPolicy      InstallPolicy `json:"install_policy"`
-	CleanupPolicy      CleanupPolicy `json:"cleanup_policy"`
-	HealthProbes       []HealthProbe `json:"health_probes"`
-	Entrypoints        []Entrypoint  `json:"entrypoints"`
-	Signer             string        `json:"signer"`
-	Signature          string        `json:"signature,omitempty"`
-	SignatureAlgorithm string        `json:"signature_algorithm,omitempty"`
-	ManifestDigest     string        `json:"manifest_digest,omitempty"`
+	API                string           `json:"api"`
+	EnvironmentID      string           `json:"environment_id"`
+	Version            string           `json:"version"`
+	Targets            []string         `json:"targets"`
+	Capabilities       []string         `json:"capabilities"`
+	Permissions        []string         `json:"permissions"`
+	Resources          []Resource       `json:"resources"`
+	Dependencies       []string         `json:"dependencies"`
+	InstallPolicy      InstallPolicy    `json:"install_policy"`
+	CleanupPolicy      CleanupPolicy    `json:"cleanup_policy"`
+	HealthProbes       []HealthProbe    `json:"health_probes"`
+	Entrypoints        []Entrypoint     `json:"entrypoints"`
+	Signer             string           `json:"signer"`
+	Signature          string           `json:"signature,omitempty"`
+	SignatureAlgorithm string           `json:"signature_algorithm,omitempty"`
+	ManifestDigest     string           `json:"manifest_digest,omitempty"`
+	RuntimeContract    *RuntimeContract `json:"runtime_contract,omitempty"`
 }
 
 func validEnvironmentVersion(v string) bool {
@@ -88,6 +99,11 @@ func (m Manifest) Validate() error {
 	}
 	if len(m.Targets) == 0 || len(m.Capabilities) == 0 {
 		return fmt.Errorf("%w: targets and capabilities are required", ErrInvalidManifest)
+	}
+	if m.RuntimeContract != nil {
+		if err := m.RuntimeContract.Validate(); err != nil {
+			return fmt.Errorf("%w: runtime contract: %v", ErrInvalidManifest, err)
+		}
 	}
 	if err := uniqueTokens(m.Targets, 128); err != nil {
 		return fmt.Errorf("%w: targets: %v", ErrInvalidManifest, err)
@@ -137,6 +153,29 @@ func (m Manifest) Validate() error {
 	}
 	if m.ManifestDigest != "" && !validSHA256(m.ManifestDigest) {
 		return fmt.Errorf("%w: invalid manifest digest", ErrInvalidManifest)
+	}
+	return nil
+}
+
+func (c RuntimeContract) Validate() error {
+	if c.Kind != "base-slot" {
+		return errors.New("kind must be base-slot")
+	}
+	if err := uniqueTokens(c.ServiceOwned, 128); err != nil {
+		return fmt.Errorf("service_owned: %w", err)
+	}
+	if err := uniqueTokens(c.Entrypoints, 128); err != nil {
+		return fmt.Errorf("entrypoints: %w", err)
+	}
+	if err := uniqueTokens(c.Isolation, 128); err != nil {
+		return fmt.Errorf("isolation: %w", err)
+	}
+	for _, value := range c.Entrypoints {
+		switch value {
+		case "worker", "headless":
+		default:
+			return fmt.Errorf("entrypoint %q is not base-owned", value)
+		}
 	}
 	return nil
 }

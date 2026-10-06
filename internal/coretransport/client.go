@@ -340,6 +340,32 @@ func (c *Client) GetEnvironmentOperation(ctx context.Context, operationID string
 	return result.Operation, err
 }
 
+func (c *Client) StartSession(ctx context.Context, input coreapi.SessionStartRequest) (coreapi.Session, error) {
+	var result SessionResult
+	err := c.Call(ctx, methodStartSession, input, &result)
+	return result.Session, err
+}
+
+func (c *Client) GetSession(ctx context.Context, id string) (coreapi.Session, error) {
+	var result coreapi.Session
+	err := c.Call(ctx, methodGetSession, struct {
+		SessionID string `json:"session_id"`
+	}{id}, &result)
+	return result, err
+}
+
+func (c *Client) ListSessions(ctx context.Context) ([]coreapi.Session, error) {
+	var result SessionsResult
+	err := c.Call(ctx, methodListSessions, struct{}{}, &result)
+	return result.Sessions, err
+}
+
+func (c *Client) StopSession(ctx context.Context, input coreapi.SessionStopRequest) (coreapi.Session, error) {
+	var result SessionResult
+	err := c.Call(ctx, methodStopSession, input, &result)
+	return result.Session, err
+}
+
 func formatUint(value uint64) string {
 	const digits = "0123456789"
 	if value == 0 {

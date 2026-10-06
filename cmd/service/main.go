@@ -649,13 +649,24 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if err != nil {
 		return closeOnError(err)
 	}
+	var agentResolver slotAgentResolver
+	if candidate, ok := slotProfileAccess.(slotAgentResolver); ok {
+		agentResolver = candidate
+	}
+	sessionManager, sessionErr := newSessionManager(database, agentResolver, options.owner, newID, now, rdpBridge)
+	if sessionErr != nil {
+		return closeOnError(sessionErr)
+	}
+	if recoveryErr := sessionManager.Recover(context.Background()); recoveryErr != nil {
+		return closeOnError(recoveryErr)
+	}
 	var environmentExecutor core.EnvironmentExecutor
 	var environmentControl core.EnvironmentControlPort = database
 	if environmentManager != nil {
 		environmentExecutor = serviceEnvironmentExecutor{manager: environmentManager, store: database}
 		environmentControl = serviceEnvironmentControl{manager: environmentManager, store: database}
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, Sessions: sessionManager, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}

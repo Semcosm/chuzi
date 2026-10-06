@@ -79,7 +79,7 @@ func validateDB(database *bbolt.DB) error {
 			migrations.EnvironmentPackagesBucket,
 			migrations.JobPoolOperationsBucket, migrations.JobPoolIdempotencyBucket, migrations.JobPoolAuditBucket,
 			migrations.EnvironmentOperationsBucket, migrations.EnvironmentIdempotencyBucket,
-			migrations.EnvironmentAuditBucket,
+			migrations.EnvironmentAuditBucket, migrations.SessionsBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				return fmt.Errorf("%w: required bucket %q is missing", ErrCorruptData, name)
@@ -130,7 +130,57 @@ func validateDB(database *bbolt.DB) error {
 		if err := validateEnvironmentOperationsTx(tx); err != nil {
 			return err
 		}
+		if err := validateSessionsTx(tx); err != nil {
+			return err
+		}
 		return validateEventsTx(tx)
+	})
+}
+
+func validateSessionsTx(tx *bbolt.Tx) error {
+	sessions := tx.Bucket([]byte(migrations.SessionsBucket))
+	slotLeases := tx.Bucket([]byte(migrations.SlotLeasesBucket))
+	accountLeases := tx.Bucket([]byte(migrations.LeasesBucket))
+	return sessions.ForEach(func(key, value []byte) error {
+		if value == nil {
+			return fmt.Errorf("%w: session bucket contains nested bucket", ErrCorruptData)
+		}
+		var session SessionRecord
+		if err := decode(value, &session); err != nil {
+			return err
+		}
+		if string(key) != session.SessionID {
+			return fmt.Errorf("%w: session key mismatch", ErrCorruptData)
+		}
+		if err := session.Validate(); err != nil {
+			return fmt.Errorf("%w: invalid session", ErrCorruptData)
+		}
+		if session.Phase == "stopped" || session.Phase == "failed" || session.SlotID == "" {
+			return nil
+		}
+		rawSlot := slotLeases.Get([]byte(session.SlotID))
+		if rawSlot == nil {
+			return fmt.Errorf("%w: active session has no slot lease", ErrCorruptData)
+		}
+		var slotLease slot.Lease
+		if err := decode(rawSlot, &slotLease); err != nil {
+			return err
+		}
+		if err := slotLease.Validate(); err != nil || slotLease.LeaseID != session.SlotLeaseID || slotLease.AccountID != session.AccountID || slotLease.RequestID != session.RequestID {
+			return fmt.Errorf("%w: session slot lease mismatch", ErrCorruptData)
+		}
+		rawAccount := accountLeases.Get([]byte(session.AccountID))
+		if rawAccount == nil {
+			return fmt.Errorf("%w: active session has no account lease", ErrCorruptData)
+		}
+		var accountLease account.Lease
+		if err := decode(rawAccount, &accountLease); err != nil {
+			return err
+		}
+		if err := accountLease.Validate(); err != nil || accountLease.LeaseID != session.AccountLeaseID {
+			return fmt.Errorf("%w: session account lease mismatch", ErrCorruptData)
+		}
+		return nil
 	})
 }
 

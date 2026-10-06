@@ -43,6 +43,10 @@ const (
 	methodListEnvironments        = "list_environments"
 	methodEnvironmentOperation    = "environment_operation"
 	methodGetEnvironmentOperation = "get_environment_operation"
+	methodStartSession            = "start_session"
+	methodGetSession              = "get_session"
+	methodListSessions            = "list_sessions"
+	methodStopSession             = "stop_session"
 )
 
 const (
@@ -70,6 +74,10 @@ const (
 	MethodListEnvironments        = methodListEnvironments
 	MethodEnvironmentOperation    = methodEnvironmentOperation
 	MethodGetEnvironmentOperation = methodGetEnvironmentOperation
+	MethodStartSession            = methodStartSession
+	MethodGetSession              = methodGetSession
+	MethodListSessions            = methodListSessions
+	MethodStopSession             = methodStopSession
 )
 
 var (
@@ -151,10 +159,16 @@ type EnvironmentsResult struct {
 type EnvironmentOperationResult struct {
 	Operation coreapi.EnvironmentOperation `json:"operation"`
 }
+type SessionResult struct {
+	Session coreapi.Session `json:"session"`
+}
+type SessionsResult struct {
+	Sessions []coreapi.Session `json:"sessions"`
+}
 
 func methodList() []string {
 	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodListRequests, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation, methodStartSession, methodGetSession, methodListSessions, methodStopSession}
 }
 
 func marshalRequest(id, method string, params any) ([]byte, error) {
