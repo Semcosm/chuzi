@@ -6,17 +6,20 @@ mod view_model;
 use base64::Engine;
 use desktop_rdp::RdpHost;
 use models::{
-    default_theme, BehaviorSettings, BrowserView, CoreJobPoolList, CoreRequest, CoreRequestList,
-    CoreStatus, DiagnosticStatus, UiPreferences,
+    default_theme, BehaviorSettings, BrowserView, CoreEnvironment, CoreEnvironmentList,
+    CoreEnvironmentOperation, CoreJobPool, CoreJobPoolList, CoreJobPoolOperation, CoreRequest,
+    CoreRequestList, CoreStatus, DiagnosticStatus, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
-use slint::{ComponentHandle, Image, SharedString};
+use slint::{ComponentHandle, Image, ModelRc, SharedString};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 use view_model::{
     sessions_from_requests, ProjectionError, SelectionMove, SessionFilter, SessionViewModel,
 };
@@ -136,7 +139,7 @@ impl AppState {
                 self.launcher_path().display()
             ));
         }
-        if !self.manifest_path().is_file() {
+        if launcher_command_needs_manifest(command) && !self.manifest_path().is_file() {
             return Err(format!(
                 "Core release manifest is missing: {}",
                 self.manifest_path().display()
@@ -148,9 +151,10 @@ impl AppState {
             .arg("-root")
             .arg(&self.data_root)
             .arg("-source-root")
-            .arg(&self.payload_root)
-            .arg("-manifest")
-            .arg(self.manifest_path());
+            .arg(&self.payload_root);
+        if self.manifest_path().is_file() {
+            launcher.arg("-manifest").arg(self.manifest_path());
+        }
         if command.starts_with("component-") && self.release_index_url.is_some() {
             launcher.args(
                 self.release_index_url
@@ -172,13 +176,79 @@ impl AppState {
     }
 }
 
-fn core_call(state: &AppState, method: &str, params: Value) -> Result<Value, String> {
+fn launcher_command_needs_manifest(command: &str) -> bool {
+    !matches!(
+        command,
+        "core-status"
+            | "core-start"
+            | "core-stop"
+            | "core-call"
+            | "job-pool-list"
+            | "job-pool-get"
+            | "job-pool-apply"
+            | "job-pool-scale"
+            | "job-pool-drain"
+            | "job-pool-resume"
+            | "job-pool-operation"
+            | "environment-list"
+            | "environment-install"
+            | "environment-upgrade"
+            | "environment-verify"
+            | "environment-trust"
+            | "environment-enable"
+            | "environment-disable"
+            | "environment-health"
+            | "environment-rollback"
+            | "environment-operation"
+    )
+}
+
+#[derive(Clone, Copy)]
+enum CoreMethod {
+    SubmitDiagnosticReport,
+    ListJobPools,
+    ApplyJobPool,
+    ScaleJobPool,
+    DrainJobPool,
+    ResumeJobPool,
+    GetJobPoolOperation,
+    ListEnvironments,
+    EnvironmentOperation,
+    GetEnvironmentOperation,
+    CancelRequest,
+    GetRequest,
+    GetBrowserView,
+    ListRequests,
+}
+
+impl CoreMethod {
+    fn wire_name(self) -> &'static str {
+        match self {
+            Self::SubmitDiagnosticReport => "submit_diagnostic_report",
+            Self::ListJobPools => "list_job_pools",
+            Self::ApplyJobPool => "apply_job_pool",
+            Self::ScaleJobPool => "scale_job_pool",
+            Self::DrainJobPool => "drain_job_pool",
+            Self::ResumeJobPool => "resume_job_pool",
+            Self::GetJobPoolOperation => "get_job_pool_operation",
+            Self::ListEnvironments => "list_environments",
+            Self::EnvironmentOperation => "environment_operation",
+            Self::GetEnvironmentOperation => "get_environment_operation",
+            Self::CancelRequest => "cancel_request",
+            Self::GetRequest => "get_request",
+            Self::GetBrowserView => "get_browser_view",
+            Self::ListRequests => "list_requests",
+        }
+    }
+}
+
+fn core_call(state: &AppState, method: CoreMethod, params: Value) -> Result<Value, String> {
     let params_json = serde_json::to_string(&params).map_err(|error| error.to_string())?;
     let output = state.run_launcher(
         "core-call",
         &[
             "-core-method",
-            method,
+            method.wire_name(),
             "-core-params-json",
             params_json.as_str(),
         ],
@@ -257,6 +327,116 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let weak = ui.as_weak();
     let pool_state = Arc::clone(&state);
     ui.on_refresh_job_pools(move || refresh_job_pools(&weak, Arc::clone(&pool_state)));
+
+    let weak = ui.as_weak();
+    let operation_state = Arc::clone(&state);
+    ui.on_job_pool_apply(
+        move |pool_id, environment_id, environment_version, desired, max| {
+            submit_job_pool_apply(
+                &weak,
+                Arc::clone(&operation_state),
+                pool_id.to_string(),
+                environment_id.to_string(),
+                environment_version.to_string(),
+                desired,
+                max,
+            );
+        },
+    );
+    let weak = ui.as_weak();
+    let operation_state = Arc::clone(&state);
+    ui.on_job_pool_action(move |pool_id, action| {
+        submit_job_pool_action(
+            &weak,
+            Arc::clone(&operation_state),
+            pool_id.to_string(),
+            action.to_string(),
+        );
+    });
+    let weak = ui.as_weak();
+    let operation_state = Arc::clone(&state);
+    ui.on_job_pool_operation(move |operation_id| {
+        poll_job_pool_operation(
+            &weak,
+            Arc::clone(&operation_state),
+            operation_id.to_string(),
+        );
+    });
+    let weak = ui.as_weak();
+    let operation_state = Arc::clone(&state);
+    ui.on_environment_operation(move |environment_id, version, operation, package_ref| {
+        submit_environment_operation(
+            &weak,
+            Arc::clone(&operation_state),
+            environment_id.to_string(),
+            version.to_string(),
+            operation.to_string(),
+            package_ref.to_string(),
+            0,
+        );
+    });
+    let weak = ui.as_weak();
+    let operation_state = Arc::clone(&state);
+    ui.on_environment_operation_poll(move |operation_id| {
+        poll_environment_operation(
+            &weak,
+            Arc::clone(&operation_state),
+            operation_id.to_string(),
+        );
+    });
+    let weak = ui.as_weak();
+    let operation_state = Arc::clone(&state);
+    ui.on_operation_confirmed(move || {
+        let Some(window) = weak.upgrade() else {
+            return;
+        };
+        let pending = window.get_pending_operation().to_string();
+        let pool_id = window.get_pending_pool_id().to_string();
+        let environment_id = window.get_pending_environment_id().to_string();
+        let environment_version = window.get_pending_environment_version().to_string();
+        let environment_generation = window
+            .get_pending_environment_generation()
+            .parse::<u64>()
+            .unwrap_or(0);
+        window.set_operation_confirmation_visible(false);
+        match pending.as_str() {
+            "apply" => submit_job_pool_apply(
+                &weak,
+                Arc::clone(&operation_state),
+                window.get_job_pool_edit_id().to_string(),
+                window.get_job_pool_edit_environment_id().to_string(),
+                window.get_job_pool_edit_environment_version().to_string(),
+                window.get_job_pool_edit_desired(),
+                window.get_job_pool_edit_max(),
+            ),
+            "scale" => submit_job_pool_scale(
+                &weak,
+                Arc::clone(&operation_state),
+                pool_id,
+                window.get_job_pool_edit_desired(),
+            ),
+            "drain" | "resume" => {
+                submit_job_pool_action(&weak, Arc::clone(&operation_state), pool_id, pending)
+            }
+            value if value.starts_with("environment:") => submit_environment_operation(
+                &weak,
+                Arc::clone(&operation_state),
+                environment_id,
+                environment_version,
+                value.trim_start_matches("environment:").to_owned(),
+                window.get_package_reference().to_string(),
+                environment_generation,
+            ),
+            _ => {}
+        }
+    });
+    let weak = ui.as_weak();
+    ui.on_operation_cancelled(move || {
+        if let Some(window) = weak.upgrade() {
+            window.set_operation_confirmation_visible(false);
+            window.set_pending_operation(SharedString::default());
+        }
+    });
 
     let weak = ui.as_weak();
     let settings_state = Arc::clone(&state);
@@ -462,7 +642,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                 ensure_core_ready(state)?;
                 let result = core_call(
                     state,
-                    "submit_diagnostic_report",
+                    CoreMethod::SubmitDiagnosticReport,
                     json!({"severity": severity, "category": category, "summary": summary}),
                 )?;
                 let status: DiagnosticStatus =
@@ -589,24 +769,633 @@ fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) 
         state,
         |state| {
             ensure_core_ready(state)?;
-            let value = core_call(state, "list_job_pools", json!({}))?;
+            let value = core_call(state, CoreMethod::ListJobPools, json!({}))?;
             let list: CoreJobPoolList = serde_json::from_value(value)
                 .map_err(|error| format!("invalid_job_pool_projection: {error}"))?;
+            let environments =
+                core_call(state, CoreMethod::ListEnvironments, json!({})).and_then(|value| {
+                    serde_json::from_value::<CoreEnvironmentList>(value)
+                        .map_err(|error| format!("invalid_environment_projection: {error}"))
+                })?;
             let summary = if list.job_pools.is_empty() {
                 "No job pools are configured.".to_owned()
             } else {
                 format_job_pool_summary(&list)
             };
-            Ok(("Job pool status refreshed.".to_owned(), summary))
+            Ok((
+                "Job pool and environment status refreshed.".to_owned(),
+                (list, environments, summary),
+            ))
         },
-        |window, summary| {
+        |window, (list, environments, summary): (CoreJobPoolList, CoreEnvironmentList, String)| {
             window.set_job_pool_phase("ready".into());
             window.set_job_pool_summary(summary.into());
+            let pools = list.job_pools.iter().map(job_pool_row).collect::<Vec<_>>();
+            let environment_rows = environments
+                .environments
+                .iter()
+                .map(environment_row)
+                .collect::<Vec<_>>();
+            window.set_job_pool_rows(ModelRc::from(pools.as_slice()));
+            window.set_environment_rows(ModelRc::from(environment_rows.as_slice()));
+            window.set_environment_operation_phase("ready".into());
         },
         |window, _| {
             window.set_job_pool_phase("error".into());
+            window.set_environment_operation_phase("unavailable".into());
         },
     );
+}
+
+fn job_pool_row(pool: &CoreJobPool) -> JobPoolRowData {
+    JobPoolRowData {
+        pool_id: pool.config.pool_id.clone().into(),
+        environment_id: pool.config.environment_id.clone().into(),
+        environment_version: pool.config.environment_version.clone().into(),
+        desired_slots: pool.config.desired_slots,
+        max_concurrency: pool.config.max_concurrency,
+        desired_state: if pool.config.desired_state.is_empty() {
+            "enabled"
+        } else {
+            pool.config.desired_state.as_str()
+        }
+        .into(),
+        ready: pool.status.ready,
+        leased: pool.status.leased,
+        quarantined: pool.status.quarantined,
+        draining: pool.status.draining,
+        provisioning: pool.status.provisioning,
+        retiring: pool.status.retiring,
+        effective_capacity: pool.status.effective_capacity,
+        environment_readiness: if pool.status.environment_readiness.is_empty() {
+            "unknown"
+        } else {
+            pool.status.environment_readiness.as_str()
+        }
+        .into(),
+        reconcile_state: if pool.status.reconcile_state.is_empty() {
+            "unknown"
+        } else {
+            pool.status.reconcile_state.as_str()
+        }
+        .into(),
+        last_failure_code: pool.status.last_failure_code.clone().into(),
+        config_revision: pool.status.config_revision.to_string().into(),
+        operation_id: pool.status.operation_id.clone().into(),
+        selected: false,
+    }
+}
+
+fn environment_row(environment: &CoreEnvironment) -> EnvironmentRowData {
+    let lifecycle = if !environment.trusted {
+        "untrusted"
+    } else if !environment.healthy {
+        "unhealthy"
+    } else if environment.ready {
+        "ready"
+    } else if !environment.enabled {
+        "disabled"
+    } else if !environment.verified {
+        "unverified"
+    } else if !environment.installed {
+        "not installed"
+    } else {
+        "provisioning"
+    };
+    EnvironmentRowData {
+        environment_id: environment.environment_id.clone().into(),
+        version: environment.version.clone().into(),
+        lifecycle: lifecycle.into(),
+        generation: environment.generation.to_string().into(),
+        selected: false,
+    }
+}
+
+static NEXT_IDEMPOTENCY_KEY: AtomicU64 = AtomicU64::new(1);
+
+fn idempotency_key(operation: &str, subject: &str, revision: u64) -> String {
+    let sequence = NEXT_IDEMPOTENCY_KEY.fetch_add(1, Ordering::Relaxed);
+    let subject = subject
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+                character
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    format!("windows-ui-{operation}-{subject}-{revision}-{sequence}")
+}
+
+fn pool_revision(state: &AppState, pool_id: &str) -> Result<u64, String> {
+    let value = core_call(state, CoreMethod::ListJobPools, json!({}))?;
+    let list: CoreJobPoolList =
+        serde_json::from_value(value).map_err(|_| "invalid_job_pool_projection".to_owned())?;
+    Ok(list
+        .job_pools
+        .iter()
+        .find(|pool| pool.config.pool_id == pool_id)
+        .map(|pool| pool.status.config_revision.max(pool.config.config_revision))
+        .unwrap_or(0))
+}
+
+fn submit_job_pool_apply(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    pool_id: String,
+    environment_id: String,
+    environment_version: String,
+    desired: i32,
+    max_concurrency: i32,
+) {
+    let pool_id_for_key = pool_id.clone();
+    start_job_pool_operation(ui, state, pool_id.clone(), move |state| {
+        validate_text(&pool_id, "pool ID")?;
+        validate_text(&environment_id, "environment ID")?;
+        validate_text(&environment_version, "environment version")?;
+        if desired < 0 || max_concurrency < 0 {
+            return Err("invalid_argument".to_owned());
+        }
+        let revision = pool_revision(state, &pool_id)?;
+        let key = idempotency_key("apply", &pool_id_for_key, revision);
+        core_call(
+            state,
+            CoreMethod::ApplyJobPool,
+            json!({
+                "config": {
+                    "pool_id": pool_id,
+                    "desired_slots": desired,
+                    "max_concurrency": max_concurrency,
+                    "environment_id": environment_id,
+                    "environment_version": environment_version,
+                    "desired_state": "enabled",
+                    "enabled": true,
+                    "require_trusted": true
+                },
+                "expected_revision": revision,
+                "idempotency_key": key,
+                "actor": "windows-ui"
+            }),
+        )
+    });
+}
+
+fn submit_job_pool_scale(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    pool_id: String,
+    desired: i32,
+) {
+    let pool_id_for_key = pool_id.clone();
+    start_job_pool_operation(ui, state, pool_id.clone(), move |state| {
+        validate_text(&pool_id, "pool ID")?;
+        if desired < 0 {
+            return Err("invalid_argument".to_owned());
+        }
+        let revision = pool_revision(state, &pool_id)?;
+        let key = idempotency_key("scale", &pool_id_for_key, revision);
+        core_call(
+            state,
+            CoreMethod::ScaleJobPool,
+            json!({
+                "pool_id": pool_id,
+                "desired_slots": desired,
+                "expected_revision": revision,
+                "idempotency_key": key,
+                "actor": "windows-ui"
+            }),
+        )
+    });
+}
+
+fn submit_job_pool_action(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    pool_id: String,
+    action: String,
+) {
+    let method = match action.as_str() {
+        "drain" => CoreMethod::DrainJobPool,
+        "resume" => CoreMethod::ResumeJobPool,
+        _ => return,
+    };
+    let pool_id_for_key = pool_id.clone();
+    start_job_pool_operation(ui, state, pool_id.clone(), move |state| {
+        validate_text(&pool_id, "pool ID")?;
+        let revision = pool_revision(state, &pool_id)?;
+        let key = idempotency_key(&action, &pool_id_for_key, revision);
+        core_call(
+            state,
+            method,
+            json!({
+                "pool_id": pool_id,
+                "expected_revision": revision,
+                "idempotency_key": key,
+                "actor": "windows-ui"
+            }),
+        )
+    });
+}
+
+fn start_job_pool_operation<F>(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    pool_id: String,
+    request: F,
+) where
+    F: FnOnce(&AppState) -> Result<Value, String> + Send + 'static,
+{
+    start_operation(ui, state, pool_id, request, |state, operation_id| {
+        let value = core_call(
+            state,
+            CoreMethod::GetJobPoolOperation,
+            json!({"operation_id": operation_id}),
+        )?;
+        decode_job_pool_operation(value)
+            .map_err(|_| "invalid_operation_projection".to_owned())
+            .map(|operation| {
+                (
+                    operation.state,
+                    operation.operation_id,
+                    operation.failure_code,
+                    operation.result,
+                )
+            })
+    });
+}
+
+fn poll_job_pool_operation(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    operation_id: String,
+) {
+    start_operation_with_id(ui, state, operation_id, |state, operation_id| {
+        let value = core_call(
+            state,
+            CoreMethod::GetJobPoolOperation,
+            json!({"operation_id": operation_id}),
+        )?;
+        decode_job_pool_operation(value)
+            .map_err(|_| "invalid_operation_projection".to_owned())
+            .map(|operation| {
+                (
+                    operation.state,
+                    operation.operation_id,
+                    operation.failure_code,
+                    operation.result,
+                )
+            })
+    });
+}
+
+fn submit_environment_operation(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    environment_id: String,
+    version: String,
+    operation: String,
+    package_ref: String,
+    expected_revision: u64,
+) {
+    if !matches!(
+        operation.as_str(),
+        "install" | "upgrade" | "verify" | "trust" | "enable" | "disable" | "health" | "rollback"
+    ) {
+        return;
+    }
+    start_environment_operation(ui, state, environment_id.clone(), move |state| {
+        validate_text(&environment_id, "environment ID")?;
+        validate_text(&version, "environment version")?;
+        if !package_ref.is_empty() && !valid_package_reference(&package_ref) {
+            return Err("package_unavailable".to_owned());
+        }
+        if matches!(operation.as_str(), "install" | "upgrade") && package_ref.trim().is_empty() {
+            return Err("package_unavailable".to_owned());
+        }
+        let revision = if expected_revision > 0 {
+            expected_revision
+        } else {
+            environment_revision(state, &environment_id, &version)?
+        };
+        let key = idempotency_key(&operation, &environment_id, revision);
+        core_call(
+            state,
+            CoreMethod::EnvironmentOperation,
+            json!({
+                "environment_id": environment_id,
+                "version": version,
+                "operation": operation,
+                "package_ref": package_ref,
+                "expected_revision": revision,
+                "idempotency_key": key,
+                "actor": "windows-ui"
+            }),
+        )
+    });
+}
+
+fn environment_revision(
+    state: &AppState,
+    environment_id: &str,
+    version: &str,
+) -> Result<u64, String> {
+    let value = core_call(state, CoreMethod::ListEnvironments, json!({}))?;
+    let list: CoreEnvironmentList =
+        serde_json::from_value(value).map_err(|_| "invalid_environment_projection".to_owned())?;
+    Ok(list
+        .environments
+        .iter()
+        .find(|environment| {
+            environment.environment_id == environment_id && environment.version == version
+        })
+        .map(|environment| environment.generation)
+        .unwrap_or(0))
+}
+
+fn valid_package_reference(value: &str) -> bool {
+    let trimmed = value.trim();
+    !trimmed.is_empty()
+        && trimmed == value
+        && value.len() <= 256
+        && value != "."
+        && value != ".."
+        && !value.chars().any(|character| {
+            character.is_control() || matches!(character, '/' | '\\' | ' ' | ':' | '@')
+        })
+}
+
+fn start_environment_operation<F>(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    subject: String,
+    request: F,
+) where
+    F: FnOnce(&AppState) -> Result<Value, String> + Send + 'static,
+{
+    start_operation(ui, state, subject, request, |state, operation_id| {
+        let value = core_call(
+            state,
+            CoreMethod::GetEnvironmentOperation,
+            json!({"operation_id": operation_id}),
+        )?;
+        decode_environment_operation(value)
+            .map_err(|_| "invalid_operation_projection".to_owned())
+            .map(|operation| {
+                (
+                    operation.state,
+                    operation.operation_id,
+                    operation.failure_code,
+                    String::new(),
+                )
+            })
+    });
+}
+
+fn poll_environment_operation(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    operation_id: String,
+) {
+    start_operation_with_id(ui, state, operation_id, |state, operation_id| {
+        let value = core_call(
+            state,
+            CoreMethod::GetEnvironmentOperation,
+            json!({"operation_id": operation_id}),
+        )?;
+        decode_environment_operation(value)
+            .map_err(|_| "invalid_operation_projection".to_owned())
+            .map(|operation| {
+                (
+                    operation.state,
+                    operation.operation_id,
+                    operation.failure_code,
+                    String::new(),
+                )
+            })
+    });
+}
+
+fn decode_job_pool_operation(value: Value) -> Result<CoreJobPoolOperation, serde_json::Error> {
+    serde_json::from_value(value.get("operation").cloned().unwrap_or(Value::Null))
+}
+
+fn decode_environment_operation(
+    value: Value,
+) -> Result<CoreEnvironmentOperation, serde_json::Error> {
+    serde_json::from_value(value.get("operation").cloned().unwrap_or(Value::Null))
+}
+
+fn start_operation<F, P>(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    subject: String,
+    request: F,
+    poll: P,
+) where
+    F: FnOnce(&AppState) -> Result<Value, String> + Send + 'static,
+    P: Fn(&AppState, &str) -> Result<(String, String, String, String), String>
+        + Send
+        + Sync
+        + 'static,
+{
+    let weak = ui.clone();
+    let poll = Arc::new(poll);
+    {
+        let mut guard = state.lock().unwrap();
+        if guard.busy {
+            return;
+        }
+        guard.busy = true;
+    }
+    set_operation_progress(
+        &weak,
+        "submitting",
+        "",
+        "requested",
+        "Submitting operation…",
+    );
+    thread::spawn(move || {
+        let result: Result<(String, String, String, String), String> =
+            (|| -> Result<(String, String, String, String), String> {
+                ensure_core_ready(&state.lock().unwrap())?;
+                let value = request(&state.lock().unwrap())?;
+                let operation_id = value
+                    .get("operation")
+                    .and_then(|operation| operation.get("operation_id"))
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| "invalid_operation_projection".to_owned())?
+                    .to_owned();
+                Ok(poll_operation(&weak, &state, &operation_id, &poll)?)
+            })();
+        state.lock().unwrap().busy = false;
+        finish_operation(&weak, result, subject, state);
+    });
+}
+
+fn start_operation_with_id<P>(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    operation_id: String,
+    poll: P,
+) where
+    P: Fn(&AppState, &str) -> Result<(String, String, String, String), String>
+        + Send
+        + Sync
+        + 'static,
+{
+    let weak = ui.clone();
+    let poll = Arc::new(poll);
+    {
+        let mut guard = state.lock().unwrap();
+        if guard.busy {
+            return;
+        }
+        guard.busy = true;
+    }
+    set_operation_progress(
+        &weak,
+        "polling",
+        &operation_id,
+        "requested",
+        "Polling operation…",
+    );
+    thread::spawn(move || {
+        let result = poll_operation(&weak, &state, &operation_id, &poll);
+        state.lock().unwrap().busy = false;
+        finish_operation(&weak, result, operation_id, state);
+    });
+}
+
+fn poll_operation<P>(
+    ui: &slint::Weak<MainWindow>,
+    state: &Arc<Mutex<AppState>>,
+    operation_id: &str,
+    poll: &Arc<P>,
+) -> Result<(String, String, String, String), String>
+where
+    P: Fn(&AppState, &str) -> Result<(String, String, String, String), String>
+        + Send
+        + Sync
+        + 'static,
+{
+    for attempt in 0..40 {
+        let value = poll(&state.lock().unwrap(), operation_id)?;
+        let (state_name, id, failure, result) = value;
+        set_operation_progress(
+            ui,
+            "polling",
+            &id,
+            &state_name,
+            &format_operation_detail(&state_name, &failure, &result),
+        );
+        if is_terminal_operation(&state_name) {
+            return Ok((state_name, id, failure, result));
+        }
+        if attempt == 39 {
+            return Err("operation_timeout".to_owned());
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    Err("operation_timeout".to_owned())
+}
+
+fn is_terminal_operation(state: &str) -> bool {
+    matches!(state, "applied" | "failed" | "rolled_back" | "cancelled")
+}
+
+fn format_operation_detail(state: &str, failure: &str, result: &str) -> String {
+    if !failure.is_empty() {
+        return format!("{state} · {failure}");
+    }
+    if !result.is_empty() {
+        return format!("{state} · {result}");
+    }
+    state.to_owned()
+}
+
+fn set_operation_progress(
+    ui: &slint::Weak<MainWindow>,
+    phase: &str,
+    operation_id: &str,
+    state: &str,
+    detail: &str,
+) {
+    let weak = ui.clone();
+    let phase = phase.to_owned();
+    let operation_id = operation_id.to_owned();
+    let state = state.to_owned();
+    let detail = detail.to_owned();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = weak.upgrade() {
+            window.set_operation_phase(phase.into());
+            window.set_operation_id(operation_id.into());
+            window.set_operation_state(state.into());
+            window.set_operation_detail(detail.into());
+        }
+    });
+}
+
+fn finish_operation(
+    ui: &slint::Weak<MainWindow>,
+    result: Result<(String, String, String, String), String>,
+    subject: String,
+    state: Arc<Mutex<AppState>>,
+) {
+    let weak = ui.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = weak.upgrade() {
+            match result {
+                Ok((operation_state, operation_id, failure, outcome)) => {
+                    let failed = operation_state == "failed" || !failure.is_empty();
+                    window.set_operation_phase(if failed { "failed" } else { "applied" }.into());
+                    window.set_operation_id(operation_id.into());
+                    window.set_operation_state(operation_state.clone().into());
+                    window.set_operation_detail(
+                        format_operation_detail(&operation_state, &failure, &outcome).into(),
+                    );
+                    window.set_message(
+                        if failed {
+                            friendly_error(&failure)
+                        } else {
+                            format!("Operation {operation_state} for {subject}.")
+                        }
+                        .into(),
+                    );
+                    window.set_message_kind(if failed { "error" } else { "success" }.into());
+                    refresh_job_pools(&window.as_weak(), Arc::clone(&state));
+                }
+                Err(error) => {
+                    let phase = operation_error_phase(&error);
+                    window.set_operation_phase(phase.into());
+                    window.set_operation_state("failed".into());
+                    window.set_operation_detail(friendly_error(&error).into());
+                    window.set_message(friendly_error(&error).into());
+                    window.set_message_kind("error".into());
+                    refresh_job_pools(&window.as_weak(), Arc::clone(&state));
+                }
+            }
+        }
+    });
+}
+
+fn operation_error_phase(error: &str) -> &'static str {
+    let value = error.to_ascii_lowercase();
+    if value.contains("conflict") || value.contains("stale") {
+        "stale revision"
+    } else if value.contains("package_unavailable") {
+        "package unavailable"
+    } else if value.contains("environment_untrusted") {
+        "environment untrusted"
+    } else if value.contains("environment_unhealthy") {
+        "environment unhealthy"
+    } else if is_core_unavailable(error) {
+        "unavailable"
+    } else if value.contains("service_restarted") {
+        "service restarted"
+    } else {
+        "failed"
+    }
 }
 
 fn format_job_pool_summary(list: &CoreJobPoolList) -> String {
@@ -659,7 +1448,16 @@ mod job_pool_tests {
             job_pools: vec![CoreJobPool {
                 config: CoreJobPoolConfig {
                     pool_id: "pool-a".to_owned(),
+                    desired_slots: 3,
+                    max_concurrency: 0,
+                    environment_id: "env-a".to_owned(),
                     environment_version: "1.2.3".to_owned(),
+                    manifest_digest: String::new(),
+                    signer: String::new(),
+                    require_trusted: true,
+                    desired_state: "enabled".to_owned(),
+                    enabled: true,
+                    config_revision: 1,
                 },
                 status: CoreJobPoolStatus {
                     desired: 3,
@@ -673,6 +1471,9 @@ mod job_pool_tests {
                     environment_readiness: "ready".to_owned(),
                     reconcile_state: "failed".to_owned(),
                     last_failure_code: "package_unavailable".to_owned(),
+                    operation_id: String::new(),
+                    config_revision: 1,
+                    environment_ready: false,
                 },
             }],
         });
@@ -721,7 +1522,7 @@ fn refresh_sessions(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
             ensure_core_ready(state)?;
             let result = core_call(
                 state,
-                "list_requests",
+                CoreMethod::ListRequests,
                 json!({"offset": 0, "limit": SESSION_PAGE_SIZE}),
             )?;
             let page: CoreRequestList = serde_json::from_value(result)
@@ -783,7 +1584,7 @@ fn load_more_sessions(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>)
             ensure_core_ready(state)?;
             let result = core_call(
                 state,
-                "list_requests",
+                CoreMethod::ListRequests,
                 json!({"offset": offset, "limit": SESSION_PAGE_SIZE}),
             )?;
             let page: CoreRequestList = serde_json::from_value(result)
@@ -858,7 +1659,7 @@ fn run_session_action(
                 "cancel" => {
                     let result = core_call(
                         state,
-                        "cancel_request",
+                        CoreMethod::CancelRequest,
                         json!({"request_id": request_id, "actor": "windows-ui"}),
                     )?;
                     let request: CoreRequest = serde_json::from_value(result)
@@ -869,8 +1670,11 @@ fn run_session_action(
                     ))
                 }
                 "refresh-status" => {
-                    let result =
-                        core_call(state, "get_request", json!({"request_id": request_id}))?;
+                    let result = core_call(
+                        state,
+                        CoreMethod::GetRequest,
+                        json!({"request_id": request_id}),
+                    )?;
                     let request: CoreRequest = serde_json::from_value(result)
                         .map_err(|_| "invalid_session_projection".to_owned())?;
                     Ok((
@@ -881,7 +1685,7 @@ fn run_session_action(
                 "capture-view" => {
                     let result = core_call(
                         state,
-                        "get_browser_view",
+                        CoreMethod::GetBrowserView,
                         json!({"request_id": request_id, "width": 640, "height": 360}),
                     )?;
                     let view: BrowserView = serde_json::from_value(result)
@@ -1191,6 +1995,32 @@ fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static st
 
 fn friendly_error(error: &str) -> String {
     let value = error.to_ascii_lowercase();
+    if value.contains("package_unavailable") {
+        return "The service-owned environment package is unavailable. Choose an approved package reference and try again.".to_owned();
+    }
+    if value.contains("environment_untrusted") || value.contains("not trusted") {
+        return "The environment is not trusted. Trust it through the service before enabling the pool.".to_owned();
+    }
+    if value.contains("environment_unhealthy") || value.contains("not healthy") {
+        return "The environment health gate is not ready. Check the environment and try again."
+            .to_owned();
+    }
+    if value.contains("service_restarted") {
+        return "Core restarted while this operation was running. Refresh the projection before retrying.".to_owned();
+    }
+    if value.contains("stale_revision")
+        || value.contains("stale revision")
+        || value.contains("conflict")
+    {
+        return "The item changed before this operation was applied. Refresh the projection and try again.".to_owned();
+    }
+    if value.contains("operation_timeout") {
+        return "The operation is still running. Use its operation ID to check the final status."
+            .to_owned();
+    }
+    if value.contains("invalid_operation_projection") {
+        return "Core returned an operation status this client could not read. Refresh and try again.".to_owned();
+    }
     if value.contains("browser_view_unavailable") {
         return "A read-only browser preview is not available for this request.".to_owned();
     }
@@ -1264,5 +2094,72 @@ mod tests {
             friendly_error("unexpected stack and profile path"),
             "The operation could not be completed. Refresh and try again."
         );
+    }
+
+    #[test]
+    fn core_method_names_are_fixed_and_package_refs_are_not_paths() {
+        assert_eq!(CoreMethod::ListJobPools.wire_name(), "list_job_pools");
+        assert_eq!(
+            CoreMethod::EnvironmentOperation.wire_name(),
+            "environment_operation"
+        );
+        assert!(launcher_command_needs_manifest("settings"));
+        assert!(!launcher_command_needs_manifest("core-call"));
+        assert!(!launcher_command_needs_manifest("environment-list"));
+        assert!("../package".contains('/'));
+        assert!(r"C:\\package".contains('\\'));
+    }
+
+    #[test]
+    fn operation_errors_use_stable_user_states() {
+        assert_eq!(operation_error_phase("stale_revision"), "stale revision");
+        assert_eq!(
+            operation_error_phase("package_unavailable"),
+            "package unavailable"
+        );
+        assert_eq!(
+            operation_error_phase("environment_untrusted"),
+            "environment untrusted"
+        );
+        assert_eq!(
+            operation_error_phase("environment_unhealthy"),
+            "environment unhealthy"
+        );
+        assert_eq!(operation_error_phase("core_unavailable"), "unavailable");
+        assert!(friendly_error("package_unavailable").contains("package"));
+        assert!(friendly_error("stale_revision").contains("changed"));
+    }
+
+    #[test]
+    fn operation_projections_decode_core_envelopes() {
+        let pool = decode_job_pool_operation(serde_json::json!({
+            "operation": {"operation_id": "op-1", "state": "applied"}
+        }))
+        .expect("job-pool operation envelope should decode");
+        assert_eq!(pool.operation_id, "op-1");
+        assert_eq!(pool.state, "applied");
+        let environment = decode_environment_operation(serde_json::json!({
+            "operation": {"operation_id": "envop-1", "state": "failed"}
+        }))
+        .expect("environment operation envelope should decode");
+        assert_eq!(environment.operation_id, "envop-1");
+        assert_eq!(environment.state, "failed");
+    }
+
+    #[test]
+    fn package_references_are_opaque_tokens() {
+        assert!(valid_package_reference("catalog-v1"));
+        assert!(!valid_package_reference("../package"));
+        assert!(!valid_package_reference("C:package"));
+        assert!(!valid_package_reference("catalog:v1"));
+        assert!(!valid_package_reference("catalog v1"));
+    }
+
+    #[test]
+    fn idempotency_keys_are_stable_shape_without_user_paths() {
+        let key = idempotency_key("scale", "pool/one", 7);
+        assert!(key.starts_with("windows-ui-scale-pool-one-7-"));
+        assert!(!key.contains('/'));
+        assert!(!key.contains('\\'));
     }
 }

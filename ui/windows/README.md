@@ -19,10 +19,20 @@ saved through the launcher settings commands; the titlebar and Settings appearan
 control save only the UI-local theme. Diagnostic consent is shown only before
 submitting a report.
 
-The Settings job-pool panel consumes the redacted `list_job_pools` DTO and is
-read-only in this phase. Pool and environment mutations use typed Core/Launcher
-commands; the UI never turns user input into a path, shell command, or
-executable.
+The Settings job-pool panel consumes redacted `list_job_pools` and
+`list_environments` DTOs as structured cards. It supports typed apply, scale,
+drain, resume, refresh, operation polling, and environment install, verify,
+trust, enable, disable, health, upgrade, and rollback actions. Each mutation
+reads the current revision, creates a stable per-action idempotency key, shows a
+confirmation step where capacity or environment state changes, and refreshes
+after stale revision or terminal failure. The operation panel shows requested,
+validating, draining, provisioning, health_check, committing, applied, and
+failed states with stable failure codes mapped to bounded user messages.
+Environment install, upgrade, and rollback accept only opaque service-owned
+package references. The UI never turns user input into a path, shell command,
+executable, Profile path, credential, Windows identity, RDP endpoint, named
+pipe, or token. Core method calls use a Rust enum allowlist rather than a
+user-supplied method name.
 
 The former Overview, Accounts, Tasks, Adapters, and RDP login pages and their
 compatibility routes have been removed. The main window does not keep hidden
@@ -115,12 +125,12 @@ and the terminal toolchain; VS Code is not required.
 For installed tool versions, the optional Slint MCP debug path, the snapshot
 matrix, and UI verification rules, read docs/ui/tooling.md.
 
-The `layout_snapshot` example renders the current Sessions screen for mixed,
-empty, loading, error, unavailable, selected, compact Inspector, More menu,
-cancellation confirmation, keyboard focus, and disabled-action fixture states,
-plus the Settings destination, in Light and Dark at 800x600, 1120x760, and
-1440x900. Fixtures are synthetic and isolated to the example; production
-startup always loads Core data.
+The `layout_snapshot` example renders Sessions and Settings fixtures for
+empty, single, mixed, provisioning, draining, quarantined, and failed pools,
+untrusted environments, operation polling, stale revision, package unavailable,
+unavailable Core, and narrow confirmation dialogs, in Light and Dark at
+800x600, 1120x760, and 1440x900. Fixtures are synthetic and isolated to the
+example; production startup always loads Core data.
 
 ```bash
 cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot \
