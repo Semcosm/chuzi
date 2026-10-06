@@ -1,17 +1,17 @@
 # CR-0095: document future Genshin BetterGI adapter boundary
 
 Base: main
-Head or Range: 1ed863a7d311a095beb3117ac035f689080ad272..17ede74
+Head or Range: 3d841865a32b3392c32f34328d622fb34a481aaf
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: docs(adapter): record future Genshin BetterGI session design
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 1ed863a7d311a095beb3117ac035f689080ad272
-Head OID: 17ede745dab154fdb8a7a25f56adb5c88c2a2c53
-Integrated Result: pending
+Base OID: 3d841865a32b3392c32f34328d622fb34a481aaf
+Head OID: 3d841865a32b3392c32f34328d622fb34a481aaf
+Integrated Result: main@3d841865a32b3392c32f34328d622fb34a481aaf
 
 ## Summary
 
