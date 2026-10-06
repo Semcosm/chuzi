@@ -1,17 +1,17 @@
 # CR-0098: add silent GitHub Actions wait helper
 
 Base: main
-Head or Range: 66da29010c672641615270f416ed198c1beb101a
+Head or Range: a87074a510fd37cdf9ef9ba9aeee836227b060a0
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(ci): add silent GitHub Actions wait helper
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
 Base OID: a547945110537a0a7b8975eba6f25534c3539e84
-Head OID: 66da29010c672641615270f416ed198c1beb101a
-Integrated Result: pending
+Head OID: 4d8a4bab6afe83d84fe8bb1b7aeaab198a83402b
+Integrated Result: main@4d8a4bab6afe83d84fe8bb1b7aeaab198a83402b
 
 ## Summary
 
