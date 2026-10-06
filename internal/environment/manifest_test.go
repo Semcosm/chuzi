@@ -197,6 +197,81 @@ func TestManagerCatalogReferenceIsOpaqueAndServiceOwned(t *testing.T) {
 	}
 }
 
+func TestManagerCatalogReferenceLifecycle(t *testing.T) {
+	content := []byte("catalog runtime")
+	manifest, private := testManifest(t, content)
+	catalog := filepath.Join(t.TempDir(), "catalog")
+	entry := filepath.Join(catalog, "catalog-v1")
+	if err := os.MkdirAll(entry, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entry, "runtime.dat"), content, 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(entry, ManifestName), data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(Options{
+		InstallRoot: t.TempDir(), CatalogRoot: catalog, Target: "linux-amd64",
+		Trust: TrustStore{manifest.Signer: private.Public().(ed25519.PublicKey)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := manager.InstallReferenceFor(context.Background(), "catalog-v1", manifest.EnvironmentID, manifest.Version)
+	if err != nil || !record.Installed || !record.Verified || record.Trusted || record.Ready {
+		t.Fatalf("catalog install = %#v, err=%v", record, err)
+	}
+	if _, err := manager.SetTrusted(manifest.EnvironmentID, manifest.Version, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.SetEnabled(manifest.EnvironmentID, manifest.Version, true); err != nil {
+		t.Fatal(err)
+	}
+	if record, err = manager.HealthCheck(context.Background(), manifest.EnvironmentID, manifest.Version); err != nil || !record.Ready {
+		t.Fatalf("catalog health = %#v, err=%v", record, err)
+	}
+	upgradeContent := []byte("catalog runtime upgrade")
+	upgradeManifest := manifest
+	upgradeManifest.Resources = []Resource{{Path: "runtime.dat", SHA256: sha256Digest(upgradeContent), Size: int64(len(upgradeContent))}}
+	upgradeManifest, err = upgradeManifest.Seal(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgradeEntry := filepath.Join(catalog, "catalog-v2")
+	if err := os.MkdirAll(upgradeEntry, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upgradeEntry, "runtime.dat"), upgradeContent, 0600); err != nil {
+		t.Fatal(err)
+	}
+	upgradeData, err := json.Marshal(upgradeManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(upgradeEntry, ManifestName), upgradeData, 0600); err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := manager.UpgradeReferenceFor(context.Background(), "catalog-v2", manifest.EnvironmentID, manifest.Version)
+	if err != nil || upgraded.Generation <= record.Generation {
+		t.Fatalf("catalog upgrade = %#v, err=%v", upgraded, err)
+	}
+	if err := manager.Rollback(manifest.EnvironmentID, manifest.Version); err != nil {
+		t.Fatalf("catalog rollback error = %v", err)
+	}
+	rolledBack, err := manager.Get(manifest.EnvironmentID, manifest.Version)
+	if err != nil || rolledBack.Generation <= upgraded.Generation || rolledBack.Trusted || rolledBack.Enabled || rolledBack.Ready {
+		t.Fatalf("catalog rollback = %#v, err=%v", rolledBack, err)
+	}
+	if _, err := manager.UpgradeReference(context.Background(), "missing-catalog"); !errors.Is(err, ErrPackageReference) {
+		t.Fatalf("missing catalog upgrade error = %v", err)
+	}
+}
+
 func TestManagerResolvesClosedRuntimeEntrypoint(t *testing.T) {
 	content := []byte("runtime data")
 	m, priv := testManifest(t, content)
