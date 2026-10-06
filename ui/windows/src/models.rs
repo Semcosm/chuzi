@@ -41,7 +41,25 @@ pub(crate) struct CoreJobPool {
 pub(crate) struct CoreJobPoolConfig {
     pub(crate) pool_id: String,
     #[serde(default)]
+    pub(crate) desired_slots: i32,
+    #[serde(default)]
+    pub(crate) max_concurrency: i32,
+    #[serde(default)]
+    pub(crate) environment_id: String,
+    #[serde(default)]
     pub(crate) environment_version: String,
+    #[serde(default)]
+    pub(crate) manifest_digest: String,
+    #[serde(default)]
+    pub(crate) signer: String,
+    #[serde(default)]
+    pub(crate) require_trusted: bool,
+    #[serde(default)]
+    pub(crate) desired_state: String,
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default)]
+    pub(crate) config_revision: u64,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -60,6 +78,73 @@ pub(crate) struct CoreJobPoolStatus {
     pub(crate) reconcile_state: String,
     #[serde(default)]
     pub(crate) last_failure_code: String,
+    #[serde(default)]
+    pub(crate) operation_id: String,
+    #[serde(default)]
+    pub(crate) config_revision: u64,
+    #[serde(default)]
+    pub(crate) environment_ready: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreJobPoolOperation {
+    pub(crate) operation_id: String,
+    #[serde(default)]
+    pub(crate) pool_id: String,
+    #[serde(default)]
+    pub(crate) operation: String,
+    #[serde(default)]
+    pub(crate) state: String,
+    #[serde(default)]
+    pub(crate) config_revision: u64,
+    #[serde(default)]
+    pub(crate) result: String,
+    #[serde(default)]
+    pub(crate) failure_code: String,
+    #[serde(default)]
+    pub(crate) idempotent: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreEnvironmentList {
+    pub(crate) environments: Vec<CoreEnvironment>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreEnvironment {
+    pub(crate) environment_id: String,
+    pub(crate) version: String,
+    #[serde(default)]
+    pub(crate) installed: bool,
+    #[serde(default)]
+    pub(crate) verified: bool,
+    #[serde(default)]
+    pub(crate) trusted: bool,
+    #[serde(default)]
+    pub(crate) enabled: bool,
+    #[serde(default)]
+    pub(crate) healthy: bool,
+    #[serde(default)]
+    pub(crate) ready: bool,
+    #[serde(default)]
+    pub(crate) generation: u64,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct CoreEnvironmentOperation {
+    pub(crate) operation_id: String,
+    #[serde(default)]
+    pub(crate) environment_id: String,
+    #[serde(default)]
+    pub(crate) version: String,
+    #[serde(default)]
+    pub(crate) operation: String,
+    #[serde(default)]
+    pub(crate) state: String,
+    #[serde(default)]
+    pub(crate) failure_code: String,
+    #[serde(default)]
+    pub(crate) idempotent: bool,
 }
 
 #[cfg(test)]

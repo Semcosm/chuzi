@@ -2,6 +2,7 @@ import { Button, CheckBox, ComboBox, LineEdit, Palette, ScrollView, SpinBox, Ver
 import { ChuziTheme } from "design_tokens.slint";
 import { ChuziTitlebar, ChuziSidebar } from "shell_components.slint";
 import { SessionRowData, ChuziActionButton, ChuziFilterChip, ChuziSessionRow, ChuziSessionInspector, ChuziSessionWorkspace } from "sessions_components.slint";
+import { JobPoolRowData, EnvironmentRowData, ChuziJobPoolCard, ChuziEnvironmentCard } from "job_pool_components.slint";
 export { Palette } from "std-widgets.slint";
 
 component FeedbackBar inherits Rectangle {
@@ -95,12 +96,44 @@ export component MainWindow inherits Window {
     in-out property <string> settings-phase: "loading";
     in-out property <string> job-pool-phase: "idle";
     in-out property <string> job-pool-summary: "Job pool status has not been loaded.";
+    in-out property <[JobPoolRowData]> job-pool-rows: [];
+    in-out property <[EnvironmentRowData]> environment-rows: [];
+    in-out property <string> operation-phase: "idle";
+    in-out property <string> operation-id: "";
+    in-out property <string> operation-state: "";
+    in-out property <string> operation-detail: "";
+    in-out property <string> operation-pool-id: "";
+    in-out property <string> operation-environment-id: "";
+    in-out property <string> operation-environment-version: "";
+    in-out property <string> operation-kind: "";
+    in-out property <string> job-pool-edit-id: "";
+    in-out property <string> job-pool-edit-environment-id: "";
+    in-out property <string> job-pool-edit-environment-version: "";
+    in-out property <int> job-pool-edit-desired: 0;
+    in-out property <int> job-pool-edit-max: 0;
+    in-out property <string> package-reference: "";
+    in-out property <string> environment-operation-phase: "idle";
+    in-out property <bool> operation-confirmation-visible: false;
+    in-out property <string> operation-confirmation-title: "Confirm operation";
+    in-out property <string> operation-confirmation-message: "";
+    in-out property <string> pending-operation: "";
+    in-out property <string> pending-pool-id: "";
+    in-out property <string> pending-environment-id: "";
+    in-out property <string> pending-environment-version: "";
+    in-out property <string> pending-environment-generation: "0";
 
     callback install-core();
     callback start-core();
     callback stop-core();
     callback refresh-core();
     callback refresh-job-pools();
+    callback job-pool-apply(string, string, string, int, int);
+    callback job-pool-action(string, string);
+    callback job-pool-operation(string);
+    callback environment-operation(string, string, string, string);
+    callback environment-operation-poll(string);
+    callback operation-confirmed();
+    callback operation-cancelled();
     callback navigate(string);
     callback save-settings();
     callback theme-changed(string);
@@ -515,15 +548,87 @@ export component MainWindow inherits Window {
                     vertical-stretch: 0;
                     VerticalBox {
                         padding: ChuziTheme.space-5;
-                        spacing: ChuziTheme.space-2;
-                        Text { text: "Job pools"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
-                        Text { text: root.job-pool-phase == "loading" ? "Refreshing…" : root.job-pool-summary; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        spacing: ChuziTheme.space-3;
                         HorizontalBox {
-                            height: ChuziTheme.control-height;
+                            height: 34px;
                             spacing: ChuziTheme.space-2;
-                            vertical-stretch: 0;
-                            Button { text: "Refresh pool status"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
+                            Text { text: "Job pools"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
+                            Button { text: root.job-pool-phase == "loading" ? "Refreshing…" : "Refresh"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
                         }
+                        Text { text: "Capacity, environment readiness, reconcile state, and safe lifecycle controls."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        if root.job-pool-rows.length == 0: Text { text: root.job-pool-phase == "loading" ? "Loading pools…" : "No job pools are configured."; color: ChuziTheme.text-tertiary; font-size: ChuziTheme.type-body; vertical-stretch: 0; }
+                        for pool in root.job-pool-rows: ChuziJobPoolCard {
+                            item: pool;
+                            busy: root.busy || root.operation-phase == "submitting" || root.operation-phase == "polling";
+                            selected(pool-id) => {
+                                root.job-pool-edit-id = pool.pool_id;
+                                root.job-pool-edit-environment-id = pool.environment_id;
+                                root.job-pool-edit-environment-version = pool.environment_version;
+                                root.job-pool-edit-desired = pool.desired_slots;
+                                root.job-pool-edit-max = pool.max_concurrency;
+                            }
+                            action(value, kind) => {
+                                if kind == "operation" {
+                                    root.job-pool-operation(value);
+                                } else {
+                                    root.pending-operation = kind;
+                                    root.pending-pool-id = value;
+                                    root.operation-confirmation-title = kind == "drain" ? "Drain this pool?" : "Resume this pool?";
+                                    root.operation-confirmation-message = kind == "drain" ? "New work will stop while leased slots finish safely." : "The pool will accept new work after reconciliation.";
+                                    root.operation-confirmation-visible = true;
+                                }
+                            }
+                            vertical-stretch: 0;
+                        }
+                        if root.operation-phase != "idle": Rectangle {
+                            background: root.operation-phase == "failed" || root.operation-phase == "stale revision" ? ChuziTheme.status-danger.with-alpha(0.10) : ChuziTheme.accent-soft;
+                            border-color: root.operation-phase == "failed" || root.operation-phase == "stale revision" ? ChuziTheme.status-danger : ChuziTheme.accent.with-alpha(0.35);
+                            border-width: 1px;
+                            border-radius: ChuziTheme.radius-small;
+                            height: 92px;
+                            VerticalBox {
+                                padding: ChuziTheme.space-3;
+                                spacing: 2px;
+                                HorizontalBox { spacing: ChuziTheme.space-2; Text { text: "Operation " + root.operation-id; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-caption; font-weight: 600; horizontal-stretch: 1; overflow: elide; } Text { text: root.operation-phase; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; } }
+                                Text { text: root.operation-state + "  ·  " + root.operation-detail; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 1; }
+                                if root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "service restarted": Button { text: "Refresh projection"; clicked => { root.refresh-job-pools(); } }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-2;
+                        Text { text: "Apply or scale a pool"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Changes use the current config revision and an idempotency key generated by the launcher façade."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                        HorizontalBox { spacing: ChuziTheme.space-2; height: 34px; LineEdit { placeholder-text: "Pool ID"; text <=> root.job-pool-edit-id; horizontal-stretch: 1; } LineEdit { placeholder-text: "Environment ID"; text <=> root.job-pool-edit-environment-id; horizontal-stretch: 1; } }
+                        HorizontalBox { spacing: ChuziTheme.space-2; height: 34px; LineEdit { placeholder-text: "Environment version"; text <=> root.job-pool-edit-environment-version; horizontal-stretch: 1; } SpinBox { value <=> root.job-pool-edit-desired; minimum: 0; maximum: 10000; } Text { text: "desired"; color: ChuziTheme.text-secondary; vertical-alignment: center; } SpinBox { value <=> root.job-pool-edit-max; minimum: 0; maximum: 10000; } Text { text: "max"; color: ChuziTheme.text-secondary; vertical-alignment: center; } }
+                        HorizontalBox { spacing: ChuziTheme.space-2; height: ChuziTheme.control-height; Button { text: "Apply configuration"; enabled: !root.busy; clicked => { root.pending-operation = "apply"; root.pending-pool-id = root.job-pool-edit-id; root.operation-confirmation-title = "Apply pool configuration?"; root.operation-confirmation-message = "Core will validate the revision and reconcile capacity. Environment changes require a fresh trusted readiness gate."; root.operation-confirmation-visible = true; } } Button { text: "Scale only"; enabled: !root.busy; clicked => { root.pending-operation = "scale"; root.pending-pool-id = root.job-pool-edit-id; root.operation-confirmation-title = "Scale this pool?"; root.operation-confirmation-message = "The requested capacity will be reconciled against the current environment."; root.operation-confirmation-visible = true; } } }
+                    }
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-3;
+                        Text { text: "Environments"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Lifecycle actions accept only opaque service-owned package references. Paths, commands, and runtime handles are not accepted."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                        HorizontalBox { spacing: ChuziTheme.space-2; height: 34px; LineEdit { placeholder-text: "Environment ID"; text <=> root.operation-environment-id; horizontal-stretch: 1; } LineEdit { placeholder-text: "Version"; text <=> root.operation-environment-version; horizontal-stretch: 1; } LineEdit { placeholder-text: "Opaque package reference"; text <=> root.package-reference; horizontal-stretch: 1; } }
+                        HorizontalBox { spacing: ChuziTheme.space-1; height: 34px; for op in ["install", "upgrade", "verify", "trust", "enable", "disable", "health", "rollback"]: Button { text: op; enabled: !root.busy; clicked => { root.pending-operation = "environment:" + op; root.pending-environment-id = root.operation-environment-id; root.pending-environment-version = root.operation-environment-version; root.operation-confirmation-title = op == "disable" || op == "rollback" ? "Confirm environment " + op + "?" : "Run environment " + op + "?"; root.operation-confirmation-message = "The service will apply this lifecycle gate and report a redacted operation status."; root.operation-confirmation-visible = true; } } }
+                        if root.environment-rows.length == 0: Text { text: root.environment-operation-phase == "loading" ? "Loading environments…" : "No environment records are available."; color: ChuziTheme.text-tertiary; font-size: ChuziTheme.type-body; vertical-stretch: 0; }
+                        for environment in root.environment-rows: ChuziEnvironmentCard { item: environment; busy: root.busy; action(environment-id, version, op, generation) => { root.pending-operation = "environment:" + op; root.pending-environment-id = environment-id; root.pending-environment-version = version; root.pending-environment-generation = generation; root.operation-confirmation-title = op == "disable" || op == "rollback" ? "Confirm environment " + op + "?" : "Run environment " + op + "?"; root.operation-confirmation-message = "The service will apply this lifecycle gate and report a redacted operation status."; root.operation-confirmation-visible = true; } vertical-stretch: 0; }
                     }
                 }
 
@@ -688,6 +793,32 @@ export component MainWindow inherits Window {
         more-action(request-id, action) => { root.session-more-action(request-id, action); }
         close => { root.inspector-open = false; }
         load-more => { root.load-more-sessions(); }
+    }
+
+    if root.operation-confirmation-visible: Rectangle {
+        x: 0px;
+        y: 0px;
+        width: root.width;
+        height: root.height;
+        background: ChuziTheme.overlay-scrim;
+        z: 80;
+        Rectangle {
+            width: root.width < 560px ? root.width - 40px : 500px;
+            height: 246px;
+            x: (root.width - self.width) / 2;
+            y: (root.height - self.height) / 2;
+            background: ChuziTheme.elevated-background;
+            border-color: ChuziTheme.separator;
+            border-width: 1px;
+            border-radius: ChuziTheme.radius-surface;
+            VerticalBox {
+                padding: ChuziTheme.space-6;
+                spacing: ChuziTheme.space-3;
+                Text { text: root.operation-confirmation-title; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-title; font-weight: 650; vertical-stretch: 0; }
+                Text { text: root.operation-confirmation-message; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-body; wrap: word-wrap; vertical-stretch: 1; }
+                HorizontalBox { spacing: ChuziTheme.space-2; height: ChuziTheme.control-height; Rectangle { horizontal-stretch: 1; background: transparent; } Button { text: "Keep editing"; clicked => { root.operation-cancelled(); } } Button { text: "Confirm"; clicked => { root.operation-confirmed(); } } }
+            }
+        }
     }
 
     if root.cancel-confirmation-visible: Rectangle {

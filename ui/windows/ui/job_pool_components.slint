@@ -1,0 +1,108 @@
+import { HorizontalBox, VerticalBox } from "std-widgets.slint";
+import { ChuziActionButton } from "sessions_components.slint";
+import { ChuziTheme } from "design_tokens.slint";
+
+export struct JobPoolRowData {
+    pool_id: string,
+    environment_id: string,
+    environment_version: string,
+    desired_slots: int,
+    max_concurrency: int,
+    desired_state: string,
+    ready: int,
+    leased: int,
+    quarantined: int,
+    draining: int,
+    provisioning: int,
+    retiring: int,
+    effective_capacity: int,
+    environment_readiness: string,
+    reconcile_state: string,
+    last_failure_code: string,
+    config_revision: string,
+    operation_id: string,
+    selected: bool,
+}
+
+export struct EnvironmentRowData {
+    environment_id: string,
+    version: string,
+    lifecycle: string,
+    generation: string,
+    selected: bool,
+}
+
+export component ChuziJobPoolCard inherits Rectangle {
+    in property <JobPoolRowData> item;
+    in property <bool> busy: false;
+    callback action(string, string);
+    callback selected(string);
+
+    height: 230px;
+    background: root.item.selected ? ChuziTheme.accent-soft : ChuziTheme.surface-background;
+    border-color: root.item.selected ? ChuziTheme.accent.with-alpha(0.45) : ChuziTheme.separator;
+    border-width: 1px;
+    border-radius: ChuziTheme.radius-surface;
+
+    TouchArea { clicked => { root.selected(root.item.pool_id); } }
+
+    VerticalBox {
+        padding: ChuziTheme.space-4;
+        spacing: ChuziTheme.space-2;
+
+        HorizontalBox {
+            spacing: ChuziTheme.space-2;
+            height: 28px;
+            Text { text: root.item.pool_id; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 650; overflow: elide; horizontal-stretch: 1; vertical-alignment: center; }
+            Text { text: root.item.reconcile_state == "" ? "unknown" : root.item.reconcile_state; color: root.item.reconcile_state == "failed" ? ChuziTheme.status-danger : ChuziTheme.status-positive; font-size: ChuziTheme.type-caption; vertical-alignment: center; }
+        }
+        Text { text: root.item.environment_id + "  /  " + root.item.environment_version; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; overflow: elide; vertical-stretch: 0; }
+
+        HorizontalBox {
+            spacing: ChuziTheme.space-4;
+            vertical-stretch: 0;
+            VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: "Desired / ready"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.desired_slots + " / " + root.item.ready; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; font-weight: 600; } }
+            VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: "Effective"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.effective_capacity + "  (max " + root.item.max_concurrency + ")"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; font-weight: 600; } }
+            VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: "Environment"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.environment_readiness; color: root.item.environment_readiness == "ready" ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-caption; font-weight: 600; } }
+        }
+        HorizontalBox {
+            spacing: ChuziTheme.space-3;
+            vertical-stretch: 0;
+            Text { text: "Leased " + root.item.leased + "  ·  Draining " + root.item.draining; color: ChuziTheme.text-secondary; font-size: 10px; horizontal-stretch: 1; }
+            Text { text: "Q " + root.item.quarantined + "  P " + root.item.provisioning + "  R " + root.item.retiring; color: ChuziTheme.text-secondary; font-size: 10px; }
+        }
+        HorizontalBox {
+            spacing: ChuziTheme.space-2;
+            vertical-stretch: 0;
+            Text { text: "Revision " + root.item.config_revision; color: ChuziTheme.text-tertiary; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; }
+            if root.item.operation_id != "": ChuziActionButton { label: "Operation"; enabled: !root.busy; width: 88px; pressed => { root.action(root.item.operation_id, "operation"); } }
+            if root.item.desired_state == "draining": ChuziActionButton { label: "Resume"; enabled: !root.busy; width: 82px; pressed => { root.action(root.item.pool_id, "resume"); } }
+            if root.item.desired_state != "draining": ChuziActionButton { label: "Drain"; enabled: !root.busy; destructive: true; width: 74px; pressed => { root.action(root.item.pool_id, "drain"); } }
+        }
+        if root.item.last_failure_code != "": Text { text: "Failure · " + root.item.last_failure_code; color: ChuziTheme.status-danger; font-size: ChuziTheme.type-caption; overflow: elide; vertical-stretch: 0; }
+    }
+}
+
+export component ChuziEnvironmentCard inherits Rectangle {
+    in property <EnvironmentRowData> item;
+    in property <bool> busy: false;
+    callback action(string, string, string, string);
+
+    height: 126px;
+    background: ChuziTheme.surface-background;
+    border-color: ChuziTheme.separator;
+    border-width: 1px;
+    border-radius: ChuziTheme.radius-surface;
+
+    VerticalBox {
+        padding: ChuziTheme.space-4;
+        spacing: ChuziTheme.space-2;
+        HorizontalBox { spacing: ChuziTheme.space-2; Text { text: root.item.environment_id; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; font-weight: 650; horizontal-stretch: 1; overflow: elide; } Text { text: root.item.version; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; } }
+        Text { text: root.item.lifecycle + "  ·  generation " + root.item.generation; color: root.item.lifecycle == "ready" ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-caption; vertical-stretch: 0; }
+        HorizontalBox {
+            spacing: ChuziTheme.space-1;
+            height: 30px;
+            for op in ["verify", "trust", "enable", "disable", "health", "rollback"]: ChuziActionButton { label: op; enabled: !root.busy; width: 62px; pressed => { root.action(root.item.environment_id, root.item.version, op, root.item.generation); } }
+        }
+    }
+}

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use i_slint_backend_testing::{TestingBackend, TestingBackendOptions};
 use slint::language::ColorScheme;
-use slint::{ComponentHandle, PhysicalSize, SharedString};
+use slint::{ComponentHandle, ModelRc, PhysicalSize, SharedString};
 
 #[path = "../src/models.rs"]
 #[allow(dead_code)]
@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         for theme in &themes {
             let window = MainWindow::new()?;
             configure_window(&window, theme);
-            if session_state == "settings" {
+            if is_settings_fixture(&session_state) {
                 window.set_page("settings".into());
                 window.set_settings_phase("ready".into());
                 window.set_auto_check_updates(true);
@@ -47,12 +47,42 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 window.set_close_to_tray(true);
                 window.set_start_core_on_launch(true);
                 window.set_update_interval(60);
+                let pools = job_pool_fixture_for(&session_state);
+                window.set_job_pool_rows(ModelRc::from(pools.as_slice()));
+                let environments = environment_fixture();
+                window.set_environment_rows(ModelRc::from(environments.as_slice()));
+                if session_state == "operation-polling" {
+                    window.set_operation_phase("polling".into());
+                    window.set_operation_id("op-snapshot-0001".into());
+                    window.set_operation_state("health_check".into());
+                    window.set_operation_detail(
+                        "health_check · waiting for trusted environment".into(),
+                    );
+                } else if session_state == "stale-revision" {
+                    window.set_operation_phase("stale revision".into());
+                    window.set_operation_id("op-stale-0001".into());
+                    window.set_operation_state("failed".into());
+                    window.set_operation_detail("stale revision · refresh required".into());
+                } else if session_state == "package-unavailable" {
+                    window.set_operation_phase("package unavailable".into());
+                    window.set_operation_id("envop-package-0001".into());
+                    window.set_operation_state("failed".into());
+                    window.set_operation_detail("failed · package_unavailable".into());
+                }
+                if session_state == "narrow-confirmation" {
+                    window.set_pending_operation("drain".into());
+                    window.set_operation_confirmation_title("Drain this pool?".into());
+                    window.set_operation_confirmation_message(
+                        "New work will stop while leased slots finish safely.".into(),
+                    );
+                    window.set_operation_confirmation_visible(true);
+                }
             }
             window.window().set_size(PhysicalSize::new(width, height));
             window.show()?;
             slint::platform::update_timers_and_animations();
 
-            let session_model = if session_state == "settings" {
+            let session_model = if is_settings_fixture(&session_state) {
                 view_model::SessionViewModel::default()
             } else {
                 session_fixture(&session_state)
@@ -189,7 +219,7 @@ fn write_snapshot(
     {
         return Err(format!("snapshot is blank at {width}x{height}").into());
     }
-    let page = if state == "settings" {
+    let page = if is_settings_fixture(state) {
         "settings"
     } else {
         "sessions"
@@ -244,6 +274,19 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
         "error",
         "unavailable",
         "settings",
+        "pool-empty",
+        "pool-single",
+        "pool-mixed",
+        "pool-provisioning",
+        "pool-draining",
+        "pool-quarantined",
+        "pool-failed",
+        "environment-untrusted",
+        "operation-polling",
+        "stale-revision",
+        "package-unavailable",
+        "unavailable-core",
+        "narrow-confirmation",
     ]
     .contains(&session_state.as_str())
     {
@@ -266,4 +309,205 @@ fn write_png(
     let mut writer = encoder.write_header()?;
     writer.write_image_data(snapshot.as_bytes())?;
     Ok(())
+}
+
+fn is_settings_fixture(state: &str) -> bool {
+    matches!(
+        state,
+        "settings"
+            | "pool-empty"
+            | "pool-single"
+            | "pool-mixed"
+            | "pool-provisioning"
+            | "pool-draining"
+            | "pool-quarantined"
+            | "pool-failed"
+            | "environment-untrusted"
+            | "operation-polling"
+            | "stale-revision"
+            | "package-unavailable"
+            | "unavailable-core"
+            | "narrow-confirmation"
+    )
+}
+
+fn job_pool_fixture_for(state: &str) -> Vec<JobPoolRowData> {
+    match state {
+        "pool-empty" => Vec::new(),
+        "pool-single" => job_pool_fixture().into_iter().take(1).collect(),
+        "pool-provisioning" => job_pool_fixture()
+            .into_iter()
+            .filter(|row| row.reconcile_state == "provisioning")
+            .collect(),
+        "pool-draining" => job_pool_fixture()
+            .into_iter()
+            .filter(|row| row.reconcile_state == "draining")
+            .collect(),
+        "pool-quarantined" => job_pool_fixture()
+            .into_iter()
+            .filter(|row| row.pool_id == "pool-quarantined")
+            .collect(),
+        "pool-failed" | "package-unavailable" => job_pool_fixture()
+            .into_iter()
+            .filter(|row| row.reconcile_state == "failed")
+            .collect(),
+        "environment-untrusted" => job_pool_fixture()
+            .into_iter()
+            .filter(|row| row.pool_id == "pool-failed")
+            .collect(),
+        _ => job_pool_fixture(),
+    }
+}
+
+fn job_pool_fixture() -> Vec<JobPoolRowData> {
+    vec![
+        pool_row(
+            "pool-ready",
+            "enabled",
+            "ready",
+            4,
+            3,
+            1,
+            0,
+            0,
+            0,
+            0,
+            3,
+            12,
+            "1",
+            "",
+        ),
+        pool_row(
+            "pool-provisioning",
+            "enabled",
+            "provisioning",
+            4,
+            1,
+            0,
+            0,
+            0,
+            3,
+            0,
+            1,
+            12,
+            "2",
+            "op-provisioning-0001",
+        ),
+        pool_row(
+            "pool-draining",
+            "draining",
+            "draining",
+            2,
+            2,
+            1,
+            0,
+            1,
+            0,
+            0,
+            1,
+            8,
+            "3",
+            "",
+        ),
+        pool_row(
+            "pool-quarantined",
+            "enabled",
+            "ready",
+            2,
+            1,
+            0,
+            1,
+            0,
+            0,
+            0,
+            1,
+            4,
+            "4",
+            "",
+        ),
+        pool_row(
+            "pool-failed",
+            "enabled",
+            "failed",
+            3,
+            0,
+            0,
+            0,
+            0,
+            3,
+            0,
+            0,
+            4,
+            "5",
+            "",
+        ),
+    ]
+}
+
+fn pool_row(
+    id: &str,
+    desired_state: &str,
+    reconcile: &str,
+    desired: i32,
+    ready: i32,
+    leased: i32,
+    quarantined: i32,
+    draining: i32,
+    provisioning: i32,
+    retiring: i32,
+    effective: i32,
+    max: i32,
+    revision: &str,
+    operation_id: &str,
+) -> JobPoolRowData {
+    JobPoolRowData {
+        pool_id: id.into(),
+        environment_id: "env/windows-slot".into(),
+        environment_version: "2026.10".into(),
+        desired_slots: desired,
+        max_concurrency: max,
+        desired_state: desired_state.into(),
+        ready,
+        leased,
+        quarantined,
+        draining,
+        provisioning,
+        retiring,
+        effective_capacity: effective,
+        environment_readiness: if reconcile == "failed" {
+            "untrusted"
+        } else {
+            "ready"
+        }
+        .into(),
+        reconcile_state: reconcile.into(),
+        last_failure_code: if reconcile == "failed" {
+            "package_unavailable"
+        } else {
+            ""
+        }
+        .into(),
+        config_revision: revision.into(),
+        operation_id: operation_id.into(),
+        selected: false,
+    }
+}
+
+fn environment_fixture() -> Vec<EnvironmentRowData> {
+    vec![
+        EnvironmentRowData {
+            environment_id: "env/windows-slot".into(),
+            version: "2026.10".into(),
+            lifecycle: "ready".into(),
+            generation: "7".into(),
+            selected: false,
+        },
+        EnvironmentRowData {
+            environment_id: "env/untrusted".into(),
+            version: "2026.09".into(),
+            lifecycle: "untrusted".into(),
+            generation: "6".into(),
+            selected: false,
+        },
+    ]
 }

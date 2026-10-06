@@ -39,11 +39,17 @@ the application launches; installation remains an explicit action. Launcher beha
 launcher; the UI theme remains a UI-local preference. The old Overview,
 Accounts, Tasks, Adapters, and RDP login pages and their compatibility routes
 remain removed. Future screens must be implemented in the current shell.
-Settings also renders the redacted `list_job_pools` projection, including
-capacity, reconcile state, environment readiness, and stable failure class. It
-does not expose pool mutation controls in this phase; operators use typed
-Core/Launcher commands for apply, scale, drain, resume, and environment
-lifecycle operations.
+Settings renders structured redacted job-pool cards and environment cards from
+`list_job_pools` and `list_environments`. Operators can apply a pool, scale,
+drain, resume, refresh, inspect operation status, and run environment lifecycle
+gates through the fixed typed Core method allowlist. Writes read the current
+revision, generate a per-action idempotency key, require confirmation for
+drain, scale, environment changes, and package changes, and poll the returned
+operation through its terminal state. Revision conflicts refresh the
+projection and show `stale revision`; package and trust/health failures use
+stable redacted failure classes. Package input is an opaque service-owned
+reference only. The UI never accepts paths, commands, executables, profiles,
+credentials, Windows identities, RDP endpoints, named pipes, or tokens.
 
 RDP is a Session Workspace capability. The default host is the main window;
 `DesktopRdpWindow` is the optional floating host for the same RDP runtime.
