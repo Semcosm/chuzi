@@ -132,9 +132,10 @@ cleanup 与 root cleanup 分别报告；未知 ownership 或未知目录不会�
 `Windows job-pool native smoke passed`。
 
 `chuzi-build-windows-job-pool-preflight` 在 GitHub-hosted `windows-2022` 上编译所有
-Windows Go 包、运行 `go vet`、检查 native smoke 测试入口并构建固定 user-agent。手动
-`test` 通道使用这个 preflight 完成可安装包的 CI 验证，并明确跳过需要受管用户真实 WTS
-session 的 native smoke；`nightly`、`stable` 和主分支构建仍要求专用 native runner。
+Windows Go 包、运行 `go vet`、检查 native smoke 测试入口并构建固定 user-agent。
+`test` 和主分支 `ci` 通道使用这个 preflight 完成可安装包的 CI 验证，并明确跳过需要
+受管用户真实 WTS session 的 native smoke；`nightly`、`stable` 构建仍要求专用 native
+runner。
 因此 test 包通过不代表 Windows 用户/session/desktop 已完成生产验收，安装后的真机 smoke
 仍是后续验收步骤。
 
