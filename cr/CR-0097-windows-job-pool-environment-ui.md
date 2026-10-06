@@ -1,7 +1,7 @@
 # CR-0097: extend Windows UI with job-pool and environment operations
 
 Base: main
-Head or Range: pending implementation head
+Head or Range: 77abebc6052ab3344ee9b66a81f55ebb2f115e6c
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(ui): add Windows job-pool and environment operations
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 01b1890b07e9a93577a9940939a80c4f7f0c750a
-Head OID: pending implementation head
+Head OID: 77abebc6052ab3344ee9b66a81f55ebb2f115e6c
 Integrated Result: pending
 
 ## Summary
