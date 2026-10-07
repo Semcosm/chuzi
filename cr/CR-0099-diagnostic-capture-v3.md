@@ -9,8 +9,8 @@ Revision: 1
 Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 12edebc6cbcb0110d0b4454e2f329f8cae355e6b
-Head OID: 72b7e9a4f3979628acac3d8e6c648ec7cf56a3d3
+Base OID: a7b9609143cb719a03e514e26eca84d8804ff95d
+Head OID: 52a504631f85dd597aec5998813834750c38eaad
 Integrated Result: main@a7b9609143cb719a03e514e26eca84d8804ff95d
 
 ## Summary
