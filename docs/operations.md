@@ -149,6 +149,7 @@ ownership 项保护和资源退休。发布 workflow 的
 `CHUZI_ENABLE_WINDOWS_JOB_POOL_SMOKE=true`，或手动 dispatch 时将
 `enable_windows_job_pool_smoke` 明确设为 true，才会请求该 runner。启用后 job 失败或排队不可用时，
 `chuzi-build` 聚合检查失败或保持等待，发布不能继续。
+取消或超时的旧 workflow 不会改变这个默认值；下一次运行仍按显式开关重新判断。
 
 ## Windows readiness 和故障处理
 
