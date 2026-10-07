@@ -174,9 +174,36 @@ pub(crate) struct BrowserView {
     pub(crate) captured_at: String,
 }
 
-#[derive(Debug, Deserialize)]
-pub(crate) struct DiagnosticStatus {
-    pub(crate) state: String,
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct DiagnosticEvent {
+    #[serde(default)]
+    pub(crate) at: String,
+    #[serde(default)]
+    pub(crate) component: String,
+    #[serde(default)]
+    pub(crate) operation: String,
+    #[serde(default)]
+    pub(crate) outcome: String,
+    #[serde(default)]
+    pub(crate) request_id: String,
+    #[serde(default)]
+    pub(crate) resource: String,
+    #[serde(default)]
+    pub(crate) error_class: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub(crate) struct DiagnosticSnapshot {
+    pub(crate) id: String,
+    pub(crate) created_at: String,
+    pub(crate) version: String,
+    pub(crate) platform: String,
+    pub(crate) arch: String,
+    pub(crate) severity: String,
+    pub(crate) category: String,
+    pub(crate) summary: String,
+    #[serde(default)]
+    pub(crate) events: Vec<DiagnosticEvent>,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

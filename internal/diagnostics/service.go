@@ -134,24 +134,45 @@ func (s *Service) Submit(ctx context.Context, input ReportInput) (Status, error)
 	if s == nil || !s.config.Enabled {
 		return Status{}, ErrDisabled
 	}
-	if err := validateInput(input); err != nil {
+	report, err := s.Snapshot(ctx, input)
+	if err != nil {
 		return Status{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	now := s.now()
-	report := Report{ID: newID(now), CreatedAt: now, Version: safeVersion(s.config.Version), Platform: runtime.GOOS, Arch: runtime.GOARCH, Severity: normalizeSeverity(input.Severity), Category: normalizeCategory(input.Category), Summary: sanitizeSummary(input.Summary), Events: s.events()}
-	queued := queuedReport{Report: report, UpdatedAt: now}
+	queued := queuedReport{Report: report, UpdatedAt: report.CreatedAt}
 	if err := s.write(report.ID, queued); err != nil {
 		return Status{}, err
 	}
 	if s.config.Endpoint != "" {
 		if err := s.flushOne(ctx, report.ID); err == nil {
-			return Status{ID: report.ID, State: "submitted", CreatedAt: report.CreatedAt, UpdatedAt: now}, nil
+			return Status{ID: report.ID, State: "submitted", CreatedAt: report.CreatedAt, UpdatedAt: report.CreatedAt}, nil
 		}
 	}
 	return s.statusFor(queuedPath(s.config.QueueDir, report.ID)), nil
+}
+
+// Snapshot returns a bounded, redaction-safe report without queueing or
+// uploading it. Local support export uses this path even when remote
+// diagnostics are disabled or no endpoint has been configured.
+func (s *Service) Snapshot(ctx context.Context, input ReportInput) (Report, error) {
+	if s == nil {
+		return Report{}, ErrDisabled
+	}
+	if err := validateInput(input); err != nil {
+		return Report{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return Report{}, err
+	}
+	now := s.now()
+	report := Report{ID: newID(now), CreatedAt: now, Version: safeVersion(s.config.Version), Platform: runtime.GOOS, Arch: runtime.GOARCH, Severity: normalizeSeverity(input.Severity), Category: normalizeCategory(input.Category), Summary: sanitizeSummary(input.Summary), Events: s.events()}
+	raw, err := json.Marshal(report)
+	if err != nil || int64(len(raw)) > s.config.MaxReportBytes {
+		return Report{}, ErrInvalidReport
+	}
+	return report, nil
 }
 
 func (s *Service) Flush(ctx context.Context) error {

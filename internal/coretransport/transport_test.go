@@ -36,6 +36,10 @@ func (a *diagnosticTestAPI) SubmitDiagnosticReport(context.Context, coreapi.Diag
 	return coreapi.DiagnosticStatus{ID: "diag-1", State: "queued"}, nil
 }
 
+func (a *diagnosticTestAPI) GetDiagnosticSnapshot(context.Context, coreapi.DiagnosticSnapshotRequest) (coreapi.DiagnosticSnapshot, error) {
+	return coreapi.DiagnosticSnapshot{ID: "diag-snapshot-1", Category: "core", Summary: "Core unavailable"}, nil
+}
+
 func (a *viewTestAPI) GetBrowserView(context.Context, coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
 	return coreapi.BrowserView{RequestID: "request-1", ContentType: "image/jpeg", Width: 320, Height: 180, Data: "amVwZw=="}, nil
 }
@@ -139,7 +143,7 @@ func TestHelloAdvertisesListRequests(t *testing.T) {
 		t.Fatal(err)
 	}
 	found := false
-	wanted := map[string]bool{MethodListRequests: false, MethodListJobPools: false, MethodApplyJobPool: false, MethodEnvironmentOperation: false}
+	wanted := map[string]bool{MethodListRequests: false, MethodListJobPools: false, MethodApplyJobPool: false, MethodEnvironmentOperation: false, MethodGetDiagnosticSnapshot: false}
 	for _, method := range hello.Methods {
 		if method == MethodListRequests {
 			found = true
@@ -185,6 +189,21 @@ func TestUnixContractDiagnosticReportMethod(t *testing.T) {
 	status, err := client.SubmitDiagnosticReport(context.Background(), coreapi.DiagnosticReport{Severity: "error", Category: "core", Summary: "Core unavailable"})
 	if err != nil || status.ID != "diag-1" || status.State != "queued" {
 		t.Fatalf("diagnostic status = %#v, err=%v", status, err)
+	}
+}
+
+func TestUnixContractDiagnosticSnapshotMethod(t *testing.T) {
+	api := &diagnosticTestAPI{testAPI: &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}}
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	snapshot, err := client.GetDiagnosticSnapshot(context.Background(), coreapi.DiagnosticSnapshotRequest{Severity: "error", Category: "core", Summary: "Core unavailable"})
+	if err != nil || snapshot.ID != "diag-snapshot-1" || snapshot.Category != "core" {
+		t.Fatalf("diagnostic snapshot = %#v, err=%v", snapshot, err)
 	}
 }
 

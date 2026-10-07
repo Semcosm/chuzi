@@ -227,9 +227,49 @@ type DiagnosticStatus struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// DiagnosticSnapshotRequest asks Core for a fresh local support snapshot. It
+// is read-only and never queues or uploads a report.
+type DiagnosticSnapshotRequest struct {
+	Severity string `json:"severity"`
+	Category string `json:"category"`
+	Summary  string `json:"summary"`
+}
+
+type DiagnosticEvent struct {
+	At         time.Time `json:"at,omitempty"`
+	Component  string    `json:"component,omitempty"`
+	Operation  string    `json:"operation,omitempty"`
+	Outcome    string    `json:"outcome,omitempty"`
+	RequestID  string    `json:"request_id,omitempty"`
+	Resource   string    `json:"resource,omitempty"`
+	ErrorClass string    `json:"error_class,omitempty"`
+}
+
+// DiagnosticSnapshot is the bounded, redaction-safe local artifact that a
+// client may save for support. It contains no paths, credentials, or raw log
+// text, and is intentionally separate from remote report submission.
+type DiagnosticSnapshot struct {
+	ID        string            `json:"id"`
+	CreatedAt time.Time         `json:"created_at"`
+	Version   string            `json:"version"`
+	Platform  string            `json:"platform"`
+	Arch      string            `json:"arch"`
+	Severity  string            `json:"severity"`
+	Category  string            `json:"category"`
+	Summary   string            `json:"summary"`
+	Events    []DiagnosticEvent `json:"events,omitempty"`
+}
+
 // DiagnosticsAPI is optional so older in-process embedders remain compatible.
 type DiagnosticsAPI interface {
 	SubmitDiagnosticReport(context.Context, DiagnosticReport) (DiagnosticStatus, error)
+}
+
+// DiagnosticSnapshotAPI is additive so older in-process embedders can keep
+// serving the existing Core contract while clients feature-detect local
+// export support.
+type DiagnosticSnapshotAPI interface {
+	GetDiagnosticSnapshot(context.Context, DiagnosticSnapshotRequest) (DiagnosticSnapshot, error)
 }
 
 // JobPoolStatus is a redaction-safe execution capacity projection. It never

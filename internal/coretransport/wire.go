@@ -32,6 +32,7 @@ const (
 	methodGetBrowserView          = "get_browser_view"
 	methodIssueRDPCapability      = "issue_rdp_capability"
 	methodSubmitDiagnostic        = "submit_diagnostic_report"
+	methodGetDiagnosticSnapshot   = "get_diagnostic_snapshot"
 	methodGetJobPoolStatus        = "get_job_pool_status"
 	methodListJobPools            = "list_job_pools"
 	methodGetJobPool              = "get_job_pool"
@@ -59,6 +60,7 @@ const (
 	MethodGetBrowserView          = methodGetBrowserView
 	MethodIssueRDPCapability      = methodIssueRDPCapability
 	MethodSubmitDiagnostic        = methodSubmitDiagnostic
+	MethodGetDiagnosticSnapshot   = methodGetDiagnosticSnapshot
 	MethodGetJobPoolStatus        = methodGetJobPoolStatus
 	MethodListJobPools            = methodListJobPools
 	MethodGetJobPool              = methodGetJobPool
@@ -154,7 +156,7 @@ type EnvironmentOperationResult struct {
 
 func methodList() []string {
 	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodListRequests, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetDiagnosticSnapshot, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
 }
 
 func marshalRequest(id, method string, params any) ([]byte, error) {

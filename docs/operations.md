@@ -447,9 +447,11 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
 - `observability.metrics_listen` 提供本地 Prometheus 文本端点；`log_path` 启用
   0600 JSONL 日志并按 `log_max_bytes`/`log_max_files` 轮转。两个端点都必须限制在
   loopback 或受保护管理网络。
-- `diagnostics.enabled` 控制用户同意后的故障报告能力；`diagnostics.endpoint`
-  只能使用 HTTPS（本机测试允许 loopback HTTP），不配置 endpoint 时报告仍会以
-  0600 文件保存在 data_dir 派生的 `diagnostics/` 队列。服务每 30 秒尝试一次待发送
-  报告，网络失败按退避时间重试；队列内容仅包含分类事件、平台/版本和脱敏摘要。
+- Windows UI 的“保存本地诊断”通过 Core 的 `get_diagnostic_snapshot` 生成有界脱敏文件，
+  不要求远程诊断开启，不写发送队列，也不产生网络请求。文件只包含分类事件、平台/版本和脱敏摘要，
+  不包含密码、Cookie、Token、Profile 路径、RDP endpoint 或原始日志。Core 不可用时 UI 保存最小
+  的本地回退快照。
+- `diagnostics.enabled` 和 `diagnostics.endpoint` 只控制未来的远程故障报告能力；endpoint
+  只能使用 HTTPS（本机测试允许 loopback HTTP）。远程发送不属于本地诊断导出的验收范围。
 - 备份状态数据库前确认凭证密文与密钥分离保存；撤销后的凭据密文已擦除且不可恢复。
 - 发布遵循 UGS 的版本和变更记录规则。

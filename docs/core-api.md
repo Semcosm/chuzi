@@ -45,7 +45,7 @@ The first request on a connection must be:
 The result contains the negotiated version and supported method names:
 
 ```json
-{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report","get_job_pool_status","list_job_pools","get_job_pool","apply_job_pool","scale_job_pool","drain_job_pool","resume_job_pool","get_job_pool_operation","list_environments","environment_operation","get_environment_operation"]}
+{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report","get_diagnostic_snapshot","get_job_pool_status","list_job_pools","get_job_pool","apply_job_pool","scale_job_pool","drain_job_pool","resume_job_pool","get_job_pool_operation","list_environments","environment_operation","get_environment_operation"]}
 ```
 
 An unsupported protocol or version is reported as `unavailable`. Calls before
@@ -66,6 +66,7 @@ successful negotiation are rejected as `invalid_argument`.
 | `get_browser_view` | `{request_id, width?, height?}` | `coreapi.BrowserView` |
 | `issue_rdp_capability` | `coreapi.RDPCapabilityRequest` | `coreapi.RDPCapability` |
 | `submit_diagnostic_report` | `coreapi.DiagnosticReport` | `coreapi.DiagnosticStatus` |
+| `get_diagnostic_snapshot` | `coreapi.DiagnosticSnapshotRequest` | `coreapi.DiagnosticSnapshot` |
 | `get_job_pool_status` | `{pool_id}` | `coreapi.JobPoolStatus` |
 | `list_job_pools` | `{}` | `{job_pools}` |
 | `get_job_pool` | `{pool_id}` | `{job_pool}` |
@@ -143,9 +144,15 @@ action in the native client. The request contains a bounded severity, category,
 and user-visible summary. Core adds only allow-listed platform and version
 metadata plus a bounded window of already-redacted operational events. It never
 reads credentials, browser Profiles, screenshots, page content, raw paths, or
-unstructured log text. If the configured HTTPS endpoint is unavailable, the
-service stores the bounded report in an owner-only local queue and retries with
-backoff.
+unstructured log text. Remote submission remains a separate, later product
+decision.
+
+`get_diagnostic_snapshot` is read-only and creates a bounded local artifact
+from the same allow-listed fields. It does not require remote diagnostics to be
+enabled, does not write the submission queue, and never makes a network request.
+The native client may save the returned snapshot to a local support location.
+If Core is unavailable, the client writes a smaller UI-only snapshot containing
+only stable error classification and local version metadata.
 
 Job-pool writes carry expected_revision, idempotency_key, actor, and an optional
 caller timestamp. A successful write returns a durable operation ID; repeating

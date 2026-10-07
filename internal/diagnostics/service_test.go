@@ -68,6 +68,56 @@ func TestSubmitRedactsUserDataAndQueuesOffline(t *testing.T) {
 	}
 }
 
+func TestSnapshotIsAvailableWhenRemoteDiagnosticsAreDisabled(t *testing.T) {
+	root := t.TempDir()
+	service, err := New(Config{
+		Enabled:  false,
+		QueueDir: filepath.Join(root, "diagnostics"),
+		Version:  "test",
+		Events: func() []observability.Event {
+			return []observability.Event{{RequestID: "request-secret", Resource: "C:\\Users\\Chen", ErrorClass: "core_unavailable"}}
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := service.Snapshot(context.Background(), ReportInput{Severity: SeverityError, Category: "core", Summary: "Core unavailable"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.ID == "" || report.Category != "core" || len(report.Events) != 1 {
+		t.Fatalf("snapshot = %#v", report)
+	}
+	files, err := os.ReadDir(filepath.Join(root, "diagnostics"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 0 {
+		t.Fatalf("snapshot unexpectedly queued: %v", files)
+	}
+}
+
+func TestSnapshotNeverContactsRemoteEndpoint(t *testing.T) {
+	root := t.TempDir()
+	called := make(chan struct{}, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called <- struct{}{}
+	}))
+	defer server.Close()
+	service, err := New(Config{Enabled: true, Endpoint: server.URL, QueueDir: filepath.Join(root, "diagnostics")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.Snapshot(context.Background(), ReportInput{Severity: SeverityError, Category: "core", Summary: "Core unavailable"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-called:
+		t.Fatal("snapshot contacted the remote endpoint")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
 func TestSubmitUploadsAndRemovesQueueItem(t *testing.T) {
 	root := t.TempDir()
 	var received map[string]any

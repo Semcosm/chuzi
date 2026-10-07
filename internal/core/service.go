@@ -77,6 +77,10 @@ type DiagnosticsPort interface {
 	Submit(context.Context, diagnostics.ReportInput) (diagnostics.Status, error)
 }
 
+type DiagnosticSnapshotPort interface {
+	Snapshot(context.Context, diagnostics.ReportInput) (diagnostics.Report, error)
+}
+
 type JobPoolStatusPort interface {
 	SlotPoolStatus(string, time.Time) (slot.StatusCounts, error)
 }
@@ -142,6 +146,7 @@ type Service struct {
 }
 
 var _ coreapi.API = (*Service)(nil)
+var _ coreapi.DiagnosticSnapshotAPI = (*Service)(nil)
 var _ coreapi.JobPoolAPI = (*Service)(nil)
 var _ coreapi.EnvironmentAPI = (*Service)(nil)
 
@@ -478,6 +483,43 @@ func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.Diag
 		return coreapi.DiagnosticStatus{}, coreapi.NewError(coreapi.CodeInternal, "diagnostic report failed")
 	}
 	return coreapi.DiagnosticStatus{ID: status.ID, State: status.State, Attempts: status.Attempts, CreatedAt: status.CreatedAt, UpdatedAt: status.UpdatedAt}, nil
+}
+
+func (s *Service) GetDiagnosticSnapshot(ctx context.Context, input coreapi.DiagnosticSnapshotRequest) (coreapi.DiagnosticSnapshot, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.DiagnosticSnapshot{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.DiagnosticSnapshot{}, err
+	}
+	port, ok := s.diagnostics.(DiagnosticSnapshotPort)
+	if !ok {
+		return coreapi.DiagnosticSnapshot{}, coreapi.NewError(coreapi.CodeUnavailable, "diagnostic snapshot is unavailable")
+	}
+	report, err := port.Snapshot(ctx, diagnostics.ReportInput{Severity: input.Severity, Category: input.Category, Summary: input.Summary})
+	if err != nil {
+		if errors.Is(err, diagnostics.ErrInvalidReport) {
+			return coreapi.DiagnosticSnapshot{}, classify(requestservice.ErrInvalidInput)
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return coreapi.DiagnosticSnapshot{}, classify(err)
+		}
+		return coreapi.DiagnosticSnapshot{}, coreapi.NewError(coreapi.CodeInternal, "diagnostic snapshot failed")
+	}
+	events := make([]coreapi.DiagnosticEvent, 0, len(report.Events))
+	for _, event := range report.Events {
+		event = observability.SanitizeEvent(event, report.CreatedAt)
+		events = append(events, coreapi.DiagnosticEvent{
+			At: event.At, Component: event.Component, Operation: event.Operation,
+			Outcome: event.Outcome, RequestID: event.RequestID,
+			Resource: event.Resource, ErrorClass: event.ErrorClass,
+		})
+	}
+	return coreapi.DiagnosticSnapshot{
+		ID: report.ID, CreatedAt: report.CreatedAt, Version: report.Version,
+		Platform: report.Platform, Arch: report.Arch, Severity: report.Severity,
+		Category: report.Category, Summary: report.Summary, Events: events,
+	}, nil
 }
 
 func (s *Service) GetBrowserView(ctx context.Context, input coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {
