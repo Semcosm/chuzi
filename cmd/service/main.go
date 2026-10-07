@@ -107,6 +107,13 @@ type serviceRuntime struct {
 	rdp                *rdpCapabilityBridge
 }
 
+func (r *serviceRuntime) record(event observability.Event) {
+	if r == nil {
+		return
+	}
+	observability.MultiSink{r.metrics, r.logger, r.eventBuffer}.Record(event)
+}
+
 func (r *serviceRuntime) refreshMetrics(at time.Time) {
 	if r == nil || r.metrics == nil || r.store == nil || at.IsZero() {
 		return
@@ -518,7 +525,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		RetryBase:      time.Duration(cfg.Diagnostics.RetryBaseSeconds) * time.Second,
 		RetryMax:       time.Duration(cfg.Diagnostics.RetryMaxSeconds) * time.Second,
 		Version:        version,
-		Events:         func() []observability.Event { return eventBuffer.Snapshot(64) },
+		Events:         func() []observability.Event { return eventBuffer.Snapshot(256) },
 		Clock:          now,
 	})
 	if diagnosticsErr != nil {

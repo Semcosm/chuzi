@@ -37,11 +37,11 @@ func run(ctx context.Context, options serviceOptions) error {
 		if runtime.automation != nil {
 			_ = runtime.automation.Close(context.Background())
 		}
-		if closeErr := runtime.store.Close(); closeErr != nil && runtime.logger != nil {
-			runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "failed", ErrorClass: "store_close_failed"})
+		if closeErr := runtime.store.Close(); closeErr != nil {
+			runtime.record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "failed", ErrorClass: "store_close_failed"})
 		}
 		if runtime.logger != nil {
-			runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "stopping"})
+			runtime.record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "stopping"})
 			_ = runtime.logger.Close()
 		}
 	}()
@@ -151,7 +151,7 @@ func run(ctx context.Context, options serviceOptions) error {
 		}
 	}()
 	runtime.refreshMetrics(time.Now().UTC())
-	runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "startup", Outcome: "ready", Resource: options.backend})
+	runtime.record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "startup", Outcome: "ready", Resource: options.backend})
 	ticker := time.NewTicker(options.pollInterval)
 	defer ticker.Stop()
 	for {
@@ -168,7 +168,7 @@ func run(ctx context.Context, options serviceOptions) error {
 			return fmt.Errorf("scheduler pass: %w", runErr)
 		}
 		if !outcome.Idle {
-			runtime.logger.Record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "scheduler", Outcome: "completed", RequestID: outcome.Request.RequestID})
+			runtime.record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "scheduler", Outcome: "completed", RequestID: outcome.Request.RequestID})
 		}
 		runtime.refreshMetrics(time.Now().UTC())
 		select {

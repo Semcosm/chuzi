@@ -81,11 +81,11 @@ func TestSnapshotIsAvailableWhenRemoteDiagnosticsAreDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := service.Snapshot(context.Background(), ReportInput{Severity: SeverityError, Category: "core", Summary: "Core unavailable"})
+	report, err := service.Snapshot(context.Background(), ReportInput{Severity: SeverityError, Category: "core", Summary: "Core unavailable", ErrorClass: "core_start_timeout", Operation: "core_lifecycle"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.ID == "" || report.Category != "core" || len(report.Events) != 1 {
+	if report.ID == "" || report.Schema != "chuzi.diagnostic/v2" || report.Source != "core" || report.Category != "core" || report.ErrorClass != "core_start_timeout" || report.Operation != "core_lifecycle" || report.EventCount != 1 || len(report.Events) != 1 {
 		t.Fatalf("snapshot = %#v", report)
 	}
 	files, err := os.ReadDir(filepath.Join(root, "diagnostics"))
@@ -115,6 +115,29 @@ func TestSnapshotNeverContactsRemoteEndpoint(t *testing.T) {
 	case <-called:
 		t.Fatal("snapshot contacted the remote endpoint")
 	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestSnapshotReportsEventWindowMetadata(t *testing.T) {
+	root := t.TempDir()
+	events := make([]observability.Event, 65)
+	for index := range events {
+		events[index] = observability.Event{Component: "core", Operation: "call", Outcome: "failed", ErrorClass: "internal"}
+	}
+	service, err := New(Config{
+		Enabled:  true,
+		QueueDir: filepath.Join(root, "diagnostics"),
+		Events:   func() []observability.Event { return events },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := service.Snapshot(context.Background(), ReportInput{Severity: SeverityError, Category: "core", Summary: "Core failed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.EventCount != 65 || !report.EventsTruncated || len(report.Events) != 64 {
+		t.Fatalf("event metadata = count %d, truncated %v, events %d", report.EventCount, report.EventsTruncated, len(report.Events))
 	}
 }
 

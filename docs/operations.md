@@ -449,8 +449,12 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
   loopback 或受保护管理网络。
 - Windows UI 的“保存本地诊断”通过 Core 的 `get_diagnostic_snapshot` 生成有界脱敏文件，
   不要求远程诊断开启，不写发送队列，也不产生网络请求。文件只包含分类事件、平台/版本和脱敏摘要，
-  不包含密码、Cookie、Token、Profile 路径、RDP endpoint 或原始日志。Core 不可用时 UI 保存最小
-  的本地回退快照。
+  不包含密码、Cookie、Token、Profile 路径、RDP endpoint 或原始日志。文件使用
+  `chuzi.diagnostic/v2` schema，包含稳定的 `error_class`、`operation`、事件总数、
+  截断标志、事件耗时和 Core 生命周期状态。事件窗口最多保留最近 64 条，超过窗口时
+  `events_truncated=true` 且 `event_count` 保留原始总数。Core 不可用、返回旧 schema 或
+  采集失败时，UI 保存包含 `capture_error_class` 的 v2 本地回退快照；失败分类只使用固定值，
+  不写入原始错误文本。
 - `diagnostics.enabled` 和 `diagnostics.endpoint` 只控制未来的远程故障报告能力；endpoint
   只能使用 HTTPS（本机测试允许 loopback HTTP）。远程发送不属于本地诊断导出的验收范围。
 - 备份状态数据库前确认凭证密文与密钥分离保存；撤销后的凭据密文已擦除且不可恢复。

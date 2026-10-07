@@ -151,8 +151,16 @@ decision.
 from the same allow-listed fields. It does not require remote diagnostics to be
 enabled, does not write the submission queue, and never makes a network request.
 The native client may save the returned snapshot to a local support location.
-If Core is unavailable, the client writes a smaller UI-only snapshot containing
-only stable error classification and local version metadata.
+The snapshot uses the `chuzi.diagnostic/v2` schema. It includes a stable
+`error_class` and `operation`, the total `event_count`, an `events_truncated`
+flag for the bounded 64-event window, per-event `duration_ms`, and a
+`core_status` projection (`installed`, `running`, `ready`, and lifecycle status).
+Event fields remain allow-listed and redacted; no paths, credentials, tokens,
+screenshots, or raw error text are included. If event capture or the Core call
+fails, `capture_error_class` records a stable classification and the native
+client writes a v2 UI fallback with the same context and an empty event window.
+Older or malformed snapshot payloads are treated as invalid projections and
+receive the same fallback treatment.
 
 Job-pool writes carry expected_revision, idempotency_key, actor, and an optional
 caller timestamp. A successful write returns a durable operation ID; repeating

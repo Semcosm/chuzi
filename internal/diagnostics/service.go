@@ -40,9 +40,11 @@ const (
 )
 
 type ReportInput struct {
-	Severity string `json:"severity"`
-	Category string `json:"category"`
-	Summary  string `json:"summary"`
+	Severity   string `json:"severity"`
+	Category   string `json:"category"`
+	Summary    string `json:"summary"`
+	ErrorClass string `json:"error_class,omitempty"`
+	Operation  string `json:"operation,omitempty"`
 }
 
 type Status struct {
@@ -54,15 +56,22 @@ type Status struct {
 }
 
 type Report struct {
-	ID        string                `json:"id"`
-	CreatedAt time.Time             `json:"created_at"`
-	Version   string                `json:"version"`
-	Platform  string                `json:"platform"`
-	Arch      string                `json:"arch"`
-	Severity  string                `json:"severity"`
-	Category  string                `json:"category"`
-	Summary   string                `json:"summary"`
-	Events    []observability.Event `json:"events,omitempty"`
+	Schema            string                `json:"schema"`
+	ID                string                `json:"id"`
+	CreatedAt         time.Time             `json:"created_at"`
+	Source            string                `json:"source"`
+	Version           string                `json:"version"`
+	Platform          string                `json:"platform"`
+	Arch              string                `json:"arch"`
+	Severity          string                `json:"severity"`
+	Category          string                `json:"category"`
+	Summary           string                `json:"summary"`
+	ErrorClass        string                `json:"error_class,omitempty"`
+	Operation         string                `json:"operation,omitempty"`
+	EventCount        int                   `json:"event_count"`
+	EventsTruncated   bool                  `json:"events_truncated,omitempty"`
+	CaptureErrorClass string                `json:"capture_error_class,omitempty"`
+	Events            []observability.Event `json:"events,omitempty"`
 }
 
 type queuedReport struct {
@@ -167,7 +176,8 @@ func (s *Service) Snapshot(ctx context.Context, input ReportInput) (Report, erro
 		return Report{}, err
 	}
 	now := s.now()
-	report := Report{ID: newID(now), CreatedAt: now, Version: safeVersion(s.config.Version), Platform: runtime.GOOS, Arch: runtime.GOARCH, Severity: normalizeSeverity(input.Severity), Category: normalizeCategory(input.Category), Summary: sanitizeSummary(input.Summary), Events: s.events()}
+	events, eventCount, eventsTruncated := s.events()
+	report := Report{Schema: "chuzi.diagnostic/v2", ID: newID(now), CreatedAt: now, Source: "core", Version: safeVersion(s.config.Version), Platform: runtime.GOOS, Arch: runtime.GOARCH, Severity: normalizeSeverity(input.Severity), Category: normalizeCategory(input.Category), Summary: sanitizeSummary(input.Summary), ErrorClass: sanitizeClassification(input.ErrorClass), Operation: sanitizeClassification(input.Operation), EventCount: eventCount, EventsTruncated: eventsTruncated, Events: events}
 	raw, err := json.Marshal(report)
 	if err != nil || int64(len(raw)) > s.config.MaxReportBytes {
 		return Report{}, ErrInvalidReport
@@ -323,11 +333,13 @@ func (s *Service) statusForFile(path string) (Status, error) {
 	}
 	return Status{ID: queued.Report.ID, State: "queued", Attempts: queued.Attempts, CreatedAt: queued.Report.CreatedAt, UpdatedAt: queued.UpdatedAt}, nil
 }
-func (s *Service) events() []observability.Event {
+func (s *Service) events() ([]observability.Event, int, bool) {
 	if s.config.Events == nil {
-		return nil
+		return nil, 0, false
 	}
 	items := s.config.Events()
+	eventCount := len(items)
+	eventsTruncated := eventCount > 64
 	if len(items) > 64 {
 		items = items[len(items)-64:]
 	}
@@ -335,7 +347,7 @@ func (s *Service) events() []observability.Event {
 	for _, item := range items {
 		result = append(result, observability.SanitizeEvent(item, s.now()))
 	}
-	return result
+	return result, eventCount, eventsTruncated
 }
 func (s *Service) now() time.Time {
 	now := s.config.Clock()
@@ -406,6 +418,19 @@ func sanitizeSummary(value string) string {
 		}
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+func sanitizeClassification(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || len(value) > 64 {
+		return ""
+	}
+	for _, r := range value {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '-' && r != '.' {
+			return ""
+		}
+	}
+	return value
 }
 func safeVersion(value string) string {
 	value = strings.TrimSpace(value)

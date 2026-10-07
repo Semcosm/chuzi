@@ -24,6 +24,8 @@ pub(crate) struct CoreStatus {
     pub(crate) installed: bool,
     pub(crate) ready: bool,
     pub(crate) running: bool,
+    #[serde(default)]
+    pub(crate) status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -190,18 +192,48 @@ pub(crate) struct DiagnosticEvent {
     pub(crate) resource: String,
     #[serde(default)]
     pub(crate) error_class: String,
+    #[serde(default)]
+    pub(crate) duration_ms: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(crate) struct DiagnosticCoreStatus {
+    #[serde(default)]
+    pub(crate) installed: bool,
+    #[serde(default)]
+    pub(crate) running: bool,
+    #[serde(default)]
+    pub(crate) ready: bool,
+    #[serde(default)]
+    pub(crate) status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct DiagnosticSnapshot {
+    #[serde(default)]
+    pub(crate) schema: String,
     pub(crate) id: String,
     pub(crate) created_at: String,
+    #[serde(default)]
+    pub(crate) source: String,
     pub(crate) version: String,
     pub(crate) platform: String,
     pub(crate) arch: String,
     pub(crate) severity: String,
     pub(crate) category: String,
     pub(crate) summary: String,
+    #[serde(default)]
+    pub(crate) error_class: String,
+    #[serde(default)]
+    pub(crate) operation: String,
+    #[serde(default)]
+    pub(crate) event_count: usize,
+    #[serde(default)]
+    pub(crate) events_truncated: bool,
+    #[serde(default)]
+    pub(crate) capture_error_class: String,
+    #[serde(default)]
+    pub(crate) core_status: DiagnosticCoreStatus,
     #[serde(default)]
     pub(crate) events: Vec<DiagnosticEvent>,
 }
