@@ -233,6 +233,28 @@ pub(crate) struct DiagnosticSnapshot {
     #[serde(default)]
     pub(crate) capture_error_class: String,
     #[serde(default)]
+    pub(crate) capture_stage: String,
+    #[serde(default)]
+    pub(crate) core_schema: String,
+    #[serde(default)]
+    pub(crate) core_version: String,
+    #[serde(default)]
+    pub(crate) core_status_error_class: String,
+    #[serde(default)]
+    pub(crate) response_kind: String,
+    #[serde(default)]
+    pub(crate) response_size: usize,
+    #[serde(default)]
+    pub(crate) response_key_count: usize,
+    #[serde(default)]
+    pub(crate) response_fields: Vec<String>,
+    #[serde(default)]
+    pub(crate) response_fingerprint: String,
+    #[serde(default)]
+    pub(crate) capture_duration_ms: u64,
+    #[serde(default)]
+    pub(crate) client_version: String,
+    #[serde(default)]
     pub(crate) core_status: DiagnosticCoreStatus,
     #[serde(default)]
     pub(crate) events: Vec<DiagnosticEvent>,

@@ -458,7 +458,11 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
   截断标志、事件耗时和 Core 生命周期状态。事件窗口最多保留最近 64 条，超过窗口时
   `events_truncated=true` 且 `event_count` 保留原始总数。Core 不可用、返回旧 schema 或
   采集失败时，UI 保存包含 `capture_error_class` 的 v2 本地回退快照；失败分类只使用固定值，
-  不写入原始错误文本。
+  不写入原始错误文本。诊断文件还记录 capture_stage、Core schema/version、
+  Core 状态探测分类、响应 kind/大小/键数量、allow-list 字段名、FNV-1a64 响应指纹、
+  捕获耗时和客户端版本。UI 会对缺失 schema、非对象响应、schema 类型错误、旧 schema、
+  v2 字段类型错误以及缺失必需字段分别归类；回退只保留一个合成的 ui 失败事件，
+  不复制 launcher stdout/stderr、路径、请求 ID 或敏感字段。
 - `diagnostics.enabled` 和 `diagnostics.endpoint` 只控制未来的远程故障报告能力；endpoint
   只能使用 HTTPS（本机测试允许 loopback HTTP）。远程发送不属于本地诊断导出的验收范围。
 - 备份状态数据库前确认凭证密文与密钥分离保存；撤销后的凭据密文已擦除且不可恢复。
