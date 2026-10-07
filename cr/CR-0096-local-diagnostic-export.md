@@ -5,7 +5,7 @@ Head or Range: feat/diagnostic-v2
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(support): add local diagnostic snapshot export
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -60,7 +60,9 @@ recorded in the commit trailers and CI result.
 The workflow contract also verifies that the native Windows job-pool smoke is
 skipped unless the repository opt-in variable or manual boolean input is true.
 The `test` channel workflow dispatch for the final CI fix completed successfully
-with the native smoke job skipped.
+with the native smoke job skipped. The persisted record is updated with each
+implementation or governance commit so PR validation uses the exact proposed
+history.
 
 ## Risk
 
