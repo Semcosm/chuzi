@@ -5,7 +5,7 @@ Head or Range: feat/diagnostic-v2
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(support): add local diagnostic snapshot export
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -25,7 +25,9 @@ unavailable or returns an invalid projection.
 
 The existing remote `submit_diagnostic_report` API remains available for a
 future product decision but is no longer presented as the immediate error
-recovery action in the Windows UI.
+recovery action in the Windows UI. The destructive native Windows job-pool
+smoke remains explicitly opt-in; normal schedules, pushes, tags, and manual
+dispatches do not request a self-hosted runner.
 
 ## Motivation
 
@@ -55,6 +57,8 @@ event count/truncation and duration metadata, Core field projection and event
 redaction, lifecycle event capture, transport method negotiation and round-trip
 calls, and the UI local/fallback export path. Full repository validation is
 recorded in the commit trailers and CI result.
+The workflow contract also verifies that the native Windows job-pool smoke is
+skipped unless the repository opt-in variable or manual boolean input is true.
 
 ## Risk
 

@@ -144,8 +144,11 @@ Administrators 排除、ownership/SID 对账、Profile ACL、reparse/path traver
 agent named pipe/token、session-aware worker 启动、browser worker handshake、worker
 停止、active session health、过期 lease fence、service shutdown agent cleanup、未知
 ownership 项保护和资源退休。发布 workflow 的
-`chuzi-build-windows-job-pool-smoke` job 使用专用 runner；对 nightly/stable 该 job 失败或
-排队不可用时，`chuzi-build` 聚合检查失败或保持等待，发布不能继续。
+`chuzi-build-windows-job-pool-smoke` job 使用专用 runner，但默认关闭；schedule、push、tag
+和普通 workflow dispatch 都会跳过它，即使 channel 是 `nightly` 或 `stable`。只有在仓库变量
+`CHUZI_ENABLE_WINDOWS_JOB_POOL_SMOKE=true`，或手动 dispatch 时将
+`enable_windows_job_pool_smoke` 明确设为 true，才会请求该 runner。启用后 job 失败或排队不可用时，
+`chuzi-build` 聚合检查失败或保持等待，发布不能继续。
 
 ## Windows readiness 和故障处理
 
