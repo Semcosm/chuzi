@@ -146,7 +146,8 @@ export component MainWindow inherits Window {
     callback session-primary-action(string, string);
     callback session-cancel-confirmed(string);
     callback session-more-action(string, string);
-    callback diagnostic-submit();
+    callback diagnostic-save();
+    callback diagnostic-open();
     callback diagnostic-dismiss();
     callback session-workspace-dock();
     callback session-workspace-float();
@@ -737,8 +738,14 @@ export component MainWindow inherits Window {
                         padding: ChuziTheme.space-5;
                         spacing: ChuziTheme.space-2;
                         Text { text: "Diagnostics and privacy"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
-                        Text { text: "Support reports are consent-based and redacted. They exclude passwords, tokens, cookies, page content, RDP credentials, and raw filesystem paths."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
-                        Text { text: "A consent sheet appears only when a Core or UI operation needs diagnostic context."; color: ChuziTheme.text-tertiary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                        Text { text: "Local diagnostic files are redacted. They exclude passwords, tokens, cookies, page content, RDP credentials, and raw filesystem paths."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        Text { text: "No network request is made when you save a local diagnostic file."; color: ChuziTheme.text-tertiary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                        HorizontalBox {
+                            height: ChuziTheme.control-height;
+                            spacing: ChuziTheme.space-2;
+                            vertical-stretch: 0;
+                            Button { text: "Save local diagnostics"; enabled: !root.busy; clicked => { root.diagnostic-open(); } }
+                        }
                     }
                 }
             }
@@ -921,16 +928,16 @@ export component MainWindow inherits Window {
             VerticalBox {
                 padding: 24px;
                 spacing: 12px;
-                Text { text: "是否发送诊断信息？"; color: Palette.foreground; font-size: 22px; font-weight: 700; vertical-stretch: 0; }
+                Text { text: "保存本地诊断文件"; color: Palette.foreground; font-size: 22px; font-weight: 700; vertical-stretch: 0; }
                 Text { text: root.diagnostic-consent-summary; color: Palette.foreground; wrap: word-wrap; vertical-stretch: 0; }
-                Text { text: "将只收集分类错误、最近的脱敏运行事件和必要的版本/平台信息。不会收集密码、Token、Cookie、页面内容、RDP 凭据或原始路径。"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 1; }
-                Text { text: root.diagnostic-submitting ? "正在保存并提交…" : "你可以拒绝；同意后若网络不可用会安全保存在本机并稍后重试。"; color: Palette.alternate-foreground; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
+                Text { text: "文件只包含分类错误、最近的脱敏运行事件和必要的版本/平台信息。不会收集密码、Token、Cookie、页面内容、RDP 凭据或原始路径。"; color: Palette.alternate-foreground; wrap: word-wrap; vertical-stretch: 1; }
+                Text { text: root.diagnostic-submitting ? "正在生成本地诊断文件…" : "保存动作只写入本机文件，不会发送到远程服务。"; color: Palette.alternate-foreground; font-size: 12px; wrap: word-wrap; vertical-stretch: 0; }
                 HorizontalBox {
                     spacing: 10px;
                     height: 40px;
                     vertical-stretch: 0;
-                    Button { text: "暂不发送"; enabled: !root.diagnostic-submitting; clicked => { root.diagnostic-dismiss(); } }
-                    Button { text: "发送诊断信息"; enabled: !root.diagnostic-submitting; clicked => { root.diagnostic-submit(); } }
+                    Button { text: "关闭"; enabled: !root.diagnostic-submitting; clicked => { root.diagnostic-dismiss(); } }
+                    Button { text: "保存诊断文件"; enabled: !root.diagnostic-submitting; clicked => { root.diagnostic-save(); } }
                 }
             }
         }

@@ -8,17 +8,18 @@ use desktop_rdp::RdpHost;
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreEnvironment, CoreEnvironmentList,
     CoreEnvironmentOperation, CoreJobPool, CoreJobPoolList, CoreJobPoolOperation, CoreRequest,
-    CoreRequestList, CoreStatus, DiagnosticStatus, UiPreferences,
+    CoreRequestList, CoreStatus, DiagnosticSnapshot, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
 use slint::{ComponentHandle, Image, ModelRc, SharedString};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use view_model::{
     sessions_from_requests, ProjectionError, SelectionMove, SessionFilter, SessionViewModel,
 };
@@ -106,6 +107,74 @@ impl AppState {
 
     fn ui_preferences_path(&self) -> PathBuf {
         self.data_root.join(".chuzi-ui-settings.json")
+    }
+
+    fn local_diagnostics_dir(&self) -> PathBuf {
+        if cfg!(windows) {
+            if let Some(root) = std::env::var_os("LOCALAPPDATA") {
+                return PathBuf::from(root).join("Chuzi").join("diagnostics");
+            }
+        } else if let Some(root) = std::env::var_os("XDG_STATE_HOME") {
+            return PathBuf::from(root).join("chuzi").join("diagnostics");
+        }
+        self.data_root.join("diagnostics")
+    }
+
+    fn save_diagnostic_snapshot(&self, snapshot: &DiagnosticSnapshot) -> Result<PathBuf, String> {
+        let mut id = snapshot
+            .id
+            .chars()
+            .filter(|value| value.is_ascii_alphanumeric() || matches!(value, '-' | '_'))
+            .take(80)
+            .collect::<String>();
+        if id.is_empty() {
+            id = format!(
+                "local-{}",
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map_err(|error| error.to_string())?
+                    .as_millis()
+            );
+        }
+        let directory = self.local_diagnostics_dir();
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let path = directory.join(format!("diagnostic-{id}.json"));
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_nanos();
+        let temporary = directory.join(format!(".diagnostic-{id}-{nonce}.tmp"));
+        let bytes = serde_json::to_vec_pretty(snapshot).map_err(|error| error.to_string())?;
+        if bytes.len() > 256 * 1024 {
+            return Err("diagnostic_snapshot_too_large".to_owned());
+        }
+        let write_result = (|| {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temporary)
+                .map_err(|error| error.to_string())?;
+            file.write_all(&bytes).map_err(|error| error.to_string())?;
+            file.flush().map_err(|error| error.to_string())?;
+            Ok::<(), String>(())
+        })();
+        if let Err(error) = write_result {
+            let _ = fs::remove_file(&temporary);
+            return Err(error);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if let Err(error) = fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600)) {
+                let _ = fs::remove_file(&temporary);
+                return Err(error.to_string());
+            }
+        }
+        if let Err(error) = fs::rename(&temporary, &path) {
+            let _ = fs::remove_file(&temporary);
+            return Err(error.to_string());
+        }
+        Ok(path)
     }
 
     fn load_ui_theme(&self) -> String {
@@ -205,6 +274,7 @@ fn launcher_command_needs_manifest(command: &str) -> bool {
 #[derive(Clone, Copy)]
 enum CoreMethod {
     SubmitDiagnosticReport,
+    GetDiagnosticSnapshot,
     ListJobPools,
     ApplyJobPool,
     ScaleJobPool,
@@ -224,6 +294,7 @@ impl CoreMethod {
     fn wire_name(self) -> &'static str {
         match self {
             Self::SubmitDiagnosticReport => "submit_diagnostic_report",
+            Self::GetDiagnosticSnapshot => "get_diagnostic_snapshot",
             Self::ListJobPools => "list_job_pools",
             Self::ApplyJobPool => "apply_job_pool",
             Self::ScaleJobPool => "scale_job_pool",
@@ -625,7 +696,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
 
     let diagnostic_weak = ui.as_weak();
     let diagnostic_state = Arc::clone(&state);
-    ui.on_diagnostic_submit(move || {
+    ui.on_diagnostic_save(move || {
         let Some(window) = diagnostic_weak.upgrade() else {
             return;
         };
@@ -638,26 +709,22 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             &weak,
             Arc::clone(&diagnostic_state),
             move |state| {
-                ensure_core_ready(state)?;
-                let result = core_call(
-                    state,
-                    CoreMethod::SubmitDiagnosticReport,
-                    json!({"severity": severity, "category": category, "summary": summary}),
-                )?;
-                let status: DiagnosticStatus =
-                    serde_json::from_value(result).map_err(|error| error.to_string())?;
-                let message = if status.state == "queued" {
-                    "诊断信息已保存，将在网络可用时自动重试。".to_owned()
-                } else {
-                    "诊断信息已提交，感谢你的帮助。".to_owned()
-                };
-                Ok((message, status))
+                let snapshot = diagnostic_snapshot(state, &severity, &category, &summary);
+                let path = state.save_diagnostic_snapshot(&snapshot)?;
+                Ok((format!("诊断文件已保存：{}", path.display()), path))
             },
-            |window, _status: DiagnosticStatus| {
+            |window, _path: PathBuf| {
                 window.set_diagnostic_submitting(false);
                 window.set_diagnostic_consent_visible(false);
             },
         );
+    });
+
+    let diagnostic_open_weak = ui.as_weak();
+    ui.on_diagnostic_open(move || {
+        if let Some(window) = diagnostic_open_weak.upgrade() {
+            show_diagnostic_consent(&window, "diagnostics", "warning");
+        }
     });
 
     let diagnostic_dismiss_weak = ui.as_weak();
@@ -690,12 +757,79 @@ fn show_diagnostic_consent(window: &MainWindow, category: &str, severity: &str) 
     window.set_diagnostic_consent_severity(severity.into());
     window.set_diagnostic_consent_summary(
         match category {
-            "core" => "Core 操作出现问题，是否发送脱敏诊断信息？",
-            _ => "应用操作出现问题，是否发送脱敏诊断信息？",
+            "core" => "Core 操作出现问题。可以保存一份脱敏诊断文件交给支持人员。",
+            "diagnostics" => "可以保存最近的脱敏运行诊断文件。",
+            _ => "应用操作出现问题。可以保存一份脱敏诊断文件交给支持人员。",
         }
         .into(),
     );
     window.set_diagnostic_consent_visible(true);
+}
+
+fn diagnostic_snapshot(
+    state: &AppState,
+    severity: &str,
+    category: &str,
+    summary: &str,
+) -> DiagnosticSnapshot {
+    let params = json!({"severity": severity, "category": category, "summary": summary});
+    if let Ok(value) = core_call(state, CoreMethod::GetDiagnosticSnapshot, params) {
+        if let Ok(snapshot) = serde_json::from_value::<DiagnosticSnapshot>(value) {
+            return snapshot;
+        }
+    }
+    DiagnosticSnapshot {
+        id: format!(
+            "ui-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|value| value.as_millis())
+                .unwrap_or_default()
+        ),
+        created_at: unix_timestamp_label(),
+        version: env!("CARGO_PKG_VERSION").to_owned(),
+        platform: std::env::consts::OS.to_owned(),
+        arch: std::env::consts::ARCH.to_owned(),
+        severity: bounded_diagnostic_field(severity),
+        category: bounded_diagnostic_field(category),
+        summary: bounded_diagnostic_field(summary),
+        events: Vec::new(),
+    }
+}
+
+fn bounded_diagnostic_field(value: &str) -> String {
+    let value = value.trim();
+    let lower = value.to_ascii_lowercase();
+    if [
+        "password",
+        "passwd",
+        "token",
+        "cookie",
+        "authorization",
+        "credential",
+        "secret",
+        "private key",
+        "profile path",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        return "user-visible diagnostic message redacted".to_owned();
+    }
+    value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(240)
+        .collect::<String>()
+        .trim()
+        .to_owned()
+}
+
+fn unix_timestamp_label() -> String {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(value) => format!("unix:{}", value.as_secs()),
+        Err(_) => "unix:0".to_owned(),
+    }
 }
 
 #[derive(Debug)]
@@ -2184,5 +2318,25 @@ mod tests {
         assert_ne!(key, changed);
         assert!(!key.contains('/'));
         assert!(!key.contains('\\'));
+    }
+
+    #[test]
+    fn local_diagnostic_fields_are_bounded_and_typed() {
+        let value = bounded_diagnostic_field("core\npassword=secret");
+        assert_eq!(value, "user-visible diagnostic message redacted");
+        let snapshot = DiagnosticSnapshot {
+            id: "diag-1".to_owned(),
+            created_at: "unix:1".to_owned(),
+            version: "test".to_owned(),
+            platform: "windows".to_owned(),
+            arch: "amd64".to_owned(),
+            severity: "warning".to_owned(),
+            category: "ui".to_owned(),
+            summary: "safe".to_owned(),
+            events: Vec::new(),
+        };
+        let encoded = serde_json::to_string(&snapshot).expect("snapshot should encode");
+        assert!(!encoded.contains("password"));
+        assert!(!encoded.contains("Profile"));
     }
 }

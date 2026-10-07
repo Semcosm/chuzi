@@ -13,6 +13,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/diagnostics"
+	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/request"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
@@ -103,6 +104,15 @@ func (testDiagnosticsPort) Submit(context.Context, diagnostics.ReportInput) (dia
 	return diagnostics.Status{ID: "diag-1", State: "queued", CreatedAt: time.Unix(1, 0).UTC(), UpdatedAt: time.Unix(1, 0).UTC()}, nil
 }
 
+func (testDiagnosticsPort) Snapshot(context.Context, diagnostics.ReportInput) (diagnostics.Report, error) {
+	return diagnostics.Report{
+		ID: "diag-snapshot-1", CreatedAt: time.Unix(1, 0).UTC(), Version: "test",
+		Platform: "windows", Arch: "amd64", Severity: diagnostics.SeverityError,
+		Category: "core", Summary: "Core unavailable",
+		Events: []observability.Event{{RequestID: "request-secret", Resource: "C:\\Users\\Chen", ErrorClass: "core_unavailable"}},
+	}, nil
+}
+
 type testJobPoolPort struct{}
 
 func (testJobPoolPort) SlotPoolStatus(string, time.Time) (slot.StatusCounts, error) {
@@ -143,6 +153,29 @@ func TestSubmitDiagnosticReportUsesOptionalPort(t *testing.T) {
 	status, err := service.SubmitDiagnosticReport(context.Background(), coreapi.DiagnosticReport{Severity: "error", Category: "core", Summary: "Core unavailable"})
 	if err != nil || status.ID != "diag-1" || status.State != "queued" {
 		t.Fatalf("status = %#v, err=%v", status, err)
+	}
+}
+
+func TestGetDiagnosticSnapshotProjectsOnlyRedactedFields(t *testing.T) {
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, Diagnostics: testDiagnosticsPort{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.GetDiagnosticSnapshot(context.Background(), coreapi.DiagnosticSnapshotRequest{Severity: "error", Category: "core", Summary: "Core unavailable"})
+	if err != nil || snapshot.ID != "diag-snapshot-1" || len(snapshot.Events) != 1 {
+		t.Fatalf("snapshot = %#v, err=%v", snapshot, err)
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"request-secret", "C:\\Users\\Chen", "password", "Profile"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Fatalf("snapshot leaked %q: %s", forbidden, raw)
+		}
+	}
+	if !strings.Contains(string(raw), "id_") {
+		t.Fatalf("snapshot did not retain opaque identifier: %s", raw)
 	}
 }
 

@@ -304,6 +304,16 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 			return nil, err
 		}
 		return diagnosticsAPI.SubmitDiagnosticReport(ctx, params)
+	case methodGetDiagnosticSnapshot:
+		snapshotAPI, ok := s.api.(coreapi.DiagnosticSnapshotAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "diagnostic snapshot is unavailable")
+		}
+		var params coreapi.DiagnosticSnapshotRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		return snapshotAPI.GetDiagnosticSnapshot(ctx, params)
 	case methodGetJobPoolStatus:
 		statusAPI, ok := s.api.(coreapi.JobPoolStatusAPI)
 		if !ok {

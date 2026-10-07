@@ -266,6 +266,12 @@ func (c *Client) SubmitDiagnosticReport(ctx context.Context, input coreapi.Diagn
 	return result, err
 }
 
+func (c *Client) GetDiagnosticSnapshot(ctx context.Context, input coreapi.DiagnosticSnapshotRequest) (coreapi.DiagnosticSnapshot, error) {
+	var result coreapi.DiagnosticSnapshot
+	err := c.Call(ctx, methodGetDiagnosticSnapshot, input, &result)
+	return result, err
+}
+
 func (c *Client) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
 	var result JobPoolStatusResult
 	err := c.Call(ctx, methodGetJobPoolStatus, struct {
