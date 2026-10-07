@@ -472,7 +472,7 @@ func (s *Service) SubmitDiagnosticReport(ctx context.Context, input coreapi.Diag
 	if s.diagnostics == nil {
 		return coreapi.DiagnosticStatus{}, coreapi.NewError(coreapi.CodeUnavailable, "diagnostics are unavailable")
 	}
-	status, err := s.diagnostics.Submit(ctx, diagnostics.ReportInput{Severity: input.Severity, Category: input.Category, Summary: input.Summary})
+	status, err := s.diagnostics.Submit(ctx, diagnostics.ReportInput{Severity: input.Severity, Category: input.Category, Summary: input.Summary, ErrorClass: input.ErrorClass, Operation: input.Operation})
 	if err != nil {
 		if errors.Is(err, diagnostics.ErrDisabled) {
 			return coreapi.DiagnosticStatus{}, coreapi.NewError(coreapi.CodeUnavailable, "diagnostics are unavailable")
@@ -496,7 +496,7 @@ func (s *Service) GetDiagnosticSnapshot(ctx context.Context, input coreapi.Diagn
 	if !ok {
 		return coreapi.DiagnosticSnapshot{}, coreapi.NewError(coreapi.CodeUnavailable, "diagnostic snapshot is unavailable")
 	}
-	report, err := port.Snapshot(ctx, diagnostics.ReportInput{Severity: input.Severity, Category: input.Category, Summary: input.Summary})
+	report, err := port.Snapshot(ctx, diagnostics.ReportInput{Severity: input.Severity, Category: input.Category, Summary: input.Summary, ErrorClass: input.ErrorClass, Operation: input.Operation})
 	if err != nil {
 		if errors.Is(err, diagnostics.ErrInvalidReport) {
 			return coreapi.DiagnosticSnapshot{}, classify(requestservice.ErrInvalidInput)
@@ -513,13 +513,41 @@ func (s *Service) GetDiagnosticSnapshot(ctx context.Context, input coreapi.Diagn
 			At: event.At, Component: event.Component, Operation: event.Operation,
 			Outcome: event.Outcome, RequestID: event.RequestID,
 			Resource: event.Resource, ErrorClass: event.ErrorClass,
+			DurationMS: durationMilliseconds(event.Duration),
 		})
 	}
+	schema := report.Schema
+	if schema == "" {
+		schema = "chuzi.diagnostic/v2"
+	}
+	source := report.Source
+	if source == "" {
+		source = "core"
+	}
+	eventCount := report.EventCount
+	if eventCount < len(events) {
+		eventCount = len(events)
+	}
 	return coreapi.DiagnosticSnapshot{
-		ID: report.ID, CreatedAt: report.CreatedAt, Version: report.Version,
-		Platform: report.Platform, Arch: report.Arch, Severity: report.Severity,
-		Category: report.Category, Summary: report.Summary, Events: events,
+		Schema: schema, ID: report.ID, CreatedAt: report.CreatedAt, Source: source,
+		Version: report.Version, Platform: report.Platform, Arch: report.Arch,
+		Severity: report.Severity, Category: report.Category, Summary: report.Summary,
+		ErrorClass: report.ErrorClass, Operation: report.Operation, EventCount: eventCount,
+		EventsTruncated: report.EventsTruncated, CaptureErrorClass: report.CaptureErrorClass,
+		CoreStatus: coreapi.DiagnosticCoreStatus{Installed: true, Running: true, Ready: true, Status: "ready"},
+		Events:     events,
 	}, nil
+}
+
+func durationMilliseconds(duration time.Duration) int64 {
+	if duration <= 0 {
+		return 0
+	}
+	value := duration.Milliseconds()
+	if value < 1 {
+		return 1
+	}
+	return value
 }
 
 func (s *Service) GetBrowserView(ctx context.Context, input coreapi.BrowserViewRequest) (coreapi.BrowserView, error) {

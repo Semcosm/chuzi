@@ -214,9 +214,11 @@ type RDPCapabilityAPI interface {
 // DiagnosticReport is a user-consented, redaction-safe support submission.
 // The Core implementation collects only allow-listed local diagnostics.
 type DiagnosticReport struct {
-	Severity string `json:"severity"`
-	Category string `json:"category"`
-	Summary  string `json:"summary"`
+	Severity   string `json:"severity"`
+	Category   string `json:"category"`
+	Summary    string `json:"summary"`
+	ErrorClass string `json:"error_class,omitempty"`
+	Operation  string `json:"operation,omitempty"`
 }
 
 type DiagnosticStatus struct {
@@ -230,9 +232,11 @@ type DiagnosticStatus struct {
 // DiagnosticSnapshotRequest asks Core for a fresh local support snapshot. It
 // is read-only and never queues or uploads a report.
 type DiagnosticSnapshotRequest struct {
-	Severity string `json:"severity"`
-	Category string `json:"category"`
-	Summary  string `json:"summary"`
+	Severity   string `json:"severity"`
+	Category   string `json:"category"`
+	Summary    string `json:"summary"`
+	ErrorClass string `json:"error_class,omitempty"`
+	Operation  string `json:"operation,omitempty"`
 }
 
 type DiagnosticEvent struct {
@@ -243,21 +247,39 @@ type DiagnosticEvent struct {
 	RequestID  string    `json:"request_id,omitempty"`
 	Resource   string    `json:"resource,omitempty"`
 	ErrorClass string    `json:"error_class,omitempty"`
+	DurationMS int64     `json:"duration_ms,omitempty"`
+}
+
+// DiagnosticCoreStatus records the launcher-visible lifecycle state without
+// exposing a PID, endpoint, path, or process error text.
+type DiagnosticCoreStatus struct {
+	Installed bool   `json:"installed"`
+	Running   bool   `json:"running"`
+	Ready     bool   `json:"ready"`
+	Status    string `json:"status"`
 }
 
 // DiagnosticSnapshot is the bounded, redaction-safe local artifact that a
 // client may save for support. It contains no paths, credentials, or raw log
 // text, and is intentionally separate from remote report submission.
 type DiagnosticSnapshot struct {
-	ID        string            `json:"id"`
-	CreatedAt time.Time         `json:"created_at"`
-	Version   string            `json:"version"`
-	Platform  string            `json:"platform"`
-	Arch      string            `json:"arch"`
-	Severity  string            `json:"severity"`
-	Category  string            `json:"category"`
-	Summary   string            `json:"summary"`
-	Events    []DiagnosticEvent `json:"events,omitempty"`
+	Schema            string               `json:"schema"`
+	ID                string               `json:"id"`
+	CreatedAt         time.Time            `json:"created_at"`
+	Source            string               `json:"source"`
+	Version           string               `json:"version"`
+	Platform          string               `json:"platform"`
+	Arch              string               `json:"arch"`
+	Severity          string               `json:"severity"`
+	Category          string               `json:"category"`
+	Summary           string               `json:"summary"`
+	ErrorClass        string               `json:"error_class,omitempty"`
+	Operation         string               `json:"operation,omitempty"`
+	EventCount        int                  `json:"event_count"`
+	EventsTruncated   bool                 `json:"events_truncated,omitempty"`
+	CaptureErrorClass string               `json:"capture_error_class,omitempty"`
+	CoreStatus        DiagnosticCoreStatus `json:"core_status"`
+	Events            []DiagnosticEvent    `json:"events,omitempty"`
 }
 
 // DiagnosticsAPI is optional so older in-process embedders remain compatible.

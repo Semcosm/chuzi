@@ -8,7 +8,7 @@ use desktop_rdp::RdpHost;
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreEnvironment, CoreEnvironmentList,
     CoreEnvironmentOperation, CoreJobPool, CoreJobPoolList, CoreJobPoolOperation, CoreRequest,
-    CoreRequestList, CoreStatus, DiagnosticSnapshot, UiPreferences,
+    CoreRequestList, CoreStatus, DiagnosticCoreStatus, DiagnosticSnapshot, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
@@ -35,6 +35,8 @@ struct AppState {
     settings: BehaviorSettings,
     session_view_model: SessionViewModel,
     workspace_host: RdpHost,
+    diagnostic_error_class: String,
+    diagnostic_operation: String,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -90,6 +92,8 @@ impl AppState {
             },
             session_view_model: SessionViewModel::default(),
             workspace_host: RdpHost::Docked,
+            diagnostic_error_class: "".to_owned(),
+            diagnostic_operation: "".to_owned(),
         })
     }
 
@@ -241,6 +245,32 @@ impl AppState {
             return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+
+    fn diagnostic_context(&self) -> DiagnosticCoreStatus {
+        match core_status(self) {
+            Ok(status) => DiagnosticCoreStatus {
+                installed: status.installed,
+                running: status.running,
+                ready: status.ready,
+                status: if status.status.trim().is_empty() {
+                    if status.ready {
+                        "ready"
+                    } else if status.running {
+                        "running"
+                    } else {
+                        "stopped"
+                    }
+                } else {
+                    status.status.as_str()
+                }
+                .to_owned(),
+            },
+            Err(_) => DiagnosticCoreStatus {
+                status: "unknown".to_owned(),
+                ..Default::default()
+            },
+        }
     }
 }
 
@@ -772,13 +802,81 @@ fn diagnostic_snapshot(
     category: &str,
     summary: &str,
 ) -> DiagnosticSnapshot {
-    let params = json!({"severity": severity, "category": category, "summary": summary});
-    if let Ok(value) = core_call(state, CoreMethod::GetDiagnosticSnapshot, params) {
-        if let Ok(snapshot) = serde_json::from_value::<DiagnosticSnapshot>(value) {
-            return snapshot;
+    let context = state.diagnostic_context();
+    let error_class = if state.diagnostic_error_class.is_empty() {
+        diagnostic_error_class(summary).to_owned()
+    } else {
+        state.diagnostic_error_class.clone()
+    };
+    let operation = if state.diagnostic_operation.is_empty() {
+        diagnostic_operation(summary).to_owned()
+    } else {
+        state.diagnostic_operation.clone()
+    };
+    let params = json!({
+        "severity": severity,
+        "category": category,
+        "summary": summary,
+        "error_class": error_class,
+        "operation": operation,
+    });
+    match core_call(state, CoreMethod::GetDiagnosticSnapshot, params) {
+        Ok(value) => match serde_json::from_value::<DiagnosticSnapshot>(value) {
+            Ok(mut snapshot) if snapshot.schema == "chuzi.diagnostic/v2" => {
+                if snapshot.source.is_empty() {
+                    snapshot.source = "core".to_owned();
+                }
+                snapshot.core_status = context;
+                return snapshot;
+            }
+            Ok(_) => {
+                return diagnostic_fallback(
+                    severity,
+                    category,
+                    summary,
+                    &error_class,
+                    &operation,
+                    context,
+                    "invalid_projection",
+                )
+            }
+            Err(_) => {
+                return diagnostic_fallback(
+                    severity,
+                    category,
+                    summary,
+                    &error_class,
+                    &operation,
+                    context,
+                    "invalid_projection",
+                )
+            }
+        },
+        Err(error) => {
+            return diagnostic_fallback(
+                severity,
+                category,
+                summary,
+                &error_class,
+                &operation,
+                context,
+                diagnostic_error_class(&error),
+            );
         }
     }
+}
+
+fn diagnostic_fallback(
+    severity: &str,
+    category: &str,
+    summary: &str,
+    error_class: &str,
+    operation: &str,
+    core_status: DiagnosticCoreStatus,
+    capture_error_class: &str,
+) -> DiagnosticSnapshot {
     DiagnosticSnapshot {
+        schema: "chuzi.diagnostic/v2".to_owned(),
         id: format!(
             "ui-{}",
             SystemTime::now()
@@ -787,13 +885,67 @@ fn diagnostic_snapshot(
                 .unwrap_or_default()
         ),
         created_at: unix_timestamp_label(),
+        source: "ui".to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         platform: std::env::consts::OS.to_owned(),
         arch: std::env::consts::ARCH.to_owned(),
         severity: bounded_diagnostic_field(severity),
         category: bounded_diagnostic_field(category),
         summary: bounded_diagnostic_field(summary),
+        error_class: error_class.to_owned(),
+        operation: operation.to_owned(),
+        event_count: 0,
+        events_truncated: false,
+        capture_error_class: capture_error_class.to_owned(),
+        core_status,
         events: Vec::new(),
+    }
+}
+
+fn diagnostic_error_class(error: &str) -> &'static str {
+    let value = error.to_ascii_lowercase();
+    if value.contains("core_not_installed") || value.contains("launcher is missing") {
+        "core_not_installed"
+    } else if value.contains("core_start_timeout") || value.contains("start timeout") {
+        "core_start_timeout"
+    } else if value.contains("core_unavailable")
+        || value.contains("connect core")
+        || value.contains("core unavailable")
+    {
+        "core_unavailable"
+    } else if value.contains("not_found") || value.contains("not found") {
+        "not_found"
+    } else if value.contains("rate_limit") || value.contains("rate limited") {
+        "rate_limited"
+    } else if value.contains("deadline") || value.contains("timeout") {
+        "deadline_exceeded"
+    } else if value.contains("cancel") {
+        "cancelled"
+    } else if value.contains("invalid_") || value.contains("projection") {
+        "invalid_projection"
+    } else if value.contains("forbidden") || value.contains("not allowed") {
+        "forbidden"
+    } else if value.contains("conflict") || value.contains("stale_revision") {
+        "conflict"
+    } else if value.contains("internal") || value.contains("panic") {
+        "internal"
+    } else {
+        "ui_operation_failed"
+    }
+}
+
+fn diagnostic_operation(error: &str) -> &'static str {
+    let value = error.to_ascii_lowercase();
+    if value.contains("core_") || value.contains("launcher") || value.contains("connect core") {
+        "core_lifecycle"
+    } else if value.contains("session") || value.contains("browser") || value.contains("request") {
+        "session_projection"
+    } else if value.contains("job_pool") || value.contains("environment") {
+        "control_plane_operation"
+    } else if value.contains("theme") || value.contains("settings") {
+        "ui_settings"
+    } else {
+        "ui_operation"
     }
 }
 
@@ -2070,6 +2222,11 @@ fn run_background_with_failure<T, F, A, E>(
     });
     thread::spawn(move || {
         let result = operation(&mut state.lock().unwrap());
+        if let Err(ref error) = result {
+            let mut guard = state.lock().unwrap();
+            guard.diagnostic_error_class = diagnostic_error_class(error).to_owned();
+            guard.diagnostic_operation = diagnostic_operation(error).to_owned();
+        }
         state.lock().unwrap().busy = false;
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(window) = weak.upgrade() {
@@ -2325,14 +2482,22 @@ mod tests {
         let value = bounded_diagnostic_field("core\npassword=secret");
         assert_eq!(value, "user-visible diagnostic message redacted");
         let snapshot = DiagnosticSnapshot {
+            schema: "chuzi.diagnostic/v2".to_owned(),
             id: "diag-1".to_owned(),
             created_at: "unix:1".to_owned(),
+            source: "ui".to_owned(),
             version: "test".to_owned(),
             platform: "windows".to_owned(),
             arch: "amd64".to_owned(),
             severity: "warning".to_owned(),
             category: "ui".to_owned(),
             summary: "safe".to_owned(),
+            error_class: "ui_operation_failed".to_owned(),
+            operation: "ui_operation".to_owned(),
+            event_count: 0,
+            events_truncated: false,
+            capture_error_class: String::new(),
+            core_status: DiagnosticCoreStatus::default(),
             events: Vec::new(),
         };
         let encoded = serde_json::to_string(&snapshot).expect("snapshot should encode");

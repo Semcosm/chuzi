@@ -109,7 +109,7 @@ func (testDiagnosticsPort) Snapshot(context.Context, diagnostics.ReportInput) (d
 		ID: "diag-snapshot-1", CreatedAt: time.Unix(1, 0).UTC(), Version: "test",
 		Platform: "windows", Arch: "amd64", Severity: diagnostics.SeverityError,
 		Category: "core", Summary: "Core unavailable",
-		Events: []observability.Event{{RequestID: "request-secret", Resource: "C:\\Users\\Chen", ErrorClass: "core_unavailable"}},
+		Events: []observability.Event{{RequestID: "request-secret", Resource: "C:\\Users\\Chen", ErrorClass: "core_unavailable", Duration: 2 * time.Millisecond}},
 	}, nil
 }
 
@@ -161,8 +161,8 @@ func TestGetDiagnosticSnapshotProjectsOnlyRedactedFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snapshot, err := service.GetDiagnosticSnapshot(context.Background(), coreapi.DiagnosticSnapshotRequest{Severity: "error", Category: "core", Summary: "Core unavailable"})
-	if err != nil || snapshot.ID != "diag-snapshot-1" || len(snapshot.Events) != 1 {
+	snapshot, err := service.GetDiagnosticSnapshot(context.Background(), coreapi.DiagnosticSnapshotRequest{Severity: "error", Category: "core", Summary: "Core unavailable", ErrorClass: "core_start_timeout", Operation: "core_lifecycle"})
+	if err != nil || snapshot.ID != "diag-snapshot-1" || snapshot.Schema != "chuzi.diagnostic/v2" || snapshot.Source != "core" || snapshot.EventCount != 1 || len(snapshot.Events) != 1 {
 		t.Fatalf("snapshot = %#v, err=%v", snapshot, err)
 	}
 	raw, err := json.Marshal(snapshot)
@@ -176,6 +176,9 @@ func TestGetDiagnosticSnapshotProjectsOnlyRedactedFields(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), "id_") {
 		t.Fatalf("snapshot did not retain opaque identifier: %s", raw)
+	}
+	if snapshot.Events[0].DurationMS != 2 {
+		t.Fatalf("event duration = %d, want 2ms", snapshot.Events[0].DurationMS)
 	}
 }
 
