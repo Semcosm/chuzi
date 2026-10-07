@@ -16,6 +16,11 @@ on:
           - test
           - nightly
         default: test
+      enable_windows_job_pool_smoke:
+        description: Run the destructive native Windows job-pool smoke on a configured self-hosted runner
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -570,9 +575,12 @@ jobs:
     name: chuzi-build-windows-job-pool-smoke
     runs-on: [self-hosted, windows, chuzi-job-pool]
     timeout-minutes: 20
-    # Native WTS smoke requires the dedicated runner and is a release gate only
-    # for nightly/stable builds. CI and test builds use the hosted preflight.
-    if: needs.release_context.outputs.channel == 'nightly' || needs.release_context.outputs.channel == 'stable'
+    # Native WTS smoke requires an explicitly configured dedicated runner. It
+    # is disabled for schedules, pushes, tags, and manual dispatch by default.
+    if: >-
+      (needs.release_context.outputs.channel == 'nightly' || needs.release_context.outputs.channel == 'stable') &&
+      (vars.CHUZI_ENABLE_WINDOWS_JOB_POOL_SMOKE == 'true' ||
+       (github.event_name == 'workflow_dispatch' && inputs.enable_windows_job_pool_smoke == true))
     needs: [release_context, contract_checks]
     permissions:
       contents: read
@@ -760,10 +768,14 @@ jobs:
           done
           channel="${{ needs.release_context.outputs.channel }}"
           native_result="${{ needs.windows_job_pool_smoke.result }}"
+          native_enabled="${{ vars.CHUZI_ENABLE_WINDOWS_JOB_POOL_SMOKE }}"
+          dispatch_native_enabled="${{ inputs.enable_windows_job_pool_smoke }}"
           if [ "$channel" = ci ] || [ "$channel" = test ]; then
             test "$native_result" = skipped || { echo "$channel channel native smoke must be skipped, got $native_result" >&2; exit 1; }
+          elif [ "$native_enabled" = true ] || [ "$dispatch_native_enabled" = true ]; then
+            test "$native_result" = success || { echo "explicitly enabled native Windows job-pool smoke did not succeed: $native_result" >&2; exit 1; }
           else
-            test "$native_result" = success || { echo "native Windows job-pool smoke did not succeed: $native_result" >&2; exit 1; }
+            test "$native_result" = skipped || { echo "native Windows job-pool smoke must be skipped unless explicitly enabled, got $native_result" >&2; exit 1; }
           fi
           if [ "$channel" = ci ]; then
             test "${{ needs.artifact_integration.result }}" = skipped || { echo "unexpected artifact integration result" >&2; exit 1; }
