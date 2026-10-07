@@ -158,9 +158,18 @@ flag for the bounded 64-event window, per-event `duration_ms`, and a
 Event fields remain allow-listed and redacted; no paths, credentials, tokens,
 screenshots, or raw error text are included. If event capture or the Core call
 fails, `capture_error_class` records a stable classification and the native
-client writes a v2 UI fallback with the same context and an empty event window.
+client writes a v2 UI fallback with the same context and one synthetic redacted capture-failure event.
 Older or malformed snapshot payloads are treated as invalid projections and
-receive the same fallback treatment.
+receive the same fallback treatment. The UI records bounded capture metadata so support
+can distinguish a launcher failure from a response-shape or schema failure without
+receiving the raw response: capture_stage is one of core_call, schema_validation,
+snapshot_decode, or complete; core_schema and core_version are sanitized tokens;
+core_status_error_class classifies a failed status probe; response_kind, response_size,
+response_key_count, and the allow-listed response_fields describe the returned JSON
+shape; and response_fingerprint is an FNV-1a 64-bit fingerprint only. capture_duration_ms
+and client_version identify capture timing and the UI build. When Core cannot provide a
+valid v2 object, the UI writes one redacted synthetic ui failure event with the stable
+capture class and never copies raw launcher output, paths, request IDs, or credentials.
 
 Job-pool writes carry expected_revision, idempotency_key, actor, and an optional
 caller timestamp. A successful write returns a durable operation ID; repeating

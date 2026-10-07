@@ -8,7 +8,8 @@ use desktop_rdp::RdpHost;
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreEnvironment, CoreEnvironmentList,
     CoreEnvironmentOperation, CoreJobPool, CoreJobPoolList, CoreJobPoolOperation, CoreRequest,
-    CoreRequestList, CoreStatus, DiagnosticCoreStatus, DiagnosticSnapshot, UiPreferences,
+    CoreRequestList, CoreStatus, DiagnosticCoreStatus, DiagnosticEvent, DiagnosticSnapshot,
+    UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
@@ -19,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use view_model::{
     sessions_from_requests, ProjectionError, SelectionMove, SessionFilter, SessionViewModel,
 };
@@ -247,29 +248,35 @@ impl AppState {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
 
-    fn diagnostic_context(&self) -> DiagnosticCoreStatus {
+    fn diagnostic_context(&self) -> (DiagnosticCoreStatus, String) {
         match core_status(self) {
-            Ok(status) => DiagnosticCoreStatus {
-                installed: status.installed,
-                running: status.running,
-                ready: status.ready,
-                status: if status.status.trim().is_empty() {
-                    if status.ready {
-                        "ready"
-                    } else if status.running {
-                        "running"
+            Ok(status) => (
+                DiagnosticCoreStatus {
+                    installed: status.installed,
+                    running: status.running,
+                    ready: status.ready,
+                    status: if status.status.trim().is_empty() {
+                        if status.ready {
+                            "ready"
+                        } else if status.running {
+                            "running"
+                        } else {
+                            "stopped"
+                        }
                     } else {
-                        "stopped"
+                        status.status.as_str()
                     }
-                } else {
-                    status.status.as_str()
-                }
-                .to_owned(),
-            },
-            Err(_) => DiagnosticCoreStatus {
-                status: "unknown".to_owned(),
-                ..Default::default()
-            },
+                    .to_owned(),
+                },
+                String::new(),
+            ),
+            Err(error) => (
+                DiagnosticCoreStatus {
+                    status: "unknown".to_owned(),
+                    ..Default::default()
+                },
+                diagnostic_capture_error_class(&error),
+            ),
         }
     }
 }
@@ -802,7 +809,8 @@ fn diagnostic_snapshot(
     category: &str,
     summary: &str,
 ) -> DiagnosticSnapshot {
-    let context = state.diagnostic_context();
+    let capture_started = Instant::now();
+    let (status, status_error_class) = state.diagnostic_context();
     let error_class = if state.diagnostic_error_class.is_empty() {
         diagnostic_error_class(summary).to_owned()
     } else {
@@ -813,68 +821,51 @@ fn diagnostic_snapshot(
     } else {
         state.diagnostic_operation.clone()
     };
-    let params = json!({
-        "severity": severity,
-        "category": category,
-        "summary": summary,
-        "error_class": error_class,
-        "operation": operation,
-    });
-    match core_call(state, CoreMethod::GetDiagnosticSnapshot, params) {
-        Ok(value) => match serde_json::from_value::<DiagnosticSnapshot>(value) {
-            Ok(mut snapshot) if snapshot.schema == "chuzi.diagnostic/v2" => {
-                if snapshot.source.is_empty() {
-                    snapshot.source = "core".to_owned();
-                }
-                snapshot.core_status = context;
-                return snapshot;
-            }
-            Ok(_) => {
-                return diagnostic_fallback(
-                    severity,
-                    category,
-                    summary,
-                    &error_class,
-                    &operation,
-                    context,
-                    "invalid_projection",
-                )
-            }
-            Err(_) => {
-                return diagnostic_fallback(
-                    severity,
-                    category,
-                    summary,
-                    &error_class,
-                    &operation,
-                    context,
-                    "invalid_projection",
-                )
-            }
-        },
-        Err(error) => {
-            return diagnostic_fallback(
-                severity,
-                category,
-                summary,
-                &error_class,
-                &operation,
-                context,
-                diagnostic_error_class(&error),
-            );
+    let params = json!({"severity": severity, "category": category, "summary": summary, "error_class": error_class, "operation": operation});
+    let capture = match diagnostic_core_call(state, params) {
+        Ok((value, response_size)) => {
+            let mut capture = inspect_diagnostic_response(value);
+            capture.response_size = response_size;
+            capture
         }
+        Err(capture) => capture,
+    };
+    let capture_duration_ms = capture_started.elapsed().as_millis() as u64;
+    if let Some(mut snapshot) = capture.snapshot {
+        snapshot.capture_stage = capture.capture_stage;
+        snapshot.core_schema = capture.core_schema;
+        snapshot.core_version = capture.core_version;
+        snapshot.response_kind = capture.response_kind;
+        snapshot.response_size = capture.response_size;
+        snapshot.response_key_count = capture.response_key_count;
+        snapshot.response_fields = capture.response_fields;
+        snapshot.response_fingerprint = capture.response_fingerprint;
+        snapshot.capture_duration_ms = capture_duration_ms;
+        snapshot.client_version = env!("CARGO_PKG_VERSION").to_owned();
+        snapshot.core_status_error_class = status_error_class;
+        return snapshot;
     }
-}
-
-fn diagnostic_fallback(
-    severity: &str,
-    category: &str,
-    summary: &str,
-    error_class: &str,
-    operation: &str,
-    core_status: DiagnosticCoreStatus,
-    capture_error_class: &str,
-) -> DiagnosticSnapshot {
+    let capture_error_class = capture.capture_error_class;
+    let error_class = if error_class.is_empty() {
+        capture_error_class.clone()
+    } else {
+        error_class
+    };
+    let operation = if operation.is_empty() {
+        "diagnostic_capture".to_owned()
+    } else {
+        operation
+    };
+    let capture_event = DiagnosticEvent {
+        at: unix_timestamp_label(),
+        component: "ui".to_owned(),
+        operation: operation.clone(),
+        outcome: "failed".to_owned(),
+        request_id: String::new(),
+        resource: String::new(),
+        error_class: capture_error_class.clone(),
+        duration_ms: 0,
+    };
     DiagnosticSnapshot {
         schema: "chuzi.diagnostic/v2".to_owned(),
         id: format!(
@@ -885,20 +876,267 @@ fn diagnostic_fallback(
                 .unwrap_or_default()
         ),
         created_at: unix_timestamp_label(),
-        source: "ui".to_owned(),
+        source: "ui_fallback".to_owned(),
         version: env!("CARGO_PKG_VERSION").to_owned(),
         platform: std::env::consts::OS.to_owned(),
         arch: std::env::consts::ARCH.to_owned(),
         severity: bounded_diagnostic_field(severity),
         category: bounded_diagnostic_field(category),
         summary: bounded_diagnostic_field(summary),
-        error_class: error_class.to_owned(),
-        operation: operation.to_owned(),
-        event_count: 0,
+        error_class,
+        operation,
+        event_count: 1,
         events_truncated: false,
+        capture_error_class,
+        capture_stage: capture.capture_stage,
+        core_schema: capture.core_schema,
+        core_version: capture.core_version,
+        core_status_error_class: status_error_class,
+        response_kind: capture.response_kind,
+        response_size: capture.response_size,
+        response_key_count: capture.response_key_count,
+        response_fields: capture.response_fields,
+        response_fingerprint: capture.response_fingerprint,
+        capture_duration_ms,
+        client_version: env!("CARGO_PKG_VERSION").to_owned(),
+        core_status: DiagnosticCoreStatus {
+            installed: status.installed,
+            running: status.running,
+            ready: status.ready,
+            status: status.status,
+        },
+        events: vec![capture_event],
+    }
+}
+
+fn diagnostic_core_call(
+    state: &AppState,
+    params: Value,
+) -> Result<(Value, usize), DiagnosticCapture> {
+    let params_json = serde_json::to_string(&params)
+        .map_err(|_| diagnostic_call_failure("core_method_error", 0, &[]))?;
+    let output = state
+        .run_launcher(
+            "core-call",
+            &[
+                "-core-method",
+                "get_diagnostic_snapshot",
+                "-core-params-json",
+                params_json.as_str(),
+            ],
+        )
+        .map_err(|error| {
+            diagnostic_call_failure(&diagnostic_capture_error_class(&error), 0, &[])
+        })?;
+    let raw = output.trim();
+    match serde_json::from_str::<Value>(raw) {
+        Ok(value) => Ok((value, raw.len())),
+        Err(_) => Err(diagnostic_call_failure(
+            "malformed_response",
+            raw.len(),
+            raw.as_bytes(),
+        )),
+    }
+}
+
+fn diagnostic_call_failure(
+    capture_error_class: &str,
+    response_size: usize,
+    response: &[u8],
+) -> DiagnosticCapture {
+    DiagnosticCapture {
+        snapshot: None,
         capture_error_class: capture_error_class.to_owned(),
-        core_status,
-        events: Vec::new(),
+        capture_stage: "core_call".to_owned(),
+        core_schema: String::new(),
+        core_version: String::new(),
+        response_kind: if response.is_empty() {
+            "unavailable".to_owned()
+        } else {
+            "invalid_json".to_owned()
+        },
+        response_size,
+        response_key_count: 0,
+        response_fields: Vec::new(),
+        response_fingerprint: if response.is_empty() {
+            String::new()
+        } else {
+            diagnostic_response_fingerprint(response)
+        },
+    }
+}
+
+#[derive(Debug)]
+struct DiagnosticCapture {
+    snapshot: Option<DiagnosticSnapshot>,
+    capture_error_class: String,
+    capture_stage: String,
+    core_schema: String,
+    core_version: String,
+    response_kind: String,
+    response_size: usize,
+    response_key_count: usize,
+    response_fields: Vec<String>,
+    response_fingerprint: String,
+}
+
+fn inspect_diagnostic_response(value: Value) -> DiagnosticCapture {
+    let encoded = serde_json::to_vec(&value).unwrap_or_default();
+    let (response_kind, response_key_count, response_fields) = response_shape(&value);
+    let response_fingerprint = diagnostic_response_fingerprint(&encoded);
+    let response_size = encoded.len();
+    let mut capture = DiagnosticCapture {
+        snapshot: None,
+        capture_error_class: String::new(),
+        capture_stage: "schema_validation".to_owned(),
+        core_schema: String::new(),
+        core_version: String::new(),
+        response_kind,
+        response_size,
+        response_key_count,
+        response_fields,
+        response_fingerprint,
+    };
+    let Some(object) = value.as_object() else {
+        capture.capture_error_class = "malformed_response".to_owned();
+        return capture;
+    };
+    if let Some(version) = object.get("version") {
+        capture.core_version = version
+            .as_str()
+            .map(bounded_diagnostic_token)
+            .unwrap_or_else(|| "non_string".to_owned());
+    }
+    let Some(schema_value) = object.get("schema") else {
+        capture.capture_error_class = "missing_schema".to_owned();
+        return capture;
+    };
+    let Some(schema) = schema_value.as_str() else {
+        capture.core_schema = "non_string".to_owned();
+        capture.capture_error_class = "malformed_schema".to_owned();
+        return capture;
+    };
+    capture.core_schema = bounded_diagnostic_token(schema);
+    if schema != "chuzi.diagnostic/v2" {
+        capture.capture_error_class = "unsupported_schema".to_owned();
+        return capture;
+    }
+    capture.capture_stage = "snapshot_decode".to_owned();
+    match serde_json::from_value::<DiagnosticSnapshot>(value) {
+        Ok(snapshot) if diagnostic_snapshot_is_well_formed(&snapshot) => {
+            capture.capture_stage = "complete".to_owned();
+            capture.snapshot = Some(snapshot);
+        }
+        Ok(_) | Err(_) => {
+            capture.capture_error_class = "malformed_snapshot".to_owned();
+        }
+    }
+    capture
+}
+
+fn diagnostic_snapshot_is_well_formed(snapshot: &DiagnosticSnapshot) -> bool {
+    [
+        &snapshot.id,
+        &snapshot.created_at,
+        &snapshot.source,
+        &snapshot.version,
+        &snapshot.platform,
+        &snapshot.arch,
+        &snapshot.severity,
+        &snapshot.category,
+        &snapshot.summary,
+        &snapshot.core_status.status,
+    ]
+    .iter()
+    .all(|value| !value.trim().is_empty())
+        && snapshot.event_count >= snapshot.events.len()
+}
+
+fn diagnostic_capture_error_class(error: &str) -> String {
+    if error.starts_with("Core projection:") {
+        return "malformed_response".to_owned();
+    }
+    if error.starts_with("Core status:") {
+        return "core_status_error".to_owned();
+    }
+    if error.contains("core transport")
+        || error.contains("core operation")
+        || error.starts_with("chuzi core:")
+    {
+        return "core_method_error".to_owned();
+    }
+    diagnostic_error_class(error).to_owned()
+}
+
+fn response_shape(value: &Value) -> (String, usize, Vec<String>) {
+    const KNOWN_FIELDS: [&str; 28] = [
+        "schema",
+        "id",
+        "created_at",
+        "source",
+        "version",
+        "platform",
+        "arch",
+        "severity",
+        "category",
+        "summary",
+        "error_class",
+        "operation",
+        "event_count",
+        "events_truncated",
+        "capture_error_class",
+        "core_status",
+        "events",
+        "capture_stage",
+        "core_schema",
+        "core_version",
+        "core_status_error_class",
+        "response_kind",
+        "response_size",
+        "response_key_count",
+        "response_fields",
+        "response_fingerprint",
+        "capture_duration_ms",
+        "client_version",
+    ];
+    match value {
+        Value::Object(object) => {
+            let fields = KNOWN_FIELDS
+                .iter()
+                .filter(|field| object.contains_key(**field))
+                .map(|field| (*field).to_owned())
+                .collect();
+            ("object".to_owned(), object.len(), fields)
+        }
+        Value::Array(_) => ("array".to_owned(), 0, Vec::new()),
+        Value::String(_) => ("string".to_owned(), 0, Vec::new()),
+        Value::Number(_) => ("number".to_owned(), 0, Vec::new()),
+        Value::Bool(_) => ("boolean".to_owned(), 0, Vec::new()),
+        Value::Null => ("null".to_owned(), 0, Vec::new()),
+    }
+}
+
+fn diagnostic_response_fingerprint(encoded: &[u8]) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in encoded {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("fnv1a64:{hash:016x}")
+}
+
+fn bounded_diagnostic_token(value: &str) -> String {
+    let token = value
+        .chars()
+        .filter(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.' | '/')
+        })
+        .take(96)
+        .collect::<String>();
+    if token.is_empty() {
+        "malformed".to_owned()
+    } else {
+        token
     }
 }
 
@@ -2497,11 +2735,131 @@ mod tests {
             event_count: 0,
             events_truncated: false,
             capture_error_class: String::new(),
+            capture_stage: String::new(),
+            core_schema: String::new(),
+            core_version: String::new(),
+            core_status_error_class: String::new(),
+            response_kind: String::new(),
+            response_size: 0,
+            response_key_count: 0,
+            response_fields: Vec::new(),
+            response_fingerprint: String::new(),
+            capture_duration_ms: 0,
+            client_version: String::new(),
             core_status: DiagnosticCoreStatus::default(),
             events: Vec::new(),
         };
         let encoded = serde_json::to_string(&snapshot).expect("snapshot should encode");
         assert!(!encoded.contains("password"));
         assert!(!encoded.contains("Profile"));
+    }
+
+    fn valid_diagnostic_response() -> Value {
+        json!({
+            "schema": "chuzi.diagnostic/v2",
+            "id": "diag-1",
+            "created_at": "2026-10-07T00:00:00Z",
+            "source": "core",
+            "version": "test",
+            "platform": "windows",
+            "arch": "amd64",
+            "severity": "error",
+            "category": "core",
+            "summary": "Core failed",
+            "error_class": "internal",
+            "operation": "core_call",
+            "event_count": 0,
+            "events_truncated": false,
+            "core_status": {"installed": true, "running": true, "ready": true, "status": "ready"},
+            "events": []
+        })
+    }
+
+    #[test]
+    fn diagnostic_response_missing_schema_is_classified() {
+        let capture = inspect_diagnostic_response(json!({"id": "opaque", "result": {}}));
+        assert_eq!(capture.capture_error_class, "missing_schema");
+        assert_eq!(capture.capture_stage, "schema_validation");
+        assert_eq!(capture.response_kind, "object");
+        assert_eq!(capture.response_key_count, 2);
+        assert!(capture.response_fingerprint.starts_with("fnv1a64:"));
+    }
+
+    #[test]
+    fn diagnostic_response_shape_and_schema_type_are_classified() {
+        let array_capture = inspect_diagnostic_response(json!([]));
+        assert_eq!(array_capture.capture_error_class, "malformed_response");
+        assert_eq!(array_capture.response_kind, "array");
+        let schema_capture = inspect_diagnostic_response(json!({"schema": null}));
+        assert_eq!(schema_capture.capture_error_class, "malformed_schema");
+        assert_eq!(schema_capture.core_schema, "non_string");
+    }
+
+    #[test]
+    fn diagnostic_response_old_schema_is_classified_without_raw_payload() {
+        let capture = inspect_diagnostic_response(
+            json!({"schema": "chuzi.diagnostic/v1", "version": "nightly-42", "summary": "secret-token"}),
+        );
+        assert_eq!(capture.capture_error_class, "unsupported_schema");
+        assert_eq!(capture.core_schema, "chuzi.diagnostic/v1");
+        assert_eq!(capture.core_version, "nightly-42");
+        assert!(!capture.response_fingerprint.contains("secret-token"));
+        assert!(capture.response_fingerprint.starts_with("fnv1a64:"));
+    }
+
+    #[test]
+    fn diagnostic_response_malformed_v2_is_classified() {
+        let mut response = valid_diagnostic_response();
+        response["event_count"] = json!("not-a-number");
+        let capture = inspect_diagnostic_response(response);
+        assert_eq!(capture.capture_error_class, "malformed_snapshot");
+        assert_eq!(capture.capture_stage, "snapshot_decode");
+        assert!(capture.snapshot.is_none());
+    }
+
+    #[test]
+    fn diagnostic_response_missing_required_status_is_classified() {
+        let mut response = valid_diagnostic_response();
+        response["core_status"] = json!({"installed": true, "running": true, "ready": true});
+        let capture = inspect_diagnostic_response(response);
+        assert_eq!(capture.capture_error_class, "malformed_snapshot");
+        assert!(capture.snapshot.is_none());
+    }
+
+    #[test]
+    fn diagnostic_response_valid_v2_is_accepted_and_fingerprinted() {
+        let capture = inspect_diagnostic_response(valid_diagnostic_response());
+        let snapshot = capture.snapshot.expect("valid snapshot");
+        assert_eq!(capture.capture_stage, "complete");
+        assert_eq!(capture.core_schema, "chuzi.diagnostic/v2");
+        assert_eq!(capture.core_version, "test");
+        assert_eq!(capture.response_kind, "object");
+        assert!(capture
+            .response_fields
+            .iter()
+            .any(|field| field == "schema"));
+        assert!(capture.response_fingerprint.starts_with("fnv1a64:"));
+        assert!(!capture.response_fingerprint.contains(&snapshot.summary));
+    }
+
+    #[test]
+    fn diagnostic_capture_errors_use_stable_classes() {
+        assert_eq!(
+            diagnostic_capture_error_class("Core projection: expected object"),
+            "malformed_response"
+        );
+        assert_eq!(
+            diagnostic_capture_error_class("core transport: invalid request"),
+            "core_method_error"
+        );
+        assert_eq!(
+            diagnostic_capture_error_class("chuzi core: internal"),
+            "core_method_error"
+        );
+        let failure = diagnostic_call_failure("malformed_response", 17, b"secret payload");
+        assert_eq!(failure.response_kind, "invalid_json");
+        assert_eq!(failure.response_size, 17);
+        assert!(failure.response_fingerprint.starts_with("fnv1a64:"));
+        assert!(!failure.response_fingerprint.contains("secret payload"));
     }
 }
