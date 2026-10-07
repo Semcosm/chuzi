@@ -1,17 +1,17 @@
 # CR-0099: enrich local diagnostic capture metadata
 
 Base: main
-Head or Range: feat/diagnostic-capture-v3
+Head or Range: 72b7e9a4f3979628acac3d8e6c648ec7cf56a3d3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(support): enrich local diagnostic capture metadata
 Revision: 1
-Status: pending
-Decision: pending
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
 Base OID: 12edebc6cbcb0110d0b4454e2f329f8cae355e6b
-Head OID: 92316fc2ab437c2623ad566d2fea4c9de4ef11ec
-Integrated Result: pending
+Head OID: 72b7e9a4f3979628acac3d8e6c648ec7cf56a3d3
+Integrated Result: main@a7b9609143cb719a03e514e26eca84d8804ff95d
 
 ## Summary
 
