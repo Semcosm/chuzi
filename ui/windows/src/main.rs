@@ -824,6 +824,8 @@ fn diagnostic_snapshot(
     let params = json!({"severity": severity, "category": category, "summary": summary, "error_class": error_class, "operation": operation});
     let capture = match diagnostic_core_call(state, params) {
         Ok((value, response_size)) => {
+            let value =
+                normalize_legacy_diagnostic_response(value, &status, &error_class, &operation);
             let mut capture = inspect_diagnostic_response(value);
             capture.response_size = response_size;
             capture
@@ -832,6 +834,12 @@ fn diagnostic_snapshot(
     };
     let capture_duration_ms = capture_started.elapsed().as_millis() as u64;
     if let Some(mut snapshot) = capture.snapshot {
+        if snapshot.error_class.is_empty() {
+            snapshot.error_class = error_class.clone();
+        }
+        if snapshot.operation.is_empty() {
+            snapshot.operation = operation.clone();
+        }
         snapshot.capture_stage = capture.capture_stage;
         snapshot.core_schema = capture.core_schema;
         snapshot.core_version = capture.core_version;
@@ -919,6 +927,22 @@ fn diagnostic_core_call(
     state: &AppState,
     params: Value,
 ) -> Result<(Value, usize), DiagnosticCapture> {
+    let result = diagnostic_core_call_once(state, &params);
+    if !matches!(&result, Err(capture) if capture.capture_error_code == "invalid_argument") {
+        return result;
+    }
+
+    // Older Core builds strictly reject additive error_class/operation fields.
+    // Retry the stable request shape so a component version skew cannot block
+    // a support snapshot.
+    let legacy_params = diagnostic_legacy_params(&params);
+    diagnostic_core_call_once(state, &legacy_params)
+}
+
+fn diagnostic_core_call_once(
+    state: &AppState,
+    params: &Value,
+) -> Result<(Value, usize), DiagnosticCapture> {
     let params_json = serde_json::to_string(&params).map_err(|_| {
         diagnostic_call_failure("core_method_error", "params_serialization", 0, &[])
     })?;
@@ -945,6 +969,63 @@ fn diagnostic_core_call(
             raw.as_bytes(),
         )),
     }
+}
+
+fn diagnostic_legacy_params(params: &Value) -> Value {
+    let Some(object) = params.as_object() else {
+        return params.clone();
+    };
+    let mut legacy = serde_json::Map::new();
+    for field in ["severity", "category", "summary"] {
+        if let Some(value) = object.get(field) {
+            legacy.insert(field.to_owned(), value.clone());
+        }
+    }
+    Value::Object(legacy)
+}
+
+fn normalize_legacy_diagnostic_response(
+    value: Value,
+    core_status: &DiagnosticCoreStatus,
+    error_class: &str,
+    operation: &str,
+) -> Value {
+    let Some(object) = value.as_object() else {
+        return value;
+    };
+    if object.contains_key("schema") {
+        return value;
+    }
+    for field in [
+        "id",
+        "created_at",
+        "version",
+        "platform",
+        "arch",
+        "severity",
+        "category",
+        "summary",
+    ] {
+        if !object.contains_key(field) {
+            return value;
+        }
+    }
+    let event_count = object
+        .get("events")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let mut normalized = object.clone();
+    normalized.insert("schema".to_owned(), json!("chuzi.diagnostic/v2"));
+    normalized.insert("source".to_owned(), json!("core"));
+    normalized.insert("error_class".to_owned(), json!(error_class));
+    normalized.insert("operation".to_owned(), json!(operation));
+    normalized.insert("event_count".to_owned(), json!(event_count));
+    normalized.insert("events_truncated".to_owned(), json!(false));
+    normalized.insert(
+        "core_status".to_owned(),
+        serde_json::to_value(core_status).unwrap_or_else(|_| json!({"status": "unknown"})),
+    );
+    Value::Object(normalized)
 }
 
 fn diagnostic_call_failure(
@@ -2896,6 +2977,58 @@ mod tests {
             .any(|field| field == "schema"));
         assert!(capture.response_fingerprint.starts_with("fnv1a64:"));
         assert!(!capture.response_fingerprint.contains(&snapshot.summary));
+    }
+
+    #[test]
+    fn diagnostic_legacy_params_keep_unicode_summary_and_drop_additive_fields() {
+        let params = json!({
+            "severity": "error",
+            "category": "core",
+            "summary": "Core 操作出现问题。可以保存一份脱敏诊断文件交给支持人员。",
+            "error_class": "invalid_projection",
+            "operation": "ui_operation",
+        });
+        let legacy = diagnostic_legacy_params(&params);
+        assert_eq!(
+            legacy,
+            json!({
+                "severity": "error",
+                "category": "core",
+                "summary": "Core 操作出现问题。可以保存一份脱敏诊断文件交给支持人员。",
+            })
+        );
+    }
+
+    #[test]
+    fn diagnostic_legacy_response_is_normalized_to_v2_without_raw_error_text() {
+        let status = DiagnosticCoreStatus {
+            installed: true,
+            running: true,
+            ready: true,
+            status: "ready".to_owned(),
+        };
+        let response = normalize_legacy_diagnostic_response(
+            json!({
+                "id": "diag-1",
+                "created_at": "2026-10-08T00:00:00Z",
+                "version": "0.1.0",
+                "platform": "windows",
+                "arch": "amd64",
+                "severity": "error",
+                "category": "core",
+                "summary": "Core 操作出现问题。",
+                "events": [],
+            }),
+            &status,
+            "invalid_projection",
+            "ui_operation",
+        );
+        assert_eq!(response["schema"], "chuzi.diagnostic/v2");
+        assert_eq!(response["source"], "core");
+        assert_eq!(response["error_class"], "invalid_projection");
+        assert_eq!(response["operation"], "ui_operation");
+        assert_eq!(response["core_status"]["status"], "ready");
+        assert!(!response.to_string().contains("password"));
     }
 
     #[test]
