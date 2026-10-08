@@ -173,6 +173,15 @@ shape; and response_fingerprint is an FNV-1a 64-bit fingerprint only. capture_du
 and client_version identify capture timing and the UI build. When Core cannot provide a
 valid v2 object, the UI writes one redacted synthetic ui failure event with the stable
 capture class and never copies raw launcher output, paths, request IDs, or credentials.
+The UI also records `capture_attempts`, `capture_request_shape`, and
+`legacy_retry_attempted`; when a compatibility retry occurs, the initial error
+class/code/size/fingerprint are preserved separately from the final result. A
+capability probe records `core_capability_status`, the negotiated
+`core_protocol_version`, the allow-listed `core_supported_methods`, and
+`core_method_supported` (null means the probe itself was unavailable or
+malformed). Probe failures retain only a stable code and fingerprint, which
+distinguishes an unsupported diagnostic method from a strict old-Core request
+decoder without storing raw launcher text.
 
 Job-pool writes carry expected_revision, idempotency_key, actor, and an optional
 caller timestamp. A successful write returns a durable operation ID; repeating

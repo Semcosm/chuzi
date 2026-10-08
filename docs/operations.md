@@ -463,7 +463,10 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
   allow-list 字段名、FNV-1a64 响应指纹、
   捕获耗时和客户端版本。UI 会对缺失 schema、非对象响应、schema 类型错误、旧 schema、
   v2 字段类型错误以及缺失必需字段分别归类；回退只保留一个合成的 ui 失败事件，
-  不复制 launcher stdout/stderr、路径、请求 ID 或敏感字段。
+  不复制 launcher stdout/stderr、路径、请求 ID 或敏感字段。报告还记录调用尝试次数、
+  最终请求形状及是否执行旧 Core 兼容重试；能力探测会写入 Core 协议版本、支持的方法列表
+  和 `get_diagnostic_snapshot` 是否受支持。这样可以区分“方法不存在”“新增字段被旧 Core
+  拒绝”和“最终调用仍失败”，而不会保存原始错误文本。
 - `diagnostics.enabled` 和 `diagnostics.endpoint` 只控制未来的远程故障报告能力；endpoint
   只能使用 HTTPS（本机测试允许 loopback HTTP）。远程发送不属于本地诊断导出的验收范围。
 - 备份状态数据库前确认凭证密文与密钥分离保存；撤销后的凭据密文已擦除且不可恢复。

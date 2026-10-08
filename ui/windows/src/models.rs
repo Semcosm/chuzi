@@ -239,6 +239,20 @@ pub(crate) struct DiagnosticSnapshot {
     #[serde(default)]
     pub(crate) capture_error_fingerprint: String,
     #[serde(default)]
+    pub(crate) capture_attempts: usize,
+    #[serde(default)]
+    pub(crate) legacy_retry_attempted: bool,
+    #[serde(default)]
+    pub(crate) capture_request_shape: String,
+    #[serde(default)]
+    pub(crate) capture_initial_error_class: String,
+    #[serde(default)]
+    pub(crate) capture_initial_error_code: String,
+    #[serde(default)]
+    pub(crate) capture_initial_error_size: usize,
+    #[serde(default)]
+    pub(crate) capture_initial_error_fingerprint: String,
+    #[serde(default)]
     pub(crate) capture_stage: String,
     #[serde(default)]
     pub(crate) core_schema: String,
@@ -246,6 +260,18 @@ pub(crate) struct DiagnosticSnapshot {
     pub(crate) core_version: String,
     #[serde(default)]
     pub(crate) core_status_error_class: String,
+    #[serde(default)]
+    pub(crate) core_capability_status: String,
+    #[serde(default)]
+    pub(crate) core_capability_error_code: String,
+    #[serde(default)]
+    pub(crate) core_capability_error_fingerprint: String,
+    #[serde(default)]
+    pub(crate) core_protocol_version: String,
+    #[serde(default)]
+    pub(crate) core_method_supported: Option<bool>,
+    #[serde(default)]
+    pub(crate) core_supported_methods: Vec<String>,
     #[serde(default)]
     pub(crate) response_kind: String,
     #[serde(default)]
