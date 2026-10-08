@@ -17,7 +17,7 @@
         "required": ["principal", "role", "key_fingerprint", "effective_from", "effective_until", "status"],
         "properties": {
           "principal": {"type": "string", "format": "email"},
-          "role": {"enum": ["maintainer", "reviewer", "release-signer"]},
+          "role": {"enum": ["maintainer", "reviewer", "tester", "release-signer"]},
           "key_fingerprint": {"type": "string", "pattern": "^SHA256:[A-Za-z0-9+/=]+$"},
           "effective_from": {"type": "string", "format": "date"},
           "effective_until": {"type": ["string", "null"], "format": "date"},

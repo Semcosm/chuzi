@@ -3,6 +3,16 @@
 The bootstrap package is generated from the UGS source tree. It is not a
 second hand-maintained repository skeleton.
 
+For task-oriented command usage, start with [UGS CLI Usage](ugs-cli.md). This
+document defines the package, component, migration, and release semantics that
+the command reference applies.
+
+The package also carries the UGS license overview and complete Apache-2.0 and
+CC BY 4.0 texts at its root. Initialized repositories receive copies under
+`.ugs/docs/`; the root `LICENSE` generated for the standard profiles remains
+a project-owned starting point that consumers should replace or extend for
+their own work.
+
 For local development:
 
 ```bash
@@ -63,14 +73,38 @@ repository shape. Consumers should verify
 the signed release tag and checksum before extracting the package.
 
 The archive also includes `OFFLINE-QUICKSTART.md` at its root, plus offline
-copies of the applicable UGS Core, v0.3 profile, conformance, commit, review,
-release, and bootstrap guidance under `docs/git/`, together with
-`CONTRIBUTING.md` and `RELEASE.md`. Start with the Quick Start and then use
-the local documents. When the tagged source contains a matching release
-packet, the archive also includes it as `RELEASE-NOTES.md`; a downloaded
+copies of the applicable UGS Core, v0.3 profile, v0.4 compatibility, canonical
+CR contract, conformance, commit, review, release, and bootstrap guidance
+under `docs/git/`, together with `CONTRIBUTING.md` and `RELEASE.md`. It also
+ships the CR schema, canonical CR template, and `scripts/cr_model.py` so a
+consumer can inspect portable CR bindings offline. Start with the Quick Start
+and then use the local documents. When the tagged source contains a matching
+release packet, the archive also includes it as `RELEASE-NOTES.md`; a downloaded
 release remains usable without web access.
 
 ## Full-Component Upgrade
+
+### Explicit Offline Migration
+
+The migrate command is the explicit offline migration entry point. The
+upgrade command remains a compatibility alias.
+
+```bash
+./scripts/ugs.sh migrate \
+  --archive ./ugs-bootstrap-vX.Y.Z.tar.gz \
+  --dry-run \
+  --report /path/to/migration-report.json \
+  /path/to/repository
+./scripts/ugs.sh migrate \
+  --archive ./ugs-bootstrap-vX.Y.Z.tar.gz \
+  --backup-dir /path/to/backup \
+  --report /path/to/migration-report.json \
+  /path/to/repository
+```
+
+The dry run changes no target files. The report uses the versioned
+ugs-migration/v1 JSON shape and records the repository inventory, desired file
+digests, package identity, conflict status, and backup/rollback information.
 
 The package includes `scripts/ugs.sh`, `scripts/ugs_upgrade.py`, and a
 machine-readable `COMPONENTS.json`. Use the package script from the extracted
@@ -103,6 +137,28 @@ a recoverable backup and prints a rollback command:
 ```bash
 ./scripts/ugs.sh rollback --backup-dir /path/to/backup /path/to/repository
 ```
+
+BACKUP.json records pre-migration file digests and modes. Rollback verifies the
+restored files, permissions, and core.hooksPath, and can emit a machine-readable
+result with:
+
+```bash
+./scripts/ugs.sh rollback \
+  --backup-dir /path/to/backup \
+  --report /path/to/rollback-report.json \
+  /path/to/repository
+```
+
+Branch closure is included in the bootstrap package. After upgrading a
+repository, retire an integrated topic branch with:
+
+    ./scripts/ugs.sh branch close feat/example --target main --remote origin
+    ./scripts/ugs.sh branch close feat/example --dry-run --format json
+    ./scripts/ugs.sh branch close feat/abandoned --archive --reason "superseded"
+
+The command reads the consumer repository policy and CR records. It refuses
+protected, undeclared, unmerged, worktree-used, or unreviewed branches before
+changing refs.
 
 Profile activation is explicit and separate:
 

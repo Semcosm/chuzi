@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install, upgrade, activate, and roll back a UGS release package."""
+"""Install, migrate, activate, and roll back a UGS release package."""
 
 import argparse
 import copy
@@ -53,6 +53,61 @@ def sha256_file(path):
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def file_snapshot(path):
+    if path.is_symlink():
+        return {"exists": True, "kind": "symlink", "sha256": None, "mode": None}
+    if path.is_file():
+        return {
+            "exists": True,
+            "kind": "file",
+            "sha256": sha256_file(path),
+            "mode": format(stat.S_IMODE(os.stat(path).st_mode), "04o"),
+        }
+    if path.exists():
+        return {"exists": True, "kind": "other", "sha256": None, "mode": None}
+    return {"exists": False, "kind": "missing", "sha256": None, "mode": None}
+
+
+def desired_snapshot(operation):
+    return {
+        "exists": True,
+        "kind": "file",
+        "sha256": sha256_bytes(operation["content"]),
+        "mode": format(operation["mode"], "04o"),
+    }
+
+
+def report_path(target, requested, default=None):
+    if requested is None:
+        return default
+    if str(requested) == "-":
+        return None
+    path = requested.resolve()
+    target_resolved = target.resolve()
+    if path == target_resolved or target_resolved in path.parents:
+        raise UpgradeError("report path must be outside the target repository")
+    if path.is_symlink():
+        raise UpgradeError("report path must not be a symbolic link")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def emit_report(report, target, requested, default=None):
+    if requested is not None and str(requested) == "-":
+        print(json.dumps(report, indent=2, sort_keys=True))
+        return "-"
+    destination = report_path(target, requested, default)
+    if destination is None:
+        return None
+    write_json(destination, report)
+    print("report: " + str(destination))
+    return destination
+
+
+def human_stream(requested):
+    return sys.stderr if requested is not None and str(requested) == "-" else sys.stdout
 
 
 def is_hex(value, length):
@@ -426,6 +481,7 @@ def destination_path(target, relative):
 def make_operation(target, package_root, entry, content=None, relative_override=None, ownership=None, kind=None, component=None):
     relative = relative_override or entry["target"]
     destination = destination_path(target, relative)
+    before = file_snapshot(destination)
     if content is None:
         source = package_root / entry["source"]
         content = source.read_bytes()
@@ -455,6 +511,7 @@ def make_operation(target, package_root, entry, content=None, relative_override=
         "mode": mode,
         "source": source,
         "status": status,
+        "before": before,
         "same": same,
         "mode_changed": exists and not destination.is_symlink() and stat.S_IMODE(os.stat(destination).st_mode) != mode,
         "ownership": effective_ownership,
@@ -499,7 +556,7 @@ def metadata_content(target, package, layout, profile):
 
 def upgrade_plan(target, package, context, command, overwrite_project_files):
     profile = active_profile(target)
-    if command == "upgrade" and profile == "unconfigured":
+    if command in ("upgrade", "migrate") and profile == "unconfigured":
         raise UpgradeError("target has no .ugs/policy.json; initialize UGS first or use the install command")
     if command == "install" and profile == "unconfigured":
         profile = "baseline"
@@ -596,15 +653,71 @@ def activation_plan(target, package, context, profile):
     return operations, current.get("conformance_level", "unknown"), profile
 
 
-def print_plan(operations, layout, profile, command, hooks_changed=False):
-    print(f"repository layout: {layout}")
-    print(f"active profile: {profile}")
-    print(f"operation: {command}")
+def migration_report(target, package, context, command, profile, operations,
+                     dry_run, status, hooks_before, hooks_changed,
+                     backup=None, rollback=None, error=None):
+    counts = {}
+    operation_records = []
     for operation in operations:
         label = operation["status"]
-        print(f"{label}: {operation['relative']} [{operation['component']}/{operation['kind']}]")
+        counts[label] = counts.get(label, 0) + 1
+        operation_records.append({
+            "path": operation["relative"],
+            "component": operation["component"],
+            "kind": operation["kind"],
+            "ownership": operation["ownership"],
+            "status": label,
+            "before": operation.get("before", file_snapshot(operation["destination"])),
+            "desired": desired_snapshot(operation),
+        })
+    manifest = package["manifest"]
+    report = {
+        "format": "ugs-migration/v1",
+        "schema_version": 1,
+        "command": command,
+        "status": status,
+        "dry_run": bool(dry_run),
+        "target": str(target.resolve()),
+        "repository": {
+            "layout": context["layout"],
+            "active_profile": profile,
+            "hooks_before": hooks_before,
+            "hooks_after": ".githooks" if hooks_changed else hooks_before,
+        },
+        "package": {
+            "format": manifest.get("format"),
+            "version": manifest.get("version"),
+            "source_commit": manifest.get("source_commit"),
+        },
+        "inventory": {
+            "operation_count": len(operation_records),
+            "counts": counts,
+            "operations": operation_records,
+        },
+        "backup": (
+            {
+                "format": "ugs-backup/v1",
+                "path": str(backup),
+                "metadata": str(Path(backup) / "BACKUP.json"),
+            }
+            if backup is not None else None
+        ),
+        "rollback": rollback,
+    }
+    if error is not None:
+        report["error"] = str(error)
+    return report
+
+
+def print_plan(operations, layout, profile, command, hooks_changed=False, stream=sys.stdout):
+    print(f"repository layout: {layout}", file=stream)
+    print(f"active profile: {profile}", file=stream)
+    print(f"operation: {command}", file=stream)
+    for operation in operations:
+        label = operation["status"]
+        print(f"{label}: {operation['relative']} [{operation['component']}/{operation['kind']}]", file=stream)
     if hooks_changed:
-        print("update: git config core.hooksPath .githooks [core]")
+        print("update: git config core.hooksPath .githooks [core]", file=stream)
 
 
 def backup_path(target, requested):
@@ -656,7 +769,7 @@ def create_backup(target, operations, hooks_before, requested):
     return path
 
 
-def restore_backup(backup, target, force=False):
+def restore_backup(backup, target, force=False, stream=sys.stdout):
     metadata = read_json(backup / "BACKUP.json", "backup metadata")
     if metadata.get("format") != "ugs-backup/v1":
         raise UpgradeError("unsupported backup format")
@@ -733,14 +846,48 @@ def restore_backup(backup, target, force=False):
             run_git(target, ["config", "core.hooksPath", hooks_before], context["managed_git_dir"], check=True)
     finally:
         shutil.rmtree(stage, ignore_errors=True)
+    failures = []
+    files_restored = 0
+    files_removed = 0
+    for record in records:
+        relative = safe_relative(record["path"], "backup path")
+        destination = destination_path(target, relative)
+        if record.get("existed"):
+            files_restored += 1
+            if not destination.is_file():
+                failures.append(relative)
+                continue
+            if record.get("before_sha256") and sha256_file(destination) != record["before_sha256"]:
+                failures.append(relative)
+                continue
+            expected_mode = record.get("before_mode")
+            if expected_mode is not None and format(stat.S_IMODE(os.stat(destination).st_mode), "04o") != expected_mode:
+                failures.append(relative)
+        else:
+            files_removed += 1
+            if destination.exists() or destination.is_symlink():
+                failures.append(relative)
+    expected_hooks = metadata.get("core.hooksPath")
+    actual_hooks = git_config(target, context, "core.hooksPath")
+    if expected_hooks != actual_hooks:
+        failures.append("core.hooksPath")
+    if failures:
+        raise UpgradeError("rollback verification failed: " + ", ".join(failures))
+    return {
+        "verified": True,
+        "forced": bool(force),
+        "files_restored": files_restored,
+        "files_removed": files_removed,
+        "hooks_restored": True,
+    }
 
 
-def apply_operations(target, operations, context, backup_requested):
+def apply_operations(target, operations, context, backup_requested, output_stream=sys.stdout):
     changed = [operation for operation in operations if operation["status"] in ("add", "update")]
     hooks_before = git_config(target, context, "core.hooksPath")
     hooks_changed = hooks_before != ".githooks"
     if not changed and not hooks_changed:
-        print("no changes required")
+        print("no changes required", file=output_stream)
         return None
     backup = create_backup(target, changed, hooks_before, backup_requested)
     stage = Path(tempfile.mkdtemp(prefix=".ugs-upgrade-", dir=str(target.parent)))
@@ -758,14 +905,14 @@ def apply_operations(target, operations, context, backup_requested):
             run_git(target, ["config", "core.hooksPath", ".githooks"], context["managed_git_dir"], check=True)
     except Exception:
         try:
-            restore_backup(backup, target, force=True)
+            restore_backup(backup, target, force=True, stream=sys.stderr)
         except Exception as rollback_error:
             print("ugs upgrade: automatic rollback failed: " + str(rollback_error), file=sys.stderr)
         raise
     finally:
         shutil.rmtree(stage, ignore_errors=True)
-    print("backup: " + str(backup))
-    print("rollback: scripts/ugs.sh rollback --backup-dir " + str(backup) + " " + str(target))
+    print("backup: " + str(backup), file=output_stream)
+    print("rollback: scripts/ugs.sh rollback --backup-dir " + str(backup) + " " + str(target), file=output_stream)
     return backup
 
 
@@ -780,19 +927,41 @@ def command_install(args, command):
                 if operation["status"] == "project-preserved":
                     operation["status"] = "update"
         conflicts = [operation for operation in operations if operation["status"] == "conflict"]
-        hooks_changed = git_config(target, context, "core.hooksPath") != ".githooks"
-        print_plan(operations, context["layout"], profile, command, hooks_changed)
+        hooks_before = git_config(target, context, "core.hooksPath")
+        hooks_changed = hooks_before != ".githooks"
+        stream = human_stream(args.report)
+        print_plan(operations, context["layout"], profile, command, hooks_changed, stream=stream)
         if conflicts:
-            if args.dry_run:
-                print("conflicts detected; no files were changed", file=sys.stderr)
-                return 1
+            report = migration_report(
+                target, package, context, command, profile, operations,
+                args.dry_run, "conflict", hooks_before, hooks_changed,
+            )
+            emit_report(report, target, args.report)
             print("conflicts detected; no files were changed", file=sys.stderr)
             return 1
         if args.dry_run:
-            print("dry-run complete; no files were changed")
+            report = migration_report(
+                target, package, context, command, profile, operations,
+                True, "planned", hooks_before, hooks_changed,
+            )
+            emit_report(report, target, args.report)
+            print("dry-run complete; no files were changed", file=stream)
             return 0
-        apply_operations(target, operations, context, args.backup_dir)
-        print(f"UGS {command} complete: {target}")
+        backup = apply_operations(target, operations, context, args.backup_dir, output_stream=stream)
+        rollback = None
+        if backup is not None:
+            rollback = {
+                "command": f"scripts/ugs.sh rollback --backup-dir {backup} {target}",
+                "verified": False,
+            }
+        report = migration_report(
+            target, package, context, command, profile, operations, False,
+            "applied" if backup is not None else "unchanged",
+            hooks_before, hooks_changed, backup=backup, rollback=rollback,
+        )
+        default_report = Path(backup) / "MIGRATION-REPORT.json" if backup is not None else None
+        emit_report(report, target, args.report, default_report)
+        print(f"UGS {command} complete: {target}", file=stream)
         return 0
 
 
@@ -801,16 +970,47 @@ def command_activate(args):
     with package_context(args) as package:
         context = detect_git_layout(target)
         operations, previous, profile = activation_plan(target, package, context, args.profile)
-        print_plan(operations, context["layout"], previous, "activate -> " + profile)
+        command = "activate"
+        plan_command = "activate -> " + profile
+        hooks_before = git_config(target, context, "core.hooksPath")
+        hooks_changed = hooks_before != ".githooks"
+        stream = human_stream(args.report)
+        print_plan(operations, context["layout"], previous, plan_command, hooks_changed, stream=stream)
         conflicts = [operation for operation in operations if operation["status"] == "conflict"]
         if conflicts:
+            report = migration_report(
+                target, package, context, command, previous, operations,
+                args.dry_run, "conflict", hooks_before, hooks_changed,
+            )
+            report["repository"]["requested_profile"] = profile
+            emit_report(report, target, args.report)
             print("conflicts detected; no files were changed", file=sys.stderr)
             return 1
         if args.dry_run:
-            print("dry-run complete; no files were changed")
+            report = migration_report(
+                target, package, context, command, previous, operations,
+                True, "planned", hooks_before, hooks_changed,
+            )
+            report["repository"]["requested_profile"] = profile
+            emit_report(report, target, args.report)
+            print("dry-run complete; no files were changed", file=stream)
             return 0
-        apply_operations(target, operations, context, args.backup_dir)
-        print(f"UGS profile activated: {profile}")
+        backup = apply_operations(target, operations, context, args.backup_dir, output_stream=stream)
+        rollback = None
+        if backup is not None:
+            rollback = {
+                "command": f"scripts/ugs.sh rollback --backup-dir {backup} {target}",
+                "verified": False,
+            }
+        report = migration_report(
+            target, package, context, command, previous, operations, False,
+            "applied" if backup is not None else "unchanged",
+            hooks_before, hooks_changed, backup=backup, rollback=rollback,
+        )
+        report["repository"]["requested_profile"] = profile
+        default_report = Path(backup) / "MIGRATION-REPORT.json" if backup is not None else None
+        emit_report(report, target, args.report, default_report)
+        print(f"UGS profile activated: {profile}", file=stream)
         return 0
 
 
@@ -819,8 +1019,24 @@ def command_rollback(args):
     backup = args.backup_dir.resolve()
     if not backup.is_dir():
         return fail("backup directory does not exist: " + str(backup))
-    restore_backup(backup, target, force=args.force)
-    print("rollback complete: " + str(target))
+    stream = human_stream(args.report)
+    rollback = restore_backup(backup, target, force=args.force, stream=stream)
+    report = {
+        "format": "ugs-migration/v1",
+        "schema_version": 1,
+        "command": "rollback",
+        "status": "rolled_back",
+        "dry_run": False,
+        "target": str(target.resolve()),
+        "backup": {
+            "format": "ugs-backup/v1",
+            "path": str(backup),
+            "metadata": str(backup / "BACKUP.json"),
+        },
+        "rollback": rollback,
+    }
+    emit_report(report, target, args.report, backup / "ROLLBACK-REPORT.json")
+    print("rollback complete: " + str(target), file=stream)
     return 0
 
 
@@ -836,11 +1052,17 @@ def main():
     parser = argparse.ArgumentParser(description="install and safely upgrade a UGS release package")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for name in ("install", "upgrade"):
-        command = subparsers.add_parser(name, help=f"{name} all release components without changing the active profile")
+    for name in ("install", "upgrade", "migrate"):
+        description = (
+            "offline migration with preview, backup, and report"
+            if name == "migrate"
+            else f"{name} all release components without changing the active profile"
+        )
+        command = subparsers.add_parser(name, help=description)
         add_package_options(command)
         command.add_argument("--dry-run", action="store_true")
         command.add_argument("--backup-dir", type=Path)
+        command.add_argument("--report", type=Path, help="write a machine-readable migration report outside the target (or - for stdout)")
         command.add_argument("--overwrite-project-files", action="store_true")
         command.add_argument("--overwrite", action="store_true", help=argparse.SUPPRESS)
         command.add_argument("target", type=Path)
@@ -850,16 +1072,18 @@ def main():
     activate.add_argument("--profile", choices=PROFILES, required=True)
     activate.add_argument("--dry-run", action="store_true")
     activate.add_argument("--backup-dir", type=Path)
+    activate.add_argument("--report", type=Path, help="write a machine-readable migration report outside the target (or - for stdout)")
     activate.add_argument("target", type=Path)
 
     rollback = subparsers.add_parser("rollback", help="restore a backup made by install, upgrade, or activate")
     rollback.add_argument("--backup-dir", type=Path, required=True)
+    rollback.add_argument("--report", type=Path, help="write a machine-readable rollback report outside the target (or - for stdout)")
     rollback.add_argument("--force", action="store_true", help="restore even when a file changed after the backup")
     rollback.add_argument("target", type=Path)
 
     args = parser.parse_args()
     try:
-        if args.command in ("install", "upgrade"):
+        if args.command in ("install", "upgrade", "migrate"):
             return command_install(args, args.command)
         if args.command == "activate":
             return command_activate(args)

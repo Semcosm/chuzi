@@ -3,9 +3,25 @@ set -euo pipefail
 
 manifest="${1:-.ugs/policy.json}"
 
+script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+. "$script_dir/ugs_errors.sh"
+
 fail() {
-  echo "policy manifest validation failed: $1" >&2
-  exit 1
+  local message="$1"
+  local code="UGS-POLICY-999"
+  case "$message" in
+    "manifest does not exist:"*) code="UGS-POLICY-001" ;;
+    "jq is required") code="UGS-POLICY-002" ;;
+    "manifest is not valid JSON") code="UGS-POLICY-003" ;;
+    "top level must be an object") code="UGS-POLICY-004" ;;
+    "unknown top-level field;"*) code="UGS-POLICY-005" ;;
+    'unsupported $schema') code="UGS-POLICY-006" ;;
+    "unsupported format") code="UGS-POLICY-007" ;;
+    "unsupported schema_version") code="UGS-POLICY-008" ;;
+    "unsupported policy_version") code="UGS-POLICY-009" ;;
+    "invalid conformance_level") code="UGS-POLICY-010" ;;
+  esac
+  ugs_fail "$code" "$message"
 }
 
 warn() {

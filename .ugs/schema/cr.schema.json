@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://semcosm.github.io/UGS/schema/cr/v1",
+  "title": "UGS canonical change request projection v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "format", "schema_version", "id", "title", "revision", "status", "decision", "policy_version", "source", "integration", "coverage_oids", "sections", "extensions", "binding"],
+  "properties": {
+    "$schema": {"const": "schema/cr.schema.json"},
+    "format": {"const": "ugs-cr/v1"},
+    "schema_version": {"const": 1},
+    "id": {"type": "string", "pattern": "^CR-[0-9]{4}$"},
+    "title": {"type": "string", "minLength": 1},
+    "revision": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["pending", "accepted", "integrated", "rejected", "superseded"]},
+    "decision": {"enum": ["pending", "accepted", "rejected", "superseded"]},
+    "policy_version": {"type": "string", "pattern": "^v(0\\.2|0\\.3(-[0-9]+|-(draft-[0-9]+|rc-[0-9]+))?)$"},
+    "source": {"$ref": "#/$defs/source"},
+    "integration": {"$ref": "#/$defs/integration"},
+    "coverage_oids": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/oid"}},
+    "sections": {"$ref": "#/$defs/sections"},
+    "extensions": {"type": "object", "propertyNames": {"pattern": "^x-"}},
+    "binding": {"$ref": "#/$defs/binding"}
+  },
+  "$defs": {
+    "oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["base_ref", "head_or_range", "base_oid", "head_oid"],
+      "properties": {
+        "base_ref": {"type": "string", "minLength": 1},
+        "head_or_range": {"type": "string", "minLength": 1},
+        "base_oid": {"$ref": "#/$defs/oid"},
+        "head_oid": {"$ref": "#/$defs/oid"}
+      }
+    },
+    "integration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "target_ref", "review_evidence", "result_ref", "result_oid"],
+      "properties": {
+        "strategy": {"enum": ["rebase-ff", "merge", "squash"]},
+        "target_ref": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"},
+        "review_evidence": {"enum": ["none", "trailers"]},
+        "result_ref": {"type": ["string", "null"]},
+        "result_oid": {"anyOf": [{"$ref": "#/$defs/oid"}, {"type": "null"}]}
+      }
+    },
+    "sections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Summary", "Motivation", "Test Evidence", "Risk", "Rollback", "Breaking Change", "Backport Target"],
+      "properties": {
+        "Summary": {"type": "string", "minLength": 1},
+        "Motivation": {"type": "string", "minLength": 1},
+        "Test Evidence": {"type": "string", "minLength": 1},
+        "Risk": {"type": "string", "minLength": 1},
+        "Rollback": {"type": "string", "minLength": 1},
+        "Breaking Change": {"type": "string", "minLength": 1},
+        "Backport Target": {"type": "string", "minLength": 1}
+      }
+    },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["format", "sha256"],
+      "properties": {
+        "format": {"const": "ugs-cr-binding/v1"},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    }
+  }
+}

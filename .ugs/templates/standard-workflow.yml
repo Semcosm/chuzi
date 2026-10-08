@@ -12,6 +12,9 @@ jobs:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
+      - name: Restore signed pull-request source refs
+        if: github.event_name == 'push'
+        run: git fetch --no-tags origin '+refs/pull/*/head:refs/remotes/origin/pr/*'
       - name: Validate persisted CR and generated PR body
         if: github.event_name == 'pull_request'
         run: adapters/github/validate_pr.sh "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" "$GITHUB_EVENT_PATH"

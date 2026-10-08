@@ -55,19 +55,36 @@ mutable hosting-platform state.
 When `Integrated Result` is present, its `main@<commit OID>` **MUST** identify
 an existing commit reachable from `main`, and that commit **MUST** descend from
 the CR's `Base OID`. The CR's `Head OID` need not be an ancestor of the
-integrated result: squash and merge integrations may create a different result
-object. Rebase-fast-forward integrations normally use the head object itself.
+integrated result: hosted rebase, squash, and merge integrations may create a
+different result object. A hosted rebase result must retain the same canonical
+non-CR tree diff from the CR's `Base OID`.
 
 New v0.3 CRs **MUST** declare `Integration Strategy` as `rebase-ff`, `merge`,
-or `squash`. A rebase-fast-forward result equals `Head OID`; a merge result is
-a merge commit containing the source head; and a squash result is a distinct
-commit that does not contain the source head as an ancestor. Historical CRs
-without this field remain valid as grandfathered records.
+or `squash`. A literal rebase-fast-forward result equals `Head OID`; a hosted
+rebase result may use a different commit when its canonical non-CR tree diff
+from `Base OID` exactly matches the reviewed `Base OID..Head OID` range. A merge
+result is a merge commit containing the source head; and a squash result is a
+distinct commit that does not contain the source head as an ancestor.
+Historical CRs without this field remain valid as grandfathered records.
+
+During the first post-integration main-range check, a `rebase-ff` CR may still
+have `Integrated Result: pending` when a hosting platform rewrites the source
+commits. The main-range validator may accept this case only when the recorded
+`Base OID` equals the previous main tip, the source `Head OID` descends from
+that base, and the source and resulting ranges have the same canonical tree
+diff after excluding persisted `cr/CR-*.md` metadata. The rewritten range must
+contain one pending CR record; unrelated records or content changes remain
+failures. A subsequent closure commit may contain only metadata changes to that
+CR, advance its revision, set `Status: integrated`, and name the rewritten
+result. The named result must already be reachable from the previous main tip.
+This is provenance evidence and does not replace commit signature or
+review-trailer validation.
 
 The repository's declared review model and sensitive-path acknowledgment
 requirements apply to every v0.3 change. Final review and test conclusions
 should be represented by commit trailers when the integration path supports
-them.
+them. The optional `ugs-cr-attestation/v1` contract adds signed, portable
+review and test evidence; it does not weaken or replace this trailer gate.
 
 New v0.3 CRs that declare `Review Evidence: trailers` **MUST** have both
 `Reviewed-by` and `Tested-by` on the final integrated commit. For rebase-ff this
@@ -99,18 +116,40 @@ trusted-signing boundary, protected refs, and rollback path. The legacy
 and warning reporting.
 
 Signer lifecycle metadata **MUST** identify each principal's role, key
-fingerprint, effective start date, status, and (when revoked) effective end
-date. Active lifecycle entries **MUST** correspond to `keys/allowed_signers`.
-Reviewer trailers are attestations bound to the final signed commit; v0.3 does
-not define a separate reviewer-signature wire format.
+fingerprint, effective start date, status, and (when closed or revoked) an
+exclusive `effective_until` date. Active lifecycle entries **MUST** correspond
+to `keys/allowed_signers`.
+Reviewer trailers remain attestations bound to the final signed commit. Signed
+reviewer and test attestations use the separate, additive
+`ugs-cr-attestation/v1` contract; they do not change the v0.3 CR or commit
+trailer wire values.
 
 Exception records under `cr/EX-*.md` **MUST** identify the exception type,
 authorizer, reason, start and expiry timestamps, event commit, and post-event
 review. Bootstrap exceptions are one-time; emergency exceptions are time-bound
 and must close with a reachable `main@<OID>` review result.
 
-## 7. Deferred capabilities
+## 7. Optional profiles and deferred capabilities
 
-Quality profiles, supply-chain profiles, and additional repository shapes are
-separate follow-up work. They are not implied by the v0.3 profile unless
-explicitly declared by a future profile or extension.
+Quality, supply-chain, and repository-shape capabilities are separately
+specified optional v0.3 profiles in `ugs-quality-profile.md`,
+`ugs-supply-chain-profile.md`, and `ugs-repository-shapes.md`. They are
+available to repositories that explicitly declare them; their absence does not
+invalidate an otherwise conforming v0.3 repository and this profile does not
+silently make them mandatory.
+
+Further work remains for stronger cross-binding of production evidence,
+portable adapter capability reporting, and the v1.0 compatibility contract.
+The signed CR reviewer/test attestation model is specified separately in
+`ugs-cr-attestation/v1`; adoption remains opt-in and is not implied by the
+v0.3 profile. Supply-chain release attestations continue to use their existing
+`ugs-attestation` contract.
+
+## 8. v0.4 compatibility contract
+
+The v0.3 wire values release and merge remain accepted aliases for the
+semantic terms release-line and merge-commit. Unknown Core fields remain
+invalid, and repository-specific additions remain limited to extensions keys
+beginning with x-. The policy-version versus distribution-SemVer boundary,
+deprecation classes, and explicit downgrade requirements are defined in the
+UGS v0.4 Contract And Compatibility Guide.

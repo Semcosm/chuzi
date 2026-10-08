@@ -1,0 +1,45 @@
+# UGS Licensing
+
+Universal Git Standard (UGS) uses a layered license policy. This file is the
+repository-level notice; the complete license texts are in
+[LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt) and
+[LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt).
+
+## Implementation and configuration — Apache-2.0
+
+Unless a file contains a more specific notice, UGS-authored implementation
+and machine-readable material is licensed under Apache License 2.0:
+
+- executable code in `scripts/`, `adapters/`, `.githooks/`, and
+  `.github/workflows/`;
+- policy, schema, workflow, and test fixture files;
+- code and configuration in `bootstrap/templates/`;
+- machine-readable UGS metadata under `.ugs/` and `keys/`.
+
+See [LICENSES/Apache-2.0.txt](LICENSES/Apache-2.0.txt).
+
+## Documentation and records — CC BY 4.0
+
+UGS-authored prose is licensed under Creative Commons Attribution 4.0
+International, including:
+
+- normative and roadmap material in `docs/`;
+- bootstrap guides and prose templates in `bootstrap/`;
+- repository guides and README files;
+- release packets and change-request records in `releases/` and `cr/`;
+- prose documentation under `adapters/`, `.githooks/`, and `keys/`;
+- generated UGS documentation under `.ugs/docs/`.
+
+See [LICENSES/CC-BY-4.0.txt](LICENSES/CC-BY-4.0.txt).
+
+The applicable license is identified by this path policy unless a file carries
+an explicit SPDX identifier, copyright notice, or third-party license notice.
+A file-level notice controls that file. Files copied into a consumer
+repository retain these terms; the consumer repository's own work may have
+separate terms.
+
+Apache-2.0 grants no permission to use UGS trademarks, logos, or the UGS name
+to imply endorsement, certification, or official status. CC BY 4.0 does not
+grant patent or trademark rights.
+
+Third-party material retains its original license and attribution requirements.

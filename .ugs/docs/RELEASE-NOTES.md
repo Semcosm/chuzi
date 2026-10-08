@@ -1,75 +1,65 @@
-# UGS v0.3.27
+# UGS v0.3.33
 
-This superseding patch release adds a complete, offline component upgrade flow
-for existing UGS repositories.
+This patch release hardens CR provenance for hosted `rebase-ff` integrations.
 
 ## Summary
 
-The release package now includes `scripts/ugs.sh`, `scripts/ugs_upgrade.py`,
-and a signed-release component inventory in `COMPONENTS.json` plus its
-`.components.json` sidecar. Existing UGS repositories can use `upgrade` to
-install the complete component set while preserving the currently active
-profile. Profile changes remain explicit through `activate`.
+The release preserves the original reviewed `Head OID` when a hosting platform
+rewrites the source series, proves equivalence through a canonical non-CR tree
+diff, and provides a bounded lifecycle for closing the pending CR after the
+rewritten result is known.
 
-The upgrade path verifies the archive checksum, embedded and external package
-manifests, component classification, file modes, archive paths, and supported
-Git worktree layout before writing. It provides dry-run output, conflict
-detection, project-owned file preservation, recoverable backups, and rollback.
-The release package's offline documentation explains the full workflow without
-requiring a web tutorial.
+## Included scope
+
+- accept a patch-equivalent hosted rebase result under the `rebase-ff` strategy;
+- require source/result tree-diff equivalence while excluding persisted CR metadata;
+- validate metadata-only closure commits against the prior pending or accepted CR;
+- reject unrelated CRs, stale bases, changed patches, and code changes in closure commits;
+- add disposable range fixtures and document the portable Core behavior; and
+- publish the v0.3.33 bootstrap package and signed release packet.
 
 ## Compatibility
 
-This release does not modify or replace `v0.3.26` or any earlier immutable
-release. Existing initialization commands and profiles remain available.
-Repositories must already be initialized with UGS before using `upgrade`;
-fresh repositories continue to use `ugs_init.sh`. Bare Git object stores are
-rejected for upgrades because installation requires a worktree checkout.
-
-`v0.3.26` and earlier release downloads remain supported without a component
-sidecar. Releases beginning with `v0.3.27` require the component inventory for
-the full upgrade protocol.
+The policy version remains `0.3`, and literal fast-forward, merge, and squash
+rules remain unchanged. Hosted rebase integrations gain an explicit
+patch-equivalence path; signature, review-trailer, and protected-ref checks
+remain required. The post-tag supply-chain evidence for v0.3.33 is a separate
+signed record that binds the immutable tag and published archive digest.
 
 ## Verification
 
-Before tagging, run:
+The release candidate must pass:
 
-```bash
-scripts/validate_repo.sh
-scripts/ugs_check.sh --format json
-scripts/test_bootstrap_upgrade.sh
-scripts/test_bootstrap_package.sh
-scripts/test_bootstrap_equivalence.sh
-scripts/test_profile_conformance.sh
-scripts/validate_cr_coverage.sh HEAD
-```
+    scripts/validate_repo.sh
+    scripts/ugs_check.sh --format json
+    scripts/test_conformance.sh
+    scripts/test_profile_conformance.sh
+    scripts/test_main_cr_range.sh
+    scripts/test_bootstrap_package.sh
+    scripts/test_bootstrap_equivalence.sh
+    scripts/test_git_fixtures.sh
+    scripts/validate_document_map.py
+    scripts/validate_cr_coverage.sh HEAD
+    scripts/validate_commit_range.sh v0.3.32..HEAD
+    scripts/validate_commit_signatures.sh v0.3.32..HEAD
 
-After publication, verify the signed tag and downloaded package:
-
-```bash
-scripts/validate_release_tag.sh v0.3.27
-scripts/test_bootstrap_release.sh v0.3.27
-```
-
-For offline use, extract the archive and begin with `OFFLINE-QUICKSTART.md`,
-`README.md`, and `RELEASE-NOTES.md`. Keep the archive, checksum, manifest, and
-component sidecar together.
+After the signed tag exists, build the package twice with
+`SOURCE_DATE_EPOCH=0`, publish the archive, and run
+`scripts/test_bootstrap_release.sh v0.3.33`. The post-tag evidence CR must
+also pass `scripts/validate_supply_chain_release.sh v0.3.33 .ugs/policy.json
+Semcosm/UGS` after its evidence is integrated.
 
 ## Rollback
 
-Do not delete, replace, or force-update `v0.3.26` or `v0.3.27`. If a published
-asset is defective, preserve the immutable release and publish a later
-superseding patch. For a consumer upgrade, use the backup directory printed by
-the command:
-
-```bash
-scripts/ugs.sh rollback --backup-dir /path/to/backup /path/to/repository
-```
+Release tags are append-only. Do not delete, replace, or force-update
+`v0.3.32` or `v0.3.33`. If the validator, archive, or evidence is defective,
+retain the immutable objects and publish a later signed superseding patch
+through a new CR.
 
 ## Breaking Change
 
-No. The new component inventory is required for the new upgrade protocol, but
-legacy releases retain their existing initialization compatibility.
+No. The change adds a verifiable hosted-rebase provenance form and closure
+checks without changing the v0.3 policy wire values.
 
 ## Backport Target
 

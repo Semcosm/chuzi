@@ -9,8 +9,8 @@ git rev-parse --verify "$head^{commit}" >/dev/null 2>&1 || fail "invalid head SH
 [ -f "$cr_file" ] || fail "CR file does not exist"
 [ -f "$review_body" ] || fail "review body does not exist"
 merge_base="$(git merge-base "$base" "$head")"
-record_base="$(sed -n 's/^Base OID: //p' "$cr_file")"
-record_head="$(sed -n 's/^Head OID: //p' "$cr_file")"
+record_base="$("$repo_root/scripts/cr_model.py" --field source.base_oid "$cr_file")"
+record_head="$("$repo_root/scripts/cr_model.py" --field source.head_oid "$cr_file")"
 [ "$record_base" = "$merge_base" ] || fail "CR Base OID does not equal review merge-base"
 git merge-base --is-ancestor "$record_head" "$head" || fail "CR Head OID is not in the proposed history"
 "$repo_root/scripts/validate_cr_record.sh" "$cr_file" >/dev/null
