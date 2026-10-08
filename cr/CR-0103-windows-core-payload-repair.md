@@ -1,7 +1,7 @@
 # CR-0103: stop and repair the retained Windows Core payload during install
 
 Base: main
-Head or Range: a243db19b91f913c91aa5e4cbcf77297e5069b8f
+Head or Range: 71394f55df66f7ada4542f479c18a73e425b6bee
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): stop and repair retained Core payload during install
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: a243db19b91f913c91aa5e4cbcf77297e5069b8f
-Head OID: a243db19b91f913c91aa5e4cbcf77297e5069b8f
+Head OID: 71394f55df66f7ada4542f479c18a73e425b6bee
 Integrated Result: pending
 
 ## Summary
