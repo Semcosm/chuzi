@@ -5,7 +5,7 @@ Head or Range: fix/diagnostic-core-error-classification
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(ui): preserve Core diagnostic failure codes
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
