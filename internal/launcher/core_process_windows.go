@@ -31,6 +31,17 @@ func stopServiceProcess(ctx context.Context, pid int) error {
 	return nil
 }
 
+func stopOrphanedService(ctx context.Context, executable string) error {
+	if strings.TrimSpace(executable) == "" {
+		return fmt.Errorf("stop core: missing executable")
+	}
+	command := exec.CommandContext(ctx, "taskkill.exe", "/F", "/IM", executable, "/T")
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("stop orphaned core: %w", err)
+	}
+	return nil
+}
+
 func normalizeWindowsPath(value string) string {
 	path := strings.TrimSpace(strings.ReplaceAll(value, "/", "\\"))
 	if stripped := strings.TrimPrefix(path, `\\?\UNC\`); stripped != path {

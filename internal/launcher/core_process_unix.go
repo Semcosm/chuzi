@@ -37,3 +37,7 @@ func stopServiceProcess(ctx context.Context, pid int) error {
 	}
 	return nil
 }
+
+func stopOrphanedService(ctx context.Context, executable string) error {
+	return fmt.Errorf("stop orphaned core is unsupported for %s", executable)
+}

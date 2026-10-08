@@ -51,6 +51,10 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional shortcuts:"
 
 [Run]
+; Stop a running Core before launching the freshly installed payload. Core is
+; installed under ProgramData, so replacing the UI files alone is insufficient
+; during upgrades unless this old process is stopped first.
+Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonappdata}\chuzi\data"" -source-root ""{app}\CorePayload"" -manifest ""{app}\CorePayload\release-manifest.json"" -command core-stop"; Flags: runhidden waituntilterminated skipifdoesntexist runascurrentuser
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -90,4 +94,62 @@ begin
   UninstallContext := True;
   KeepUserData();
   Result := True;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ExistingLauncher: String;
+  ExistingManifest: String;
+  DataRoot: String;
+  Parameters: String;
+  ResultCode: Integer;
+begin
+  NeedsRestart := False;
+  Result := '';
+  ExistingLauncher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
+  ExistingManifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
+  DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
+  if (not FileExists(ExistingLauncher)) or (not FileExists(ExistingManifest)) then
+    Exit;
+  Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
+    '" -manifest "' + ExistingManifest + '" -command core-stop';
+  { Old launchers may not have a PID file. Let the new launcher perform the
+    Windows orphan-process fallback after its files have been copied. }
+  Exec(ExistingLauncher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Launcher: String;
+  Manifest: String;
+  DataRoot: String;
+  Parameters: String;
+  ResultCode: Integer;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+  Launcher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
+  Manifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
+  DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
+  if (not FileExists(Launcher)) or (not FileExists(Manifest)) then
+  begin
+    MsgBox('安装包缺少 Core 文件，无法完成安装。请重新下载最新安装包。', mbError, MB_OK);
+    Abort;
+  end;
+  Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
+    '" -manifest "' + Manifest + '" -command core-stop';
+  if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+     (ResultCode <> 0) then
+  begin
+    MsgBox('无法停止旧版 Core，安装已停止。请关闭 Chuzi 后重试。', mbError, MB_OK);
+    Abort;
+  end;
+  Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
+    '" -manifest "' + Manifest + '" -command component-install -item service';
+  if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+     (ResultCode <> 0) then
+  begin
+    MsgBox('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError, MB_OK);
+    Abort;
+  end;
 end;

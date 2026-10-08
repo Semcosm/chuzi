@@ -159,6 +159,13 @@ func methodList() []string {
 		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetDiagnosticSnapshot, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
 }
 
+// SupportedMethods is the compatibility contract a packaged Core must expose
+// to the matching launcher and UI. Return a copy so callers cannot mutate the
+// transport's canonical method list.
+func SupportedMethods() []string {
+	return append([]string(nil), methodList()...)
+}
+
 func marshalRequest(id, method string, params any) ([]byte, error) {
 	if err := validateID(id); err != nil || !validMethod(method) {
 		return nil, ErrInvalidTransport
