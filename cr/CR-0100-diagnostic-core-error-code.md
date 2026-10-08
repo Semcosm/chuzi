@@ -1,17 +1,16 @@
 # CR-0100: preserve Core diagnostic failure codes
 
 Base: main
-Head or Range: fix/diagnostic-core-error-classification
+Head or Range: 55cc93dc8dd8731aae9b6e648071f39a3eaf7573
 Integration Strategy: rebase-ff
-Review Evidence: trailers
 Title: fix(ui): preserve Core diagnostic failure codes
-Revision: 6
-Status: pending
-Decision: pending
+Revision: 7
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 60cc83d3e5aedc745e7351ff7bc85004c35c1410
-Head OID: 60121a5457072e8110284acc6f7b2dfd7ab1c737
-Integrated Result: pending
+Base OID: 55cc93dc8dd8731aae9b6e648071f39a3eaf7573
+Head OID: 55cc93dc8dd8731aae9b6e648071f39a3eaf7573
+Integrated Result: main@55cc93dc8dd8731aae9b6e648071f39a3eaf7573
 
 ## Summary
 
