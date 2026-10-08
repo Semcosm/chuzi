@@ -835,6 +835,9 @@ fn diagnostic_snapshot(
         snapshot.capture_stage = capture.capture_stage;
         snapshot.core_schema = capture.core_schema;
         snapshot.core_version = capture.core_version;
+        snapshot.capture_error_code = capture.capture_error_code;
+        snapshot.capture_error_size = capture.capture_error_size;
+        snapshot.capture_error_fingerprint = capture.capture_error_fingerprint;
         snapshot.response_kind = capture.response_kind;
         snapshot.response_size = capture.response_size;
         snapshot.response_key_count = capture.response_key_count;
@@ -888,6 +891,9 @@ fn diagnostic_snapshot(
         event_count: 1,
         events_truncated: false,
         capture_error_class,
+        capture_error_code: capture.capture_error_code,
+        capture_error_size: capture.capture_error_size,
+        capture_error_fingerprint: capture.capture_error_fingerprint,
         capture_stage: capture.capture_stage,
         core_schema: capture.core_schema,
         core_version: capture.core_version,
@@ -913,8 +919,9 @@ fn diagnostic_core_call(
     state: &AppState,
     params: Value,
 ) -> Result<(Value, usize), DiagnosticCapture> {
-    let params_json = serde_json::to_string(&params)
-        .map_err(|_| diagnostic_call_failure("core_method_error", 0, &[]))?;
+    let params_json = serde_json::to_string(&params).map_err(|_| {
+        diagnostic_call_failure("core_method_error", "params_serialization", 0, &[])
+    })?;
     let output = state
         .run_launcher(
             "core-call",
@@ -926,13 +933,14 @@ fn diagnostic_core_call(
             ],
         )
         .map_err(|error| {
-            diagnostic_call_failure(&diagnostic_capture_error_class(&error), 0, &[])
+            diagnostic_call_failure(&diagnostic_capture_error_class(&error), &error, 0, &[])
         })?;
     let raw = output.trim();
     match serde_json::from_str::<Value>(raw) {
         Ok(value) => Ok((value, raw.len())),
         Err(_) => Err(diagnostic_call_failure(
             "malformed_response",
+            "malformed_json",
             raw.len(),
             raw.as_bytes(),
         )),
@@ -941,12 +949,16 @@ fn diagnostic_core_call(
 
 fn diagnostic_call_failure(
     capture_error_class: &str,
+    capture_error: &str,
     response_size: usize,
     response: &[u8],
 ) -> DiagnosticCapture {
     DiagnosticCapture {
         snapshot: None,
         capture_error_class: capture_error_class.to_owned(),
+        capture_error_code: diagnostic_capture_error_code(capture_error),
+        capture_error_size: capture_error.len(),
+        capture_error_fingerprint: diagnostic_response_fingerprint(capture_error.as_bytes()),
         capture_stage: "core_call".to_owned(),
         core_schema: String::new(),
         core_version: String::new(),
@@ -970,6 +982,9 @@ fn diagnostic_call_failure(
 struct DiagnosticCapture {
     snapshot: Option<DiagnosticSnapshot>,
     capture_error_class: String,
+    capture_error_code: String,
+    capture_error_size: usize,
+    capture_error_fingerprint: String,
     capture_stage: String,
     core_schema: String,
     core_version: String,
@@ -988,6 +1003,9 @@ fn inspect_diagnostic_response(value: Value) -> DiagnosticCapture {
     let mut capture = DiagnosticCapture {
         snapshot: None,
         capture_error_class: String::new(),
+        capture_error_code: String::new(),
+        capture_error_size: 0,
+        capture_error_fingerprint: String::new(),
         capture_stage: "schema_validation".to_owned(),
         core_schema: String::new(),
         core_version: String::new(),
@@ -1059,17 +1077,49 @@ fn diagnostic_capture_error_class(error: &str) -> String {
     if error.starts_with("Core status:") {
         return "core_status_error".to_owned();
     }
-    if error.contains("core transport")
-        || error.contains("core operation")
-        || error.starts_with("chuzi core:")
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("core transport")
+        || lower.contains("core operation")
+        || lower.starts_with("chuzi core:")
     {
         return "core_method_error".to_owned();
     }
     diagnostic_error_class(error).to_owned()
 }
 
+fn diagnostic_capture_error_code(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    if matches!(lower.as_str(), "malformed_json" | "params_serialization") {
+        return lower;
+    }
+    if let Some(code) = lower.strip_prefix("chuzi core:") {
+        let code = code.trim().split_whitespace().next().unwrap_or_default();
+        if matches!(
+            code,
+            "invalid_argument"
+                | "not_found"
+                | "conflict"
+                | "forbidden"
+                | "unavailable"
+                | "cancelled"
+                | "deadline_exceeded"
+                | "rate_limited"
+                | "internal"
+        ) {
+            return code.to_owned();
+        }
+    }
+    if lower.contains("core transport") {
+        return "transport_error".to_owned();
+    }
+    if lower.contains("core operation") {
+        return "operation_error".to_owned();
+    }
+    diagnostic_capture_error_class(error)
+}
+
 fn response_shape(value: &Value) -> (String, usize, Vec<String>) {
-    const KNOWN_FIELDS: [&str; 28] = [
+    const KNOWN_FIELDS: [&str; 31] = [
         "schema",
         "id",
         "created_at",
@@ -1085,6 +1135,9 @@ fn response_shape(value: &Value) -> (String, usize, Vec<String>) {
         "event_count",
         "events_truncated",
         "capture_error_class",
+        "capture_error_code",
+        "capture_error_size",
+        "capture_error_fingerprint",
         "core_status",
         "events",
         "capture_stage",
@@ -2735,6 +2788,9 @@ mod tests {
             event_count: 0,
             events_truncated: false,
             capture_error_class: String::new(),
+            capture_error_code: String::new(),
+            capture_error_size: 0,
+            capture_error_fingerprint: String::new(),
             capture_stage: String::new(),
             core_schema: String::new(),
             core_version: String::new(),
@@ -2856,10 +2912,30 @@ mod tests {
             diagnostic_capture_error_class("chuzi core: internal"),
             "core_method_error"
         );
-        let failure = diagnostic_call_failure("malformed_response", 17, b"secret payload");
+        assert_eq!(
+            diagnostic_capture_error_class("chuzi core: unavailable"),
+            "core_method_error"
+        );
+        assert_eq!(
+            diagnostic_capture_error_code("chuzi core: unavailable"),
+            "unavailable"
+        );
+        assert_eq!(
+            diagnostic_capture_error_code("core transport: invalid request"),
+            "transport_error"
+        );
+        let failure = diagnostic_call_failure(
+            "malformed_response",
+            "malformed_json",
+            17,
+            b"secret payload",
+        );
         assert_eq!(failure.response_kind, "invalid_json");
         assert_eq!(failure.response_size, 17);
         assert!(failure.response_fingerprint.starts_with("fnv1a64:"));
         assert!(!failure.response_fingerprint.contains("secret payload"));
+        assert_eq!(failure.capture_error_code, "malformed_json");
+        assert!(failure.capture_error_fingerprint.starts_with("fnv1a64:"));
+        assert_eq!(failure.capture_error_size, "malformed_json".len());
     }
 }

@@ -164,7 +164,10 @@ receive the same fallback treatment. The UI records bounded capture metadata so 
 can distinguish a launcher failure from a response-shape or schema failure without
 receiving the raw response: capture_stage is one of core_call, schema_validation,
 snapshot_decode, or complete; core_schema and core_version are sanitized tokens;
-core_status_error_class classifies a failed status probe; response_kind, response_size,
+core_status_error_class classifies a failed status probe; capture_error_code preserves
+the allow-listed Core code (such as unavailable, invalid_argument, or internal), while
+capture_error_size and capture_error_fingerprint identify the bounded launcher error
+without storing its text; response_kind, response_size,
 response_key_count, and the allow-listed response_fields describe the returned JSON
 shape; and response_fingerprint is an FNV-1a 64-bit fingerprint only. capture_duration_ms
 and client_version identify capture timing and the UI build. When Core cannot provide a

@@ -233,6 +233,12 @@ pub(crate) struct DiagnosticSnapshot {
     #[serde(default)]
     pub(crate) capture_error_class: String,
     #[serde(default)]
+    pub(crate) capture_error_code: String,
+    #[serde(default)]
+    pub(crate) capture_error_size: usize,
+    #[serde(default)]
+    pub(crate) capture_error_fingerprint: String,
+    #[serde(default)]
     pub(crate) capture_stage: String,
     #[serde(default)]
     pub(crate) core_schema: String,
