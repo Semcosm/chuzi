@@ -105,6 +105,25 @@ Topic branch **SHOULD** 为短生命周期。
 
 Topic branch **MUST NOT** 充当长期个人集成分支。
 
+### 5.3.1 分支关闭
+
+实现了分支关闭命令的仓库 **MAY** 使用：
+
+    ugs branch close <branch> [--target main] [--remote origin]
+    ugs branch close <branch> --dry-run
+    ugs branch close <branch> --format json
+    ugs branch close <branch> --archive --reason "<text>"
+
+普通关闭只允许声明的 topic branch。命令必须确认目标分支已经包含
+branch tip、存在对应的 integrated CR、且当前或其他 worktree 没有使用该
+branch。受保护分支永远不能关闭。指定 --remote 时，远端删除只在远端
+OID 仍与本地预检值一致时执行；远端竞态会拒绝操作。
+
+--dry-run 不修改任何 ref。--archive 用显式 reason 将原始 tip 保存到
+refs/ugs/archive/<branch>，不覆盖已有归档 ref，并在 JSON 报告中返回
+reason、source OID 和 archive ref。重复执行已经完成的关闭操作必须返回
+幂等的已完成结果。
+
 ### 5.3 CR 最小字段集
 每个 CR **MUST** 至少包含以下字段：
 

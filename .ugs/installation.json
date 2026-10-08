@@ -6,12 +6,13 @@
     "document-map",
     "documentation",
     "high-trust",
+    "licensing",
     "standard",
     "templates",
     "tests"
   ],
-  "layout": "normal",
-  "package_version": "v0.3.27",
+  "layout": "linked-worktree",
+  "package_version": "v0.3.33",
   "profile_activation": "separate",
-  "source_commit": "33827e98046ee41c7b919700f681748871086400"
+  "source_commit": "5a75abe5534b5e66066571e7d6c0b2428d6258cf"
 }

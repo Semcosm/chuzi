@@ -14,48 +14,6 @@ fail() {
   exit 1
 }
 
-validate_openpgp_commit() {
-  local commit="$1"
-  local key_file="$repo_root/keys/github-web-flow.asc"
-  local expected_fingerprint="968479A1AFF927E37D1A566BB5690EEEBB952194"
-  local gnupg_home status
-
-  [ -f "$key_file" ] || return 1
-  gnupg_home="$(mktemp -d)"
-  chmod 700 "$gnupg_home"
-  if ! GNUPGHOME="$gnupg_home" gpg --batch --quiet --import "$key_file" >/dev/null 2>&1; then
-    rm -rf "$gnupg_home"
-    return 1
-  fi
-
-  if ! status="$(GNUPGHOME="$gnupg_home" git -c gpg.format=openpgp verify-commit --raw "$commit" 2>&1 >/dev/null)"; then
-    rm -rf "$gnupg_home"
-    return 1
-  fi
-  rm -rf "$gnupg_home"
-  printf '%s\n' "$status" | awk -v expected="$expected_fingerprint" \
-    '$1 == "[GNUPG:]" && $2 == "VALIDSIG" && $3 == expected { found = 1 } END { exit(found ? 0 : 1) }'
-}
-
-validate_ssh_commit() {
-  local commit="$1"
-
-  git -c gpg.format=ssh \
-    -c gpg.ssh.allowedSignersFile="$repo_root/keys/allowed_signers" \
-    -c gpg.ssh.revocationFile="$repo_root/keys/revoked_signers" \
-    verify-commit "$commit" >/dev/null 2>&1
-}
-
-validate_signed_commit() {
-  local commit="$1"
-
-  if git cat-file commit "$commit" | grep -q '^gpgsig -----BEGIN PGP SIGNATURE-----'; then
-    validate_openpgp_commit "$commit"
-  else
-    validate_ssh_commit "$commit"
-  fi
-}
-
 validate_commit() {
   local commit="$1"
 
@@ -68,7 +26,10 @@ validate_commit() {
     return 0
   fi
 
-  validate_signed_commit "$commit" \
+  git -c gpg.format=ssh \
+    -c gpg.ssh.allowedSignersFile="$repo_root/keys/allowed_signers" \
+    -c gpg.ssh.revocationFile="$repo_root/keys/revoked_signers" \
+    verify-commit "$commit" >/dev/null 2>&1 \
     || fail "commit signature is not trusted: $commit"
 }
 
@@ -94,7 +55,10 @@ validate_rebased_commit() {
     [ "$(git show -s --format='%an%x09%ae%x09%ad' --date=raw "$candidate")" = "$target_author" ] || continue
     [ "$(git cat-file commit "$candidate" | sed '1,/^$/d')" = "$target_message" ] || continue
     git cat-file commit "$candidate" | grep -q '^gpgsig ' || continue
-    if validate_signed_commit "$candidate"; then
+    if git -c gpg.format=ssh \
+      -c gpg.ssh.allowedSignersFile="$repo_root/keys/allowed_signers" \
+      -c gpg.ssh.revocationFile="$repo_root/keys/revoked_signers" \
+      verify-commit "$candidate" >/dev/null 2>&1; then
       echo "commit signature validation passed via signed source commit: $candidate" >&2
       return 0
     fi

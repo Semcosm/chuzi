@@ -11,7 +11,7 @@ Run these commands in the directory containing the downloaded archive and its
 checksum file. Replace the tag when using another release:
 
 ```bash
-tag=v0.3.27
+tag=v0.3.33
 sha256sum -c "ugs-bootstrap-${tag}.tar.gz.sha256"
 tar -xzf "ugs-bootstrap-${tag}.tar.gz"
 cd "ugs-bootstrap-${tag}"
@@ -58,16 +58,20 @@ For an already initialized repository, add only missing files with:
 ./scripts/ugs_init.sh --profile standard --migrate /path/to/repository
 ```
 
-For an existing UGS v0.3.x repository, install the complete component set
-without changing its active profile:
+For an existing UGS v0.3.x repository, use the explicit offline migration
+entry point to install the complete component set without changing its active
+profile. The `upgrade` command remains a compatibility alias:
 
 ```bash
-./scripts/ugs.sh upgrade \
+./scripts/ugs.sh migrate \
   --archive "../ugs-bootstrap-${tag}.tar.gz" \
-  --dry-run /path/to/repository
-./scripts/ugs.sh upgrade \
+  --dry-run \
+  --report /path/to/migration-report.json \
+  /path/to/repository
+./scripts/ugs.sh migrate \
   --archive "../ugs-bootstrap-${tag}.tar.gz" \
   --backup-dir /path/to/ugs-backup-${tag} \
+  --report /path/to/migration-report.json \
   /path/to/repository
 ```
 
@@ -75,7 +79,10 @@ The dry run lists additions, updates, project-owned files that will be
 preserved, and filesystem conflicts. Existing README, policy, workflow, trust
 files, and CR history are preserved by default. A conflict stops the upgrade
 before any write; `--overwrite-project-files` is an explicit opt-in for
-replacing project-owned files. The command prints the exact rollback command.
+replacing project-owned files. The `ugs-migration/v1` report records the
+inventory, package identity, desired file digests, conflict status, and
+backup/rollback information. The command prints the exact rollback command.
+The backup contains `BACKUP.json` with pre-migration file digests and modes.
 
 The active profile remains unchanged even though all profile components are
 installed. Activate a profile only as a separate step:
@@ -90,8 +97,12 @@ script and the backup directory printed by the upgrade:
 
 ```bash
 ./scripts/ugs.sh rollback \
-  --backup-dir /path/to/ugs-backup-${tag} /path/to/repository
+  --backup-dir /path/to/ugs-backup-${tag} \
+  --report /path/to/rollback-report.json \
+  /path/to/repository
 ```
+Rollback verifies restored files, permissions, and `core.hooksPath`; the
+machine-readable result is written as `ROLLBACK-REPORT.json` by default.
 
 The installer supports normal `.git` directories, linked-worktree `.git`
 files, and managed worktrees with `.git-worktree`. It detects bare Git
@@ -132,11 +143,17 @@ high-trust profile when GitHub PR integration is required.
 
 ## 4. Read the local reference
 
-The release archive includes the applicable UGS guidance under `docs/git/`:
+The release archive includes the applicable UGS guidance under docs/git/.
 
-- `docs/git/ugs-bootstrap.md` — package behavior and profile selection
+Start with [docs/git/ugs-cli.md](docs/git/ugs-cli.md) for the complete command
+workflow and safety rules. The documents below provide the normative contracts
+and package details behind those commands.
+
+- docs/git/ugs-bootstrap.md — package behavior and profile selection
 - `docs/git/ugs-core.md` — Git-native governance primitives
 - `docs/git/ugs-v0.3-profile.md` — adopted policy and conformance profile
+- `docs/git/ugs-v0-4-contract.md` — vocabulary and compatibility rules
+- `docs/git/ugs-cr-contract.md` — canonical CR Markdown, projection, and binding
 - `docs/git/ugs-conformance-levels.md` — profile matrix and levels
 - `docs/git/ugs-branch-profiles.md` — branch behavior
 - `docs/git/commit-convention.md` — commit message format
@@ -152,6 +169,12 @@ The release archive includes the applicable UGS guidance under `docs/git/`:
 Commands in those two files that refer to files outside this bootstrap bundle
 are maintainer workflows for a full UGS source checkout; the consumer steps in
 this guide are self-contained in the downloaded archive.
+
+The archive also contains `bootstrap/templates/cr.schema.json`; initialization
+installs it as `.ugs/schema/cr.schema.json` alongside the `cr/TEMPLATE.md`
+starter and `scripts/cr_model.py`. These let an offline consumer inspect the
+canonical v1 CR projection and derived `binding.sha256`; historical records
+without `Format: ugs-cr/v1` remain legacy evidence.
 
 The optional GitHub adapter can contact GitHub and therefore may require
 network access and credentials. Initialization, Core validation, profile

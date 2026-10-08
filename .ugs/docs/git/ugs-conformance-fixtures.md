@@ -12,6 +12,16 @@ validators against the same cases and fails if pass/fail decisions diverge.
 It also materializes the CR template in a new Git repository, so OID,
 ancestry, and integrated-result checks do not use UGS history.
 
+Canonical CR v1 fixtures live in
+[`tests/fixtures/cr-model/`](../../tests/fixtures/cr-model/).
+`scripts/test_cr_model.sh` verifies the fixed Markdown layout, lifecycle
+states, duplicate-field rejection, deterministic projection, derived binding,
+and byte-identical parse/render result. It also reads every archived CR so the
+legacy `ugs-cr/legacy-v0` path remains covered.
+`scripts/test_conformance.sh` additionally compares the independent Python
+projection and binding implementation with the reference parser's JSON output
+and checks the published v1 error codes.
+
 `scripts/test_git_fixtures.sh` creates and removes a disposable repository,
 generates an SSH key, verifies signed commits and annotated tags, configures
 hooks, exercises rebase/merge/squash, and checks protected-ref updates.
