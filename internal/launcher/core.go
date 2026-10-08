@@ -19,17 +19,22 @@ import (
 
 var (
 	ErrCoreUnavailable        = errors.New("core_unavailable")
+	ErrCoreCapabilityMismatch = errors.New("core_capability_mismatch")
 	ErrCoreStartTimeout       = errors.New("core_start_timeout")
 	ErrCoreStopTimeout        = errors.New("core_stop_timeout")
 	ErrCoreProcessUnavailable = errors.New("core_stop_unavailable")
 )
 
 type CoreStatus struct {
-	Installed bool   `json:"installed"`
-	Ready     bool   `json:"ready"`
-	Running   bool   `json:"running"`
-	PID       int    `json:"pid,omitempty"`
-	Status    string `json:"status"`
+	Installed        bool     `json:"installed"`
+	Ready            bool     `json:"ready"`
+	Running          bool     `json:"running"`
+	PID              int      `json:"pid,omitempty"`
+	Status           string   `json:"status"`
+	Protocol         string   `json:"protocol,omitempty"`
+	Methods          []string `json:"methods,omitempty"`
+	MissingMethods   []string `json:"missing_methods,omitempty"`
+	CapabilityStatus string   `json:"capability_status,omitempty"`
 }
 
 // CoreManager is the launcher-owned boundary for Core lifecycle and IPC.
@@ -73,8 +78,9 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 	}
 	installed := fileExists(m.ServicePath)
 	pid := m.readPID()
-	ready := m.ready(ctx)
-	running := ready
+	endpointReady := m.ready(ctx)
+	ready := endpointReady
+	running := endpointReady
 	if !running && pid > 0 {
 		running = serviceProcessMatches(pid, m.ServicePath)
 	}
@@ -88,7 +94,56 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 	} else {
 		status = "not_installed"
 	}
-	return CoreStatus{Installed: installed, Ready: ready, Running: running, PID: pid, Status: status}, nil
+	result := CoreStatus{Installed: installed, Ready: ready, Running: running, PID: pid, Status: status}
+	if endpointReady {
+		capabilities, err := m.capabilities(ctx)
+		if err != nil {
+			result.CapabilityStatus = "probe_error"
+		} else {
+			result.Protocol = capabilities.Version
+			result.Methods = capabilities.Methods
+			result.CapabilityStatus = "supported"
+			result.MissingMethods = missingMethods(capabilities.Methods, coretransport.SupportedMethods())
+			if len(result.MissingMethods) > 0 {
+				result.CapabilityStatus = "incompatible"
+				result.Ready = false
+				result.Status = "incompatible"
+			}
+		}
+	}
+	return result, nil
+}
+
+type coreCapabilities struct {
+	Version string   `json:"version"`
+	Methods []string `json:"methods"`
+}
+
+func (m *CoreManager) capabilities(ctx context.Context) (coreCapabilities, error) {
+	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{})
+	if err != nil {
+		return coreCapabilities{}, err
+	}
+	defer client.Close()
+	hello, err := client.Hello(ctx)
+	if err != nil {
+		return coreCapabilities{}, err
+	}
+	return coreCapabilities{Version: hello.Version, Methods: hello.Methods}, nil
+}
+
+func missingMethods(actual, required []string) []string {
+	seen := make(map[string]struct{}, len(actual))
+	for _, method := range actual {
+		seen[method] = struct{}{}
+	}
+	missing := make([]string, 0)
+	for _, method := range required {
+		if _, ok := seen[method]; !ok {
+			missing = append(missing, method)
+		}
+	}
+	return missing
 }
 
 func (m *CoreManager) Start(ctx context.Context) (CoreStatus, error) {
@@ -97,6 +152,14 @@ func (m *CoreManager) Start(ctx context.Context) (CoreStatus, error) {
 	}
 	if status, _ := m.Status(ctx); status.Ready {
 		return status, nil
+	}
+	if status, _ := m.Status(ctx); status.Running {
+		if status.PID <= 0 {
+			return status, ErrCoreCapabilityMismatch
+		}
+		if err := m.Stop(ctx); err != nil {
+			return status, err
+		}
 	}
 	if !fileExists(m.ServicePath) {
 		return CoreStatus{}, fmt.Errorf("%w: core service is not installed", ErrNotFound)
@@ -139,18 +202,31 @@ func (m *CoreManager) Stop(ctx context.Context) error {
 	}
 	pid := m.readPID()
 	if pid <= 0 {
-		if status, _ := m.Status(ctx); status.Ready {
+		if !m.ready(ctx) {
+			return nil
+		}
+		if err := stopOrphanedService(ctx, filepath.Base(m.ServicePath)); err != nil {
 			return ErrCoreProcessUnavailable
 		}
-		return nil
+		return m.waitStopped(ctx)
 	}
 	if !serviceProcessMatches(pid, m.ServicePath) {
 		_ = os.Remove(m.PIDPath)
+		if m.ready(ctx) {
+			if err := stopOrphanedService(ctx, filepath.Base(m.ServicePath)); err != nil {
+				return ErrCoreProcessUnavailable
+			}
+			return m.waitStopped(ctx)
+		}
 		return nil
 	}
 	if err := stopServiceProcess(ctx, pid); err != nil {
 		return err
 	}
+	return m.waitStopped(ctx)
+}
+
+func (m *CoreManager) waitStopped(ctx context.Context) error {
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
 	for {

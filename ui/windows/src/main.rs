@@ -958,6 +958,8 @@ fn diagnostic_snapshot(
             running: status.running,
             ready: status.ready,
             status: status.status,
+            protocol: status.protocol,
+            capability_status: status.capability_status,
         },
         events: vec![capture_event],
     }
@@ -1561,7 +1563,9 @@ fn bounded_diagnostic_token(value: &str) -> String {
 
 fn diagnostic_error_class(error: &str) -> &'static str {
     let value = error.to_ascii_lowercase();
-    if value.contains("core_not_installed") || value.contains("launcher is missing") {
+    if value.contains("core_capability_mismatch") || value.contains("core update required") {
+        "core_capability_mismatch"
+    } else if value.contains("core_not_installed") || value.contains("launcher is missing") {
         "core_not_installed"
     } else if value.contains("core_start_timeout") || value.contains("start timeout") {
         "core_start_timeout"
@@ -1663,6 +1667,16 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
                     installed: true,
                     status: "Core is running".to_owned(),
                     details: "Core is running and ready for requests.".to_owned(),
+                }
+            } else if status.installed
+                && status.running
+                && status.capability_status == "incompatible"
+            {
+                CoreSnapshot {
+                    ready: false,
+                    installed: true,
+                    status: "Core update required".to_owned(),
+                    details: "The installed Core is older than this UI. Reinstall or install Core again to repair the shared Core payload.".to_owned(),
                 }
             } else if status.installed && status.running {
                 CoreSnapshot {
@@ -2785,7 +2799,7 @@ fn start_core_on_launch(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>
                     (),
                 ));
             }
-            if !status.running {
+            if !status.running || status.capability_status == "incompatible" {
                 state.run_launcher("core-start", &[])?;
             }
             Ok(("Core started automatically.".to_owned(), ()))
@@ -2955,6 +2969,9 @@ fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static st
 
 fn friendly_error(error: &str) -> String {
     let value = error.to_ascii_lowercase();
+    if value.contains("core_capability_mismatch") || value.contains("core update required") {
+        return "Installed Core is older than this UI. Reinstall Core to repair the shared Core payload.".to_owned();
+    }
     if value.contains("package_unavailable") {
         return "The service-owned environment package is unavailable. Choose an approved package reference and try again.".to_owned();
     }
@@ -3024,7 +3041,8 @@ fn friendly_error(error: &str) -> String {
 
 fn is_core_unavailable(error: &str) -> bool {
     let value = error.to_ascii_lowercase();
-    value.contains("core_unavailable")
+    value.contains("core_capability_mismatch")
+        || value.contains("core_unavailable")
         || value.contains("core unavailable")
         || value.contains("connect core pipe")
         || value.contains("core_start_timeout")
@@ -3048,6 +3066,12 @@ mod tests {
             "Core could not find that item. Check the ID and try again."
         );
         assert!(is_core_unavailable("core_unavailable"));
+        assert!(is_core_unavailable("core_capability_mismatch"));
+        assert_eq!(
+            diagnostic_error_class("core_capability_mismatch"),
+            "core_capability_mismatch"
+        );
+        assert!(friendly_error("core_capability_mismatch").contains("older"));
         assert!(!is_core_unavailable("not_found: request"));
         assert_eq!(
             friendly_error("connect Core pipe: C:\\private\\data"),

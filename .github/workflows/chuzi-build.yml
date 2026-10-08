@@ -394,6 +394,27 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $healthy) { throw 'Core did not become healthy during lifecycle smoke test' }
+            $helloJson = & $launcher -root $root -source-root $payload -manifest $manifest -command core-call -core-method hello -core-params-json '{"version":"chuzi.core/v1"}'
+            if ($LASTEXITCODE -ne 0) {
+              $helloJson | Out-String | Write-Error
+              throw 'Core hello capability probe failed'
+            }
+            $hello = $helloJson | ConvertFrom-Json
+            if ($hello.version -ne 'chuzi.core/v1') { throw "Core protocol version mismatch: $($hello.version)" }
+            $requiredMethods = @(
+              'hello', 'cancel', 'submit_request', 'get_request', 'list_requests',
+              'get_account', 'cancel_request', 'get_result', 'list_events',
+              'list_notifications', 'get_browser_view', 'issue_rdp_capability',
+              'submit_diagnostic_report', 'get_diagnostic_snapshot',
+              'get_job_pool_status', 'list_job_pools', 'get_job_pool',
+              'apply_job_pool', 'scale_job_pool', 'drain_job_pool',
+              'resume_job_pool', 'get_job_pool_operation', 'list_environments',
+              'environment_operation', 'get_environment_operation'
+            )
+            $missingMethods = @($requiredMethods | Where-Object { $hello.methods -notcontains $_ })
+            if ($missingMethods.Count -gt 0) {
+              throw "Core payload is missing required capabilities: $($missingMethods -join ', ')"
+            }
           } finally {
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }

@@ -26,6 +26,10 @@ pub(crate) struct CoreStatus {
     pub(crate) running: bool,
     #[serde(default)]
     pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) protocol: String,
+    #[serde(default)]
+    pub(crate) capability_status: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -206,6 +210,10 @@ pub(crate) struct DiagnosticCoreStatus {
     pub(crate) ready: bool,
     #[serde(default)]
     pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) protocol: String,
+    #[serde(default)]
+    pub(crate) capability_status: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

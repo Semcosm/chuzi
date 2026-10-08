@@ -224,6 +224,9 @@ grep -Fq 'ISCC.exe' "$repo_root/scripts/build_windows_slint.ps1" || fail "Window
 grep -Fq 'packaging/windows/Chuzi.iss' "$repo_root/scripts/build_windows_slint.ps1" || fail "Windows Slint script misses installer definition"
 grep -Fq 'OutputBaseFilename=ChuziSetup' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses stable setup filename"
 grep -Fq 'Source: "{#PayloadDir}\*"' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses published payload"
+grep -Fq 'function PrepareToInstall' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop the retained Core before upgrade"
+grep -Fq 'component-install -item service' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not repair the retained Core payload"
+grep -Fq 'core-stop' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop Core during install/uninstall"
 grep -Fq 'UninstallDelete' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses uninstall cleanup"
 grep -Fq 'KeepUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall misses user-data retention option"
 grep -Fq 'Check: ShouldDeleteUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall data cleanup must use a check function"
@@ -252,6 +255,8 @@ grep -Fq 'Assemble Core payload for the Slint package' "$repo_root/.github/workf
 grep -Fq 'core-call' "$repo_root/ui/windows/src/main.rs" || fail "Windows Slint client misses launcher Core façade"
 grep -Fq 'chuzi.core/v1' "$repo_root/internal/coreapi/api.go" || fail "Core API misses API version"
 grep -Fq 'EndpointPath' "$repo_root/internal/launcher/core.go" || fail "launcher Core façade misses endpoint derivation"
+grep -Fq 'SupportedMethods' "$repo_root/internal/coretransport/wire.go" || fail "Core transport misses packaged capability contract"
+grep -Fq 'missing_methods' "$repo_root/internal/launcher/core.go" || fail "launcher Core status misses capability mismatch details"
 
 for obsolete in \
   "$repo_root/ui/windows/Chuzi.Native.Windows.csproj" \
