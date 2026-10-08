@@ -40,6 +40,19 @@ struct AppState {
     diagnostic_operation: String,
 }
 
+const CORE_PROTOCOL_VERSION: &str = "chuzi.core/v1";
+const DIAGNOSTIC_METHOD: &str = "get_diagnostic_snapshot";
+
+#[derive(Debug, Default)]
+struct DiagnosticCapabilities {
+    status: String,
+    error_code: String,
+    error_fingerprint: String,
+    protocol_version: String,
+    method_supported: Option<bool>,
+    supported_methods: Vec<String>,
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let smoke_test = std::env::args().any(|argument| argument == "--smoke-test");
     if smoke_test {
@@ -811,6 +824,7 @@ fn diagnostic_snapshot(
 ) -> DiagnosticSnapshot {
     let capture_started = Instant::now();
     let (status, status_error_class) = state.diagnostic_context();
+    let capabilities = diagnostic_core_capabilities(state);
     let error_class = if state.diagnostic_error_class.is_empty() {
         diagnostic_error_class(summary).to_owned()
     } else {
@@ -822,13 +836,13 @@ fn diagnostic_snapshot(
         state.diagnostic_operation.clone()
     };
     let params = json!({"severity": severity, "category": category, "summary": summary, "error_class": error_class, "operation": operation});
-    let capture = match diagnostic_core_call(state, params) {
-        Ok((value, response_size)) => {
+    let capture = match diagnostic_core_call(state, params, &capabilities) {
+        Ok((value, _response_size, capture)) => {
             let value =
                 normalize_legacy_diagnostic_response(value, &status, &error_class, &operation);
-            let mut capture = inspect_diagnostic_response(value);
-            capture.response_size = response_size;
-            capture
+            let mut inspected = inspect_diagnostic_response(value);
+            inspected.merge_call_metadata(capture);
+            inspected
         }
         Err(capture) => capture,
     };
@@ -846,6 +860,13 @@ fn diagnostic_snapshot(
         snapshot.capture_error_code = capture.capture_error_code;
         snapshot.capture_error_size = capture.capture_error_size;
         snapshot.capture_error_fingerprint = capture.capture_error_fingerprint;
+        snapshot.capture_attempts = capture.capture_attempts;
+        snapshot.legacy_retry_attempted = capture.legacy_retry_attempted;
+        snapshot.capture_request_shape = capture.capture_request_shape;
+        snapshot.capture_initial_error_class = capture.capture_initial_error_class;
+        snapshot.capture_initial_error_code = capture.capture_initial_error_code;
+        snapshot.capture_initial_error_size = capture.capture_initial_error_size;
+        snapshot.capture_initial_error_fingerprint = capture.capture_initial_error_fingerprint;
         snapshot.response_kind = capture.response_kind;
         snapshot.response_size = capture.response_size;
         snapshot.response_key_count = capture.response_key_count;
@@ -854,6 +875,12 @@ fn diagnostic_snapshot(
         snapshot.capture_duration_ms = capture_duration_ms;
         snapshot.client_version = env!("CARGO_PKG_VERSION").to_owned();
         snapshot.core_status_error_class = status_error_class;
+        snapshot.core_capability_status = capture.core_capability_status;
+        snapshot.core_capability_error_code = capture.core_capability_error_code;
+        snapshot.core_capability_error_fingerprint = capture.core_capability_error_fingerprint;
+        snapshot.core_protocol_version = capture.core_protocol_version;
+        snapshot.core_method_supported = capture.core_method_supported;
+        snapshot.core_supported_methods = capture.core_supported_methods;
         return snapshot;
     }
     let capture_error_class = capture.capture_error_class;
@@ -902,10 +929,23 @@ fn diagnostic_snapshot(
         capture_error_code: capture.capture_error_code,
         capture_error_size: capture.capture_error_size,
         capture_error_fingerprint: capture.capture_error_fingerprint,
+        capture_attempts: capture.capture_attempts,
+        legacy_retry_attempted: capture.legacy_retry_attempted,
+        capture_request_shape: capture.capture_request_shape,
+        capture_initial_error_class: capture.capture_initial_error_class,
+        capture_initial_error_code: capture.capture_initial_error_code,
+        capture_initial_error_size: capture.capture_initial_error_size,
+        capture_initial_error_fingerprint: capture.capture_initial_error_fingerprint,
         capture_stage: capture.capture_stage,
         core_schema: capture.core_schema,
         core_version: capture.core_version,
         core_status_error_class: status_error_class,
+        core_capability_status: capture.core_capability_status,
+        core_capability_error_code: capture.core_capability_error_code,
+        core_capability_error_fingerprint: capture.core_capability_error_fingerprint,
+        core_protocol_version: capture.core_protocol_version,
+        core_method_supported: capture.core_method_supported,
+        core_supported_methods: capture.core_supported_methods,
         response_kind: capture.response_kind,
         response_size: capture.response_size,
         response_key_count: capture.response_key_count,
@@ -923,20 +963,182 @@ fn diagnostic_snapshot(
     }
 }
 
+fn diagnostic_core_capabilities(state: &AppState) -> DiagnosticCapabilities {
+    let params = json!({"version": CORE_PROTOCOL_VERSION});
+    let params_json = match serde_json::to_string(&params) {
+        Ok(value) => value,
+        Err(_) => {
+            return DiagnosticCapabilities {
+                status: "probe_error".to_owned(),
+                error_code: "params_serialization".to_owned(),
+                ..Default::default()
+            };
+        }
+    };
+    let output = match state.run_launcher(
+        "core-call",
+        &[
+            "-core-method",
+            "hello",
+            "-core-params-json",
+            params_json.as_str(),
+        ],
+    ) {
+        Ok(output) => output,
+        Err(error) => {
+            return DiagnosticCapabilities {
+                status: "probe_error".to_owned(),
+                error_code: diagnostic_capture_error_code(&error),
+                error_fingerprint: diagnostic_response_fingerprint(error.as_bytes()),
+                ..Default::default()
+            };
+        }
+    };
+    let raw = output.trim();
+    let value = match serde_json::from_str::<Value>(raw) {
+        Ok(value) => value,
+        Err(_) => {
+            return DiagnosticCapabilities {
+                status: "malformed_response".to_owned(),
+                error_code: "malformed_json".to_owned(),
+                error_fingerprint: diagnostic_response_fingerprint(raw.as_bytes()),
+                ..Default::default()
+            };
+        }
+    };
+    parse_diagnostic_capabilities(value, raw.as_bytes())
+}
+
+fn parse_diagnostic_capabilities(value: Value, raw: &[u8]) -> DiagnosticCapabilities {
+    let Some(object) = value.as_object() else {
+        return DiagnosticCapabilities {
+            status: "malformed_response".to_owned(),
+            error_code: "malformed_hello".to_owned(),
+            error_fingerprint: diagnostic_response_fingerprint(raw),
+            ..Default::default()
+        };
+    };
+    let protocol_version = object
+        .get("version")
+        .and_then(Value::as_str)
+        .map(bounded_diagnostic_token)
+        .unwrap_or_default();
+    let Some(methods_value) = object.get("methods") else {
+        return DiagnosticCapabilities {
+            status: "malformed_response".to_owned(),
+            error_code: "malformed_hello".to_owned(),
+            error_fingerprint: diagnostic_response_fingerprint(raw),
+            protocol_version,
+            ..Default::default()
+        };
+    };
+    let Some(methods) = methods_value.as_array() else {
+        return DiagnosticCapabilities {
+            status: "malformed_response".to_owned(),
+            error_code: "malformed_hello".to_owned(),
+            error_fingerprint: diagnostic_response_fingerprint(raw),
+            protocol_version,
+            ..Default::default()
+        };
+    };
+    let mut supported_methods = methods
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|method| valid_diagnostic_method_name(method))
+        .map(ToOwned::to_owned)
+        .collect::<Vec<_>>();
+    supported_methods.sort();
+    supported_methods.dedup();
+    supported_methods.truncate(64);
+    let method_supported = supported_methods
+        .iter()
+        .any(|method| method == DIAGNOSTIC_METHOD);
+    DiagnosticCapabilities {
+        status: if method_supported {
+            "supported".to_owned()
+        } else {
+            "unsupported".to_owned()
+        },
+        error_code: String::new(),
+        error_fingerprint: String::new(),
+        protocol_version,
+        method_supported: Some(method_supported),
+        supported_methods,
+    }
+}
+
+fn valid_diagnostic_method_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 64
+        && value
+            .chars()
+            .all(|character| character.is_ascii_lowercase() || character == '_')
+}
+
 fn diagnostic_core_call(
     state: &AppState,
     params: Value,
-) -> Result<(Value, usize), DiagnosticCapture> {
-    let result = diagnostic_core_call_once(state, &params);
-    if !matches!(&result, Err(capture) if capture.capture_error_code == "invalid_argument") {
-        return result;
+    capabilities: &DiagnosticCapabilities,
+) -> Result<(Value, usize, DiagnosticCapture), DiagnosticCapture> {
+    if capabilities.method_supported == Some(false) {
+        let mut capture =
+            diagnostic_call_failure("core_method_unsupported", "unsupported_method", 0, &[]);
+        capture.capture_stage = "capability_probe".to_owned();
+        capture.capture_request_shape = "none".to_owned();
+        capture.apply_capabilities(capabilities);
+        return Err(capture);
+    }
+
+    let first = match diagnostic_core_call_once(state, &params) {
+        Ok((value, response_size)) => {
+            let mut capture = inspect_diagnostic_response(value.clone());
+            capture.response_size = response_size;
+            capture.capture_attempts = 1;
+            capture.capture_request_shape = "extended".to_owned();
+            capture.apply_capabilities(capabilities);
+            return Ok((value, response_size, capture));
+        }
+        Err(capture) => capture,
+    };
+    if first.capture_error_code != "invalid_argument" {
+        let mut capture = first;
+        capture.capture_attempts = 1;
+        capture.capture_request_shape = "extended".to_owned();
+        capture.apply_capabilities(capabilities);
+        return Err(capture);
     }
 
     // Older Core builds strictly reject additive error_class/operation fields.
     // Retry the stable request shape so a component version skew cannot block
-    // a support snapshot.
+    // a support snapshot, while retaining the first failure classification.
     let legacy_params = diagnostic_legacy_params(&params);
-    diagnostic_core_call_once(state, &legacy_params)
+    let retry = diagnostic_core_call_once(state, &legacy_params);
+    match retry {
+        Ok((value, response_size)) => {
+            let mut capture = inspect_diagnostic_response(value.clone());
+            capture.response_size = response_size;
+            capture.capture_attempts = 2;
+            capture.legacy_retry_attempted = true;
+            capture.capture_request_shape = "legacy".to_owned();
+            capture.capture_initial_error_class = first.capture_error_class;
+            capture.capture_initial_error_code = first.capture_error_code;
+            capture.capture_initial_error_size = first.capture_error_size;
+            capture.capture_initial_error_fingerprint = first.capture_error_fingerprint;
+            capture.apply_capabilities(capabilities);
+            Ok((value, response_size, capture))
+        }
+        Err(mut capture) => {
+            capture.capture_attempts = 2;
+            capture.legacy_retry_attempted = true;
+            capture.capture_request_shape = "legacy".to_owned();
+            capture.capture_initial_error_class = first.capture_error_class;
+            capture.capture_initial_error_code = first.capture_error_code;
+            capture.capture_initial_error_size = first.capture_error_size;
+            capture.capture_initial_error_fingerprint = first.capture_error_fingerprint;
+            capture.apply_capabilities(capabilities);
+            Err(capture)
+        }
+    }
 }
 
 fn diagnostic_core_call_once(
@@ -951,7 +1153,7 @@ fn diagnostic_core_call_once(
             "core-call",
             &[
                 "-core-method",
-                "get_diagnostic_snapshot",
+                DIAGNOSTIC_METHOD,
                 "-core-params-json",
                 params_json.as_str(),
             ],
@@ -1040,6 +1242,13 @@ fn diagnostic_call_failure(
         capture_error_code: diagnostic_capture_error_code(capture_error),
         capture_error_size: capture_error.len(),
         capture_error_fingerprint: diagnostic_response_fingerprint(capture_error.as_bytes()),
+        capture_attempts: 0,
+        legacy_retry_attempted: false,
+        capture_request_shape: String::new(),
+        capture_initial_error_class: String::new(),
+        capture_initial_error_code: String::new(),
+        capture_initial_error_size: 0,
+        capture_initial_error_fingerprint: String::new(),
         capture_stage: "core_call".to_owned(),
         core_schema: String::new(),
         core_version: String::new(),
@@ -1056,6 +1265,12 @@ fn diagnostic_call_failure(
         } else {
             diagnostic_response_fingerprint(response)
         },
+        core_capability_status: String::new(),
+        core_capability_error_code: String::new(),
+        core_capability_error_fingerprint: String::new(),
+        core_protocol_version: String::new(),
+        core_method_supported: None,
+        core_supported_methods: Vec::new(),
     }
 }
 
@@ -1066,6 +1281,13 @@ struct DiagnosticCapture {
     capture_error_code: String,
     capture_error_size: usize,
     capture_error_fingerprint: String,
+    capture_attempts: usize,
+    legacy_retry_attempted: bool,
+    capture_request_shape: String,
+    capture_initial_error_class: String,
+    capture_initial_error_code: String,
+    capture_initial_error_size: usize,
+    capture_initial_error_fingerprint: String,
     capture_stage: String,
     core_schema: String,
     core_version: String,
@@ -1074,6 +1296,40 @@ struct DiagnosticCapture {
     response_key_count: usize,
     response_fields: Vec<String>,
     response_fingerprint: String,
+    core_capability_status: String,
+    core_capability_error_code: String,
+    core_capability_error_fingerprint: String,
+    core_protocol_version: String,
+    core_method_supported: Option<bool>,
+    core_supported_methods: Vec<String>,
+}
+
+impl DiagnosticCapture {
+    fn apply_capabilities(&mut self, capabilities: &DiagnosticCapabilities) {
+        self.core_capability_status = capabilities.status.clone();
+        self.core_capability_error_code = capabilities.error_code.clone();
+        self.core_capability_error_fingerprint = capabilities.error_fingerprint.clone();
+        self.core_protocol_version = capabilities.protocol_version.clone();
+        self.core_method_supported = capabilities.method_supported;
+        self.core_supported_methods = capabilities.supported_methods.clone();
+    }
+
+    fn merge_call_metadata(&mut self, source: DiagnosticCapture) {
+        self.capture_attempts = source.capture_attempts;
+        self.legacy_retry_attempted = source.legacy_retry_attempted;
+        self.capture_request_shape = source.capture_request_shape;
+        self.capture_initial_error_class = source.capture_initial_error_class;
+        self.capture_initial_error_code = source.capture_initial_error_code;
+        self.capture_initial_error_size = source.capture_initial_error_size;
+        self.capture_initial_error_fingerprint = source.capture_initial_error_fingerprint;
+        self.core_capability_status = source.core_capability_status;
+        self.core_capability_error_code = source.core_capability_error_code;
+        self.core_capability_error_fingerprint = source.core_capability_error_fingerprint;
+        self.core_protocol_version = source.core_protocol_version;
+        self.core_method_supported = source.core_method_supported;
+        self.core_supported_methods = source.core_supported_methods;
+        self.response_size = source.response_size;
+    }
 }
 
 fn inspect_diagnostic_response(value: Value) -> DiagnosticCapture {
@@ -1087,6 +1343,13 @@ fn inspect_diagnostic_response(value: Value) -> DiagnosticCapture {
         capture_error_code: String::new(),
         capture_error_size: 0,
         capture_error_fingerprint: String::new(),
+        capture_attempts: 0,
+        legacy_retry_attempted: false,
+        capture_request_shape: String::new(),
+        capture_initial_error_class: String::new(),
+        capture_initial_error_code: String::new(),
+        capture_initial_error_size: 0,
+        capture_initial_error_fingerprint: String::new(),
         capture_stage: "schema_validation".to_owned(),
         core_schema: String::new(),
         core_version: String::new(),
@@ -1095,6 +1358,12 @@ fn inspect_diagnostic_response(value: Value) -> DiagnosticCapture {
         response_key_count,
         response_fields,
         response_fingerprint,
+        core_capability_status: String::new(),
+        core_capability_error_code: String::new(),
+        core_capability_error_fingerprint: String::new(),
+        core_protocol_version: String::new(),
+        core_method_supported: None,
+        core_supported_methods: Vec::new(),
     };
     let Some(object) = value.as_object() else {
         capture.capture_error_class = "malformed_response".to_owned();
@@ -1170,7 +1439,10 @@ fn diagnostic_capture_error_class(error: &str) -> String {
 
 fn diagnostic_capture_error_code(error: &str) -> String {
     let lower = error.to_ascii_lowercase();
-    if matches!(lower.as_str(), "malformed_json" | "params_serialization") {
+    if matches!(
+        lower.as_str(),
+        "malformed_json" | "params_serialization" | "unsupported_method" | "malformed_hello"
+    ) {
         return lower;
     }
     if let Some(code) = lower.strip_prefix("chuzi core:") {
@@ -1200,7 +1472,7 @@ fn diagnostic_capture_error_code(error: &str) -> String {
 }
 
 fn response_shape(value: &Value) -> (String, usize, Vec<String>) {
-    const KNOWN_FIELDS: [&str; 31] = [
+    const KNOWN_FIELDS: [&str; 44] = [
         "schema",
         "id",
         "created_at",
@@ -1219,12 +1491,25 @@ fn response_shape(value: &Value) -> (String, usize, Vec<String>) {
         "capture_error_code",
         "capture_error_size",
         "capture_error_fingerprint",
+        "capture_attempts",
+        "legacy_retry_attempted",
+        "capture_request_shape",
+        "capture_initial_error_class",
+        "capture_initial_error_code",
+        "capture_initial_error_size",
+        "capture_initial_error_fingerprint",
         "core_status",
         "events",
         "capture_stage",
         "core_schema",
         "core_version",
         "core_status_error_class",
+        "core_capability_status",
+        "core_capability_error_code",
+        "core_capability_error_fingerprint",
+        "core_protocol_version",
+        "core_method_supported",
+        "core_supported_methods",
         "response_kind",
         "response_size",
         "response_key_count",
@@ -2872,10 +3157,23 @@ mod tests {
             capture_error_code: String::new(),
             capture_error_size: 0,
             capture_error_fingerprint: String::new(),
+            capture_attempts: 0,
+            legacy_retry_attempted: false,
+            capture_request_shape: String::new(),
+            capture_initial_error_class: String::new(),
+            capture_initial_error_code: String::new(),
+            capture_initial_error_size: 0,
+            capture_initial_error_fingerprint: String::new(),
             capture_stage: String::new(),
             core_schema: String::new(),
             core_version: String::new(),
             core_status_error_class: String::new(),
+            core_capability_status: String::new(),
+            core_capability_error_code: String::new(),
+            core_capability_error_fingerprint: String::new(),
+            core_protocol_version: String::new(),
+            core_method_supported: None,
+            core_supported_methods: Vec::new(),
             response_kind: String::new(),
             response_size: 0,
             response_key_count: 0,
@@ -3032,6 +3330,67 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_capabilities_record_method_support_without_raw_payload() {
+        let capabilities = parse_diagnostic_capabilities(
+            json!({
+                "version": "chuzi.core/v1",
+                "methods": ["get_diagnostic_snapshot", "hello", "bad method"]
+            }),
+            br#"{\"version\":\"chuzi.core/v1\",\"methods\":[] }"#,
+        );
+        assert_eq!(capabilities.status, "supported");
+        assert_eq!(capabilities.protocol_version, "chuzi.core/v1");
+        assert_eq!(capabilities.method_supported, Some(true));
+        assert_eq!(
+            capabilities.supported_methods,
+            vec!["get_diagnostic_snapshot".to_owned(), "hello".to_owned()]
+        );
+        assert!(!capabilities.error_fingerprint.contains("methods"));
+    }
+
+    #[test]
+    fn diagnostic_capabilities_distinguish_unsupported_and_malformed_hello() {
+        let unsupported = parse_diagnostic_capabilities(
+            json!({"version": "chuzi.core/v1", "methods": ["hello"]}),
+            b"safe hello",
+        );
+        assert_eq!(unsupported.status, "unsupported");
+        assert_eq!(unsupported.method_supported, Some(false));
+
+        let malformed = parse_diagnostic_capabilities(
+            json!({"version": "chuzi.core/v1"}),
+            b"secret hello response",
+        );
+        assert_eq!(malformed.status, "malformed_response");
+        assert_eq!(malformed.error_code, "malformed_hello");
+        assert!(malformed.error_fingerprint.starts_with("fnv1a64:"));
+        assert!(!malformed.error_fingerprint.contains("secret"));
+    }
+
+    #[test]
+    fn diagnostic_capture_metadata_keeps_retry_and_capability_facts() {
+        let mut target = inspect_diagnostic_response(valid_diagnostic_response());
+        let mut source =
+            diagnostic_call_failure("core_method_error", "chuzi core: invalid_argument", 0, &[]);
+        source.capture_attempts = 2;
+        source.legacy_retry_attempted = true;
+        source.capture_request_shape = "legacy".to_owned();
+        source.capture_initial_error_code = "invalid_argument".to_owned();
+        source.core_capability_status = "supported".to_owned();
+        source.core_protocol_version = CORE_PROTOCOL_VERSION.to_owned();
+        source.core_method_supported = Some(true);
+        source.core_supported_methods = vec![DIAGNOSTIC_METHOD.to_owned()];
+        target.merge_call_metadata(source);
+        assert_eq!(target.capture_attempts, 2);
+        assert!(target.legacy_retry_attempted);
+        assert_eq!(target.capture_request_shape, "legacy");
+        assert_eq!(target.capture_initial_error_code, "invalid_argument");
+        assert_eq!(target.core_capability_status, "supported");
+        assert_eq!(target.core_method_supported, Some(true));
+        assert_eq!(target.core_supported_methods, vec![DIAGNOSTIC_METHOD]);
+    }
+
+    #[test]
     fn diagnostic_capture_errors_use_stable_classes() {
         assert_eq!(
             diagnostic_capture_error_class("Core projection: expected object"),
@@ -3056,6 +3415,10 @@ mod tests {
         assert_eq!(
             diagnostic_capture_error_code("core transport: invalid request"),
             "transport_error"
+        );
+        assert_eq!(
+            diagnostic_capture_error_code("unsupported_method"),
+            "unsupported_method"
         );
         let failure = diagnostic_call_failure(
             "malformed_response",
