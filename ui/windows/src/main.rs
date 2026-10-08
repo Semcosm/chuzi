@@ -280,6 +280,8 @@ impl AppState {
                         status.status.as_str()
                     }
                     .to_owned(),
+                    protocol: status.protocol,
+                    capability_status: status.capability_status,
                 },
                 String::new(),
             ),
