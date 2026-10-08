@@ -4,7 +4,7 @@ Base: main
 Head or Range: 8118d20fb28ca7cf740b52b9044f129563ed3cf5
 Integration Strategy: rebase-ff
 Title: fix(ui): expose diagnostic capability and retry facts
-Revision: 1
+Revision: 2
 Status: integrated
 Decision: accepted
 Policy Version: v0.3
