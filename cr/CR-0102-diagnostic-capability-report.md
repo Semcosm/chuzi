@@ -1,17 +1,16 @@
 # CR-0102: make Core diagnostic compatibility failures explainable
 
 Base: main
-Head or Range: 63b2f4930492f2e9e0f072a52b409f5c75d681d7
+Head or Range: 8118d20fb28ca7cf740b52b9044f129563ed3cf5
 Integration Strategy: rebase-ff
-Review Evidence: trailers
 Title: fix(ui): expose diagnostic capability and retry facts
 Revision: 1
-Status: pending
-Decision: pending
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
 Base OID: 5abed1d6a4cce4a29c97ac5875d4a6103a5bd022
-Head OID: 63b2f4930492f2e9e0f072a52b409f5c75d681d7
-Integrated Result: pending
+Head OID: 8118d20fb28ca7cf740b52b9044f129563ed3cf5
+Integrated Result: main@8118d20fb28ca7cf740b52b9044f129563ed3cf5
 
 ## Summary
 
