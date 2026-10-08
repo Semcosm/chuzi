@@ -1,7 +1,7 @@
 # CR-0101: keep local diagnostic export compatible with older Core
 
 Base: main
-Head or Range: 82bf3950d4df424aac81fc4aa61f52336c321aa6
+Head or Range: 82bf39599693456cb491fe4ff38ac99a881e4db5
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(ui): retry diagnostic snapshots for older Core
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: dcb72a7d1f3cee56f3c11463878882cfd85649d6
-Head OID: 82bf3950d4df424aac81fc4aa61f52336c321aa6
+Head OID: 82bf39599693456cb491fe4ff38ac99a881e4db5
 Integrated Result: pending
 
 ## Summary
