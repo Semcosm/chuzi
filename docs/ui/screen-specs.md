@@ -25,13 +25,15 @@ Settings also contains structured job-pool cards and environment cards. Each
 pool card shows the redacted pool and environment identity, desired/ready/
 leased/quarantined/draining/provisioning/retiring counts, effective capacity,
 environment readiness, reconcile state, last failure class, config revision,
-and any current operation ID. Apply, scale, drain, resume, refresh, and
+and any current operation ID. Apply, scale, drain, resume, delete, refresh, and
 operation polling remain launcher/Core operations; the UI does not read Store
 or choose a runtime slot.
 
 Pool writes read the current revision immediately before dispatch and derive a
 deterministic idempotency key from the operation payload. Apply, scale, drain,
-and environment changes use a confirmation dialog. The operation panel shows
+delete, and environment changes use a confirmation dialog. Delete drains active
+leases and waits for managed slot retirement before removing the pool
+configuration; it has no force variant. The operation panel shows
 the Core state while polling (requested, validating, draining, provisioning,
 health_check, committing, applied, or failed) and maps stable failure classes
 to bounded recovery text. A stale revision refreshes the projection before

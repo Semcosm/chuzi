@@ -271,6 +271,43 @@ func (s *Store) ResumeJobPool(poolID string, expectedRevision uint64, idempotenc
 	return s.ApplyJobPool(JobPoolMutation{Config: config, Operation: "resume", ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor, RequestedAt: at})
 }
 
+// DeleteJobPool starts a safe asynchronous removal. The pool remains in the
+// durable store while slots drain so the lifecycle reconciler can still load
+// its target and retire platform resources.
+func (s *Store) DeleteJobPool(poolID string, expectedRevision uint64, idempotencyKey, actor string, at time.Time) (JobPoolOperation, bool, error) {
+	// Once finalization removes the pool config, a retry must still resolve the
+	// original operation from the idempotency index instead of becoming a false
+	// not-found error.
+	var existing JobPoolOperation
+	found := false
+	key := strings.TrimSpace(idempotencyKey)
+	if key != "" {
+		if err := s.view(func(tx *bbolt.Tx) error {
+			raw := tx.Bucket([]byte(migrations.JobPoolIdempotencyBucket)).Get([]byte(key))
+			if raw == nil {
+				return nil
+			}
+			found = true
+			return getJSON(tx.Bucket([]byte(migrations.JobPoolOperationsBucket)), string(raw), &existing, ErrJobPoolOperationNotFound)
+		}); err != nil {
+			return JobPoolOperation{}, false, err
+		}
+	}
+	if found {
+		if existing.PoolID != poolID || existing.Operation != "delete" || existing.ExpectedRevision != expectedRevision || existing.Actor != strings.TrimSpace(actor) {
+			return JobPoolOperation{}, false, ErrJobPoolIdempotencyConflict
+		}
+		return existing, true, nil
+	}
+	config, err := s.GetJobPool(poolID)
+	if err != nil {
+		return JobPoolOperation{}, false, err
+	}
+	config.DesiredSlots = 0
+	config.DesiredState = "draining"
+	return s.ApplyJobPool(JobPoolMutation{Config: config, Operation: "delete", ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor, RequestedAt: at})
+}
+
 func (s *Store) GetJobPoolOperation(operationID string) (JobPoolOperation, error) {
 	var result JobPoolOperation
 	err := s.view(func(tx *bbolt.Tx) error {
@@ -315,6 +352,21 @@ func (s *Store) ListJobPoolOperations(poolID string, limit int) ([]JobPoolOperat
 		result = result[len(result)-limit:]
 	}
 	return result, err
+}
+
+// JobPoolDeletionCompleted distinguishes a pool deliberately removed through
+// Core from a pool that has never been initialized. Startup must not restore a
+// completed deletion from its static deployment configuration.
+func (s *Store) JobPoolDeletionCompleted(poolID string) (bool, error) {
+	operations, err := s.ListJobPoolOperations(poolID, 1)
+	if err != nil {
+		return false, err
+	}
+	if len(operations) == 0 {
+		return false, nil
+	}
+	latest := operations[0]
+	return latest.Operation == "delete" && latest.State == JobPoolApplied && latest.Result == "deleted", nil
 }
 
 func (s *Store) UpdateJobPoolOperation(operationID string, state JobPoolOperationState, result, failureCode string, at time.Time) (JobPoolOperation, error) {
@@ -661,7 +713,7 @@ func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) e
 	}
 	leaseBucket := tx.Bucket([]byte(migrations.SlotLeasesBucket))
 	for _, current := range slots {
-		if current.Ordinal <= target || current.Status == slot.Deleted {
+		if current.Ordinal <= target || current.Status == slot.Deleted || current.Status == slot.Quarantined {
 			continue
 		}
 		if (current.Status == slot.Leased || current.Status == slot.Draining) && leaseBucket.Get([]byte(current.SlotID)) != nil {
@@ -720,7 +772,7 @@ func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolPro
 	if projection.OperationID == "" {
 		return projection, nil
 	}
-	if !terminalJobPoolOperation(operation.State) && projection.Status.Quarantined > 0 {
+	if !terminalJobPoolOperation(operation.State) && operation.Operation != "delete" && projection.Status.Quarantined > 0 {
 		updated, rollbackErr := s.RollbackJobPoolOperation(operation.OperationID, "slot_quarantined", at)
 		if rollbackErr != nil {
 			return JobPoolProjection{}, rollbackErr
@@ -743,8 +795,12 @@ func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolPro
 		updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolFailed, "failed", projection.EnvironmentReadiness, at)
 	} else if config.DesiredState == "draining" || config.DesiredState == "disabled" {
 		updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolDraining, "draining", "", at)
-		if err == nil && projection.Status.Leased == 0 && projection.Status.Draining == 0 && projection.Status.Retiring == 0 {
-			updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolApplied, "applied", "", at)
+		if err == nil && projection.Status.Leased == 0 && projection.Status.Draining == 0 && projection.Status.Retiring == 0 && projection.Status.Provisioning == 0 && projection.Status.Unprovisioned == 0 && projection.Status.Quarantined == 0 {
+			if operation.Operation == "delete" {
+				updated, err = s.finalizeDeletedJobPool(operation.OperationID, poolID, at)
+			} else {
+				updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolApplied, "applied", "", at)
+			}
 		}
 	} else {
 		updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolProvisioning, "provisioning", "", at)
@@ -763,4 +819,48 @@ func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolPro
 	}
 	projection.ReconcileState, projection.LastFailureCode, projection.LastSuccessfulReconcileAt = updated.State, updated.FailureCode, updated.LastSuccessfulAt
 	return projection, nil
+}
+
+// finalizeDeletedJobPool removes the configuration and slot records only after
+// every logical slot is a deleted tombstone and no lease remains. Operation
+// and audit data are retained for support and historical lookup.
+func (s *Store) finalizeDeletedJobPool(operationID, poolID string, at time.Time) (JobPoolOperation, error) {
+	if at.IsZero() {
+		at = time.Now().UTC()
+	}
+	var updated JobPoolOperation
+	err := s.update(func(tx *bbolt.Tx) error {
+		if err := getJSON(tx.Bucket([]byte(migrations.JobPoolOperationsBucket)), operationID, &updated, ErrJobPoolOperationNotFound); err != nil {
+			return err
+		}
+		if updated.Operation != "delete" || updated.PoolID != poolID || terminalJobPoolOperation(updated.State) {
+			return nil
+		}
+		slots, err := slotsForPoolTx(tx, poolID)
+		if err != nil {
+			return err
+		}
+		leases := tx.Bucket([]byte(migrations.SlotLeasesBucket))
+		for _, value := range slots {
+			if value.Status != slot.Deleted || leases.Get([]byte(value.SlotID)) != nil {
+				return nil
+			}
+		}
+		if err := tx.Bucket([]byte(migrations.JobPoolsBucket)).Delete([]byte(poolID)); err != nil {
+			return err
+		}
+		slotBucket := tx.Bucket([]byte(migrations.ExecutionSlotsBucket))
+		for _, value := range slots {
+			if err := slotBucket.Delete([]byte(value.SlotID)); err != nil {
+				return err
+			}
+		}
+		previous := updated.State
+		updated.State, updated.Result, updated.UpdatedAt, updated.CompletedAt = JobPoolApplied, "deleted", at.UTC(), at.UTC()
+		if err := putJSON(tx.Bucket([]byte(migrations.JobPoolOperationsBucket)), operationID, updated); err != nil {
+			return err
+		}
+		return putJobPoolAuditTx(tx, JobPoolAuditEvent{EventID: nextJobPoolAuditID(tx, operationID, at), OperationID: operationID, Actor: updated.Actor, PoolID: poolID, Operation: updated.Operation, FromState: previous, ToState: JobPoolApplied, ConfigRevision: updated.ConfigRevision, Outcome: "deleted", OccurredAt: at.UTC()})
+	})
+	return updated, err
 }

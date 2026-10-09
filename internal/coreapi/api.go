@@ -372,6 +372,17 @@ type JobPoolActionRequest struct {
 	RequestedAt      time.Time `json:"requested_at,omitempty"`
 }
 
+// JobPoolDeleteRequest requests a safe, asynchronous pool removal. Core first
+// drains the pool and only removes its durable configuration after every slot
+// has been retired.
+type JobPoolDeleteRequest struct {
+	PoolID           string    `json:"pool_id"`
+	ExpectedRevision uint64    `json:"expected_revision"`
+	IdempotencyKey   string    `json:"idempotency_key"`
+	Actor            string    `json:"actor"`
+	RequestedAt      time.Time `json:"requested_at,omitempty"`
+}
+
 type JobPoolOperation struct {
 	OperationID           string    `json:"operation_id"`
 	PoolID                string    `json:"pool_id"`
@@ -396,6 +407,7 @@ type JobPoolAPI interface {
 	ScaleJobPool(context.Context, JobPoolScaleRequest) (JobPoolOperation, error)
 	DrainJobPool(context.Context, JobPoolActionRequest) (JobPoolOperation, error)
 	ResumeJobPool(context.Context, JobPoolActionRequest) (JobPoolOperation, error)
+	DeleteJobPool(context.Context, JobPoolDeleteRequest) (JobPoolOperation, error)
 	GetJobPoolOperation(context.Context, string) (JobPoolOperation, error)
 }
 

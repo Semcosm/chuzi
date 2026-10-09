@@ -318,6 +318,12 @@ func (c *Client) ResumeJobPool(ctx context.Context, input coreapi.JobPoolActionR
 	return result.Operation, err
 }
 
+func (c *Client) DeleteJobPool(ctx context.Context, input coreapi.JobPoolDeleteRequest) (coreapi.JobPoolOperation, error) {
+	var result JobPoolOperationResult
+	err := c.Call(ctx, methodDeleteJobPool, input, &result)
+	return result.Operation, err
+}
+
 func (c *Client) GetJobPoolOperation(ctx context.Context, operationID string) (coreapi.JobPoolOperation, error) {
 	var result JobPoolOperationResult
 	err := c.Call(ctx, methodGetJobPoolOperation, struct {

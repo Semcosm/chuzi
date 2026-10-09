@@ -97,7 +97,7 @@ func TestControlCommandRejectsPackagePathsBeforeCoreCall(t *testing.T) {
 func TestControlCommandsDoNotRequireReleaseManifest(t *testing.T) {
 	for _, command := range []string{
 		"core-status", "core-start", "core-stop", "core-call",
-		"job-pool-list", "job-pool-apply", "environment-list", "environment-install",
+		"job-pool-list", "job-pool-apply", "job-pool-delete", "environment-list", "environment-install",
 	} {
 		if launcherCommandNeedsManifest(command, false) {
 			t.Fatalf("%s unexpectedly requires a release manifest", command)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/observability"
+	"github.com/Semcosm/chuzi/internal/slot"
 )
 
 // run owns the long-lived service loop. Runtime assembly and maintenance
@@ -96,30 +97,37 @@ func run(ctx context.Context, options serviceOptions) error {
 		startBackground("slot lifecycle", func(workerCtx context.Context) error {
 			reconcile := func() {
 				var err error
+				poolExists := true
 				environmentID, environmentVersion := runtime.environmentID, runtime.environmentVersion
 				if runtime.jobPoolID != "" {
 					if current, getErr := runtime.store.GetJobPool(runtime.jobPoolID); getErr == nil {
 						environmentID, environmentVersion = current.EnvironmentID, current.EnvironmentVersion
+					} else if errors.Is(getErr, slot.ErrPoolNotFound) {
+						// Delete completed only after slot cleanup. The reconciler and
+						// environment health loop have no work once the config is gone.
+						poolExists = false
+					} else {
+						err = getErr
 					}
-					if _, controlErr := runtime.store.ReconcileJobPoolControl(runtime.jobPoolID, time.Now().UTC()); controlErr != nil {
-						err = controlErr
+					if poolExists {
+						if _, controlErr := runtime.store.ReconcileJobPoolControl(runtime.jobPoolID, time.Now().UTC()); controlErr != nil {
+							err = controlErr
+						}
 					}
 				}
-				if runtime.environment != nil {
+				if poolExists && runtime.environment != nil {
 					// Revalidate the signed tree before each slot pass. Store remains
 					// the projection used by claims and capacity, so an external
 					// package edit immediately removes readiness from both views.
 					if _, healthErr := runtime.environment.HealthCheck(workerCtx, environmentID, environmentVersion); healthErr != nil {
 						err = healthErr
 					}
-					// HealthCheck may downgrade a tampered or missing package. Always
-					// mirror that result before the next control reconcile so a pending
-					// pool operation can roll back instead of remaining provisioning.
+					// Mirror health changes before the next control reconcile.
 					if syncErr := runtime.environment.SyncRecords(runtime.store); syncErr != nil && err == nil {
 						err = syncErr
 					}
 				}
-				if err == nil && runtime.slotReconciler != nil {
+				if err == nil && poolExists && runtime.slotReconciler != nil {
 					err = runtime.slotReconciler.Reconcile(workerCtx)
 				}
 				runtime.recordSlotReconcile(time.Now().UTC(), err)

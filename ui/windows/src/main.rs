@@ -309,6 +309,7 @@ fn launcher_command_needs_manifest(command: &str) -> bool {
             | "job-pool-scale"
             | "job-pool-drain"
             | "job-pool-resume"
+            | "job-pool-delete"
             | "job-pool-operation"
             | "environment-list"
             | "environment-install"
@@ -332,6 +333,7 @@ enum CoreMethod {
     ScaleJobPool,
     DrainJobPool,
     ResumeJobPool,
+    DeleteJobPool,
     GetJobPoolOperation,
     ListEnvironments,
     EnvironmentOperation,
@@ -352,6 +354,7 @@ impl CoreMethod {
             Self::ScaleJobPool => "scale_job_pool",
             Self::DrainJobPool => "drain_job_pool",
             Self::ResumeJobPool => "resume_job_pool",
+            Self::DeleteJobPool => "delete_job_pool",
             Self::GetJobPoolOperation => "get_job_pool_operation",
             Self::ListEnvironments => "list_environments",
             Self::EnvironmentOperation => "environment_operation",
@@ -537,7 +540,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
                 pool_id,
                 window.get_job_pool_edit_desired(),
             ),
-            "drain" | "resume" => {
+            "drain" | "resume" | "delete" => {
                 submit_job_pool_action(&weak, Arc::clone(&operation_state), pool_id, pending)
             }
             value if value.starts_with("environment:") => submit_environment_operation(
@@ -1942,6 +1945,7 @@ fn submit_job_pool_action(
     let method = match action.as_str() {
         "drain" => CoreMethod::DrainJobPool,
         "resume" => CoreMethod::ResumeJobPool,
+        "delete" => CoreMethod::DeleteJobPool,
         _ => return,
     };
     let pool_id_for_key = pool_id.clone();
@@ -3088,6 +3092,7 @@ mod tests {
     #[test]
     fn core_method_names_are_fixed_and_package_refs_are_not_paths() {
         assert_eq!(CoreMethod::ListJobPools.wire_name(), "list_job_pools");
+        assert_eq!(CoreMethod::DeleteJobPool.wire_name(), "delete_job_pool");
         assert_eq!(
             CoreMethod::EnvironmentOperation.wire_name(),
             "environment_operation"
@@ -3330,6 +3335,8 @@ mod tests {
             running: true,
             ready: true,
             status: "ready".to_owned(),
+            protocol: "chuzi.core/v1".to_owned(),
+            capability_status: "supported".to_owned(),
         };
         let response = normalize_legacy_diagnostic_response(
             json!({

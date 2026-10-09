@@ -391,6 +391,17 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		item, err := api.ResumeJobPool(ctx, params)
 		return JobPoolOperationResult{Operation: item}, err
+	case methodDeleteJobPool:
+		api, ok := s.api.(coreapi.JobPoolAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "job pool control is unavailable")
+		}
+		var params coreapi.JobPoolDeleteRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.DeleteJobPool(ctx, params)
+		return JobPoolOperationResult{Operation: item}, err
 	case methodGetJobPoolOperation:
 		api, ok := s.api.(coreapi.JobPoolAPI)
 		if !ok {

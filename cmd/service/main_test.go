@@ -198,6 +198,53 @@ func TestAssembleRuntimePreservesDurablePoolAfterRestart(t *testing.T) {
 	}
 }
 
+func TestAssembleRuntimeDoesNotRestoreDeletedPoolFromDeploymentConfig(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	cfg, err := config.New(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := strings.Repeat("f", 64)
+	cfg.JobPool = config.JobPoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	if err := database.PutEnvironmentRecord(environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: digest, Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: now}); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	created, _, err := database.ApplyJobPool(store.JobPoolMutation{Config: slot.PoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: digest, Signer: "signer", RequireTrusted: true}, Operation: "apply", ExpectedRevision: 0, IdempotencyKey: "start-pool", Actor: "operator", RequestedAt: now})
+	if err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if _, _, err := database.DeleteJobPool("pool", created.ConfigRevision, "delete-pool", "operator", now.Add(time.Second)); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.SetSlotStatus("pool-001", slot.Deleted, now.Add(2*time.Second)); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if _, err := database.ReconcileJobPoolControl("pool", now.Add(3*time.Second)); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), func() time.Time { return now.Add(time.Minute) }, testFactory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.store.Close()
+	if _, err := runtime.store.GetJobPool("pool"); !errors.Is(err, slot.ErrPoolNotFound) {
+		t.Fatalf("deleted pool was recreated on restart: %v", err)
+	}
+}
+
 func openStoreForTest(cfg config.Config) (*store.Store, error) {
 	return store.Open(cfg)
 }

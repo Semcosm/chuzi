@@ -78,6 +78,7 @@ export component ChuziJobPoolCard inherits Rectangle {
             if root.item.operation_id != "": ChuziActionButton { label: "Operation"; enabled: !root.busy; width: 88px; pressed => { root.action(root.item.operation_id, "operation"); } }
             if root.item.desired_state == "draining": ChuziActionButton { label: "Resume"; enabled: !root.busy; width: 82px; pressed => { root.action(root.item.pool_id, "resume"); } }
             if root.item.desired_state != "draining": ChuziActionButton { label: "Drain"; enabled: !root.busy; destructive: true; width: 74px; pressed => { root.action(root.item.pool_id, "drain"); } }
+            ChuziActionButton { label: "Delete"; enabled: !root.busy; destructive: true; width: 78px; pressed => { root.action(root.item.pool_id, "delete"); } }
         }
         if root.item.last_failure_code != "": Text { text: "Failure · " + root.item.last_failure_code; color: ChuziTheme.status-danger; font-size: ChuziTheme.type-caption; overflow: elide; vertical-stretch: 0; }
     }

@@ -45,7 +45,7 @@ The first request on a connection must be:
 The result contains the negotiated version and supported method names:
 
 ```json
-{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report","get_diagnostic_snapshot","get_job_pool_status","list_job_pools","get_job_pool","apply_job_pool","scale_job_pool","drain_job_pool","resume_job_pool","get_job_pool_operation","list_environments","environment_operation","get_environment_operation"]}
+{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report","get_diagnostic_snapshot","get_job_pool_status","list_job_pools","get_job_pool","apply_job_pool","scale_job_pool","drain_job_pool","resume_job_pool","delete_job_pool","get_job_pool_operation","list_environments","environment_operation","get_environment_operation"]}
 ```
 
 An unsupported protocol or version is reported as `unavailable`. Calls before
@@ -73,10 +73,19 @@ successful negotiation are rejected as `invalid_argument`.
 | `apply_job_pool` | `coreapi.JobPoolApplyRequest` | `{operation}` |
 | `scale_job_pool` | `coreapi.JobPoolScaleRequest` | `{operation}` |
 | `drain_job_pool` / `resume_job_pool` | `coreapi.JobPoolActionRequest` | `{operation}` |
+| `delete_job_pool` | `coreapi.JobPoolDeleteRequest` | `{operation}` |
 | `get_job_pool_operation` | `{operation_id}` | `{operation}` |
 | `list_environments` | `{}` | `{environments}` |
 | `environment_operation` | `coreapi.EnvironmentOperationRequest` | `{operation}` |
 | `get_environment_operation` | `{operation_id}` | `{operation}` |
+
+`delete_job_pool` is asynchronous and safe by construction. It changes the
+pool target to zero and drains new work first; the pool configuration is
+removed only after every managed slot has reached `deleted` and no slot lease
+remains. The returned operation remains queryable after finalization, and a
+retry with the same idempotency key returns the original operation. Active
+leases and cleanup failures keep the operation in a non-terminal draining
+state; there is no force-delete path for platform resources.
 
 `list_requests` returns a bounded, read-only request projection. It lists
 persisted request records; it does not enumerate accounts without requests or

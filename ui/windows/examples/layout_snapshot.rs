@@ -69,12 +69,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     window.set_operation_state("failed".into());
                     window.set_operation_detail("failed · package_unavailable".into());
                 }
-                if session_state == "narrow-confirmation" {
-                    window.set_pending_operation("drain".into());
-                    window.set_operation_confirmation_title("Drain this pool?".into());
-                    window.set_operation_confirmation_message(
-                        "New work will stop while leased slots finish safely.".into(),
-                    );
+                if matches!(
+                    session_state.as_str(),
+                    "narrow-confirmation" | "delete-confirmation"
+                ) {
+                    let (operation, title, message) = if session_state == "delete-confirmation" {
+                        (
+                            "delete",
+                            "Delete this pool?",
+                            "New work will stop. The pool and managed slots will be removed after cleanup.",
+                        )
+                    } else {
+                        (
+                            "drain",
+                            "Drain this pool?",
+                            "New work will stop while leased slots finish safely.",
+                        )
+                    };
+                    window.set_pending_operation(operation.into());
+                    window.set_operation_confirmation_title(title.into());
+                    window.set_operation_confirmation_message(message.into());
                     window.set_operation_confirmation_visible(true);
                 }
             }
@@ -287,6 +301,7 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
         "package-unavailable",
         "unavailable-core",
         "narrow-confirmation",
+        "delete-confirmation",
     ]
     .contains(&session_state.as_str())
     {
@@ -328,6 +343,7 @@ fn is_settings_fixture(state: &str) -> bool {
             | "package-unavailable"
             | "unavailable-core"
             | "narrow-confirmation"
+            | "delete-confirmation"
     )
 }
 

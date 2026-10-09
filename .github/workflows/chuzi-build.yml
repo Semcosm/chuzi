@@ -408,7 +408,7 @@ jobs:
               'submit_diagnostic_report', 'get_diagnostic_snapshot',
               'get_job_pool_status', 'list_job_pools', 'get_job_pool',
               'apply_job_pool', 'scale_job_pool', 'drain_job_pool',
-              'resume_job_pool', 'get_job_pool_operation', 'list_environments',
+              'resume_job_pool', 'delete_job_pool', 'get_job_pool_operation', 'list_environments',
               'environment_operation', 'get_environment_operation'
             )
             $missingMethods = @($requiredMethods | Where-Object { $hello.methods -notcontains $_ })

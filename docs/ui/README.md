@@ -41,11 +41,13 @@ Accounts, Tasks, Adapters, and RDP login pages and their compatibility routes
 remain removed. Future screens must be implemented in the current shell.
 Settings renders structured redacted job-pool cards and environment cards from
 `list_job_pools` and `list_environments`. Operators can apply a pool, scale,
-drain, resume, refresh, inspect operation status, and run environment lifecycle
+drain, resume, delete, refresh, inspect operation status, and run environment lifecycle
 gates through the fixed typed Core method allowlist. Writes read the current
 revision, generate a per-action idempotency key, require confirmation for
-drain, scale, environment changes, and package changes, and poll the returned
-operation through its terminal state. Revision conflicts refresh the
+drain, scale, delete, environment changes, and package changes, and poll the
+returned operation through its terminal state. Delete first drains all leases
+and waits for managed slot cleanup before removing the pool; it has no force
+variant. Revision conflicts refresh the
 projection and show `stale revision`; package and trust/health failures use
 stable redacted failure classes. Package input is an opaque service-owned
 reference only. The UI never accepts paths, commands, executables, profiles,
@@ -91,13 +93,13 @@ account-only rows or runtime facts.
 ## Snapshot fixtures
 
 The layout example renders the production view model and Slint components for
-the data states plus selected, compact, More menu, cancellation confirmation,
-keyboard focus, and disabled-action fixtures. Each state is rendered in Light
+the data states plus selected, compact, More menu, cancellation and pool-delete
+confirmation, keyboard focus, and disabled-action fixtures. Each state is rendered in Light
 and Dark at 800x600, 1120x760, and 1440x900:
 
 ~~~bash
 for state in mixed empty loading error unavailable mixed-selected settings \
-  compact-inspector more-menu cancel-confirmation keyboard-focus disabled-action; do
+  compact-inspector more-menu cancel-confirmation delete-confirmation keyboard-focus disabled-action; do
   cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot \
     --example layout_snapshot -- --session-state "$state" \
     --theme both --output dist/ui-sessions
