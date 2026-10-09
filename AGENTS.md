@@ -133,33 +133,24 @@ Use explicit repository selectors for one-off inspection:
 gh pr view <number> --repo Semcosm/chuzi --json statusCheckRollup,mergeCommit,headRefOid,baseRefOid
 ```
 
-### Silent GitHub Actions waiting
+### GitHub Actions waiting
 
-After a push, do not make the agent a CI poller. Do not repeatedly call
-`gh run list`, `gh run view`, or the GitHub API; do not read queued, pending,
-in-progress, runner, or step-progress state into the model context. Do not
-implement an Actions polling loop, call the API every few seconds, or stream
-`gh run watch` progress into the model context. Use the repository helper for
-one bounded, silent wait:
+After a push or workflow dispatch, identify the run for the exact commit once
+and watch that run directly. Do not implement an Actions polling loop or
+repeatedly call `gh run list`, `gh run view`, or the GitHub API. The standard
+watch command refreshes every 30 seconds and returns a failing exit status when
+the run fails:
 
 ```bash
-./scripts/ci-wait "$(git rev-parse HEAD)"
+gh run watch <run-id> --repo Semcosm/chuzi --interval 30 --exit-status
 ```
 
-The helper finds the `chuzi-build` run for the exact commit internally, waits
-with a 30-second refresh interval, and has a 30-minute hard timeout. It emits
-only one final line: `CI SUCCESS: <commit>`, `CI FAILED: <commit> (run <id>)`,
-or `CI TIMEOUT: <commit> (exceeded 30m)`. A timeout is not a CI failure. Do not
-load complete successful workflow logs. After `CI FAILED`, use the reported
-run id only if diagnosis is needed, and bound the failed-step output:
+Keep successful workflow logs out of the model context. After a failed watch,
+use the run id only if diagnosis is needed, and bound the failed-step output:
 
 ```bash
 gh run view <run-id> --repo Semcosm/chuzi --log-failed 2>&1 | sed -n '1,200p'
 ```
-
-Set `CI_WORKFLOW` to override the default workflow or pass a second duration
-such as `./scripts/ci-wait "$commit" 45m`. If the helper reports `CI TIMEOUT`,
-stop waiting and report the timeout without assuming the code failed.
 
 ### Build Nightly From an Unmerged Topic Branch
 
@@ -178,10 +169,14 @@ git push git@github-account:Semcosm/chuzi.git HEAD:"$topic_branch"
 gh auth status
 gh api user --jq .login
 gh workflow run chuzi-build.yml --repo Semcosm/chuzi --ref "$topic_branch"
-./scripts/ci-wait "$head_sha"
+run_id="$(gh run list --repo Semcosm/chuzi --workflow chuzi-build.yml \
+  --commit "$head_sha" --limit 1 --json databaseId,headSha \
+  --jq 'map(select(.headSha == "'"$head_sha"'")) | first.databaseId')"
+test -n "$run_id"
+gh run watch "$run_id" --repo Semcosm/chuzi --interval 30 --exit-status
 ```
 
-After the helper returns `CI SUCCESS`, perform the following single lookup for
+After the watched run succeeds, perform the following single lookup for
 the completed run whose `headSha` exactly equals `head_sha`; do not use it as a
 polling loop. Then derive the workflow version and validate every downloaded
 Actions artifact against the topic commit:
