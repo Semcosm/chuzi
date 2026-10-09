@@ -1,17 +1,17 @@
 # CR-0108: durable slot-session control and Windows pool reconciliation
 
 Base: main
-Head or Range: 16c5e5de10d2a115280d489d7cdcbc08f602b472
+Head or Range: 31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): reconcile Windows pools and expose slot-session operations
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 6462c0685bd5a05ef5d4dca117e4339cc13afdf4
-Head OID: 16c5e5de10d2a115280d489d7cdcbc08f602b472
-Integrated Result: pending
+Base OID: 31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
+Head OID: 31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
+Integrated Result: main@31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
 
 ## Summary
 
