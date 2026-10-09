@@ -32,6 +32,31 @@ func (a *jobPoolTestAPI) GetJobPoolStatus(context.Context, string) (coreapi.JobP
 	return coreapi.JobPoolStatus{PoolID: "pool-test", Desired: 2, Ready: 1, Leased: 1, EffectiveCapacity: 1}, nil
 }
 
+func (a *jobPoolTestAPI) ListJobPools(context.Context) ([]coreapi.JobPool, error) {
+	return nil, nil
+}
+func (a *jobPoolTestAPI) GetJobPool(context.Context, string) (coreapi.JobPool, error) {
+	return coreapi.JobPool{}, nil
+}
+func (a *jobPoolTestAPI) ApplyJobPool(context.Context, coreapi.JobPoolApplyRequest) (coreapi.JobPoolOperation, error) {
+	return coreapi.JobPoolOperation{}, nil
+}
+func (a *jobPoolTestAPI) ScaleJobPool(context.Context, coreapi.JobPoolScaleRequest) (coreapi.JobPoolOperation, error) {
+	return coreapi.JobPoolOperation{}, nil
+}
+func (a *jobPoolTestAPI) DrainJobPool(context.Context, coreapi.JobPoolActionRequest) (coreapi.JobPoolOperation, error) {
+	return coreapi.JobPoolOperation{}, nil
+}
+func (a *jobPoolTestAPI) ResumeJobPool(context.Context, coreapi.JobPoolActionRequest) (coreapi.JobPoolOperation, error) {
+	return coreapi.JobPoolOperation{}, nil
+}
+func (a *jobPoolTestAPI) DeleteJobPool(context.Context, coreapi.JobPoolDeleteRequest) (coreapi.JobPoolOperation, error) {
+	return coreapi.JobPoolOperation{OperationID: "delete-op-1", PoolID: "pool-test", Operation: "delete", State: "draining"}, nil
+}
+func (a *jobPoolTestAPI) GetJobPoolOperation(context.Context, string) (coreapi.JobPoolOperation, error) {
+	return coreapi.JobPoolOperation{}, nil
+}
+
 func (a *diagnosticTestAPI) SubmitDiagnosticReport(context.Context, coreapi.DiagnosticReport) (coreapi.DiagnosticStatus, error) {
 	return coreapi.DiagnosticStatus{ID: "diag-1", State: "queued"}, nil
 }
@@ -219,6 +244,23 @@ func TestUnixContractJobPoolStatusMethod(t *testing.T) {
 	status, err := client.GetJobPoolStatus(context.Background(), "pool-test")
 	if err != nil || status.PoolID != "pool-test" || status.Ready != 1 || status.EffectiveCapacity != 1 {
 		t.Fatalf("job pool status = %#v, err=%v", status, err)
+	}
+}
+
+func TestUnixContractJobPoolDeleteMethod(t *testing.T) {
+	api := &jobPoolTestAPI{testAPI: &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}}
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	operation, err := client.DeleteJobPool(context.Background(), coreapi.JobPoolDeleteRequest{
+		PoolID: "pool-test", ExpectedRevision: 4, IdempotencyKey: "delete-key", Actor: "operator",
+	})
+	if err != nil || operation.OperationID != "delete-op-1" || operation.Operation != "delete" || operation.State != "draining" {
+		t.Fatalf("delete operation = %#v, err=%v", operation, err)
 	}
 }
 

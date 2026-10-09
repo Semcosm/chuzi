@@ -47,7 +47,8 @@ revision, generate a per-action idempotency key, require confirmation for
 drain, scale, delete, environment changes, and package changes, and poll the
 returned operation through its terminal state. Delete first drains all leases
 and waits for managed slot cleanup before removing the pool; it has no force
-variant. Revision conflicts refresh the
+variant. Long-running deletion remains in the polling state and can be
+refreshed by operation ID. Revision conflicts refresh the
 projection and show `stale revision`; package and trust/health failures use
 stable redacted failure classes. Package input is an opaque service-owned
 reference only. The UI never accepts paths, commands, executables, profiles,
