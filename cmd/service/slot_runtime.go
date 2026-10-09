@@ -10,6 +10,14 @@ type slotReconciler interface {
 	Reconcile(context.Context) error
 }
 
+// allPoolReconciler is implemented by the logical platform-neutral runtime.
+// Unlike the Windows native reconciler, it can discover pools created through
+// Core after startup and must keep reconciling even after the startup pool was
+// deleted.
+type allPoolReconciler interface {
+	ReconcileAll(context.Context) error
+}
+
 type slotProfileAccess interface {
 	GrantProfile(context.Context, string, string) error
 	RevokeProfile(context.Context, string, string) error

@@ -47,7 +47,14 @@ func configureWorkerFactory(cfg config.Config, options serviceOptions, factory b
 }
 
 func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker, environmentRuntime *serviceEnvironmentRuntime, pool slot.PoolConfig) (slotReconciler, slotProfileAccess, error) {
-	if !cfg.WindowsJobPool.Enabled || pool.PoolID == "" {
+	if !cfg.WindowsJobPool.Enabled {
+		reconciler, err := newLogicalSlotReconciler(database, now, options.owner)
+		if err != nil {
+			return nil, nil, err
+		}
+		return reconciler, nil, nil
+	}
+	if pool.PoolID == "" {
 		return nil, nil, nil
 	}
 	executable, err := os.Executable()
