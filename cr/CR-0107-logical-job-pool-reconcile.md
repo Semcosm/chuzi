@@ -5,13 +5,13 @@ Head or Range: a7f0f88649df91e8e388b465d68b2bf100f4e6df
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(service): reconcile logical job pools after Core changes
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 684702c2880fc1d0cd5447587a281088d9641e1e
-Head OID: a7f0f88649df91e8e388b465d68b2bf100f4e6df
-Integrated Result: pending
+Base OID: 1ec4bbc50e3ed6ae1cd7f194d0e4dbd26da0a735
+Head OID: 1ec4bbc50e3ed6ae1cd7f194d0e4dbd26da0a735
+Integrated Result: main@1ec4bbc50e3ed6ae1cd7f194d0e4dbd26da0a735
 
 ## Summary
 
