@@ -1,7 +1,7 @@
 # CR-0107: reconcile logical job pools after Core changes
 
 Base: main
-Head or Range: pending
+Head or Range: a7f0f88649df91e8e388b465d68b2bf100f4e6df
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(service): reconcile logical job pools after Core changes
@@ -9,8 +9,8 @@ Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: pending
-Head OID: pending
+Base OID: 684702c2880fc1d0cd5447587a281088d9641e1e
+Head OID: a7f0f88649df91e8e388b465d68b2bf100f4e6df
 Integrated Result: pending
 
 ## Summary
