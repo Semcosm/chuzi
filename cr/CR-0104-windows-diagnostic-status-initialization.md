@@ -1,16 +1,16 @@
 # CR-0104: initialize Windows diagnostic Core status fields
 
 Base: main
-Head or Range: 037a2ad89d1e6a46f2726d833c4e609eb9256e1b
+Head or Range: df0ddfd116992f10784195d15c5a80be58b9b120
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): initialize diagnostic Core status fields
-Revision: 1
-Status: pending
-Decision: pending
+Revision: 2
+Status: accepted
+Decision: accepted
 Policy Version: v0.3
-Base OID: 5ffc66c7259577725283b2f8521350edde28e90f
-Head OID: 037a2ad89d1e6a46f2726d833c4e609eb9256e1b
+Base OID: f17e06435ee79d958f55829bc70458b35682e4e5
+Head OID: df0ddfd116992f10784195d15c5a80be58b9b120
 Integrated Result: pending
 
 ## Summary
