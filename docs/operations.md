@@ -216,12 +216,14 @@ pipe、bbolt 或读取 Profile。
 
 Launcher 是运维脚本和 Native UI 的唯一入口。可用命令为
 `job-pool-list`、`job-pool-get`、`job-pool-apply`、`job-pool-scale`、
-`job-pool-drain`、`job-pool-resume`、`job-pool-operation`，以及
+`job-pool-drain`、`job-pool-resume`、`job-pool-delete`、`job-pool-operation`，以及
 `environment-list`、`environment-install`、`environment-upgrade`、
 `environment-verify`、`environment-trust`、`environment-enable`、
 `environment-disable`、`environment-health`、`environment-rollback` 和
 `environment-operation`。这些命令都通过 Core IPC，不直接打开 bbolt 或调用
 Windows API；写命令返回 operation ID，状态可重复查询。
+`job-pool-delete` 会先停止新任务、等待租约释放并清理所有受管 slot，完成后才删除池配置；
+没有绕过租约或强制删除平台资源的选项。
 
 Job pool 配置在 Store 中使用递增 `config_revision`。`expected_revision` 必须匹配
 当前版本；`idempotency_key` 与请求 payload 绑定，重复请求返回相同 operation，改变

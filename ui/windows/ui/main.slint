@@ -574,8 +574,8 @@ export component MainWindow inherits Window {
                                 } else {
                                     root.pending-operation = kind;
                                     root.pending-pool-id = value;
-                                    root.operation-confirmation-title = kind == "drain" ? "Drain this pool?" : "Resume this pool?";
-                                    root.operation-confirmation-message = kind == "drain" ? "New work will stop while leased slots finish safely." : "The pool will accept new work after reconciliation.";
+                                    root.operation-confirmation-title = kind == "drain" ? "Drain this pool?" : kind == "delete" ? "Delete this pool?" : "Resume this pool?";
+                                    root.operation-confirmation-message = kind == "drain" ? "New work will stop while leased slots finish safely." : kind == "delete" ? "New work will stop. The pool and its managed slots will be removed after leases and resources finish cleanup." : "The pool will accept new work after reconciliation.";
                                     root.operation-confirmation-visible = true;
                                 }
                             }

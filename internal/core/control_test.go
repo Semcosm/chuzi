@@ -41,6 +41,9 @@ func (p controlJobPools) DrainJobPool(string, uint64, string, string, time.Time)
 func (p controlJobPools) ResumeJobPool(string, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error) {
 	return store.JobPoolOperation{}, false, p.err
 }
+func (p controlJobPools) DeleteJobPool(string, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error) {
+	return store.JobPoolOperation{}, false, p.err
+}
 func (p controlJobPools) GetJobPoolOperation(string) (store.JobPoolOperation, error) {
 	return store.JobPoolOperation{}, p.err
 }

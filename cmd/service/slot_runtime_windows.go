@@ -32,7 +32,7 @@ func (b slotAgentBridge) ResolveAgent(slotID, handle string) (browser.AgentConne
 }
 
 func configureWorkerFactory(cfg config.Config, options serviceOptions, factory browser.WorkerFactory, access slotProfileAccess) (browser.WorkerFactory, error) {
-	if !cfg.WindowsJobPool.Enabled {
+	if !cfg.WindowsJobPool.Enabled || access == nil {
 		return factory, nil
 	}
 	resolver, ok := access.(slotAgentResolver)
@@ -47,7 +47,7 @@ func configureWorkerFactory(cfg config.Config, options serviceOptions, factory b
 }
 
 func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker, environmentRuntime *serviceEnvironmentRuntime, pool slot.PoolConfig) (slotReconciler, slotProfileAccess, error) {
-	if !cfg.WindowsJobPool.Enabled {
+	if !cfg.WindowsJobPool.Enabled || pool.PoolID == "" {
 		return nil, nil, nil
 	}
 	executable, err := os.Executable()

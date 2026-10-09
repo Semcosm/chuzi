@@ -92,6 +92,7 @@ type JobPoolControlPort interface {
 	ScaleJobPool(string, int, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error)
 	DrainJobPool(string, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error)
 	ResumeJobPool(string, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error)
+	DeleteJobPool(string, uint64, string, string, time.Time) (store.JobPoolOperation, bool, error)
 	GetJobPoolOperation(string) (store.JobPoolOperation, error)
 	ReconcileJobPoolControl(string, time.Time) (store.JobPoolProjection, error)
 }
@@ -301,6 +302,32 @@ func (s *Service) DrainJobPool(ctx context.Context, input coreapi.JobPoolActionR
 
 func (s *Service) ResumeJobPool(ctx context.Context, input coreapi.JobPoolActionRequest) (coreapi.JobPoolOperation, error) {
 	return s.jobPoolAction(ctx, input, false)
+}
+
+func (s *Service) DeleteJobPool(ctx context.Context, input coreapi.JobPoolDeleteRequest) (coreapi.JobPoolOperation, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.JobPoolOperation{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.JobPoolOperation{}, err
+	}
+	if s.jobPoolControl == nil || !validToken(input.PoolID) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) {
+		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	value, idempotent, err := s.jobPoolControl.DeleteJobPool(input.PoolID, input.ExpectedRevision, input.IdempotencyKey, input.Actor, input.RequestedAt)
+	if err != nil {
+		return coreapi.JobPoolOperation{}, classify(err)
+	}
+	if reconcileErr := s.reconcileJobPool(input.PoolID); reconcileErr != nil {
+		if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
+			value = current
+		}
+		return projectJobPoolOperation(value, idempotent), reconcileErr
+	}
+	if current, getErr := s.jobPoolControl.GetJobPoolOperation(value.OperationID); getErr == nil {
+		value = current
+	}
+	return projectJobPoolOperation(value, idempotent), nil
 }
 
 func (s *Service) jobPoolAction(ctx context.Context, input coreapi.JobPoolActionRequest, drain bool) (coreapi.JobPoolOperation, error) {

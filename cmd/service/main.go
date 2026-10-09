@@ -399,7 +399,20 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			// boot. A restart must not overwrite it from deployment config.
 			poolConfig = existing
 		} else if errors.Is(getErr, slot.ErrPoolNotFound) {
-			if err := database.ReconcileTrustedJobPool(poolConfig, now()); err != nil {
+			deleted, deletionErr := database.JobPoolDeletionCompleted(poolConfig.PoolID)
+			if deletionErr != nil {
+				_ = database.Close()
+				return nil, deletionErr
+			}
+			if deleted {
+				// A completed delete is durable intent. Keep the static deployment
+				// template from recreating the pool on restart and avoid requiring a
+				// package runtime for a pool that no longer exists.
+				poolConfig = slot.PoolConfig{}
+			} else {
+				err = database.ReconcileTrustedJobPool(poolConfig, now())
+			}
+			if err != nil {
 				_ = database.Close()
 				return nil, err
 			}
@@ -408,7 +421,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return nil, getErr
 		}
 	}
-	if cfg.WindowsJobPool.Enabled {
+	if cfg.WindowsJobPool.Enabled && poolConfig.PoolID != "" {
 		entryName := "headless"
 		if options.backend == backendNode {
 			entryName = "worker"
@@ -626,6 +639,12 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		}
 		current, getErr := database.GetJobPool(staticRuntimeConfig.SlotPoolID)
 		if getErr != nil {
+			if errors.Is(getErr, slot.ErrPoolNotFound) {
+				// A completed delete removes the pool config after all platform
+				// slots are retired. Stop selecting that pool without failing the
+				// scheduler loop or reviving it from startup configuration.
+				return queue.RuntimeConfig{MaxGlobalConcurrency: options.maxConcurrency}, nil
+			}
 			return queue.RuntimeConfig{}, getErr
 		}
 		maxConcurrency := current.MaxConcurrency

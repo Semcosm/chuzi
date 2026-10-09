@@ -92,7 +92,7 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 		}
 		leaseBucket := tx.Bucket([]byte(migrations.SlotLeasesBucket))
 		for _, current := range slots {
-			if current.Ordinal <= targetSlots || current.Status == slot.Deleted {
+			if current.Ordinal <= targetSlots || current.Status == slot.Deleted || current.Status == slot.Quarantined {
 				continue
 			}
 			if (current.Status == slot.Leased || current.Status == slot.Draining) && leaseBucket.Get([]byte(current.SlotID)) != nil {

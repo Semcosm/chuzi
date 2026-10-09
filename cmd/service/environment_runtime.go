@@ -68,7 +68,7 @@ func newConfiguredEnvironmentManager(cfg config.Config, target string) (*environ
 // startup. A Store record alone cannot turn an edited or missing package into
 // a runnable Windows environment.
 func resolveServiceEnvironment(cfg config.Config, manager *environment.Manager, pool slot.PoolConfig, entryName string) (*serviceEnvironmentRuntime, error) {
-	if !cfg.WindowsJobPool.Enabled {
+	if !cfg.WindowsJobPool.Enabled || pool.PoolID == "" {
 		return nil, nil
 	}
 	if manager == nil {

@@ -25,7 +25,7 @@ func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
 	verify := flag.Bool("verify", false, "verify declared resources under root")
-	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, job-pool-list, job-pool-get, job-pool-apply, job-pool-scale, job-pool-drain, job-pool-resume, job-pool-operation, environment-list, environment-install, environment-upgrade, environment-verify, environment-trust, environment-enable, environment-disable, environment-health, environment-rollback, environment-operation, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
+	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, job-pool-list, job-pool-get, job-pool-apply, job-pool-scale, job-pool-drain, job-pool-resume, job-pool-delete, job-pool-operation, environment-list, environment-install, environment-upgrade, environment-verify, environment-trust, environment-enable, environment-disable, environment-health, environment-rollback, environment-operation, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
 	sourceRoot := flag.String("source-root", "", "trusted local source root for repair/install")
 	updateManifest := flag.String("update-manifest", "", "candidate manifest for check-update")
 	releaseIndexURL := flag.String("release-index", "", "HTTPS release index URL for update and component downloads")
@@ -277,7 +277,7 @@ func main() {
 			}
 			return
 		}
-	case "job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-operation", "environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
+	case "job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-delete", "job-pool-operation", "environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
 		handled, err := runControlCommand(ctx, *command, root, *jobPoolInput, *poolID, *desiredSlots, *expectedRevision, *idempotencyKey, *actor, *operationID, *environmentID, *environmentVersion, *packageRef)
 		if handled {
 			if err != nil {
@@ -420,6 +420,8 @@ func runControlCommand(ctx context.Context, command, root, jobPoolInput, poolID 
 		method, params = "drain_job_pool", coreapi.JobPoolActionRequest{PoolID: poolID, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
 	case "job-pool-resume":
 		method, params = "resume_job_pool", coreapi.JobPoolActionRequest{PoolID: poolID, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
+	case "job-pool-delete":
+		method, params = "delete_job_pool", coreapi.JobPoolDeleteRequest{PoolID: poolID, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
 	case "job-pool-operation":
 		method, params = "get_job_pool_operation", struct {
 			OperationID string `json:"operation_id"`
@@ -508,7 +510,7 @@ func launcherCommandNeedsManifest(command string, verify bool) bool {
 	}
 	switch command {
 	case "core-status", "core-start", "core-stop", "core-call",
-		"job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-operation",
+		"job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-delete", "job-pool-operation",
 		"environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
 		return false
 	default:

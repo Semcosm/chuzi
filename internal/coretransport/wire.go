@@ -40,6 +40,7 @@ const (
 	methodScaleJobPool            = "scale_job_pool"
 	methodDrainJobPool            = "drain_job_pool"
 	methodResumeJobPool           = "resume_job_pool"
+	methodDeleteJobPool           = "delete_job_pool"
 	methodGetJobPoolOperation     = "get_job_pool_operation"
 	methodListEnvironments        = "list_environments"
 	methodEnvironmentOperation    = "environment_operation"
@@ -68,6 +69,7 @@ const (
 	MethodScaleJobPool            = methodScaleJobPool
 	MethodDrainJobPool            = methodDrainJobPool
 	MethodResumeJobPool           = methodResumeJobPool
+	MethodDeleteJobPool           = methodDeleteJobPool
 	MethodGetJobPoolOperation     = methodGetJobPoolOperation
 	MethodListEnvironments        = methodListEnvironments
 	MethodEnvironmentOperation    = methodEnvironmentOperation
@@ -156,7 +158,7 @@ type EnvironmentOperationResult struct {
 
 func methodList() []string {
 	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodListRequests, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetDiagnosticSnapshot, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetDiagnosticSnapshot, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodDeleteJobPool, methodGetJobPoolOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
 }
 
 // SupportedMethods is the compatibility contract a packaged Core must expose
