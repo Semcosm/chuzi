@@ -2248,7 +2248,12 @@ where
         + Sync
         + 'static,
 {
-    for attempt in 0..40 {
+    // Lease and platform cleanup can legitimately outlive the short UI
+    // request path. Keep polling long enough for the default lease TTL, then
+    // leave the operation ID available for an explicit refresh instead of
+    // presenting a still-running delete as a failed operation.
+    const MAX_POLL_ATTEMPTS: usize = 1200;
+    for attempt in 0..MAX_POLL_ATTEMPTS {
         let value = match poll(&state.lock().unwrap(), operation_id) {
             Ok(value) => value,
             Err(error) if is_core_unavailable(&error) => {
@@ -2267,7 +2272,7 @@ where
         if is_terminal_operation(&state_name) {
             return Ok((state_name, id, failure, result));
         }
-        if attempt == 39 {
+        if attempt + 1 == MAX_POLL_ATTEMPTS {
             return Err("operation_timeout".to_owned());
         }
         thread::sleep(Duration::from_millis(250));
@@ -2341,6 +2346,19 @@ fn finish_operation(
                     refresh_job_pools(&window.as_weak(), Arc::clone(&state));
                 }
                 Err(error) => {
+                    if error == "operation_timeout" {
+                        window.set_operation_phase("polling".into());
+                        window.set_operation_detail(
+                            "still running · use Operation to refresh status".into(),
+                        );
+                        window.set_message(
+                            "Operation is still running. Use Operation to refresh its status."
+                                .into(),
+                        );
+                        window.set_message_kind("info".into());
+                        refresh_job_pools(&window.as_weak(), Arc::clone(&state));
+                        return;
+                    }
                     let phase = operation_error_phase(&error);
                     window.set_operation_phase(phase.into());
                     window.set_operation_state("failed".into());
