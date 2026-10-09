@@ -97,6 +97,11 @@ func run(ctx context.Context, options serviceOptions) error {
 		startBackground("slot lifecycle", func(workerCtx context.Context) error {
 			reconcile := func() {
 				var err error
+				if allPools, ok := runtime.slotReconciler.(allPoolReconciler); ok {
+					err = allPools.ReconcileAll(workerCtx)
+					runtime.recordSlotReconcile(time.Now().UTC(), err)
+					return
+				}
 				poolExists := true
 				environmentID, environmentVersion := runtime.environmentID, runtime.environmentVersion
 				if runtime.jobPoolID != "" {

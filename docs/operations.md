@@ -72,6 +72,12 @@ session-aware `chuzi-user-agent.exe` 和 per-slot Job Object；没有 active ses
 agent heartbeat 时 slot 保持 provisioning/quarantined，不会参与调度。非 Windows 构建
 返回 `slotwindows.ErrUnsupported`，只运行逻辑 slot。
 
+当 pool 通过 Core/UI 在服务启动后创建或修改时，服务会从持久化 Store 发现全部逻辑
+pool 并持续 reconcile，不要求重启。未启用 `windows_job_pool` 时，逻辑 provisioner
+只维护可调度的逻辑 slot 状态，不创建 Windows 用户或进程；因此缩容和删除也会
+完成 `retiring -> deleted`，不会留下永久的 polling operation。启用 Windows 原生
+pool 后仍由受管 provisioner 执行真实资源的 provision/retire。
+
 每次 lifecycle reconcile 失败都会写入脱敏的 `slot/reconcile` 事件，并递增
 `chuzi_slot_reconcile_errors_total`；错误正文、SID、路径和凭证不会写入日志。最近一次
 失败会让 health endpoint 的 `slot_lifecycle` 检查返回 503，下一次成功 reconcile 后恢复
