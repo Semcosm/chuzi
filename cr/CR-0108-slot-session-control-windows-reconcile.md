@@ -5,7 +5,7 @@ Head or Range: 31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): reconcile Windows pools and expose slot-session operations
-Revision: 3
+Revision: 4
 Status: integrated
 Decision: accepted
 Policy Version: v0.3
@@ -35,7 +35,8 @@ Passed: `go test ./...`; `go test -race ./internal/slotwindows`; `go vet ./...`;
 Windows-targeted `go vet` for service, slotwindows, Core, transport, and Store;
 Windows-amd64 test compilation for those five packages; policy, quality,
 supply-chain, action-pinning, repository-shape, and build-contract validators;
-and `git diff --check`. `.ugs/document-map.json` is absent in this checkout, so
+and `git diff --check`; `./scripts/validate_cr_record.sh cr/CR-0108-slot-session-control-windows-reconcile.md`.
+`.ugs/document-map.json` is absent in this checkout, so
 the conditional document-map validator was not applicable. Native listener and
 WTS smoke require a Windows deployment with a real broker adapter and are not
 executable on the Linux development host.
