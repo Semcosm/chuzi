@@ -1,7 +1,7 @@
 # CR-0108: durable slot-session control and Windows pool reconciliation
 
 Base: main
-Head or Range: pending
+Head or Range: 16c5e5de10d2a115280d489d7cdcbc08f602b472
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): reconcile Windows pools and expose slot-session operations
@@ -9,8 +9,8 @@ Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: pending
-Head OID: pending
+Base OID: 6462c0685bd5a05ef5d4dca117e4339cc13afdf4
+Head OID: 16c5e5de10d2a115280d489d7cdcbc08f602b472
 Integrated Result: pending
 
 ## Summary
