@@ -157,22 +157,23 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		}
 		pool = current
 	}
+	slots, err := r.store.ListSlots(pool.PoolID)
+	if err != nil {
+		return err
+	}
+	cleanupOnly := pool.DesiredSlots == 0 || pool.DesiredState == "draining" || pool.DesiredState == "disabled"
 	var packageGeneration uint64
-	if r.authority != nil {
+	if r.authority != nil && !cleanupOnly {
 		record, authorityErr := r.authority.GetEnvironmentRecord(pool.EnvironmentID, pool.EnvironmentVersion)
 		if authorityErr != nil || !record.IsReady() || record.EnvironmentID != pool.EnvironmentID || record.Version != pool.EnvironmentVersion || pool.ManifestDigest == "" || !strings.EqualFold(record.ManifestDigest, pool.ManifestDigest) || pool.Signer == "" || record.Signer != pool.Signer || !containsAll(record.Capabilities, pool.Capabilities) {
 			return errors.New("slotlifecycle: trusted environment unavailable")
 		}
 		packageGeneration = record.Generation
 	}
-	if updater, ok := r.provisioner.(PoolRuntimeUpdater); ok {
+	if updater, ok := r.provisioner.(PoolRuntimeUpdater); ok && !cleanupOnly {
 		if err := updater.UpdatePoolRuntime(ctx, pool); err != nil {
 			return errors.New("slotlifecycle: trusted environment runtime unavailable")
 		}
-	}
-	slots, err := r.store.ListSlots(pool.PoolID)
-	if err != nil {
-		return err
 	}
 	var first error
 	for _, value := range slots {

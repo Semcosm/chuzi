@@ -198,6 +198,22 @@ func TestReconcileRefreshesDurablePoolConfiguration(t *testing.T) {
 	}
 }
 
+func TestReconcileRetiresDrainingPoolWithoutReadyAuthority(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Ready, 1)}, leases: map[string]slot.Lease{}}
+	provisioner := &fakeProvisioner{}
+	authority := environmentAuthority{err: errors.New("environment was removed")}
+	r, err := New(db, provisioner, validPool(0), func() time.Time { return lifecycleNow }, time.Minute, time.Minute, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("draining reconcile failed after environment removal: %v", err)
+	}
+	if db.items["pool-001"].Status != slot.Deleted || len(provisioner.calls) != 1 || provisioner.calls[0] != "retire" {
+		t.Fatalf("draining cleanup state=%#v calls=%v", db.items["pool-001"], provisioner.calls)
+	}
+}
+
 func TestReconcileRequiresExactReadyEnvironmentAuthority(t *testing.T) {
 	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
 	p := validPool(1)

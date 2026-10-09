@@ -592,6 +592,7 @@ export component MainWindow inherits Window {
                                 spacing: 2px;
                                 HorizontalBox { spacing: ChuziTheme.space-2; Text { text: "Operation " + root.operation-id; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-caption; font-weight: 600; horizontal-stretch: 1; overflow: elide; } Text { text: root.operation-phase; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; } }
                                 Text { text: root.operation-state + "  ·  " + root.operation-detail; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 1; }
+                                if root.operation-phase == "polling": Button { text: "Refresh operation"; enabled: !root.busy; clicked => { root.job-pool-operation(root.operation-id); } }
                                 if root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "service restarted": Button { text: "Refresh projection"; clicked => { root.refresh-job-pools(); } }
                             }
                         }
