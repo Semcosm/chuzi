@@ -16,6 +16,8 @@ func (p *windowsProvisioner) UpdatePoolRuntime(ctx context.Context, pool slot.Po
 	if p == nil || ctx == nil {
 		return ErrInvalidOptions
 	}
+	p.runtimeMu.Lock()
+	defer p.runtimeMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -23,9 +25,7 @@ func (p *windowsProvisioner) UpdatePoolRuntime(ctx context.Context, pool slot.Po
 	if err != nil {
 		return err
 	}
-	p.mu.Lock()
 	resolver := p.options.RuntimeResolver
-	p.mu.Unlock()
 	if resolver == nil {
 		return nil
 	}
@@ -33,7 +33,6 @@ func (p *windowsProvisioner) UpdatePoolRuntime(ctx context.Context, pool slot.Po
 	if err != nil || !runtime.Valid() || !runtime.Matches(requirement.EnvironmentID, requirement.Version, requirement.ManifestDigest, requirement.Signer) {
 		return ErrInvalidOptions
 	}
-	p.mu.Lock()
 	p.options.EnvironmentID = pool.EnvironmentID
 	p.options.Version = pool.EnvironmentVersion
 	p.options.ManifestDigest = pool.ManifestDigest
@@ -43,6 +42,5 @@ func (p *windowsProvisioner) UpdatePoolRuntime(ctx context.Context, pool slot.Po
 	p.options.RuntimePath = filepath.Clean(runtime.PackageRoot())
 	p.options.WorkerScript = filepath.Clean(runtime.WorkerPath())
 	p.options.AdapterScript = filepath.Clean(runtime.AdapterBridgePath())
-	p.mu.Unlock()
 	return nil
 }

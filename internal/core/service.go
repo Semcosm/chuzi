@@ -97,6 +97,11 @@ type JobPoolControlPort interface {
 	ReconcileJobPoolControl(string, time.Time) (store.JobPoolProjection, error)
 }
 
+type SlotSessionControlPort interface {
+	StartSlotSession(store.SlotSessionMutation) (store.SlotSessionOperation, bool, error)
+	GetSlotSessionOperation(string) (store.SlotSessionOperation, error)
+}
+
 type EnvironmentControlPort interface {
 	ListEnvironmentRecords() ([]environment.Record, error)
 	ApplyEnvironmentOperation(store.EnvironmentMutation) (store.EnvironmentOperationRecord, bool, error)
@@ -124,6 +129,7 @@ type Dependencies struct {
 	Diagnostics         DiagnosticsPort
 	JobPools            JobPoolStatusPort
 	JobPoolControl      JobPoolControlPort
+	SlotSessions        SlotSessionControlPort
 	Environments        EnvironmentControlPort
 	EnvironmentExecutor EnvironmentExecutor
 	JobPoolID           string
@@ -139,6 +145,7 @@ type Service struct {
 	diagnostics         DiagnosticsPort
 	jobPools            JobPoolStatusPort
 	jobPoolControl      JobPoolControlPort
+	slotSessions        SlotSessionControlPort
 	environments        EnvironmentControlPort
 	environmentExecutor EnvironmentExecutor
 	jobPoolID           string
@@ -159,7 +166,41 @@ func New(dependencies Dependencies) (*Service, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, slotSessions: dependencies.SlotSessions, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+}
+
+func (s *Service) StartSlotSession(ctx context.Context, input coreapi.StartSlotSessionRequest) (coreapi.SlotSessionOperation, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.SlotSessionOperation{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.SlotSessionOperation{}, err
+	}
+	if s.slotSessions == nil || (strings.TrimSpace(input.PoolID) == "") == (strings.TrimSpace(input.SlotID) == "") || !validToken(input.Actor) || !validToken(input.IdempotencyKey) || (input.PoolID != "" && !validToken(input.PoolID)) || (input.SlotID != "" && !validToken(input.SlotID)) {
+		return coreapi.SlotSessionOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	value, idempotent, err := s.slotSessions.StartSlotSession(store.SlotSessionMutation{PoolID: input.PoolID, SlotID: input.SlotID, Actor: input.Actor, IdempotencyKey: input.IdempotencyKey, ExpectedRevision: input.ExpectedRevision, RequestedAt: s.clock().UTC()})
+	if err != nil {
+		return coreapi.SlotSessionOperation{}, classify(err)
+	}
+	return projectSlotSessionOperation(value, idempotent), nil
+}
+
+func (s *Service) GetSlotSessionOperation(ctx context.Context, operationID string) (coreapi.SlotSessionOperation, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.SlotSessionOperation{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.SlotSessionOperation{}, err
+	}
+	if s.slotSessions == nil || !validToken(operationID) {
+		return coreapi.SlotSessionOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	value, err := s.slotSessions.GetSlotSessionOperation(operationID)
+	if err != nil {
+		return coreapi.SlotSessionOperation{}, classify(err)
+	}
+	return projectSlotSessionOperation(value, false), nil
 }
 
 func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
@@ -1052,6 +1093,11 @@ func projectJobPoolOperation(value store.JobPoolOperation, idempotent bool) core
 	return coreapi.JobPoolOperation{OperationID: value.OperationID, PoolID: value.PoolID, Operation: value.Operation, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ConfigRevision: value.ConfigRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, Result: value.Result, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, LastSuccessfulAt: value.LastSuccessfulAt, Idempotent: idempotent}
 }
 
+func projectSlotSessionOperation(value store.SlotSessionOperation, idempotent bool) coreapi.SlotSessionOperation {
+	status := coreapi.SlotSessionStatus{PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, Status: value.SessionState, EnvironmentGeneration: value.EnvironmentGeneration, SessionState: value.SessionState, AgentReady: value.AgentReady}
+	return coreapi.SlotSessionOperation{OperationID: value.OperationID, PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, Status: status, Idempotent: idempotent}
+}
+
 func projectEnvironment(value environment.Record) coreapi.Environment {
 	return coreapi.Environment{EnvironmentID: value.EnvironmentID, Version: value.Version, Capabilities: append([]string(nil), value.Capabilities...), ManifestDigest: value.ManifestDigest, Signer: value.Signer, Installed: value.Installed, Verified: value.Verified, Trusted: value.Trusted, Enabled: value.Enabled, Healthy: value.Healthy, Ready: value.Ready, Generation: value.Generation, UpdatedAt: value.UpdatedAt}
 }
@@ -1136,11 +1182,11 @@ func classify(err error) error {
 	case errors.Is(err, requestservice.ErrRateLimited):
 		code = coreapi.CodeRateLimited
 	case errors.Is(err, store.ErrAccountNotFound), errors.Is(err, store.ErrRequestNotFound),
-		errors.Is(err, store.ErrLeaseNotFound), errors.Is(err, store.ErrJobPoolNotFound), errors.Is(err, store.ErrJobPoolOperationNotFound), errors.Is(err, store.ErrEnvironmentOperationNotFound), errors.Is(err, slot.ErrPoolNotFound):
+		errors.Is(err, store.ErrLeaseNotFound), errors.Is(err, store.ErrJobPoolNotFound), errors.Is(err, store.ErrJobPoolOperationNotFound), errors.Is(err, store.ErrEnvironmentOperationNotFound), errors.Is(err, store.ErrSlotSessionOperationNotFound), errors.Is(err, slot.ErrPoolNotFound), errors.Is(err, slot.ErrSlotNotFound):
 		code = coreapi.CodeNotFound
 	case errors.Is(err, store.ErrAccountExists), errors.Is(err, store.ErrRequestExists),
 		errors.Is(err, store.ErrRequestConflict), errors.Is(err, store.ErrIdempotencyConflict),
-		errors.Is(err, store.ErrJobPoolStaleRevision), errors.Is(err, store.ErrJobPoolConflict), errors.Is(err, store.ErrJobPoolIdempotencyConflict),
+		errors.Is(err, store.ErrJobPoolStaleRevision), errors.Is(err, store.ErrJobPoolConflict), errors.Is(err, store.ErrJobPoolIdempotencyConflict), errors.Is(err, store.ErrSlotSessionRevision), errors.Is(err, store.ErrSlotSessionIdempotencyConflict),
 		errors.Is(err, store.ErrEnvironmentIdempotencyConflict), errors.Is(err, store.ErrEnvironmentStaleRevision),
 		errors.Is(err, store.ErrRequestStateMismatch), errors.Is(err, store.ErrAccountBusy),
 		errors.Is(err, account.ErrEventConflict), errors.Is(err, account.ErrStaleEvent),

@@ -99,7 +99,8 @@ type CapabilityRevoker interface {
 }
 
 func (o Options) Validate() error {
-	if !filepath.IsAbs(o.DataDir) || filepath.Clean(o.DataDir) == string(filepath.Separator) || containsUnsafePathText(o.DataDir) || !userPrefixPattern.MatchString(o.UserPrefix) || o.EnvironmentID == "" || len(o.EnvironmentID) > 256 || len(o.Version) > 128 || len(o.ManifestDigest) > 256 || len(o.Signer) > 256 || strings.ContainsAny(o.EnvironmentID+o.Version+o.ManifestDigest+o.Signer, "\x00\r\n\t") {
+	deferredRuntime := o.RuntimeResolver != nil && o.EnvironmentID == "" && o.Version == "" && o.ManifestDigest == "" && o.Signer == "" && !o.Runtime.Valid()
+	if !filepath.IsAbs(o.DataDir) || filepath.Clean(o.DataDir) == string(filepath.Separator) || containsUnsafePathText(o.DataDir) || !userPrefixPattern.MatchString(o.UserPrefix) || (!deferredRuntime && o.EnvironmentID == "") || len(o.EnvironmentID) > 256 || len(o.Version) > 128 || len(o.ManifestDigest) > 256 || len(o.Signer) > 256 || strings.ContainsAny(o.EnvironmentID+o.Version+o.ManifestDigest+o.Signer, "\x00\r\n\t") {
 		return ErrInvalidOptions
 	}
 	for _, value := range []string{o.AgentPath, o.RuntimePath, o.WorkerRuntimeRoot, o.WorkerCommand, o.WorkerScript, o.AdapterScript, o.BrowserCommand} {

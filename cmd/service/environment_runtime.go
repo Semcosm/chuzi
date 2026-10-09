@@ -68,22 +68,11 @@ func newConfiguredEnvironmentManager(cfg config.Config, target string) (*environ
 // startup. A Store record alone cannot turn an edited or missing package into
 // a runnable Windows environment.
 func resolveServiceEnvironment(cfg config.Config, manager *environment.Manager, pool slot.PoolConfig, entryName string) (*serviceEnvironmentRuntime, error) {
-	if !cfg.WindowsJobPool.Enabled || pool.PoolID == "" {
+	if !cfg.WindowsJobPool.Enabled {
 		return nil, nil
 	}
 	if manager == nil {
 		return nil, fmt.Errorf("service: environment manager unavailable")
-	}
-	packageValue, _, err := manager.ResolveEntrypoint(pool.EnvironmentID, pool.EnvironmentVersion, entryName, "browser-worker")
-	if err != nil {
-		return nil, fmt.Errorf("service: trusted browser-worker entrypoint unavailable")
-	}
-	handoff, err := environment.NewRuntimeHandoff(packageValue, entryName)
-	if err != nil {
-		return nil, fmt.Errorf("service: invalid trusted environment runtime")
-	}
-	if !handoff.Matches(pool.EnvironmentID, pool.EnvironmentVersion, pool.ManifestDigest, pool.Signer) {
-		return nil, fmt.Errorf("service: trusted environment runtime does not match pool")
 	}
 	resolver := func(ctx context.Context, requirement slot.EnvironmentRequirement) (environment.RuntimeHandoff, error) {
 		if err := ctx.Err(); err != nil {
@@ -101,6 +90,23 @@ func resolveServiceEnvironment(cfg config.Config, manager *environment.Manager, 
 			return environment.RuntimeHandoff{}, fmt.Errorf("service: resolved runtime does not match requirement")
 		}
 		return handoff, nil
+	}
+	if pool.PoolID == "" {
+		// The Windows provisioner can be assembled before the first pool exists.
+		// Its first reconcile resolves the durable pool's signed package through
+		// this closure, so Core-created pools are handled after startup.
+		return &serviceEnvironmentRuntime{RuntimeResolver: resolver}, nil
+	}
+	packageValue, _, err := manager.ResolveEntrypoint(pool.EnvironmentID, pool.EnvironmentVersion, entryName, "browser-worker")
+	if err != nil {
+		return nil, fmt.Errorf("service: trusted browser-worker entrypoint unavailable")
+	}
+	handoff, err := environment.NewRuntimeHandoff(packageValue, entryName)
+	if err != nil {
+		return nil, fmt.Errorf("service: invalid trusted environment runtime")
+	}
+	if !handoff.Matches(pool.EnvironmentID, pool.EnvironmentVersion, pool.ManifestDigest, pool.Signer) {
+		return nil, fmt.Errorf("service: trusted environment runtime does not match pool")
 	}
 	return &serviceEnvironmentRuntime{Handoff: handoff, Manifest: packageValue.Manifest, Record: packageValue.Record, RuntimeResolver: resolver}, nil
 }

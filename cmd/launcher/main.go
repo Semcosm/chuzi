@@ -25,7 +25,7 @@ func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
 	verify := flag.Bool("verify", false, "verify declared resources under root")
-	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, job-pool-list, job-pool-get, job-pool-apply, job-pool-scale, job-pool-drain, job-pool-resume, job-pool-delete, job-pool-operation, environment-list, environment-install, environment-upgrade, environment-verify, environment-trust, environment-enable, environment-disable, environment-health, environment-rollback, environment-operation, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
+	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, job-pool-list, job-pool-get, job-pool-apply, job-pool-scale, job-pool-drain, job-pool-resume, job-pool-delete, job-pool-operation, start-slot-session, slot-session-operation, environment-list, environment-install, environment-upgrade, environment-verify, environment-trust, environment-enable, environment-disable, environment-health, environment-rollback, environment-operation, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
 	sourceRoot := flag.String("source-root", "", "trusted local source root for repair/install")
 	updateManifest := flag.String("update-manifest", "", "candidate manifest for check-update")
 	releaseIndexURL := flag.String("release-index", "", "HTTPS release index URL for update and component downloads")
@@ -277,8 +277,8 @@ func main() {
 			}
 			return
 		}
-	case "job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-delete", "job-pool-operation", "environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
-		handled, err := runControlCommand(ctx, *command, root, *jobPoolInput, *poolID, *desiredSlots, *expectedRevision, *idempotencyKey, *actor, *operationID, *environmentID, *environmentVersion, *packageRef)
+	case "job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-delete", "job-pool-operation", "start-slot-session", "slot-session-operation", "environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
+		handled, err := runControlCommand(ctx, *command, root, *jobPoolInput, *poolID, *desiredSlots, *expectedRevision, *idempotencyKey, *actor, *operationID, *environmentID, *environmentVersion, *packageRef, *item)
 		if handled {
 			if err != nil {
 				fatal(err)
@@ -376,13 +376,17 @@ func runCoreCommand(ctx context.Context, command, root, method, paramsJSON strin
 	}
 }
 
-func runControlCommand(ctx context.Context, command, root, jobPoolInput, poolID string, desiredSlots int, expectedRevision uint64, idempotencyKey, actor, operationID, environmentID, environmentVersion, packageRef string) (bool, error) {
+func runControlCommand(ctx context.Context, command, root, jobPoolInput, poolID string, desiredSlots int, expectedRevision uint64, idempotencyKey, actor, operationID, environmentID, environmentVersion, packageRef string, slotSelector ...string) (bool, error) {
 	manager, err := launcher.NewCoreManager(root)
 	if err != nil {
 		return true, err
 	}
 	method := ""
 	var params any = struct{}{}
+	slotID := ""
+	if len(slotSelector) > 0 {
+		slotID = slotSelector[0]
+	}
 	switch command {
 	case "job-pool-list":
 		method = "list_job_pools"
@@ -424,6 +428,15 @@ func runControlCommand(ctx context.Context, command, root, jobPoolInput, poolID 
 		method, params = "delete_job_pool", coreapi.JobPoolDeleteRequest{PoolID: poolID, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
 	case "job-pool-operation":
 		method, params = "get_job_pool_operation", struct {
+			OperationID string `json:"operation_id"`
+		}{operationID}
+	case "start-slot-session":
+		if (poolID == "") == (slotID == "") {
+			return true, fmt.Errorf("-pool-id or -item slot id is required")
+		}
+		params, method = coreapi.StartSlotSessionRequest{PoolID: poolID, SlotID: slotID, ExpectedRevision: expectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}, "start_slot_session"
+	case "slot-session-operation":
+		method, params = "get_slot_session_operation", struct {
 			OperationID string `json:"operation_id"`
 		}{operationID}
 	case "environment-list":
@@ -510,7 +523,7 @@ func launcherCommandNeedsManifest(command string, verify bool) bool {
 	}
 	switch command {
 	case "core-status", "core-start", "core-stop", "core-call",
-		"job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-delete", "job-pool-operation",
+		"job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-delete", "job-pool-operation", "start-slot-session", "slot-session-operation",
 		"environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
 		return false
 	default:

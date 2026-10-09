@@ -332,6 +332,20 @@ func (c *Client) GetJobPoolOperation(ctx context.Context, operationID string) (c
 	return result.Operation, err
 }
 
+func (c *Client) StartSlotSession(ctx context.Context, input coreapi.StartSlotSessionRequest) (coreapi.SlotSessionOperation, error) {
+	var result SlotSessionOperationResult
+	err := c.Call(ctx, methodStartSlotSession, input, &result)
+	return result.Operation, err
+}
+
+func (c *Client) GetSlotSessionOperation(ctx context.Context, operationID string) (coreapi.SlotSessionOperation, error) {
+	var result SlotSessionOperationResult
+	err := c.Call(ctx, methodGetSlotSessionOperation, struct {
+		OperationID string `json:"operation_id"`
+	}{operationID}, &result)
+	return result.Operation, err
+}
+
 func (c *Client) ListEnvironments(ctx context.Context) ([]coreapi.Environment, error) {
 	var result EnvironmentsResult
 	err := c.Call(ctx, methodListEnvironments, struct{}{}, &result)

@@ -33,6 +33,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/queue"
 	requestservice "github.com/Semcosm/chuzi/internal/request"
 	"github.com/Semcosm/chuzi/internal/slot"
+	"github.com/Semcosm/chuzi/internal/slotwindows"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
@@ -76,6 +77,10 @@ type serviceOptions struct {
 	maxAttempts            int
 	retryBaseDelay         time.Duration
 	retryMaxDelay          time.Duration
+	// sessionBootstrapper is an internal deployment seam. Windows production
+	// assembly supplies the fixed broker client; tests may inject a fake
+	// provider without exposing that seam through ordinary configuration.
+	sessionBootstrapper slotwindows.SessionBootstrapper
 }
 
 type serviceRuntime struct {
@@ -421,7 +426,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return nil, getErr
 		}
 	}
-	if cfg.WindowsJobPool.Enabled && poolConfig.PoolID != "" {
+	if cfg.WindowsJobPool.Enabled {
 		entryName := "headless"
 		if options.backend == backendNode {
 			entryName = "worker"
@@ -681,7 +686,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		environmentExecutor = serviceEnvironmentExecutor{manager: environmentManager, store: database}
 		environmentControl = serviceEnvironmentControl{manager: environmentManager, store: database}
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
+	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, SlotSessions: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}

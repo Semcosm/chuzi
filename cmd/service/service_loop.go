@@ -97,8 +97,16 @@ func run(ctx context.Context, options serviceOptions) error {
 		startBackground("slot lifecycle", func(workerCtx context.Context) error {
 			reconcile := func() {
 				var err error
+				// Session start operations are durable intents. Project the latest
+				// slot facts before pool reconciliation so launchers can observe
+				// requested -> provisioning -> ready deterministically.
+				if sessionErr := runtime.store.ReconcileSlotSessionOperations(time.Now().UTC()); sessionErr != nil {
+					err = sessionErr
+				}
 				if allPools, ok := runtime.slotReconciler.(allPoolReconciler); ok {
-					err = allPools.ReconcileAll(workerCtx)
+					if err == nil {
+						err = allPools.ReconcileAll(workerCtx)
+					}
 					runtime.recordSlotReconcile(time.Now().UTC(), err)
 					return
 				}

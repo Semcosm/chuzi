@@ -1,10 +1,30 @@
 package slotwindows
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Semcosm/chuzi/internal/environment"
+	"github.com/Semcosm/chuzi/internal/slot"
 )
+
+func TestOptionsValidateAllowsDeferredSignedRuntime(t *testing.T) {
+	options := Options{
+		DataDir: filepath.Join(t.TempDir(), "state"), UserPrefix: "ChuziJob",
+		RuntimeResolver: func(context.Context, slot.EnvironmentRequirement) (environment.RuntimeHandoff, error) {
+			return environment.RuntimeHandoff{}, nil
+		},
+	}
+	if err := options.Validate(); err != nil {
+		t.Fatalf("deferred runtime rejected: %v", err)
+	}
+	options.RuntimeResolver = nil
+	if err := options.Validate(); err == nil {
+		t.Fatal("missing runtime metadata accepted without resolver")
+	}
+}
 
 func TestDerivePathsIsSlotAndGenerationScoped(t *testing.T) {
 	options := Options{DataDir: filepath.Join(t.TempDir(), "state"), UserPrefix: "ChuziJob", EnvironmentID: "env/v1", Version: "1.0.0"}

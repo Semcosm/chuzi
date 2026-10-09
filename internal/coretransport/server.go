@@ -415,6 +415,30 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		item, err := api.GetJobPoolOperation(ctx, params.OperationID)
 		return JobPoolOperationResult{Operation: item}, err
+	case methodStartSlotSession:
+		api, ok := s.api.(coreapi.SlotSessionAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "slot session control is unavailable")
+		}
+		var params coreapi.StartSlotSessionRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.StartSlotSession(ctx, params)
+		return SlotSessionOperationResult{Operation: item}, err
+	case methodGetSlotSessionOperation:
+		api, ok := s.api.(coreapi.SlotSessionAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "slot session control is unavailable")
+		}
+		var params struct {
+			OperationID string `json:"operation_id"`
+		}
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		item, err := api.GetSlotSessionOperation(ctx, params.OperationID)
+		return SlotSessionOperationResult{Operation: item}, err
 	case methodListEnvironments:
 		api, ok := s.api.(coreapi.EnvironmentAPI)
 		if !ok {

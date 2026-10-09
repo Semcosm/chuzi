@@ -93,10 +93,11 @@ operation ID、last failure code 和 last successful reconcile time。扩缩容�
 Core 或生产 RDP 边界。Windows provisioner 和 agent 只在本机受控边界内运行，
 跨主机资源回收不属于当前拓扑。
 
-当前服务实例仍在启动时绑定部署配置中的一个 `pool_id`。Core/Launcher 可以
-持久化和查询多个逻辑 pool，但运行中的 Scheduler 和 Windows provisioner 只会
-接管该启动 pool；运行中新增 pool 的自动 reconciler/OS 资源接管不属于本阶段
-完成条件。
+服务 reconcile 周期会枚举 Store 中的每个持久化 pool。逻辑运行时和 Windows
+provisioner 都按当前 pool 配置创建、更新、drain 和 retire slot；运行中新建的
+pool 也会被接管，删除后的 pool 会从 reconciler cache 清理。Windows 服务可以在
+没有启动 pool 时初始化，并在首次发现 pool 后通过签名环境 resolver 取得该 pool
+的 service-owned runtime。单节点拓扑和每个 pool 的受控 OS 资源边界保持不变。
 
 ## Windows 阶段 2
 
@@ -227,9 +228,10 @@ session，也不能停止未知 session。stop 会调用部署适配器并等待
 该 session；等待受 context 总超时约束，重复 stop 仅对本次 broker 已确认的 tombstone 幂等成功。
 
 pipe listener 必须在解析 JSON 前使用显式 ACL，只允许 chuzi 服务 SID 和部署侧 broker SID，
-拒绝 Everyone、Users、Remote Desktop Users 等宽泛主体。仓库提供协议/ACL 验证和
-`SessionBroker` ownership 状态机，但不伪造 broker listener；真实 listener、ACL、RDP/Winlogon
-authorizer 和 WTS 建立动作属于部署适配器。Windows SDK 没有可直接替代真实登录的
+拒绝 Everyone、Users、Remote Desktop Users 等宽泛主体。仓库提供固定 pipe listener、
+协议/ACL 验证和 `SessionBroker` ownership 状态机；部署在构造 listener 时注入两个 SID
+和真实 `SessionBrokerAdapter`。listener 不创建或模拟 Windows session，RDP/Winlogon
+authorizer 和 WTS 建立动作仍属于部署适配器。Windows SDK 没有可直接替代真实登录的
 `WTSLogonUser` API，这不允许改用 `runas`、`CreateProcessAsUser`、`tscon` 或伪造 pipe 响应。
 
 需要一次性密码的部署实现必须使用 `SessionLoginAdapter`：密码只作为短生命周期的内存
