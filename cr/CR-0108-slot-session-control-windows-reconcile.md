@@ -5,12 +5,12 @@ Head or Range: 31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): reconcile Windows pools and expose slot-session operations
-Revision: 2
+Revision: 3
 Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: 31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
-Head OID: 31f9ccb0e31eb4b8e7db79cc58ab6a4d942e6cff
+Base OID: b84e035560506ee970337f1c9bf55b9759504783
+Head OID: b84e035560506ee970337f1c9bf55b9759504783
 Integrated Result: main@b84e035560506ee970337f1c9bf55b9759504783
 
 ## Summary
