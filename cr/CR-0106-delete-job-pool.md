@@ -1,7 +1,7 @@
 # CR-0106: add safe job pool deletion
 
 Base: main
-Head or Range: 9674c6a
+Head or Range: 32b302a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add safe job pool deletion
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 762c6fd8809b4da826fab1a82e62b03023f86930
-Head OID: 9674c6a824db3cc435f5a923cc49ca23fd9ff641
+Head OID: 32b302aa66ca9e5354398deb9365e3b86f9c879c
 Integrated Result: pending
 
 ## Summary
