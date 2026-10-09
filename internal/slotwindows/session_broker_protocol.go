@@ -237,7 +237,7 @@ func (b *SessionBroker) Handle(ctx context.Context, request SessionBrokerRequest
 		response.Code = sessionBrokerCode(err)
 		return response
 	}
-	if b == nil || b.adapter == nil {
+	if ctx == nil || b == nil || b.adapter == nil {
 		response.Code = SessionBrokerSessionUnavailable
 		return response
 	}
@@ -254,8 +254,8 @@ func (b *SessionBroker) Handle(ctx context.Context, request SessionBrokerRequest
 
 func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest, response SessionBrokerResponse) SessionBrokerResponse {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if previous, ok := b.records[request.SlotID]; ok {
-		b.mu.Unlock()
 		if previous.Generation > request.Generation {
 			response.Code = SessionBrokerStaleGeneration
 			return response
@@ -272,38 +272,41 @@ func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest,
 		return response
 	}
 	if previous, ok := b.tombstones[request.SlotID]; ok && request.Generation <= previous.Generation {
-		b.mu.Unlock()
 		response.Code = SessionBrokerStaleGeneration
 		return response
 	}
-	b.mu.Unlock()
 
 	if current, err := b.adapter.Find(ctx, request.SID); current.ID != 0 || (err == nil && current.State != "") {
 		response.Code = SessionBrokerOwnershipUnknown
 		return response
 	}
-	started, err := b.adapter.Start(ctx, SessionBrokerOwnership{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, Owner: request.Owner})
+	ownership := SessionBrokerOwnership{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, Owner: request.Owner}
+	started, err := b.adapter.Start(ctx, ownership)
 	if err != nil || started.ID == 0 || started.State != "active" {
+		if started.ID != 0 {
+			ownership.SessionID = started.ID
+			_ = b.adapter.Stop(ctx, ownership)
+		}
 		response.Code = SessionBrokerSessionUnavailable
 		return response
 	}
 	current, err := b.adapter.Find(ctx, request.SID)
 	if err != nil || current.ID != started.ID || current.State != "active" {
+		ownership.SessionID = started.ID
+		_ = b.adapter.Stop(ctx, ownership)
 		response.Code = SessionBrokerSessionChanged
 		return response
 	}
 	record := SessionBrokerOwnership{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, SessionID: current.ID, Owner: request.Owner}
-	b.mu.Lock()
 	b.records[request.SlotID] = record
-	b.mu.Unlock()
 	return sessionBrokerOK(response, current.ID, "active")
 }
 
 func (b *SessionBroker) stop(ctx context.Context, request SessionBrokerRequest, response SessionBrokerResponse) SessionBrokerResponse {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	record, ok := b.records[request.SlotID]
 	tombstone, wasStopped := b.tombstones[request.SlotID]
-	b.mu.Unlock()
 	if !ok {
 		if wasStopped && tombstone.sameRequest(request) && tombstone.SessionID == request.SessionID {
 			return sessionBrokerOK(response, 0, "stopped")
@@ -331,12 +334,10 @@ func (b *SessionBroker) stop(ctx context.Context, request SessionBrokerRequest, 
 		response.Code = SessionBrokerStopTimeout
 		return response
 	}
-	b.mu.Lock()
 	if current, present := b.records[request.SlotID]; present && current == record {
 		delete(b.records, request.SlotID)
 		b.tombstones[request.SlotID] = record
 	}
-	b.mu.Unlock()
 	return sessionBrokerOK(response, 0, "stopped")
 }
 

@@ -35,10 +35,11 @@ type BootstrapSession struct {
 	State string
 }
 
-// SessionBootstrapper is optional. Production deployments normally leave it
-// nil and depend on an externally managed interactive session. Native smoke
-// may inject a runner-owned implementation, but the implementation must not
-// accept arbitrary user, endpoint, command, or executable input.
+// SessionBootstrapper is optional for direct provisioner users. Service
+// assembly supplies the fixed broker client by default; deployments may leave
+// it nil only when an interactive session is managed outside this boundary.
+// Implementations must not accept arbitrary user, endpoint, command, or
+// executable input.
 type SessionBootstrapper interface {
 	Start(context.Context, ManagedIdentity) (BootstrapSession, error)
 	Stop(context.Context, ManagedIdentity, BootstrapSession) error

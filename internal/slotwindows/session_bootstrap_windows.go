@@ -16,8 +16,9 @@ const runnerSessionBootstrapPipe = SessionBrokerPipeName
 
 type runnerSessionBootstrapper struct{}
 
-// NewRunnerSessionBootstrapper returns the fixed Windows runner boundary used
-// by the opt-in native smoke. Production configuration leaves this unset.
+// NewRunnerSessionBootstrapper returns the fixed Windows broker boundary used
+// by service assembly and the opt-in native smoke. The endpoint is fixed at
+// build time and carries no credentials.
 func NewRunnerSessionBootstrapper() SessionBootstrapper {
 	return runnerSessionBootstrapper{}
 }

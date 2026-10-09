@@ -411,6 +411,47 @@ type JobPoolAPI interface {
 	GetJobPoolOperation(context.Context, string) (JobPoolOperation, error)
 }
 
+// StartSlotSessionRequest asks the service to establish the session for one
+// existing logical slot. Exactly one of PoolID and SlotID is accepted.
+type StartSlotSessionRequest struct {
+	PoolID           string `json:"pool_id,omitempty"`
+	SlotID           string `json:"slot_id,omitempty"`
+	Actor            string `json:"actor"`
+	IdempotencyKey   string `json:"idempotency_key"`
+	ExpectedRevision uint64 `json:"expected_revision,omitempty"`
+}
+
+type SlotSessionStatus struct {
+	PoolID                string `json:"pool_id"`
+	SlotID                string `json:"slot_id"`
+	Ordinal               int    `json:"ordinal"`
+	Status                string `json:"status"`
+	EnvironmentGeneration uint64 `json:"environment_generation"`
+	SessionState          string `json:"session_state"`
+	AgentReady            bool   `json:"agent_ready"`
+}
+
+type SlotSessionOperation struct {
+	OperationID           string            `json:"operation_id"`
+	PoolID                string            `json:"pool_id"`
+	SlotID                string            `json:"slot_id"`
+	Ordinal               int               `json:"ordinal"`
+	State                 string            `json:"state"`
+	Actor                 string            `json:"actor,omitempty"`
+	RequestedAt           time.Time         `json:"requested_at"`
+	UpdatedAt             time.Time         `json:"updated_at"`
+	CompletedAt           time.Time         `json:"completed_at,omitempty"`
+	FailureCode           string            `json:"failure_code,omitempty"`
+	EnvironmentGeneration uint64            `json:"environment_generation"`
+	Status                SlotSessionStatus `json:"status"`
+	Idempotent            bool              `json:"idempotent,omitempty"`
+}
+
+type SlotSessionAPI interface {
+	StartSlotSession(context.Context, StartSlotSessionRequest) (SlotSessionOperation, error)
+	GetSlotSessionOperation(context.Context, string) (SlotSessionOperation, error)
+}
+
 type Environment struct {
 	EnvironmentID  string    `json:"environment_id"`
 	Version        string    `json:"version"`

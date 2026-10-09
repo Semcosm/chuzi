@@ -80,6 +80,7 @@ func validateDB(database *bbolt.DB) error {
 			migrations.JobPoolOperationsBucket, migrations.JobPoolIdempotencyBucket, migrations.JobPoolAuditBucket,
 			migrations.EnvironmentOperationsBucket, migrations.EnvironmentIdempotencyBucket,
 			migrations.EnvironmentAuditBucket,
+			migrations.SlotSessionOperationsBucket, migrations.SlotSessionIdempotencyBucket,
 		} {
 			if tx.Bucket([]byte(name)) == nil {
 				return fmt.Errorf("%w: required bucket %q is missing", ErrCorruptData, name)

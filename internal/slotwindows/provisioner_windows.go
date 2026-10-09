@@ -134,10 +134,11 @@ type profileGrantRecord struct {
 }
 
 type windowsProvisioner struct {
-	options Options
-	mu      sync.Mutex
-	agents  map[string]agentProcess
-	boots   map[string]sessionBootstrapState
+	options   Options
+	runtimeMu sync.RWMutex
+	mu        sync.Mutex
+	agents    map[string]agentProcess
+	boots     map[string]sessionBootstrapState
 }
 
 type agentProcess struct {
@@ -174,6 +175,11 @@ func (c *managedUserCredentials) clear() {
 // active. It receives the authoritative lease so the probe cannot accidentally
 // use the provisioning fence after a job has been prepared.
 func (p *windowsProvisioner) Health(ctx context.Context, request slot.ProvisionRequest, lease slot.Lease) error {
+	if p == nil {
+		return ErrInvalidOptions
+	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
 	if err := p.validateRequest(request); err != nil || lease.Validate() != nil || lease.SlotID != request.SlotID || lease.EnvironmentGeneration != request.EnvironmentGeneration {
 		return ErrOwnership
 	}
@@ -289,6 +295,8 @@ func (p *windowsProvisioner) StopSlotLease(ctx context.Context, lease slot.Lease
 	if p == nil || ctx == nil {
 		return ErrOwnership
 	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
 	if err := lease.Validate(); err != nil {
 		return ErrOwnership
 	}
@@ -388,6 +396,8 @@ func (p *windowsProvisioner) Shutdown(ctx context.Context) error {
 	if p == nil || ctx == nil {
 		return ErrCleanup
 	}
+	p.runtimeMu.Lock()
+	defer p.runtimeMu.Unlock()
 	p.mu.Lock()
 	agents := make(map[string]agentProcess, len(p.agents))
 	for slotID, agent := range p.agents {
@@ -426,6 +436,11 @@ func New(options Options) (Provisioner, error) {
 }
 
 func (p *windowsProvisioner) Provision(ctx context.Context, request slot.ProvisionRequest) (result slot.ProvisionResult, provisionErr error) {
+	if p == nil {
+		return slot.ProvisionResult{}, ErrInvalidOptions
+	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
 	if err := p.validateRequest(request); err != nil {
 		return slot.ProvisionResult{}, err
 	}
@@ -580,6 +595,11 @@ func (p *windowsProvisioner) rollbackProvision(paths Paths, request slot.Provisi
 }
 
 func (p *windowsProvisioner) Inspect(ctx context.Context, request slot.ProvisionRequest) (slot.EnvironmentSummary, error) {
+	if p == nil {
+		return slot.EnvironmentSummary{}, ErrInvalidOptions
+	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
 	if err := p.validateRequest(request); err != nil {
 		return slot.EnvironmentSummary{}, err
 	}
@@ -616,6 +636,11 @@ func (p *windowsProvisioner) Inspect(ctx context.Context, request slot.Provision
 }
 
 func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionRequest) error {
+	if p == nil {
+		return ErrCleanup
+	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
 	retireFail := func(stage string, err error) error {
 		writeRetireDiagnostics(stage, err)
 		return err
@@ -713,6 +738,11 @@ func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionR
 }
 
 func (p *windowsProvisioner) GrantProfile(ctx context.Context, slotID, profilePath string) error {
+	if p == nil {
+		return ErrOwnership
+	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -770,6 +800,11 @@ func (p *windowsProvisioner) GrantProfile(ctx context.Context, slotID, profilePa
 }
 
 func (p *windowsProvisioner) RevokeProfile(ctx context.Context, slotID, profilePath string) error {
+	if p == nil {
+		return ErrOwnership
+	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
 	if err := ctx.Err(); err != nil {
 		return err
 	}

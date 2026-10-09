@@ -158,6 +158,37 @@ func TestSessionBrokerOwnershipAndIdempotency(t *testing.T) {
 	}
 }
 
+func TestSessionBrokerSerializesConcurrentStarts(t *testing.T) {
+	adapter := newBrokerTestAdapter()
+	broker := NewSessionBroker(adapter)
+	request := validBrokerRequest()
+	responses := make(chan SessionBrokerResponse, 16)
+	var group sync.WaitGroup
+	for range cap(responses) {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			responses <- broker.Handle(context.Background(), request)
+		}()
+	}
+	group.Wait()
+	close(responses)
+	var sessionID uint32
+	for response := range responses {
+		if response.Code != SessionBrokerOK || response.SessionID == 0 {
+			t.Fatalf("concurrent start response=%+v", response)
+		}
+		if sessionID == 0 {
+			sessionID = response.SessionID
+		} else if response.SessionID != sessionID {
+			t.Fatalf("sessions diverged: %d and %d", sessionID, response.SessionID)
+		}
+	}
+	if adapter.starts != 1 {
+		t.Fatalf("starts=%d want 1", adapter.starts)
+	}
+}
+
 func TestSessionBrokerRestartCannotAdoptUnknownSession(t *testing.T) {
 	adapter := newBrokerTestAdapter()
 	request := validBrokerRequest()
@@ -189,5 +220,62 @@ func TestSessionBrokerStopHasBoundedWait(t *testing.T) {
 	defer cancel()
 	if response := broker.Handle(ctx, stop); response.Code != SessionBrokerStopTimeout {
 		t.Fatalf("stop did not time out: %+v", response)
+	}
+}
+
+type blockingStartAdapter struct{}
+
+func (blockingStartAdapter) Start(ctx context.Context, _ SessionBrokerOwnership) (BootstrapSession, error) {
+	<-ctx.Done()
+	return BootstrapSession{}, ctx.Err()
+}
+
+func (blockingStartAdapter) Stop(context.Context, SessionBrokerOwnership) error { return nil }
+
+func (blockingStartAdapter) Find(context.Context, string) (BootstrapSession, error) {
+	return BootstrapSession{}, ErrSessionUnavailable
+}
+
+func TestSessionBrokerStartProviderTimeoutIsStable(t *testing.T) {
+	broker := NewSessionBroker(blockingStartAdapter{})
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	response := broker.Handle(ctx, validBrokerRequest())
+	if response.Code != SessionBrokerSessionUnavailable || response.SessionID != 0 {
+		t.Fatalf("timeout response=%+v", response)
+	}
+}
+
+type changingSessionAdapter struct {
+	finds int
+	stops int
+}
+
+func (a *changingSessionAdapter) Start(context.Context, SessionBrokerOwnership) (BootstrapSession, error) {
+	return BootstrapSession{ID: 71, State: "active"}, nil
+}
+
+func (a *changingSessionAdapter) Stop(context.Context, SessionBrokerOwnership) error {
+	a.stops++
+	return nil
+}
+
+func (a *changingSessionAdapter) Find(context.Context, string) (BootstrapSession, error) {
+	a.finds++
+	if a.finds == 1 {
+		return BootstrapSession{}, ErrSessionUnavailable
+	}
+	return BootstrapSession{ID: 72, State: "active"}, nil
+}
+
+func TestSessionBrokerRejectsProviderSessionIDChange(t *testing.T) {
+	adapter := &changingSessionAdapter{}
+	broker := NewSessionBroker(adapter)
+	response := broker.Handle(context.Background(), validBrokerRequest())
+	if response.Code != SessionBrokerSessionChanged || response.SessionID != 0 {
+		t.Fatalf("changed session response=%+v", response)
+	}
+	if adapter.stops != 1 {
+		t.Fatalf("cleanup stops=%d, want 1", adapter.stops)
 	}
 }

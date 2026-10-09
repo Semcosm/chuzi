@@ -20,6 +20,25 @@ type controlJobPools struct {
 	err        error
 }
 
+type controlSlotSessions struct {
+	operation   store.SlotSessionOperation
+	err         error
+	calls       int
+	mutation    store.SlotSessionMutation
+	idempotent  bool
+	operationID string
+}
+
+func (p *controlSlotSessions) StartSlotSession(mutation store.SlotSessionMutation) (store.SlotSessionOperation, bool, error) {
+	p.calls++
+	p.mutation = mutation
+	return p.operation, p.idempotent, p.err
+}
+func (p *controlSlotSessions) GetSlotSessionOperation(operationID string) (store.SlotSessionOperation, error) {
+	p.operationID = operationID
+	return p.operation, p.err
+}
+
 func (p controlJobPools) ListJobPoolProjections(time.Time) ([]store.JobPoolProjection, error) {
 	if p.err != nil {
 		return nil, p.err
@@ -159,5 +178,74 @@ func TestApplyJobPoolClassifiesInvalidConfiguration(t *testing.T) {
 	})
 	if coreapi.CodeOf(err) != coreapi.CodeInvalidArgument {
 		t.Fatalf("invalid pool configuration error = %v, code=%q", err, coreapi.CodeOf(err))
+	}
+}
+
+func TestStartSlotSessionUsesRedactedAsyncOperation(t *testing.T) {
+	port := &controlSlotSessions{operation: store.SlotSessionOperation{OperationID: "slotop-1", PoolID: "pool-1", SlotID: "pool-1-001", Ordinal: 1, State: store.SlotSessionRequested, Actor: "operator@example", RequestedAt: controlTestTime, UpdatedAt: controlTestTime, EnvironmentGeneration: 2, SessionState: "provisioning"}}
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, SlotSessions: port, Clock: func() time.Time { return controlTestTime }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := service.StartSlotSession(context.Background(), coreapi.StartSlotSessionRequest{PoolID: "pool-1", Actor: "operator@example", IdempotencyKey: "key-1"})
+	if err != nil || operation.OperationID != "slotop-1" || operation.Status.SlotID != "pool-1-001" || operation.Status.AgentReady {
+		t.Fatalf("operation=%#v err=%v", operation, err)
+	}
+	if strings.Contains(operation.Actor, "operator@example") || strings.Contains(operation.Status.SlotID, "password") {
+		t.Fatalf("operation leaked sensitive identity: %#v", operation)
+	}
+	if port.calls != 1 {
+		t.Fatalf("calls=%d", port.calls)
+	}
+	if port.mutation.PoolID != "pool-1" || !port.mutation.RequestedAt.Equal(controlTestTime) {
+		t.Fatalf("mutation=%#v", port.mutation)
+	}
+}
+
+func TestStartSlotSessionRejectsInvalidSelectors(t *testing.T) {
+	port := &controlSlotSessions{}
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, SlotSessions: port})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range []coreapi.StartSlotSessionRequest{
+		{Actor: "operator", IdempotencyKey: "key"},
+		{PoolID: "pool-1", SlotID: "pool-1-001", Actor: "operator", IdempotencyKey: "key"},
+		{PoolID: "bad pool", Actor: "operator", IdempotencyKey: "key"},
+	} {
+		if _, err := service.StartSlotSession(context.Background(), input); coreapi.CodeOf(err) != coreapi.CodeInvalidArgument {
+			t.Fatalf("input=%#v err=%v code=%q", input, err, coreapi.CodeOf(err))
+		}
+	}
+	if port.calls != 0 {
+		t.Fatalf("invalid inputs reached store: %d", port.calls)
+	}
+}
+
+func TestSlotSessionOperationErrorsUseStableCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		code coreapi.Code
+	}{
+		{name: "stale revision", err: store.ErrSlotSessionRevision, code: coreapi.CodeConflict},
+		{name: "idempotency conflict", err: store.ErrSlotSessionIdempotencyConflict, code: coreapi.CodeConflict},
+		{name: "missing operation", err: store.ErrSlotSessionOperationNotFound, code: coreapi.CodeNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			port := &controlSlotSessions{err: tc.err}
+			service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, SlotSessions: port})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.name == "missing operation" {
+				_, err = service.GetSlotSessionOperation(context.Background(), "slotop-1")
+			} else {
+				_, err = service.StartSlotSession(context.Background(), coreapi.StartSlotSessionRequest{PoolID: "pool-1", Actor: "operator", IdempotencyKey: "key"})
+			}
+			if coreapi.CodeOf(err) != tc.code {
+				t.Fatalf("err=%v code=%q want=%q", err, coreapi.CodeOf(err), tc.code)
+			}
+		})
 	}
 }
