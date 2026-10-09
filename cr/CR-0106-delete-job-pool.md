@@ -5,13 +5,13 @@ Head or Range: 32b302a
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(service): add safe job pool deletion
-Revision: 2
-Status: accepted
+Revision: 3
+Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: e0bf5c208a6ffdad897cca09c67f204977f5c21c
-Head OID: 5e8fd68875109281346536fbcfa4725ca73f734d
-Integrated Result: pending
+Base OID: c9d3fd0ab22479514082717cf066c16d6cacdcac
+Head OID: c9d3fd0ab22479514082717cf066c16d6cacdcac
+Integrated Result: main@c9d3fd0ab22479514082717cf066c16d6cacdcac
 
 ## Summary
 
