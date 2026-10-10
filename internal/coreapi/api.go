@@ -297,6 +297,7 @@ type DiagnosticSnapshotAPI interface {
 // JobPoolStatus is a redaction-safe execution capacity projection. It never
 // contains Windows usernames, SIDs, Profile paths, endpoints, or commands.
 type JobPoolStatus struct {
+	ExecutionMode             string    `json:"execution_mode"`
 	PoolID                    string    `json:"pool_id"`
 	EnvironmentID             string    `json:"environment_id"`
 	EnvironmentVersion        string    `json:"environment_version"`
@@ -422,6 +423,7 @@ type StartSlotSessionRequest struct {
 }
 
 type SlotSessionStatus struct {
+	ExecutionMode         string `json:"execution_mode"`
 	PoolID                string `json:"pool_id"`
 	SlotID                string `json:"slot_id"`
 	Ordinal               int    `json:"ordinal"`

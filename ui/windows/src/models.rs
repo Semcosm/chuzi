@@ -21,6 +21,8 @@ pub(crate) struct CoreRequestList {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CoreStatus {
+    #[serde(default)]
+    pub(crate) configured_pool_mode: String,
     pub(crate) installed: bool,
     pub(crate) ready: bool,
     pub(crate) running: bool,
@@ -70,6 +72,8 @@ pub(crate) struct CoreJobPoolConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct CoreJobPoolStatus {
+    #[serde(default)]
+    pub(crate) execution_mode: String,
     pub(crate) desired: i32,
     pub(crate) ready: i32,
     pub(crate) leased: i32,
@@ -113,6 +117,8 @@ pub(crate) struct CoreJobPoolOperation {
 
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub(crate) struct CoreSlotSessionStatus {
+    #[serde(default)]
+    pub(crate) execution_mode: String,
     #[serde(default)]
     pub(crate) pool_id: String,
     #[serde(default)]
@@ -158,6 +164,10 @@ pub(crate) struct CoreEnvironmentList {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct CoreEnvironment {
+    #[serde(default)]
+    pub(crate) manifest_digest: String,
+    #[serde(default)]
+    pub(crate) signer: String,
     pub(crate) environment_id: String,
     pub(crate) version: String,
     #[serde(default)]

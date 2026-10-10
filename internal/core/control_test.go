@@ -249,3 +249,78 @@ func TestSlotSessionOperationErrorsUseStableCodes(t *testing.T) {
 		})
 	}
 }
+
+type currentControlSlotSessions struct {
+	controlSlotSessions
+	current slot.Slot
+	missing bool
+}
+
+func (p *currentControlSlotSessions) GetSlot(string) (slot.Slot, error) {
+	if p.missing {
+		return slot.Slot{}, slot.ErrSlotNotFound
+	}
+	return p.current, nil
+}
+
+func TestSlotSessionRefreshUsesCurrentRuntimeFacts(t *testing.T) {
+	for _, mode := range []string{"logical", "windows", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			port := &currentControlSlotSessions{controlSlotSessions: controlSlotSessions{operation: store.SlotSessionOperation{OperationID: "op-a", SlotID: "slot-a", PoolID: "pool-a", State: store.SlotSessionReady, EnvironmentGeneration: 7, SessionState: "ready", AgentReady: true}}, current: slot.Slot{SlotID: "slot-a", Status: slot.Ready, AgentHandle: "native-handle", HealthAt: controlTestTime, EnvironmentGeneration: 7}}
+			svc, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, SlotSessions: port, ExecutionMode: mode})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := svc.GetSlotSessionOperation(context.Background(), "op-a")
+			if err != nil || result.Status.ExecutionMode != mode || result.Status.AgentReady != (mode == "windows") {
+				t.Fatalf("projection: %#v %v", result, err)
+			}
+			port.current.EnvironmentGeneration = 8
+			result, _ = svc.GetSlotSessionOperation(context.Background(), "op-a")
+			if result.Status.EnvironmentGeneration != 8 || result.Status.AgentReady != (mode == "windows") {
+				t.Fatalf("current generation not projected: %#v", result)
+			}
+			port.current.AgentHandle = "logical"
+			result, _ = svc.GetSlotSessionOperation(context.Background(), "op-a")
+			if result.Status.AgentReady {
+				t.Fatal("synthetic handle treated as native")
+			}
+			port.current.Status = slot.Quarantined
+			result, _ = svc.GetSlotSessionOperation(context.Background(), "op-a")
+			if result.State != "ready" || result.Status.Status != "quarantined" || result.Status.AgentReady {
+				t.Fatalf("historical ready hides current failure: %#v", result)
+			}
+			port.missing = true
+			result, _ = svc.GetSlotSessionOperation(context.Background(), "op-a")
+			if result.Status.Status != "unavailable" || result.Status.AgentReady || result.Status.EnvironmentGeneration != 0 {
+				t.Fatalf("missing slot: %#v", result)
+			}
+		})
+	}
+}
+
+func TestJobPoolModeReportsActiveCoreConfiguration(t *testing.T) {
+	for _, mode := range []string{"logical", "windows", "invalid"} {
+		projection := store.JobPoolProjection{Config: slot.PoolConfig{PoolID: "pool-a"}, Status: slot.StatusCounts{PoolID: "pool-a"}}
+		svc, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, JobPoolControl: controlJobPools{projection: projection}, ExecutionMode: mode})
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected := mode
+		if mode == "invalid" {
+			expected = "unknown"
+		}
+		pools, err := svc.ListJobPools(context.Background())
+		if err != nil || len(pools) != 1 || pools[0].Status.ExecutionMode != expected {
+			t.Fatalf("list: %#v %v", pools, err)
+		}
+		pool, err := svc.GetJobPool(context.Background(), "pool-a")
+		if err != nil || pool.Status.ExecutionMode != expected {
+			t.Fatalf("get: %#v %v", pool, err)
+		}
+		status, err := svc.GetJobPoolStatus(context.Background(), "pool-a")
+		if err != nil || status.ExecutionMode != expected {
+			t.Fatalf("status: %#v %v", status, err)
+		}
+	}
+}

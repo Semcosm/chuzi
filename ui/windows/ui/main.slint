@@ -94,6 +94,11 @@ export component MainWindow inherits Window {
     in-out property <bool> start-core-on-launch: false;
     in-out property <int> update-interval: 60;
     in-out property <string> settings-phase: "loading";
+    in-out property <bool> core-running: false;
+    in-out property <string> configured-pool-mode: "unknown";
+    in-out property <string> pool-mode-phase: "idle";
+    in-out property <string> pool-mode-detail: "";
+    in-out property <length> settings-scroll-y: 0px;
     in-out property <string> job-pool-phase: "idle";
     in-out property <string> job-pool-summary: "Job pool status has not been loaded.";
     in-out property <[JobPoolRowData]> job-pool-rows: [];
@@ -504,6 +509,7 @@ export component MainWindow inherits Window {
         z: 20;
 
         ScrollView {
+            content-y <=> root.settings-scroll-y;
             VerticalBox {
                 padding: ChuziTheme.space-6;
                 spacing: ChuziTheme.space-3;
@@ -550,6 +556,29 @@ export component MainWindow inherits Window {
                     vertical-stretch: 0;
                     VerticalBox {
                         padding: ChuziTheme.space-5;
+                        spacing: ChuziTheme.space-2;
+                        Text { text: "Windows user pool"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-stretch: 0; }
+                        Text { text: "Saved mode: " + (root.configured-pool-mode == "windows" ? "Windows users" : root.configured-pool-mode == "logical" ? "Logical test" : "unknown") + " · applied when Core starts"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; wrap: word-wrap; vertical-stretch: 0; }
+                        Text { text: "Scale every pool to 0, wait for slot cleanup, then stop Core. Select a pool with a signed, trusted environment before enabling Windows users. Real sessions also require the deployment login service and Windows service privileges."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                        LineEdit { placeholder-text: "Select a pool below, or enter its pool ID"; text <=> root.job-pool-edit-id; }
+                        Text { text: root.core-running ? "Stop Core after cleanup to change the saved mode." : root.pool-mode-detail; color: root.pool-mode-phase == "failed" ? ChuziTheme.status-danger : ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
+                        HorizontalBox {
+                            spacing: ChuziTheme.space-2;
+                            height: ChuziTheme.control-height;
+                            Button { text: "Enable Windows users"; enabled: !root.busy && root.core-status-known && root.core-installed && !root.core-running && root.job-pool-edit-id != ""; clicked => { root.pending-operation = "pool-mode:windows"; root.pending-pool-id = root.job-pool-edit-id; root.operation-confirmation-title = "Enable Windows user pool?"; root.operation-confirmation-message = "Core will verify that all previous slots are cleaned up and the selected pool has an installed signed environment. Save the mode, then start Core and scale the pool. Login service availability is checked during provisioning."; root.operation-confirmation-visible = true; } }
+                            Button { text: "Use logical test mode"; enabled: !root.busy && root.core-status-known && root.core-installed && !root.core-running; clicked => { root.pending-operation = "pool-mode:logical"; root.operation-confirmation-title = "Use logical test mode?"; root.operation-confirmation-message = "All Windows slots must finish cleanup before saving. After starting Core, logical slots will provide test capacity without creating Windows users or Agents."; root.operation-confirmation-visible = true; } }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    background: ChuziTheme.surface-background;
+                    border-color: ChuziTheme.separator;
+                    border-width: 1px;
+                    border-radius: ChuziTheme.radius-surface;
+                    vertical-stretch: 0;
+                    VerticalBox {
+                        padding: ChuziTheme.space-5;
                         spacing: ChuziTheme.space-3;
                         HorizontalBox {
                             height: 34px;
@@ -557,7 +586,7 @@ export component MainWindow inherits Window {
                             Text { text: "Job pools"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-section; font-weight: 600; vertical-alignment: center; horizontal-stretch: 1; }
                             Button { text: root.job-pool-phase == "loading" ? "Refreshing…" : "Refresh"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
                         }
-                        Text { text: "Capacity, environment readiness, reconcile state, and safe lifecycle controls."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        Text { text: "Each card shows the active Core execution mode. Logical ready does not mean a Windows session or Agent exists."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
                         if root.operation-phase != "idle": Rectangle {
                             background: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" ? ChuziTheme.status-danger.with-alpha(0.10) : ChuziTheme.accent-soft;
                             border-color: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" ? ChuziTheme.status-danger : ChuziTheme.accent.with-alpha(0.35);
@@ -595,7 +624,7 @@ export component MainWindow inherits Window {
                                     root.pending-operation = kind;
                                     root.pending-pool-id = value;
                                     root.operation-confirmation-title = kind == "start-slot-session" ? "Start a basic session?" : kind == "drain" ? "Drain this pool?" : kind == "delete" ? "Delete this pool?" : "Resume this pool?";
-                                    root.operation-confirmation-message = kind == "start-slot-session" ? "Core will choose the first available execution slot and report its redacted readiness." : kind == "drain" ? "New work will stop while leased slots finish safely." : kind == "delete" ? "New work will stop. The pool and its managed slots will be removed after leases and resources finish cleanup." : "The pool will accept new work after reconciliation.";
+                                    root.operation-confirmation-message = kind == "start-slot-session" ? "Core will choose an execution slot in its active mode. Logical tests create no Windows session; Windows mode reports the latest Agent health." : kind == "drain" ? "New work will stop while leased slots finish safely." : kind == "delete" ? "New work will stop. The pool and its managed slots will be removed after leases and resources finish cleanup." : "The pool will accept new work after reconciliation.";
                                     root.operation-confirmation-visible = true;
                                 }
                             }

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/coretransport"
 )
 
@@ -26,15 +27,16 @@ var (
 )
 
 type CoreStatus struct {
-	Installed        bool     `json:"installed"`
-	Ready            bool     `json:"ready"`
-	Running          bool     `json:"running"`
-	PID              int      `json:"pid,omitempty"`
-	Status           string   `json:"status"`
-	Protocol         string   `json:"protocol,omitempty"`
-	Methods          []string `json:"methods,omitempty"`
-	MissingMethods   []string `json:"missing_methods,omitempty"`
-	CapabilityStatus string   `json:"capability_status,omitempty"`
+	ConfiguredPoolMode string   `json:"configured_pool_mode"`
+	Installed          bool     `json:"installed"`
+	Ready              bool     `json:"ready"`
+	Running            bool     `json:"running"`
+	PID                int      `json:"pid,omitempty"`
+	Status             string   `json:"status"`
+	Protocol           string   `json:"protocol,omitempty"`
+	Methods            []string `json:"methods,omitempty"`
+	MissingMethods     []string `json:"missing_methods,omitempty"`
+	CapabilityStatus   string   `json:"capability_status,omitempty"`
 }
 
 // CoreManager is the launcher-owned boundary for Core lifecycle and IPC.
@@ -95,6 +97,14 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 		status = "not_installed"
 	}
 	result := CoreStatus{Installed: installed, Ready: ready, Running: running, PID: pid, Status: status}
+	result.ConfiguredPoolMode = "logical"
+	if cfg, err := m.loadConfig(); err == nil {
+		if cfg.WindowsJobPool.Enabled {
+			result.ConfiguredPoolMode = "windows"
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		result.ConfiguredPoolMode = "unknown"
+	}
 	if endpointReady {
 		capabilities, err := m.capabilities(ctx)
 		if err != nil {
@@ -300,6 +310,11 @@ func (m *CoreManager) waitReady(ctx context.Context) error {
 }
 
 func (m *CoreManager) writeConfig() error {
+	if _, err := m.loadConfig(); err == nil {
+		return nil // Deployment settings survive every managed restart.
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.New("core_config_invalid")
+	}
 	if err := os.MkdirAll(m.Root, 0o700); err != nil {
 		return err
 	}
@@ -317,7 +332,72 @@ func (m *CoreManager) writeConfig() error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(m.ConfigPath, data, 0o600)
+	file, err := os.OpenFile(m.ConfigPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		_, loadErr := m.loadConfig()
+		if loadErr != nil {
+			return errors.New("core_config_invalid")
+		}
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	if _, err := file.Write(data); err != nil {
+		return err
+	}
+	return file.Sync()
+}
+
+func (m *CoreManager) loadConfig() (config.Config, error) {
+	cfg, err := config.Load(m.ConfigPath)
+	if err != nil {
+		return config.Config{}, err
+	}
+	if cfg.DataDir != m.Root {
+		return config.Config{}, errors.New("core_config_invalid")
+	}
+	return cfg, nil
+}
+
+// SavePoolMode delegates offline validation to Core. The service owns Store
+// and package validation; the launcher owns lifecycle and the mutation lock.
+func (m *CoreManager) SavePoolMode(ctx context.Context, mode, poolID string, revision uint64) (json.RawMessage, error) {
+	if mode != "logical" && mode != "windows" {
+		return nil, errors.New("invalid_pool_mode")
+	}
+	status, err := m.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if status.Running {
+		return nil, errors.New("core_stop_required")
+	}
+	if !status.Installed {
+		return nil, ErrNotFound
+	}
+	if err := m.writeConfig(); err != nil {
+		return nil, err
+	}
+	command := exec.CommandContext(ctx, m.ServicePath, "-config", m.ConfigPath, "-configure-pool-mode", mode, "-pool-id", poolID, "-expected-revision", strconv.FormatUint(revision, 10))
+	command.Dir = m.Root
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
+	if err != nil {
+		// Only closed failure classes cross the launcher/UI boundary.
+		for _, code := range []string{"pool_cleanup_required", "signed_environment_required", "environment_unavailable", "stale_revision", "pool_not_found", "windows_required", "core_config_invalid", "core_stop_required"} {
+			if strings.TrimSpace(stderr.String()) == "chuzi: "+code {
+				return nil, errors.New(code)
+			}
+		}
+		return nil, errors.New("pool_mode_save_failed")
+	}
+	if !json.Valid(output) {
+		return nil, errors.New("pool_mode_save_failed")
+	}
+	return output, nil
 }
 
 func (m *CoreManager) readPID() int {

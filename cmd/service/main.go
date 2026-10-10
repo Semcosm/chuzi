@@ -686,7 +686,11 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		environmentExecutor = serviceEnvironmentExecutor{manager: environmentManager, store: database}
 		environmentControl = serviceEnvironmentControl{manager: environmentManager, store: database}
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, SlotSessions: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
+	executionMode := "logical"
+	if cfg.WindowsJobPool.Enabled {
+		executionMode = "windows"
+	}
+	coreAPI, coreErr := core.New(core.Dependencies{ExecutionMode: executionMode, Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, SlotSessions: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}
@@ -886,6 +890,9 @@ func main() {
 	environmentPromote := flag.Bool("environment-promote", false, "promote manager-ready environment records into Store")
 	environmentID := flag.String("environment-id", "", "environment ID for a lifecycle operation")
 	environmentVersion := flag.String("environment-version", "", "environment version for a lifecycle operation")
+	poolMode := flag.String("configure-pool-mode", "", "offline execution mode configuration (logical or windows)")
+	poolID := flag.String("pool-id", "", "zero-capacity signed pool for Windows mode")
+	poolRevision := flag.Uint64("expected-revision", 0, "expected pool revision for execution mode configuration")
 	flag.Parse()
 
 	if *showVersion {
@@ -913,7 +920,9 @@ func main() {
 	} else if environmentOperation == "upgrade" {
 		environmentSource = *environmentUpgrade
 	}
-	if err == nil && environmentOperation != "" {
+	if err == nil && *poolMode != "" {
+		err = runPoolModeMaintenance(ctx, options.configPath, *poolMode, *poolID, *poolRevision)
+	} else if err == nil && environmentOperation != "" {
 		err = runEnvironmentMaintenance(ctx, options, environmentOperation, environmentSource, *environmentID, *environmentVersion)
 	} else if err == nil && (*backup || strings.TrimSpace(*restorePath) != "" || strings.TrimSpace(*injectAccount) != "" || strings.TrimSpace(*rotateAccount) != "" || strings.TrimSpace(*revokeAccount) != "" || *diagnostics || *audit || strings.TrimSpace(*validateBackupPath) != "") {
 		err = runMaintenance(ctx, options, *backup, *restorePath, *injectAccount, *rotateAccount, *revokeAccount, *credentialEnv, *credentialActor, *diagnostics, *audit, *auditAccount, *validateBackupPath, *auditLimit)

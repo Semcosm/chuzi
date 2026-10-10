@@ -96,7 +96,7 @@ func TestControlCommandRejectsPackagePathsBeforeCoreCall(t *testing.T) {
 
 func TestControlCommandsDoNotRequireReleaseManifest(t *testing.T) {
 	for _, command := range []string{
-		"core-status", "core-start", "core-stop", "core-call",
+		"core-status", "core-start", "core-stop", "core-call", "core-pool-mode-save",
 		"job-pool-list", "job-pool-apply", "job-pool-delete", "environment-list", "environment-install",
 	} {
 		if launcherCommandNeedsManifest(command, false) {

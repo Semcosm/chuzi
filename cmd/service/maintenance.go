@@ -29,6 +29,10 @@ func cliErrorMessage(err error) string {
 	if err == nil {
 		return ""
 	}
+	var modeError poolModeError
+	if errors.As(err, &modeError) {
+		return string(modeError)
+	}
 	switch {
 	case errors.Is(err, context.Canceled):
 		return "cancelled"

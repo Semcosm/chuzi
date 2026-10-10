@@ -39,6 +39,19 @@ health_check, committing, applied, or failed) and maps stable failure classes
 to bounded recovery text. A stale revision refreshes the projection before
 retry.
 
+The Windows user pool card precedes Job pools. It shows saved mode, a pool ID
+selection, cleanup/stop instructions, Enable Windows users, Use logical test
+mode, and stable save feedback. Both actions require a known stopped Core and
+confirmation. Windows mode also requires the selected pool's cached revision;
+Core revalidates it under the offline Store lock. Save success shows restart
+required. The card explains the deployment login service requirement.
+
+Each pool card displays active Core execution mode. Logical ready is explicitly
+labelled as test capacity without a Windows user or Agent. A missing mode is
+unknown. Slot operation state is historical; status/generation show the current
+slot's latest reconcile facts. Only Windows mode can display Windows Agent ready
+(latest reconcile). Current unavailable/quarantined state clears that marker.
+
 Each pool card also exposes Start basic session. It confirms the intent, submits
 the current pool revision and an idempotency key through launcher/Core, and lets
 Core choose the first available execution slot. The operation panel shows slot

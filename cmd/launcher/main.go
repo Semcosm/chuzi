@@ -25,7 +25,7 @@ func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
 	verify := flag.Bool("verify", false, "verify declared resources under root")
-	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, job-pool-list, job-pool-get, job-pool-apply, job-pool-scale, job-pool-drain, job-pool-resume, job-pool-delete, job-pool-operation, start-slot-session, slot-session-operation, environment-list, environment-install, environment-upgrade, environment-verify, environment-trust, environment-enable, environment-disable, environment-health, environment-rollback, environment-operation, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
+	command := flag.String("command", "show", "launcher command: show, verify, check-update, initialize, initialize-complete, repair, settings, settings-save, core-status, core-start, core-stop, core-call, core-pool-mode-save, job-pool-list, job-pool-get, job-pool-apply, job-pool-scale, job-pool-drain, job-pool-resume, job-pool-delete, job-pool-operation, start-slot-session, slot-session-operation, environment-list, environment-install, environment-upgrade, environment-verify, environment-trust, environment-enable, environment-disable, environment-health, environment-rollback, environment-operation, component-list, component-install, component-remove, component-enable, component-disable, plugin-list, plugin-install, plugin-update, plugin-remove, plugin-enable, plugin-disable, plugin-trust, plugin-untrust")
 	sourceRoot := flag.String("source-root", "", "trusted local source root for repair/install")
 	updateManifest := flag.String("update-manifest", "", "candidate manifest for check-update")
 	releaseIndexURL := flag.String("release-index", "", "HTTPS release index URL for update and component downloads")
@@ -41,6 +41,7 @@ func main() {
 	coreParamsJSON := flag.String("core-params-json", "{}", "JSON parameters for core-call")
 	jobPoolInput := flag.String("job-pool-input", "", "typed JSON file for job-pool-apply")
 	poolID := flag.String("pool-id", "", "job pool identifier")
+	poolMode := flag.String("pool-mode", "", "execution mode for core-pool-mode-save: logical or windows")
 	desiredSlots := flag.Int("desired-slots", -1, "desired job pool slots")
 	expectedRevision := flag.Uint64("expected-revision", 0, "expected config revision")
 	idempotencyKey := flag.String("idempotency-key", "", "idempotency key for control operation")
@@ -269,6 +270,24 @@ func main() {
 			fatal(err)
 		}
 		writeJSON(settings)
+		return
+	case "core-pool-mode-save":
+		lock, err := acquireMutationLock(ctx, root, *lockPath)
+		if err != nil {
+			fatal(err)
+		}
+		manager, err := launcher.NewCoreManager(root)
+		var result json.RawMessage
+		if err == nil {
+			result, err = manager.SavePoolMode(ctx, *poolMode, *poolID, *expectedRevision)
+		}
+		if releaseErr := lock.Release(); err == nil {
+			err = releaseErr
+		}
+		if err != nil {
+			fatal(err)
+		}
+		writeJSON(result)
 		return
 	case "core-status", "core-start", "core-stop", "core-call":
 		if handled, err := runCoreCommand(ctx, *command, root, *coreMethod, *coreParamsJSON); handled {
@@ -522,7 +541,7 @@ func launcherCommandNeedsManifest(command string, verify bool) bool {
 		return true
 	}
 	switch command {
-	case "core-status", "core-start", "core-stop", "core-call",
+	case "core-status", "core-start", "core-stop", "core-call", "core-pool-mode-save",
 		"job-pool-list", "job-pool-get", "job-pool-apply", "job-pool-scale", "job-pool-drain", "job-pool-resume", "job-pool-delete", "job-pool-operation", "start-slot-session", "slot-session-operation",
 		"environment-list", "environment-install", "environment-upgrade", "environment-verify", "environment-trust", "environment-enable", "environment-disable", "environment-health", "environment-rollback", "environment-operation":
 		return false

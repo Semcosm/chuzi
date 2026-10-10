@@ -8,7 +8,7 @@ args = sys.argv[1:]
 root = Path(args[args.index("-root") + 1])
 command = args[args.index("-command") + 1]
 if command == "core-status":
-    print(json.dumps(dict(installed=True, running=True, ready=True)))
+    print(json.dumps(dict(installed=True, running=True, ready=True, configured_pool_mode="windows")))
     sys.exit(0)
 method = args[args.index("-core-method") + 1]
 params = json.loads(args[args.index("-core-params-json") + 1])
@@ -21,6 +21,7 @@ if method == "list_job_pools":
          "provisioning", "retiring", "effective_capacity"], 0
     )
     status["config_revision"] = 7
+    status["execution_mode"] = "windows"
     print(json.dumps(dict(job_pools=[dict(config=dict(pool_id="pool-a"), status=status)])))
 elif method == "list_environments":
     print(json.dumps(dict(environments=[])))
@@ -39,7 +40,8 @@ elif method in ("start_slot_session", "get_slot_session_operation"):
         operation_id="slotop-" + scenario, ordinal=1, state=state,
         failure_code="slot_quarantined" if state == "failed" else "",
         environment_generation=9,
-        status=dict(status=slot_state, session_state=slot_state, agent_ready=state == "ready"),
+        status=dict(status=slot_state, session_state=slot_state, agent_ready=state == "ready",
+                    execution_mode="windows", environment_generation=9),
         idempotent=method == "start_slot_session" and count > 1,
     ))))
 else:

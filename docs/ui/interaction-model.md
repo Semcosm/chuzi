@@ -88,6 +88,17 @@ authorized capability and must not be derived from the browser-view DTO.
 - Destructive commands require the same confirmation path for keyboard and
   pointer input.
 
+## Pool mode changes
+
+Select and refresh the signed environment pool while Core is running. Scale all
+pools to zero and wait for slot/lease cleanup, then stop Core and confirm the
+mode change in Settings. The shared busy guard owns the whole save operation;
+unknown/running Core status rejects it, and the worker rechecks running status
+before invoking the fixed launcher maintenance command. Core holds the Store
+lock and validates cleanup and the selected revision. Stable failure feedback
+preserves the previously saved mode. Successful save requires starting Core
+before scaling; no login or Agent readiness is inferred from that save.
+
 ## Animation
 
 Animations communicate continuity and feedback only: selection movement,
