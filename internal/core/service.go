@@ -307,6 +307,58 @@ func (s *Service) ApplyJobPool(ctx context.Context, input coreapi.JobPoolApplyRe
 	if s.jobPoolControl == nil || !validToken(input.Config.PoolID) || !validToken(input.Config.EnvironmentID) || !validToken(input.IdempotencyKey) || !validToken(input.Actor) || input.Config.DesiredSlots < 0 || input.Config.MaxConcurrency < 0 {
 		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
 	}
+	if s.executionMode == "windows" && !input.Config.RequireTrusted {
+		return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "signed_environment_required")
+	}
+	cleanupBinding := false
+	if input.Config.RequireTrusted && input.Config.DesiredSlots == 0 {
+		// Cleanup uses the existing durable binding, even after its package loses
+		// readiness. It cannot create a pool or select a different environment.
+		current, err := s.jobPoolControl.GetJobPoolProjection(input.Config.PoolID, s.clock())
+		if err != nil && !errors.Is(err, slot.ErrPoolNotFound) && !errors.Is(err, store.ErrJobPoolNotFound) {
+			return coreapi.JobPoolOperation{}, classify(err)
+		}
+		if err == nil && current.Config.RequireTrusted && current.Config.ManifestDigest != "" && current.Config.Signer != "" && current.Config.EnvironmentID == input.Config.EnvironmentID && current.Config.EnvironmentVersion == input.Config.EnvironmentVersion {
+			if (input.Config.ManifestDigest != "" && !strings.EqualFold(input.Config.ManifestDigest, current.Config.ManifestDigest)) || (input.Config.Signer != "" && input.Config.Signer != current.Config.Signer) {
+				return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "environment_binding_mismatch")
+			}
+			input.Config.ManifestDigest, input.Config.Signer = current.Config.ManifestDigest, current.Config.Signer
+			cleanupBinding = true
+		}
+	}
+	if input.Config.RequireTrusted && !cleanupBinding {
+		// Unsigned logical fixtures have no package record. Preserve that explicit
+		// test mode while requiring the signed authority for Windows and bindings.
+		allowLogicalFixture := s.executionMode == "logical" && input.Config.ManifestDigest == "" && input.Config.Signer == ""
+		if s.environments == nil && !allowLogicalFixture {
+			return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeUnavailable, "environment_unavailable")
+		}
+		var records []environment.Record
+		if s.environments != nil {
+			var err error
+			records, err = s.environments.ListEnvironmentRecords()
+			if err != nil {
+				return coreapi.JobPoolOperation{}, classify(err)
+			}
+		}
+		var matched *environment.Record
+		for index := range records {
+			if records[index].EnvironmentID == input.Config.EnvironmentID && records[index].Version == input.Config.EnvironmentVersion {
+				matched = &records[index]
+				break
+			}
+		}
+		if (matched == nil && !allowLogicalFixture) || (matched != nil && !matched.IsReady()) {
+			return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeUnavailable, "environment_unavailable")
+		}
+		if matched != nil {
+			if (input.Config.ManifestDigest != "" && !strings.EqualFold(input.Config.ManifestDigest, matched.ManifestDigest)) || (input.Config.Signer != "" && input.Config.Signer != matched.Signer) {
+				return coreapi.JobPoolOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "environment_binding_mismatch")
+			}
+			input.Config.ManifestDigest = matched.ManifestDigest
+			input.Config.Signer = matched.Signer
+		}
+	}
 	value, idempotent, err := s.jobPoolControl.ApplyJobPool(store.JobPoolMutation{Config: unprojectJobPoolConfig(input.Config), ExpectedRevision: input.ExpectedRevision, IdempotencyKey: input.IdempotencyKey, Actor: input.Actor, RequestedAt: input.RequestedAt})
 	if err != nil {
 		return coreapi.JobPoolOperation{}, classify(err)

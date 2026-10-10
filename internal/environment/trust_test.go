@@ -69,3 +69,44 @@ func TestLoadTrustStoreRejectsPrivateSizedKeyAndUnknownContent(t *testing.T) {
 		}
 	}
 }
+
+func TestManagerAddsPublicSignerWithoutReplacingOrAliasingKey(t *testing.T) {
+	manager, err := NewManager(Options{InstallRoot: t.TempDir(), Target: "linux-amd64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	public, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	original := append(ed25519.PublicKey(nil), public...)
+	if err := manager.AddTrustedSigner("local-test", public); err != nil {
+		t.Fatal(err)
+	}
+	clear(public)
+	if !ed25519.PublicKey(manager.trust["local-test"]).Equal(original) {
+		t.Fatal("manager retained caller-owned key buffer")
+	}
+	if err := manager.AddTrustedSigner("local-test", original); err != nil {
+		t.Fatalf("identical signer retry: %v", err)
+	}
+	other, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []struct {
+		signer string
+		public ed25519.PublicKey
+	}{
+		{"local-test", other},
+		{"", original},
+		{"invalid-size", []byte("short")},
+	} {
+		if err := manager.AddTrustedSigner(candidate.signer, candidate.public); !errors.Is(err, ErrUntrustedSigner) {
+			t.Fatalf("invalid signer accepted: %v", err)
+		}
+	}
+	if len(manager.trust) != 1 || !ed25519.PublicKey(manager.trust["local-test"]).Equal(original) {
+		t.Fatal("rejected signer changed trust")
+	}
+}

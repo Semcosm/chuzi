@@ -3,10 +3,12 @@ package core
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/slot"
@@ -178,6 +180,139 @@ func TestApplyJobPoolClassifiesInvalidConfiguration(t *testing.T) {
 	})
 	if coreapi.CodeOf(err) != coreapi.CodeInvalidArgument {
 		t.Fatalf("invalid pool configuration error = %v, code=%q", err, coreapi.CodeOf(err))
+	}
+}
+
+func TestApplyJobPoolRejectsUnreadyOrMismatchedTrustedEnvironment(t *testing.T) {
+	ready := environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: strings.Repeat("a", 64), Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: controlTestTime}
+	for _, test := range []struct {
+		name   string
+		record environment.Record
+		digest string
+		signer string
+		code   coreapi.Code
+	}{
+		{name: "missing", code: coreapi.CodeUnavailable},
+		{name: "unready", record: func() environment.Record { value := ready; value.Ready = false; return value }(), code: coreapi.CodeUnavailable},
+		{name: "digest mismatch", record: ready, digest: strings.Repeat("b", 64), code: coreapi.CodeInvalidArgument},
+		{name: "signer mismatch", record: ready, signer: "other-signer", code: coreapi.CodeInvalidArgument},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, JobPoolControl: controlJobPools{}, Environments: controlEnvironments{record: test.record}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.ApplyJobPool(context.Background(), coreapi.JobPoolApplyRequest{Config: coreapi.JobPoolConfig{PoolID: "pool-1", EnvironmentID: ready.EnvironmentID, EnvironmentVersion: ready.Version, ManifestDigest: test.digest, Signer: test.signer, RequireTrusted: true}, IdempotencyKey: "apply-1", Actor: "operator"})
+			if coreapi.CodeOf(err) != test.code {
+				t.Fatalf("error = %v, code = %q", err, coreapi.CodeOf(err))
+			}
+		})
+	}
+}
+
+func TestWindowsPoolApplyCannotDisableTrust(t *testing.T) {
+	service, err := New(Dependencies{ExecutionMode: "windows", Requests: viewServiceRequests{}, Store: viewServiceStore{}, JobPoolControl: controlJobPools{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.ApplyJobPool(context.Background(), coreapi.JobPoolApplyRequest{Config: coreapi.JobPoolConfig{PoolID: "pool-1", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0"}, IdempotencyKey: "apply-1", Actor: "operator"})
+	if coreapi.CodeOf(err) != coreapi.CodeInvalidArgument {
+		t.Fatalf("unsigned Windows pool apply = %v", err)
+	}
+}
+
+func TestWindowsPoolApplyToZeroPreservesBindingAndWaitsForCleanup(t *testing.T) {
+	for _, failure := range []string{"unhealthy", "disabled", "untrusted", "unverified", "missing environment port"} {
+		t.Run(failure, func(t *testing.T) {
+			cfg, err := config.New(filepath.Join(t.TempDir(), "data"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			database, err := store.Open(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			record := environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: strings.Repeat("a", 64), Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: controlTestTime}
+			if err := database.PutEnvironmentRecord(record); err != nil {
+				t.Fatal(err)
+			}
+			service, err := New(Dependencies{ExecutionMode: "windows", Requests: viewServiceRequests{}, Store: viewServiceStore{}, JobPoolControl: database, Environments: database, Clock: func() time.Time { return controlTestTime }})
+			if err != nil {
+				t.Fatal(err)
+			}
+			input := coreapi.JobPoolApplyRequest{Config: coreapi.JobPoolConfig{PoolID: "pool-1", EnvironmentID: record.EnvironmentID, EnvironmentVersion: record.Version, DesiredSlots: 1, RequireTrusted: true}, IdempotencyKey: "initial", Actor: "operator", RequestedAt: controlTestTime}
+			if _, err := service.ApplyJobPool(context.Background(), input); err != nil {
+				t.Fatal(err)
+			}
+			if err := database.MarkSlotReady("pool-1-001", slot.EnvironmentSummary{EnvironmentID: record.EnvironmentID, Version: record.Version, ManifestDigest: record.ManifestDigest, Signer: record.Signer, Trusted: true, Generation: 1, UpdatedAt: controlTestTime}, controlTestTime); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.ReconcileJobPoolControl("pool-1", controlTestTime); err != nil {
+				t.Fatal(err)
+			}
+			record.Ready = false
+			switch failure {
+			case "unhealthy", "missing environment port":
+				record.Healthy = false
+			case "disabled":
+				record.Enabled = false
+			case "untrusted":
+				record.Trusted, record.Enabled, record.Healthy = false, false, false
+			case "unverified":
+				record.Verified, record.Trusted, record.Enabled, record.Healthy = false, false, false, false
+			}
+			if err := database.PutEnvironmentRecord(record); err != nil {
+				t.Fatal(err)
+			}
+			if failure == "missing environment port" {
+				service.environments = nil
+			}
+			input.ExpectedRevision, input.IdempotencyKey = 1, "blocked"
+			if _, err := service.ApplyJobPool(context.Background(), input); coreapi.CodeOf(err) != coreapi.CodeUnavailable {
+				t.Fatalf("unready capacity apply: %v", err)
+			}
+			input.Config.DesiredSlots = 0
+			for _, changed := range []string{"digest", "signer", "version", "pool", "revision"} {
+				rejected := input
+				code := coreapi.CodeInvalidArgument
+				switch changed {
+				case "digest":
+					rejected.Config.ManifestDigest = strings.Repeat("b", 64)
+				case "signer":
+					rejected.Config.Signer = "other-signer"
+				case "version":
+					rejected.Config.EnvironmentVersion, code = "2.0.0", coreapi.CodeUnavailable
+				case "pool":
+					rejected.Config.PoolID, rejected.ExpectedRevision, code = "new-pool", 0, coreapi.CodeUnavailable
+				case "revision":
+					rejected.ExpectedRevision, code = 0, coreapi.CodeConflict
+				}
+				if _, err := service.ApplyJobPool(context.Background(), rejected); coreapi.CodeOf(err) != code {
+					t.Fatalf("cleanup with changed %s: %v", changed, err)
+				}
+			}
+			input.IdempotencyKey = "cleanup"
+			operation, err := service.ApplyJobPool(context.Background(), input)
+			if err != nil || operation.State != string(store.JobPoolProvisioning) {
+				t.Fatalf("cleanup apply: %#v %v", operation, err)
+			}
+			projection, err := database.GetJobPoolProjection("pool-1", controlTestTime)
+			if err != nil || projection.Config.DesiredSlots != 0 || projection.Config.ManifestDigest != record.ManifestDigest || projection.Config.Signer != record.Signer || !projection.Config.RequireTrusted || projection.Status.Retiring != 1 || projection.EnvironmentReady {
+				t.Fatalf("cleanup projection: %#v %v", projection, err)
+			}
+			duplicate, err := service.ApplyJobPool(context.Background(), input)
+			if err != nil || !duplicate.Idempotent || duplicate.OperationID != operation.OperationID {
+				t.Fatalf("cleanup retry: %#v %v", duplicate, err)
+			}
+			if err := database.SetSlotStatus("pool-1-001", slot.Deleted, controlTestTime); err != nil {
+				t.Fatal(err)
+			}
+			projection, err = database.ReconcileJobPoolControl("pool-1", controlTestTime)
+			if err != nil || projection.ReconcileState != store.JobPoolApplied || projection.Status.Retiring != 0 || projection.EnvironmentReady {
+				t.Fatalf("completed cleanup: %#v %v", projection, err)
+			}
+		})
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
@@ -53,7 +54,7 @@ func runPoolModeMaintenance(ctx context.Context, configPath, mode, poolID string
 		if err != nil {
 			return poolModeError("pool_not_found")
 		}
-		if _, err := resolveServiceEnvironment(pool, manager, selected, "headless"); err != nil {
+		if err := verifyWindowsModeEnvironment(database, manager, pool, selected); err != nil {
 			return poolModeError("environment_unavailable")
 		}
 	}
@@ -64,6 +65,15 @@ func runPoolModeMaintenance(ctx context.Context, configPath, mode, poolID string
 		return poolModeError("pool_mode_save_failed")
 	}
 	return json.NewEncoder(os.Stdout).Encode(map[string]string{"configured_pool_mode": mode, "status": "restart_required"})
+}
+
+func verifyWindowsModeEnvironment(database *store.Store, manager *environment.Manager, cfg config.Config, pool slot.PoolConfig) error {
+	record, err := database.GetEnvironmentRecord(pool.EnvironmentID, pool.EnvironmentVersion)
+	if err != nil || !record.IsReady() || record.ManifestDigest != pool.ManifestDigest || record.Signer != pool.Signer {
+		return poolModeError("environment_unavailable")
+	}
+	_, err = resolveServiceEnvironment(cfg, manager, pool, "headless")
+	return err
 }
 
 func poolModeCandidate(cfg config.Config, database *store.Store, mode, poolID string, revision uint64, at time.Time) (config.Config, error) {

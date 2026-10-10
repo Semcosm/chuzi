@@ -98,6 +98,12 @@ before invoking the fixed launcher maintenance command. Core holds the Store
 lock and validates cleanup and the selected revision. Stable failure feedback
 preserves the previously saved mode. Successful save requires starting Core
 before scaling; no login or Agent readiness is inferred from that save.
+For the built-in Windows test environment, selecting the fixed package fills
+the environment ID, version, and opaque reference. The operator runs install,
+verify, trust, enable, and health while Core is running, then refreshes the
+environment list before applying the pool. Ready on an environment card means
+only signed package readiness. Logical test capacity and current Windows
+slot/session/Agent readiness remain distinct in the pool and session views.
 
 ## Animation
 

@@ -2,8 +2,12 @@ package main
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"time"
 
+	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/store"
 )
@@ -14,6 +18,7 @@ import (
 type serviceEnvironmentExecutor struct {
 	manager *environment.Manager
 	store   *store.Store
+	config  config.Config
 }
 
 // serviceEnvironmentControl keeps lifecycle gates on the same signed-manager
@@ -58,12 +63,21 @@ func (c serviceEnvironmentControl) ApplyEnvironmentGate(id, version, operation s
 		record, err = c.manager.SetEnabled(id, version, true)
 	case "disable":
 		record, err = c.manager.SetEnabled(id, version, false)
-	case "health", "verify":
+	case "verify":
+		record, err = c.manager.Verify(id, version)
+	case "health":
 		record, err = c.manager.HealthCheck(context.Background(), id, version)
 	default:
 		return c.store.ApplyEnvironmentGate(id, version, operation, at)
 	}
 	if err != nil {
+		// A failed gate may revoke readiness in the manager. Persist that
+		// projection too, so pool admission cannot use its previous ready state.
+		if current, getErr := c.manager.Get(id, version); getErr == nil {
+			if saveErr := c.store.PutEnvironmentRecord(current); saveErr != nil {
+				return environment.Record{}, saveErr
+			}
+		}
 		return environment.Record{}, err
 	}
 	return record, nil
@@ -75,6 +89,18 @@ func (e serviceEnvironmentExecutor) Execute(ctx context.Context, mutation store.
 	}
 	switch mutation.Operation {
 	case "install":
+		if mutation.PackageRef == testEnvironmentPackageRef {
+			if runtime.GOOS != "windows" || mutation.EnvironmentID != testEnvironmentID || mutation.Version != testEnvironmentVersion {
+				return environment.Record{}, environment.ErrPackageReference
+			}
+			executable, err := os.Executable()
+			if err != nil {
+				return environment.Record{}, environment.ErrPackageReference
+			}
+			if err := prepareTestEnvironmentPackage(e.config, filepath.Dir(executable), serviceTarget(), e.manager); err != nil {
+				return environment.Record{}, err
+			}
+		}
 		record, err := e.manager.InstallReferenceFor(ctx, mutation.PackageRef, mutation.EnvironmentID, mutation.Version)
 		if err != nil {
 			return environment.Record{}, err

@@ -619,7 +619,7 @@ fn environment_fixture() -> Vec<EnvironmentRowData> {
         EnvironmentRowData {
             environment_id: "env/windows-slot".into(),
             version: "2026.10".into(),
-            lifecycle: "ready".into(),
+            lifecycle: "Environment ready".into(),
             generation: "7".into(),
             selected: false,
         },

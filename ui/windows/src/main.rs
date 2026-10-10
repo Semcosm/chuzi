@@ -1866,18 +1866,22 @@ fn job_pool_row(pool: &CoreJobPool) -> JobPoolRowData {
 }
 
 fn environment_row(environment: &CoreEnvironment) -> EnvironmentRowData {
-    let lifecycle = if !environment.trusted {
+    let lifecycle = if !environment.installed {
+        "not installed"
+    } else if !environment.verified {
+        "unverified"
+    } else if !environment.trusted {
         "untrusted"
+    } else if !environment.enabled {
+        "disabled"
     } else if !environment.healthy {
         "unhealthy"
     } else if environment.ready {
-        "ready"
-    } else if !environment.enabled {
-        "disabled"
-    } else if !environment.verified {
-        "unverified"
-    } else if !environment.installed {
-        "not installed"
+        if environment.environment_id == "chuzi/windows-test" {
+            "Windows environment ready"
+        } else {
+            "Environment ready"
+        }
     } else {
         "provisioning"
     };
@@ -3919,6 +3923,36 @@ mod tests {
             let detail = format_slot_session_detail(&operation, false);
             assert!(!detail.contains("Windows Agent ready"));
             assert!(detail.contains("generation 9"));
+        }
+    }
+
+    #[test]
+    fn environment_card_requires_every_ready_gate() {
+        let ready = json!({
+            "environment_id": "chuzi/windows-test", "version": "1.0.0",
+            "installed": true, "verified": true, "trusted": true,
+            "enabled": true, "healthy": true, "ready": true
+        });
+        let environment: CoreEnvironment = serde_json::from_value(ready.clone()).unwrap();
+        assert_eq!(
+            environment_row(&environment).lifecycle.to_string(),
+            "Windows environment ready"
+        );
+        for (gate, expected) in [
+            ("installed", "not installed"),
+            ("verified", "unverified"),
+            ("trusted", "untrusted"),
+            ("enabled", "disabled"),
+            ("healthy", "unhealthy"),
+            ("ready", "provisioning"),
+        ] {
+            let mut value = ready.clone();
+            value[gate] = json!(false);
+            let environment: CoreEnvironment = serde_json::from_value(value).unwrap();
+            assert_eq!(
+                environment_row(&environment).lifecycle.to_string(),
+                expected
+            );
         }
     }
 

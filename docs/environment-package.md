@@ -45,6 +45,35 @@ rollback tree. A missing catalog entry completes the operation with the stable
 `package_unavailable` failure classification. The existing maintenance command
 remains available for signed local sources outside the Core/Launcher boundary.
 
+The Windows Core payload includes a reserved test package reference,
+`chuzi-windows-test-v1`, for environment ID `chuzi/windows-test` and version
+`1.0.0`. The first install request constructs the package from five fixed
+`browser-worker/src` files in the installed Core payload. The Windows build
+copies these files to `CorePayload/browser-worker/src`. Missing or redirected
+resources cause the install to fail; the request cannot name an alternate
+file or executable. Core generates an Ed25519 key locally, stores only its
+public key in the trust file, and uses the private key only to sign the local
+test manifest. The signer name is tied to the public key so an interrupted
+bootstrap can retry. Existing catalog entries are revalidated before reuse.
+This local test signer is not a production signing authority and does not
+attest an external publisher.
+
+Logical-mode Core now exposes the environment manager so the test package can
+be installed before switching modes. After install, the separate verify,
+trust, enable, and health gates produce a ready record in `environment-list`.
+Verify rechecks the installed signature and file tree without granting later
+gates. Verification or health failures also persist revoked readiness into
+the Store projection, so pool admission cannot reuse the previous ready state.
+Core pool apply fills the digest and signer from that record when
+`require_trusted` is true and rejects an unready or mismatched record.
+Unsigned logical fixtures without a matching package record retain their
+existing behavior. Windows pool apply always requires `require_trusted` and a
+ready signed record; it never uses the logical fixture fallback.
+The offline Windows-mode save checks both the persisted Store record and the
+installed signed headless runtime again. A ready environment describes package
+readiness only; it does not prove a Windows user, WTS session, desktop, or
+Agent heartbeat.
+
 Slots use the persisted environment record as their trusted target when the
 lifecycle reconciler is configured with the store authority. Pool requirements
 can narrow capabilities but cannot replace the pool environment, version,

@@ -2,6 +2,7 @@ package environment
 
 import (
 	"context"
+	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -126,6 +127,24 @@ func cloneTrustStore(source TrustStore) TrustStore {
 		copy[signer] = append([]byte(nil), key...)
 	}
 	return copy
+}
+
+// AddTrustedSigner updates only this manager's verifier after the service has
+// durably stored the public key. An existing signer cannot be replaced.
+func (m *Manager) AddTrustedSigner(signer string, public ed25519.PublicKey) error {
+	if !validToken(signer, 256) || len(public) != ed25519.PublicKeySize {
+		return ErrUntrustedSigner
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if previous, ok := m.trust[signer]; ok && !ed25519.PublicKey(previous).Equal(public) {
+		return ErrUntrustedSigner
+	}
+	if m.trust == nil {
+		m.trust = make(TrustStore)
+	}
+	m.trust[signer] = append([]byte(nil), public...)
+	return nil
 }
 
 func NewManager(options Options) (*Manager, error) {
@@ -578,6 +597,32 @@ func (m *Manager) PromoteReady(sink RecordSink) error {
 	}
 	return nil
 }
+
+// Verify checks the installed signature and resource tree without granting
+// trust, enabling the package, or running its health checker.
+func (m *Manager) Verify(id, version string) (Record, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := key(id, version)
+	r, ok := m.records[k]
+	if !ok || !r.Installed {
+		return Record{}, ErrNotInstalled
+	}
+	_, verifyErr := m.currentManifestLocked(id, version)
+	r.Verified = verifyErr == nil
+	if verifyErr != nil {
+		r.Trusted, r.Enabled, r.Healthy, r.Ready = false, false, false, false
+	}
+	r.UpdatedAt = m.clock().UTC()
+	if err := m.commitRecord(k, r); err != nil {
+		return Record{}, err
+	}
+	if verifyErr != nil {
+		return r, ErrNotVerified
+	}
+	return r, nil
+}
+
 func (m *Manager) SetTrusted(id, version string, trusted bool) (Record, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

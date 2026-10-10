@@ -405,24 +405,48 @@ func executableHeader(path string) (bool, error) {
 	return false, nil
 }
 
-// ValidatePackage checks every package entry without executing it. The only
-// unlisted file permitted is the manifest itself.
-func ValidatePackage(root, target string, trust TrustStore) (Manifest, error) {
+func validatePackageRoot(root string) error {
 	if strings.TrimSpace(root) == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root {
-		return Manifest{}, fmt.Errorf("%w: package-root-form", ErrInvalidPath)
+		return fmt.Errorf("%w: package-root-form", ErrInvalidPath)
 	}
 	info, err := os.Lstat(root)
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return Manifest{}, fmt.Errorf("%w: package-root-type", ErrInvalidPath)
+		return fmt.Errorf("%w: package-root-type", ErrInvalidPath)
 	}
 	if reparse, reparseErr := isReparsePath(root); reparseErr != nil || reparse {
-		return Manifest{}, fmt.Errorf("%w: package-root-reparse-check", ErrInvalidPath)
+		return fmt.Errorf("%w: package-root-reparse-check", ErrInvalidPath)
 	}
 	// A package root can itself be ordinary while a parent directory is a
 	// symlink/junction. Resolve the complete chain before reading any resource.
 	resolved, resolveErr := filepath.EvalSymlinks(root)
 	if resolveErr != nil || !sameResolvedPath(filepath.Clean(resolved), filepath.Clean(root)) {
-		return Manifest{}, fmt.Errorf("%w: package-root-resolution", ErrInvalidPath)
+		return fmt.Errorf("%w: package-root-resolution", ErrInvalidPath)
+	}
+	return nil
+}
+
+// ResolveRegularResource validates a fixed resource in a service-owned root,
+// including every parent directory. It does not verify a package signature.
+func ResolveRegularResource(root, relative string) (string, error) {
+	if err := validatePackageRoot(root); err != nil {
+		return "", err
+	}
+	path, err := pathInPackage(root, relative)
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", ErrInvalidPath
+	}
+	return path, nil
+}
+
+// ValidatePackage checks every package entry without executing it. The only
+// unlisted file permitted is the manifest itself.
+func ValidatePackage(root, target string, trust TrustStore) (Manifest, error) {
+	if err := validatePackageRoot(root); err != nil {
+		return Manifest{}, err
 	}
 	m, err := ReadManifest(root)
 	if err != nil {
