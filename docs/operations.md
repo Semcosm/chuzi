@@ -78,6 +78,34 @@ pool 并持续 reconcile，不要求重启。未启用 `windows_job_pool` 时，
 完成 `retiring -> deleted`，不会留下永久的 polling operation。启用 Windows 原生
 pool 后仍由受管 provisioner 执行真实资源的 provision/retire。
 
+Windows UI 的 Settings 顶部提供 **Windows user pool** 模式入口。未启用时，
+卡片明确显示 Logical test；逻辑 ready 不证明 Windows 用户、session 或 Agent 存在。
+切换流程如下：
+
+1. Core 运行时先安装、验证并启用签名环境。在 Apply or scale a pool 中选择该环境，
+   保存池；UI 使用已验证记录的 manifest digest 和 signer，缩容不会丢失这些元数据。
+2. 把所有池的 Desired slots 缩至 0，等待 operation 完成、所有非 deleted 槽位及租约
+   回收。刷新池后选择目标池，让 UI 保留当前 revision，再停止 Core。
+3. 在 Windows user pool 确认 Enable Windows users。保存成功显示 restart required；
+   启动 Core 后再扩容。Use logical test mode 也需要先完成相同的资源回收。
+
+保存通过固定 launcher 命令交给离线 Core 维护边界；维护进程取得 bbolt 独占锁，
+验证零容量、终态 operation、所有槽位和包括过期项的租约，原子保存配置。Windows 模式
+额外验证池 revision、签名元数据和已安装 headless runtime。UI 不读写配置或 bbolt。
+重新打开处于停止状态的 UI 时，应先启动 Core、刷新并选择池，再停止后切换模式。
+
+等价的 launcher 命令是 `core-pool-mode-save -pool-mode windows -pool-id <id>
+-expected-revision <revision>`，或 `-pool-mode logical`。直接 service 维护命令使用
+`-config <core-config.json> -configure-pool-mode windows -pool-id <id>
+-expected-revision <revision>`。错误仅返回稳定分类，不输出内部路径或凭据。
+launcher 启动保留已有合法部署配置；损坏或 data_dir 不匹配时拒绝覆盖。
+
+当前安装包不包含完整的 Windows session broker 登录适配器。模式保存成功仅代表
+配置通过离线检查；实际 provision 仍需要部署登录服务和 Windows 服务权限，缺失时
+会 fail closed。Start basic session 的 Windows Agent ready 表示最近一次 reconcile
+记录的健康状态；历史 operation ready 不能替代当前健康状态，也不代表此刻完成
+WTS 探测。test 包构建通过仍不能替代真机生产验收。
+
 每次 lifecycle reconcile 失败都会写入脱敏的 `slot/reconcile` 事件，并递增
 `chuzi_slot_reconcile_errors_total`；错误正文、SID、路径和凭证不会写入日志。最近一次
 失败会让 health endpoint 的 `slot_lifecycle` 检查返回 503，下一次成功 reconcile 后恢复

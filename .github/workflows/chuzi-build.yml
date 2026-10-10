@@ -275,12 +275,12 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $output = Join-Path $env:RUNNER_TEMP 'chuzi-layout'
-          foreach ($state in @('mixed', 'empty', 'loading', 'error', 'unavailable', 'settings')) {
+          foreach ($state in @('mixed', 'empty', 'loading', 'error', 'unavailable', 'settings', 'windows-user-pool-stopped', 'windows-user-pool-blocked', 'slot-session-ready', 'slot-session-logical-ready', 'slot-session-failed')) {
             cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked `
               --example layout_snapshot -- `
               --output $output --session-state $state --theme both
             foreach ($theme in @('light', 'dark')) {
-              $page = if ($state -eq 'settings') { 'settings' } else { 'sessions' }
+              $page = if ($state -eq 'settings' -or $state.StartsWith('windows-user-pool-') -or $state.StartsWith('slot-session-')) { 'settings' } else { 'sessions' }
               $stateDirectory = Join-Path (Join-Path (Join-Path $output $page) $state) $theme
               foreach ($size in @('800x600.png', '1120x760.png', '1440x900.png')) {
                 $path = Join-Path $stateDirectory $size

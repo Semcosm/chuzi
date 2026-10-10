@@ -122,6 +122,7 @@ type EnvironmentExecutor interface {
 }
 
 type Dependencies struct {
+	ExecutionMode       string
 	Requests            RequestPort
 	Store               StoreReader
 	Views               BrowserViewPort
@@ -138,6 +139,7 @@ type Dependencies struct {
 }
 
 type Service struct {
+	executionMode       string
 	requests            RequestPort
 	store               StoreReader
 	views               BrowserViewPort
@@ -166,7 +168,11 @@ func New(dependencies Dependencies) (*Service, error) {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &Service{requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, slotSessions: dependencies.SlotSessions, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+	mode := dependencies.ExecutionMode
+	if mode != "logical" && mode != "windows" {
+		mode = "unknown"
+	}
+	return &Service{executionMode: mode, requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, slotSessions: dependencies.SlotSessions, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
 }
 
 func (s *Service) StartSlotSession(ctx context.Context, input coreapi.StartSlotSessionRequest) (coreapi.SlotSessionOperation, error) {
@@ -183,7 +189,7 @@ func (s *Service) StartSlotSession(ctx context.Context, input coreapi.StartSlotS
 	if err != nil {
 		return coreapi.SlotSessionOperation{}, classify(err)
 	}
-	return projectSlotSessionOperation(value, idempotent), nil
+	return s.projectSlotSessionOperation(value, idempotent), nil
 }
 
 func (s *Service) GetSlotSessionOperation(ctx context.Context, operationID string) (coreapi.SlotSessionOperation, error) {
@@ -200,7 +206,7 @@ func (s *Service) GetSlotSessionOperation(ctx context.Context, operationID strin
 	if err != nil {
 		return coreapi.SlotSessionOperation{}, classify(err)
 	}
-	return projectSlotSessionOperation(value, false), nil
+	return s.projectSlotSessionOperation(value, false), nil
 }
 
 func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
@@ -228,7 +234,9 @@ func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.
 		if err != nil {
 			return coreapi.JobPoolStatus{}, classify(err)
 		}
-		return projectJobPoolStatus(projection), nil
+		status := projectJobPoolStatus(projection)
+		status.ExecutionMode = s.executionMode
+		return status, nil
 	}
 	status, err := s.jobPools.SlotPoolStatus(poolID, now)
 	if err != nil {
@@ -238,7 +246,7 @@ func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.
 	if s.maxConcurrency > 0 && effective > s.maxConcurrency {
 		effective = s.maxConcurrency
 	}
-	return coreapi.JobPoolStatus{PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, EffectiveCapacity: effective}, nil
+	return coreapi.JobPoolStatus{ExecutionMode: s.executionMode, PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, EffectiveCapacity: effective}, nil
 }
 
 func (s *Service) ListJobPools(ctx context.Context) ([]coreapi.JobPool, error) {
@@ -260,7 +268,9 @@ func (s *Service) ListJobPools(ctx context.Context) ([]coreapi.JobPool, error) {
 	}
 	result := make([]coreapi.JobPool, 0, len(items))
 	for _, item := range items {
-		result = append(result, projectJobPool(item))
+		pool := projectJobPool(item)
+		pool.Status.ExecutionMode = s.executionMode
+		result = append(result, pool)
 	}
 	return result, nil
 }
@@ -282,7 +292,9 @@ func (s *Service) GetJobPool(ctx context.Context, poolID string) (coreapi.JobPoo
 	if err != nil {
 		return coreapi.JobPool{}, classify(err)
 	}
-	return projectJobPool(item), nil
+	pool := projectJobPool(item)
+	pool.Status.ExecutionMode = s.executionMode
+	return pool, nil
 }
 
 func (s *Service) ApplyJobPool(ctx context.Context, input coreapi.JobPoolApplyRequest) (coreapi.JobPoolOperation, error) {
@@ -1091,6 +1103,30 @@ func unprojectJobPoolConfig(value coreapi.JobPoolConfig) slot.PoolConfig {
 
 func projectJobPoolOperation(value store.JobPoolOperation, idempotent bool) coreapi.JobPoolOperation {
 	return coreapi.JobPoolOperation{OperationID: value.OperationID, PoolID: value.PoolID, Operation: value.Operation, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ConfigRevision: value.ConfigRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, Result: value.Result, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, LastSuccessfulAt: value.LastSuccessfulAt, Idempotent: idempotent}
+}
+
+// Operation state is historical; status reflects the latest reconciled slot.
+func (s *Service) projectSlotSessionOperation(value store.SlotSessionOperation, idempotent bool) coreapi.SlotSessionOperation {
+	result := projectSlotSessionOperation(value, idempotent)
+	result.Status.ExecutionMode = s.executionMode
+	result.Status.AgentReady = false
+	result.Status.EnvironmentGeneration = 0
+	reader, ok := s.slotSessions.(interface {
+		GetSlot(string) (slot.Slot, error)
+	})
+	if !ok {
+		result.Status.Status, result.Status.SessionState = "unavailable", "unavailable"
+		return result
+	}
+	item, err := reader.GetSlot(value.SlotID)
+	if err != nil {
+		result.Status.Status, result.Status.SessionState = "unavailable", "unavailable"
+		return result
+	}
+	result.Status.Status, result.Status.SessionState = string(item.Status), string(item.Status)
+	result.Status.EnvironmentGeneration = item.EnvironmentGeneration
+	result.Status.AgentReady = s.executionMode == "windows" && (item.Status == slot.Ready || item.Status == slot.Leased) && item.AgentHandle != "" && item.AgentHandle != "logical" && !item.HealthAt.IsZero() && item.EnvironmentGeneration != 0
+	return result
 }
 
 func projectSlotSessionOperation(value store.SlotSessionOperation, idempotent bool) coreapi.SlotSessionOperation {

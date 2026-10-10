@@ -51,7 +51,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 window.set_job_pool_rows(ModelRc::from(pools.as_slice()));
                 let environments = environment_fixture();
                 window.set_environment_rows(ModelRc::from(environments.as_slice()));
-                if session_state == "operation-polling" {
+                if session_state.starts_with("windows-user-pool-") {
+                    window.set_job_pool_edit_id("pool-ready".into());
+                    if session_state == "windows-user-pool-stopped" {
+                        window.set_core_running(false);
+                        window.set_core_ready(false);
+                        window.set_core_status("Core is stopped".into());
+                        window.set_pool_mode_detail(
+                            "Previous slots are cleaned up. Enable Windows users, then start Core."
+                                .into(),
+                        );
+                    } else {
+                        window.set_pool_mode_phase("failed".into());
+                        window.set_pool_mode_detail(
+                            "Scale every pool to 0 and wait for cleanup before stopping Core."
+                                .into(),
+                        );
+                    }
+                } else if session_state == "operation-polling" {
                     window.set_operation_phase("polling".into());
                     window.set_operation_id("op-snapshot-0001".into());
                     window.set_operation_state("health_check".into());
@@ -81,19 +98,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     window.set_operation_phase("polling".into());
                     window.set_operation_id("slotop-snapshot-0001".into());
                     window.set_operation_state("provisioning".into());
-                    window.set_operation_detail("slot #1 · status provisioning · session provisioning · agent not ready · environment generation 7".into());
-                } else if session_state == "slot-session-ready" {
+                    window.set_operation_detail("slot #1 · status provisioning · session provisioning · Windows Agent not ready · environment generation 7".into());
+                } else if matches!(
+                    session_state.as_str(),
+                    "slot-session-ready" | "slot-session-logical-ready"
+                ) {
                     window.set_operation_kind("slot-session".into());
                     window.set_operation_phase("ready".into());
                     window.set_operation_id("slotop-snapshot-0002".into());
                     window.set_operation_state("ready".into());
-                    window.set_operation_detail("slot #1 · status ready · session ready · agent ready · environment generation 7 · idempotent".into());
+                    let agent = if session_state == "slot-session-ready" {
+                        "Windows Agent ready (latest reconcile)"
+                    } else {
+                        "no Windows Agent (logical test)"
+                    };
+                    window.set_operation_detail(format!("slot #1 · status ready · session ready · {agent} · environment generation 7 · idempotent").into());
                 } else if session_state == "slot-session-failed" {
                     window.set_operation_kind("slot-session".into());
                     window.set_operation_phase("failed".into());
                     window.set_operation_id("slotop-snapshot-0003".into());
                     window.set_operation_state("failed".into());
-                    window.set_operation_detail("failed · slot_quarantined · slot #1 · status quarantined · session quarantined · agent not ready · environment generation 7".into());
+                    window.set_operation_detail("failed · slot_quarantined · slot #1 · status quarantined · session quarantined · Windows Agent not ready · environment generation 7".into());
                 } else if session_state == "slot-session-unavailable" {
                     window.set_operation_kind("slot-session".into());
                     window.set_operation_phase("slot unavailable".into());
@@ -154,6 +179,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 window.set_cancel_confirmation_request_id("req-0001".into());
                 window.set_cancel_confirmation_account_label("id_000000000001".into());
             }
+            if session_state.starts_with("slot-session-") {
+                window.set_settings_scroll_y(-400.0);
+            }
             slint::platform::update_timers_and_animations();
 
             let snapshot = window.window().take_snapshot()?;
@@ -168,6 +196,8 @@ fn configure_window(window: &MainWindow, theme: &str) {
     window.set_theme(theme.into());
     window.set_core_installed(true);
     window.set_core_ready(true);
+    window.set_core_running(true);
+    window.set_configured_pool_mode("logical".into());
     window.set_core_status_known(true);
     window.set_core_status("Core is running".into());
     window.set_core_details("Headless layout snapshot".into());
@@ -334,6 +364,9 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
         "slot-session-normal",
         "slot-session-provisioning",
         "slot-session-ready",
+        "slot-session-logical-ready",
+        "windows-user-pool-stopped",
+        "windows-user-pool-blocked",
         "slot-session-failed",
         "slot-session-unavailable",
         "unavailable-core",
@@ -381,6 +414,9 @@ fn is_settings_fixture(state: &str) -> bool {
             | "slot-session-normal"
             | "slot-session-provisioning"
             | "slot-session-ready"
+            | "slot-session-logical-ready"
+            | "windows-user-pool-stopped"
+            | "windows-user-pool-blocked"
             | "slot-session-failed"
             | "slot-session-unavailable"
             | "unavailable-core"
@@ -390,11 +426,20 @@ fn is_settings_fixture(state: &str) -> bool {
 }
 
 fn job_pool_fixture_for(state: &str) -> Vec<JobPoolRowData> {
-    match state {
+    let mut rows = match state {
         "pool-empty" => Vec::new(),
+        "windows-user-pool-stopped" | "windows-user-pool-blocked" => {
+            let mut row = job_pool_fixture().remove(0);
+            row.desired_slots = 0;
+            row.ready = 0;
+            row.leased = 0;
+            row.effective_capacity = 0;
+            vec![row]
+        }
         "pool-single"
         | "slot-session-normal"
         | "slot-session-ready"
+        | "slot-session-logical-ready"
         | "slot-session-unavailable" => job_pool_fixture().into_iter().take(1).collect(),
         "slot-session-provisioning" => job_pool_fixture()
             .into_iter()
@@ -425,7 +470,13 @@ fn job_pool_fixture_for(state: &str) -> Vec<JobPoolRowData> {
             .filter(|row| row.pool_id == "pool-failed")
             .collect(),
         _ => job_pool_fixture(),
+    };
+    if state.starts_with("slot-session-") && state != "slot-session-logical-ready" {
+        for row in &mut rows {
+            row.execution_mode = "windows".into();
+        }
     }
+    rows
 }
 
 fn job_pool_fixture() -> Vec<JobPoolRowData> {
@@ -530,6 +581,7 @@ fn pool_row(
     operation_id: &str,
 ) -> JobPoolRowData {
     JobPoolRowData {
+        execution_mode: "logical".into(),
         pool_id: id.into(),
         environment_id: "env/windows-slot".into(),
         environment_version: "2026.10".into(),

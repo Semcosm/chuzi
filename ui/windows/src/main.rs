@@ -13,7 +13,7 @@ use models::{
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
-use slint::{ComponentHandle, Image, ModelRc, SharedString};
+use slint::{ComponentHandle, Image, Model, ModelRc, SharedString};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -305,6 +305,7 @@ fn launcher_command_needs_manifest(command: &str) -> bool {
             | "core-start"
             | "core-stop"
             | "core-call"
+            | "core-pool-mode-save"
             | "job-pool-list"
             | "job-pool-get"
             | "job-pool-apply"
@@ -563,6 +564,12 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             .unwrap_or(0);
         window.set_operation_confirmation_visible(false);
         match pending.as_str() {
+            "pool-mode:windows" | "pool-mode:logical" => submit_pool_mode(
+                &weak,
+                Arc::clone(&operation_state),
+                pending.trim_start_matches("pool-mode:").to_owned(),
+                pool_id,
+            ),
             "apply" => submit_job_pool_apply(
                 &weak,
                 Arc::clone(&operation_state),
@@ -1746,23 +1753,31 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
                     details: "Install Core to load Sessions.".to_owned(),
                 }
             };
-            Ok(("Core status refreshed.".to_owned(), snapshot))
+            Ok(("Core status refreshed.".to_owned(), (snapshot, status)))
         },
-        move |window, snapshot: CoreSnapshot| {
+        move |window, (snapshot, status): (CoreSnapshot, CoreStatus)| {
+            window.set_core_running(status.running);
+            window.set_configured_pool_mode(execution_mode(&status.configured_pool_mode).into());
             window.set_core_ready(snapshot.ready);
             window.set_core_installed(snapshot.installed);
             window.set_core_status_known(true);
             window.set_core_status(snapshot.status.into());
             window.set_core_details(snapshot.details.into());
             if snapshot.ready {
-                refresh_sessions(&window.as_weak(), Arc::clone(&sessions_state));
-                refresh_job_pools(&window.as_weak(), Arc::clone(&pools_state));
+                if window.get_page() == "settings" {
+                    refresh_job_pools(&window.as_weak(), Arc::clone(&pools_state));
+                } else {
+                    refresh_sessions(&window.as_weak(), Arc::clone(&sessions_state));
+                }
             }
         },
     );
 }
 
 fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    if state.lock().unwrap().busy {
+        return;
+    }
     if let Some(window) = ui.upgrade() {
         window.set_job_pool_phase("loading".into());
         window.set_environment_operation_phase("loading".into());
@@ -1812,6 +1827,7 @@ fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) 
 
 fn job_pool_row(pool: &CoreJobPool) -> JobPoolRowData {
     JobPoolRowData {
+        execution_mode: execution_mode(&pool.status.execution_mode).into(),
         pool_id: pool.config.pool_id.clone().into(),
         environment_id: pool.config.environment_id.clone().into(),
         environment_version: pool.config.environment_version.clone().into(),
@@ -1907,6 +1923,126 @@ fn pool_revision(state: &AppState, pool_id: &str) -> Result<u64, String> {
         .unwrap_or(0))
 }
 
+fn execution_mode(value: &str) -> &str {
+    match value {
+        "logical" | "windows" => value,
+        _ => "unknown",
+    }
+}
+
+fn submit_pool_mode(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    mode: String,
+    pool_id: String,
+) {
+    let Some(window) = ui.upgrade() else {
+        return;
+    };
+    if state.lock().unwrap().busy {
+        return;
+    }
+    if !window.get_core_status_known() || window.get_core_running() {
+        window.set_pool_mode_phase("failed".into());
+        window.set_pool_mode_detail(friendly_error("core_stop_required").into());
+        return;
+    }
+    let revision = window
+        .get_job_pool_rows()
+        .iter()
+        .find(|row| row.pool_id.as_str() == pool_id)
+        .and_then(|row| row.config_revision.parse::<u64>().ok())
+        .unwrap_or(0);
+    window.set_pool_mode_phase("saving".into());
+    window.set_pool_mode_detail("Validating cleanup and saving mode…".into());
+    run_background_with_failure(
+        ui,
+        state,
+        move |state| {
+            if !matches!(mode.as_str(), "logical" | "windows") {
+                return Err("invalid_argument".to_owned());
+            }
+            if core_status(state)?.running {
+                return Err("core_stop_required".to_owned());
+            }
+            if mode == "windows" && revision == 0 {
+                return Err("stale_revision".to_owned());
+            }
+            let output = state.run_launcher(
+                "core-pool-mode-save",
+                &[
+                    "-pool-mode",
+                    &mode,
+                    "-pool-id",
+                    &pool_id,
+                    "-expected-revision",
+                    &revision.to_string(),
+                ],
+            )?;
+            let result: Value =
+                serde_json::from_str(&output).map_err(|_| "pool_mode_save_failed".to_owned())?;
+            if result["configured_pool_mode"] != mode || result["status"] != "restart_required" {
+                return Err("pool_mode_save_failed".to_owned());
+            }
+            Ok((
+                "Pool mode saved. Start Core to apply it, then scale the pool.".to_owned(),
+                mode,
+            ))
+        },
+        |window, mode: String| {
+            let detail = if mode == "windows" {
+                "Saved. Start Core to apply the mode, then scale the pool. Windows Agent readiness is verified during provisioning."
+            } else {
+                "Saved. Start Core to apply the mode, then scale the pool. Logical capacity creates no Windows user or Agent."
+            };
+            window.set_configured_pool_mode(mode.into());
+            window.set_pool_mode_phase("restart required".into());
+            window.set_pool_mode_detail(detail.into());
+        },
+        |window, error| {
+            window.set_pool_mode_phase("failed".into());
+            window.set_pool_mode_detail(friendly_error(error).into());
+        },
+    );
+}
+
+fn pool_environment_metadata(
+    existing: Option<&CoreJobPool>,
+    environments: &CoreEnvironmentList,
+    id: &str,
+    version: &str,
+) -> Result<(String, String), String> {
+    if let Some(env) = environments.environments.iter().find(|env| {
+        env.environment_id == id
+            && env.version == version
+            && env.ready
+            && env.installed
+            && env.verified
+            && env.trusted
+            && env.enabled
+            && env.healthy
+            && env.manifest_digest.len() == 64
+            && !env.signer.is_empty()
+    }) {
+        return Ok((env.manifest_digest.clone(), env.signer.clone()));
+    }
+    if let Some(pool) = existing {
+        if pool.config.environment_id == id && pool.config.environment_version == version {
+            return Ok((
+                pool.config.manifest_digest.clone(),
+                pool.config.signer.clone(),
+            ));
+        }
+        if !pool.config.manifest_digest.is_empty()
+            || !pool.config.signer.is_empty()
+            || pool.status.execution_mode == "windows"
+        {
+            return Err("signed_environment_required".to_owned());
+        }
+    }
+    Ok((String::new(), String::new()))
+}
+
 fn submit_job_pool_apply(
     ui: &slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
@@ -1924,8 +2060,28 @@ fn submit_job_pool_apply(
         if desired < 0 || max_concurrency < 0 {
             return Err("invalid_argument".to_owned());
         }
-        let revision = pool_revision(state, &pool_id)?;
-        let details = format!("{environment_id}|{environment_version}|{desired}|{max_concurrency}");
+        let pools: CoreJobPoolList =
+            serde_json::from_value(core_call(state, CoreMethod::ListJobPools, json!({}))?)
+                .map_err(|_| "invalid_job_pool_projection".to_owned())?;
+        let existing = pools
+            .job_pools
+            .iter()
+            .find(|pool| pool.config.pool_id == pool_id);
+        let revision = existing
+            .map(|pool| pool.config.config_revision.max(pool.status.config_revision))
+            .unwrap_or(0);
+        let environments: CoreEnvironmentList =
+            serde_json::from_value(core_call(state, CoreMethod::ListEnvironments, json!({}))?)
+                .map_err(|_| "invalid_environment_projection".to_owned())?;
+        let (digest, signer) = pool_environment_metadata(
+            existing,
+            &environments,
+            &environment_id,
+            &environment_version,
+        )?;
+        let details = format!(
+            "{environment_id}|{environment_version}|{desired}|{max_concurrency}|{digest}|{signer}"
+        );
         let key = idempotency_key("apply", &pool_id_for_key, revision, &details);
         core_call(
             state,
@@ -1939,7 +2095,9 @@ fn submit_job_pool_apply(
                     "environment_version": environment_version,
                     "desired_state": "enabled",
                     "enabled": true,
-                    "require_trusted": true
+                    "require_trusted": true,
+                    "manifest_digest": digest,
+                    "signer": signer
                 },
                 "expected_revision": revision,
                 "idempotency_key": key,
@@ -2355,7 +2513,7 @@ fn slot_session_projection(
 fn redacted_slot_state(value: &str) -> &str {
     match value {
         "unprovisioned" | "provisioning" | "ready" | "leased" | "quarantined" | "draining"
-        | "retiring" | "deleted" => value,
+        | "retiring" | "deleted" | "unavailable" => value,
         _ => "unknown",
     }
 }
@@ -2366,14 +2524,21 @@ fn format_slot_session_detail(
 ) -> String {
     let status = redacted_slot_state(&operation.status.status);
     let session_state = redacted_slot_state(&operation.status.session_state);
-    let agent = if operation.status.agent_ready {
-        "ready"
-    } else {
-        "not ready"
+    let mode = execution_mode(&operation.status.execution_mode);
+    let agent = match mode {
+        "logical" => "no Windows Agent (logical test)",
+        "windows" if operation.status.agent_ready => "Windows Agent ready (latest reconcile)",
+        "windows" => "Windows Agent not ready",
+        _ => "Agent readiness unknown",
     };
     let mut detail = format!(
-        "slot #{} · status {} · session {} · agent {} · environment generation {}",
-        operation.ordinal, status, session_state, agent, operation.environment_generation,
+        "slot #{} · mode {} · current status {} · session {} · {} · environment generation {}",
+        operation.ordinal,
+        mode,
+        status,
+        session_state,
+        agent,
+        operation.status.environment_generation,
     );
     if operation.idempotent || initial_idempotent {
         detail.push_str(" · idempotent");
@@ -2722,6 +2887,7 @@ mod job_pool_tests {
                     config_revision: 1,
                 },
                 status: CoreJobPoolStatus {
+                    execution_mode: "logical".to_owned(),
                     desired: 3,
                     ready: 2,
                     leased: 1,
@@ -3114,27 +3280,14 @@ fn run_background_status<F>(
 ) where
     F: FnOnce(&mut AppState) -> Result<String, String> + Send + 'static,
 {
-    let sessions_state = Arc::clone(&state);
+    let refresh_state = Arc::clone(&state);
     run_background_with(
         ui,
         state,
         move |state| operation(state).map(|message| (message, core_ready)),
         move |window, ready: Option<bool>| {
-            if let Some(ready) = ready {
-                window.set_core_ready(ready);
-                window.set_core_status(
-                    if ready {
-                        "Core is running"
-                    } else {
-                        "Core is stopped"
-                    }
-                    .into(),
-                );
-                window.set_core_installed(true);
-                window.set_core_status_known(true);
-                if ready {
-                    refresh_sessions(&window.as_weak(), Arc::clone(&sessions_state));
-                }
+            if ready.is_some() {
+                refresh_core(&window.as_weak(), Arc::clone(&refresh_state));
             }
         },
     );
@@ -3262,6 +3415,17 @@ fn set_feedback(ui: &slint::Weak<MainWindow>, message: String, kind: &'static st
 
 fn friendly_error(error: &str) -> String {
     let value = error.to_ascii_lowercase();
+    for (code, message) in [
+        ("core_stop_required", "Stop Core after all pools finish slot cleanup, then save the mode."),
+        ("pool_cleanup_required", "Scale every pool to 0 and wait for all slots and leases to finish cleanup before stopping Core."),
+        ("signed_environment_required", "Apply this pool with an installed, verified, trusted and healthy signed environment, then refresh before stopping Core."),
+        ("environment_unavailable", "The signed environment runtime could not be verified. Start Core and check its environment gates."),
+        ("core_config_invalid", "Core configuration is invalid. The existing file was preserved; repair the deployment configuration before starting Core."),
+        ("windows_required", "Windows user pools can only be enabled on Windows."),
+        ("pool_mode_save_failed", "The pool mode could not be saved. Refresh Core status and try again."),
+    ] {
+        if value.contains(code) { return message.to_owned(); }
+    }
     if value.contains("core_capability_mismatch") || value.contains("core update required") {
         return "Installed Core is older than this UI. Reinstall Core to repair the shared Core payload.".to_owned();
     }
@@ -3432,7 +3596,9 @@ mod tests {
                 assert_eq!(window.get_session_rows().row_count(), 0);
                 match stage_for_timer.get() {
                     0 => {
-                        assert!(window.get_operation_detail().contains("agent ready"));
+                        assert!(window
+                            .get_operation_detail()
+                            .contains("Windows Agent ready"));
                         assert!(!window.get_operation_detail().contains("idempotent"));
                         confirm(&window);
                     }
@@ -3495,6 +3661,8 @@ mod tests {
                 .starts_with("windows-ui-start_slot_session-"));
         }
         fs::remove_dir_all(root).unwrap();
+        drop(ui);
+        pool_mode_confirmation_saves_offline_and_rejects_unsafe_states();
     }
 
     #[test]
@@ -3579,6 +3747,217 @@ mod tests {
         assert!(r"C:\\package".contains('\\'));
     }
 
+    #[cfg(unix)]
+    fn pool_mode_confirmation_saves_offline_and_rejects_unsafe_states() {
+        use std::cell::Cell;
+        use std::os::unix::fs::PermissionsExt;
+        use std::rc::Rc;
+        use std::time::Instant;
+
+        let root = std::env::temp_dir().join(format!(
+            "chuzi-pool-mode-ui-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let state = Arc::new(Mutex::new(AppState {
+            data_root: root.clone(),
+            payload_root: root.clone(),
+            ..AppState::default()
+        }));
+        let launcher = state.lock().unwrap().launcher_path();
+        fs::write(
+            &launcher,
+            include_str!("../tests/fixtures/pool_mode_launcher.py"),
+        )
+        .unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(root.join("scenario"), "saved").unwrap();
+        let ui = MainWindow::new().unwrap();
+        connect_callbacks(&ui, Arc::clone(&state));
+        let confirm = |window: &MainWindow, mode: &str| {
+            window.set_pending_operation(format!("pool-mode:{mode}").into());
+            window.set_pending_pool_id("pool-a".into());
+            window.set_operation_confirmation_visible(true);
+            window.invoke_operation_confirmed();
+            assert!(!window.get_operation_confirmation_visible());
+        };
+        ui.set_core_status_known(true);
+        ui.set_core_installed(true);
+        ui.set_core_running(true);
+        confirm(&ui, "windows");
+        assert_eq!(ui.get_pool_mode_phase(), "failed");
+        assert!(ui.get_pool_mode_detail().contains("Stop Core"));
+        ui.set_core_running(false);
+        ui.set_core_status_known(false);
+        confirm(&ui, "windows");
+        assert!(!root.join("calls.jsonl").exists());
+        ui.set_pool_mode_phase("idle".into());
+        state.lock().unwrap().busy = true;
+        confirm(&ui, "windows");
+        assert_eq!(ui.get_pool_mode_phase(), "idle");
+        assert!(!root.join("calls.jsonl").exists());
+        state.lock().unwrap().busy = false;
+        ui.set_core_status_known(true);
+        ui.set_job_pool_rows(ModelRc::from(
+            [JobPoolRowData {
+                pool_id: "pool-a".into(),
+                config_revision: "7".into(),
+                ..Default::default()
+            }]
+            .as_slice(),
+        ));
+        confirm(&ui, "windows");
+        let stage = Rc::new(Cell::new(0));
+        let timer_stage = Rc::clone(&stage);
+        let weak = ui.as_weak();
+        let fixture_root = root.clone();
+        let timer_state = Arc::clone(&state);
+        let began = Instant::now();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(20),
+            move || {
+                assert!(
+                    began.elapsed() < Duration::from_secs(20),
+                    "mode callback timed out"
+                );
+                let window = weak.upgrade().unwrap();
+                if window.get_busy() || timer_state.lock().unwrap().busy {
+                    return;
+                }
+                let expected = if timer_stage.get() == 0 || timer_stage.get() == 5 {
+                    "restart required"
+                } else {
+                    "failed"
+                };
+                if window.get_pool_mode_phase() != expected {
+                    return;
+                }
+                match timer_stage.get() {
+                    0 => {
+                        assert_eq!(window.get_configured_pool_mode(), "windows");
+                        fs::write(fixture_root.join("scenario"), "pool_cleanup_required").unwrap();
+                        confirm(&window, "windows");
+                    }
+                    1 => {
+                        assert!(window
+                            .get_pool_mode_detail()
+                            .contains("Scale every pool to 0"));
+                        assert_eq!(window.get_configured_pool_mode(), "windows");
+                        fs::write(fixture_root.join("scenario"), "running").unwrap();
+                        confirm(&window, "windows");
+                    }
+                    2 => {
+                        assert!(window.get_pool_mode_detail().contains("Stop Core"));
+                        fs::write(fixture_root.join("scenario"), "saved").unwrap();
+                        window.set_job_pool_rows(ModelRc::default());
+                        confirm(&window, "windows");
+                    }
+                    3 => {
+                        assert!(window.get_pool_mode_detail().contains("changed"));
+                        fs::write(fixture_root.join("scenario"), "malformed").unwrap();
+                        confirm(&window, "logical");
+                    }
+                    4 => {
+                        assert!(window.get_pool_mode_detail().contains("could not be saved"));
+                        assert_eq!(window.get_configured_pool_mode(), "windows");
+                        fs::write(fixture_root.join("scenario"), "saved").unwrap();
+                        confirm(&window, "logical");
+                    }
+                    _ => {
+                        assert_eq!(window.get_configured_pool_mode(), "logical");
+                        assert!(!window.get_core_running());
+                        slint::quit_event_loop().unwrap();
+                    }
+                }
+                timer_stage.set(timer_stage.get() + 1);
+            },
+        );
+        slint::run_event_loop().unwrap();
+        timer.stop();
+        assert_eq!(stage.get(), 6);
+        let calls = fs::read_to_string(root.join("calls.jsonl"))
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(calls.iter().all(|call| matches!(
+            call["command"].as_str(),
+            Some("core-status" | "core-pool-mode-save")
+        )));
+        let saves = calls
+            .iter()
+            .filter(|call| call["command"] == "core-pool-mode-save")
+            .collect::<Vec<_>>();
+        assert_eq!(saves.len(), 4);
+        let args = saves[0]["args"].as_array().unwrap();
+        for (flag, expected) in [
+            ("-pool-mode", "windows"),
+            ("-pool-id", "pool-a"),
+            ("-expected-revision", "7"),
+        ] {
+            let index = args.iter().position(|arg| arg == flag).unwrap();
+            assert_eq!(args[index + 1], expected);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn logical_and_unknown_mode_never_claim_windows_agent_readiness() {
+        for mode in ["logical", "", "unexpected"] {
+            let operation = decode_slot_session_operation(json!({"operation": {
+                "state": "ready", "environment_generation": 1,
+                "status": {"execution_mode": mode, "agent_ready": true,
+                           "status": "ready", "environment_generation": 9}
+            }}))
+            .unwrap();
+            let detail = format_slot_session_detail(&operation, false);
+            assert!(!detail.contains("Windows Agent ready"));
+            assert!(detail.contains("generation 9"));
+        }
+    }
+
+    #[test]
+    fn pool_apply_preserves_or_resolves_signed_environment_identity() {
+        let mut pools: CoreJobPoolList = serde_json::from_value(json!({"job_pools": [{
+            "config": {"pool_id": "pool-a", "environment_id": "env", "environment_version": "1",
+                       "manifest_digest": "a".repeat(64), "signer": "signed-by"},
+            "status": {"execution_mode": "windows", "desired": 0, "ready": 0, "leased": 0,
+                       "quarantined": 0, "draining": 0, "provisioning": 0, "retiring": 0, "effective_capacity": 0}
+        }]})).unwrap();
+        let mut envs: CoreEnvironmentList = serde_json::from_value(json!({"environments": [{
+            "environment_id": "env", "version": "2", "ready": true, "installed": true,
+            "verified": true, "trusted": true, "enabled": true, "healthy": true,
+            "manifest_digest": "b".repeat(64), "signer": "new-signer"
+        }]}))
+        .unwrap();
+        assert_eq!(
+            pool_environment_metadata(Some(&pools.job_pools[0]), &envs, "env", "1").unwrap(),
+            ("a".repeat(64), "signed-by".to_owned())
+        );
+        assert_eq!(
+            pool_environment_metadata(Some(&pools.job_pools[0]), &envs, "env", "2").unwrap(),
+            ("b".repeat(64), "new-signer".to_owned())
+        );
+        envs.environments[0].healthy = false;
+        assert_eq!(
+            pool_environment_metadata(Some(&pools.job_pools[0]), &envs, "env", "2").unwrap_err(),
+            "signed_environment_required"
+        );
+        pools.job_pools[0].config.manifest_digest.clear();
+        pools.job_pools[0].config.signer.clear();
+        pools.job_pools[0].status.execution_mode = "logical".to_owned();
+        assert_eq!(
+            pool_environment_metadata(Some(&pools.job_pools[0]), &envs, "basic", "1").unwrap(),
+            (String::new(), String::new())
+        );
+    }
+
     #[test]
     fn operation_errors_use_stable_user_states() {
         assert_eq!(operation_error_phase("stale_revision"), "stale revision");
@@ -3644,6 +4023,8 @@ mod tests {
                 "status": {
                     "status": "ready",
                     "session_state": "ready",
+                    "execution_mode": "windows",
+                    "environment_generation": 7,
                     "agent_ready": true
                 },
                 "idempotent": true
@@ -3654,7 +4035,7 @@ mod tests {
         assert!(detail.contains("slot #1"));
         assert!(detail.contains("status ready"));
         assert!(detail.contains("session ready"));
-        assert!(detail.contains("agent ready"));
+        assert!(detail.contains("Windows Agent ready"));
         assert!(detail.contains("idempotent"));
         assert!(is_terminal_operation("ready"));
     }
@@ -3671,6 +4052,8 @@ mod tests {
                 "status": {
                     "status": "quarantined",
                     "session_state": "quarantined",
+                    "execution_mode": "windows",
+                    "environment_generation": 3,
                     "agent_ready": false
                 }
             }
@@ -3683,7 +4066,7 @@ mod tests {
         );
         assert!(detail.contains("slot_quarantined"));
         assert!(detail.contains("slot #2"));
-        assert!(detail.contains("agent not ready"));
+        assert!(detail.contains("Windows Agent not ready"));
     }
 
     #[test]

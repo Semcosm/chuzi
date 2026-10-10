@@ -4,6 +4,7 @@ import { ChuziTheme } from "design_tokens.slint";
 
 export struct JobPoolRowData {
     pool_id: string,
+    execution_mode: string,
     environment_id: string,
     environment_version: string,
     desired_slots: int,
@@ -38,7 +39,7 @@ export component ChuziJobPoolCard inherits Rectangle {
     callback action(string, string);
     callback selected(string);
 
-    height: 300px;
+    height: 330px;
     background: root.item.selected ? ChuziTheme.accent-soft : ChuziTheme.surface-background;
     border-color: root.item.selected ? ChuziTheme.accent.with-alpha(0.45) : ChuziTheme.separator;
     border-width: 1px;
@@ -50,6 +51,7 @@ export component ChuziJobPoolCard inherits Rectangle {
         padding: ChuziTheme.space-4;
         spacing: ChuziTheme.space-2;
 
+        Text { text: root.item.execution_mode == "logical" ? "Logical test · no Windows user or Agent" : root.item.execution_mode == "windows" ? "Windows users · latest reconciled health" : "Execution mode unknown · refresh Core"; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 0; }
         HorizontalBox {
             spacing: ChuziTheme.space-2;
             height: 28px;
@@ -61,9 +63,9 @@ export component ChuziJobPoolCard inherits Rectangle {
         HorizontalBox {
             spacing: ChuziTheme.space-4;
             vertical-stretch: 0;
-            VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: "Desired / ready"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.desired_slots + " / " + root.item.ready; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; font-weight: 600; } }
+            VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: root.item.execution_mode == "logical" ? "Desired / logical ready" : "Desired / ready"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.desired_slots + " / " + root.item.ready; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; font-weight: 600; } }
             VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: "Effective"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.effective_capacity + "  (max " + root.item.max_concurrency + ")"; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; font-weight: 600; } }
-            VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: "Environment"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.environment_readiness; color: root.item.environment_readiness == "ready" ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-caption; font-weight: 600; } }
+            VerticalBox { horizontal-stretch: 1; spacing: 1px; Text { text: "Environment"; color: ChuziTheme.text-tertiary; font-size: 10px; } Text { text: root.item.environment_readiness; color: root.item.execution_mode == "windows" && root.item.environment_readiness == "ready" ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-caption; font-weight: 600; } }
         }
         HorizontalBox {
             spacing: ChuziTheme.space-3;

@@ -54,6 +54,16 @@ stable redacted failure classes. Package input is an opaque service-owned
 reference only. The UI never accepts paths, commands, executables, profiles,
 credentials, Windows identities, RDP endpoints, named pipes, or tokens.
 
+Settings includes a Windows user pool mode card above Job pools. Saved mode
+comes from launcher status; active execution mode comes from Core pool status.
+The operator scales every pool to zero, waits for cleanup, refreshes/selects the
+signed environment pool, stops Core, and confirms Enable Windows users or Use
+logical test mode. The fixed offline launcher command delegates Store locking,
+revision, cleanup, and installed runtime checks to Core. Saving requires a
+restart and does not install the deployment login service. Existing deployment
+configuration survives launcher restarts. Controls require known stopped Core
+status and obey the shared busy guard.
+
 Each pool card also offers an explicit Start basic session action. It calls
 start_slot_session through the launcher/Core boundary with the current pool
 revision, actor, and deterministic idempotency key; Core chooses the first

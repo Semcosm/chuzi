@@ -99,6 +99,22 @@ pool 也会被接管，删除后的 pool 会从 reconciler cache 清理。Window
 没有启动 pool 时初始化，并在首次发现 pool 后通过签名环境 resolver 取得该 pool
 的 service-owned runtime。单节点拓扑和每个 pool 的受控 OS 资源边界保持不变。
 
+## UI 模式切换与 readiness
+
+Settings → Windows user pool 提供 Enable Windows users 和 Use logical test mode。
+默认逻辑测试模式不会创建 Windows 用户或启动 chuzi-user-agent；UI 中逻辑 ready 只是
+测试容量。Windows 模式适用于全部持久化池，不是单张池卡片的用户开关。
+
+在原模式运行时，先把所有池缩容至 0，等待所有资源及租约回收，刷新并选中具有
+已安装签名环境的目标池，随后停止 Core。确认模式切换成功后启动 Core，再扩容。
+离线维护持有 Store 独占锁，并重新验证 revision、签名环境及清理条件；不能通过停止
+Core 跳过未完成的清理。launcher 重启保留已有配置。详细命令见 operations.md。
+
+当前发布包尚未包含完整的部署登录适配器。新 UI 入口只保存执行模式，不能替代
+session broker 登录服务及所需 Windows 权限。配置保存不会创建会话；真实环境未满足
+依赖时必须返回不可用或隔离。Windows Agent ready 只来自最近一次 reconcile 的当前
+槽位健康记录，逻辑模式及缺失状态一律不能显示该标记。
+
 ## Windows 阶段 2
 
 Windows 构建包含 `chuzi-user-agent.exe`。服务在 Windows-only provisioner 中按

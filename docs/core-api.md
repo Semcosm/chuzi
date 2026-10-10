@@ -95,6 +95,16 @@ This is an execution slot session, not a business account request session.
 Neither method writes or exposes a Windows username, SID, Profile path, RDP
 endpoint, or credential material.
 
+Job-pool and nested slot-session status include additive `execution_mode`:
+`logical`, `windows`, or `unknown`. Missing or unrecognized mode renders as
+unknown. Logical ready is test capacity and never Windows Agent readiness.
+Operation `state` and top-level generation remain historical operation facts;
+nested status and generation come from the current slot record at query time.
+A missing slot or failed read returns unavailable status and false Agent ready.
+Windows Agent ready requires a ready/leased current slot, native environment
+handle, nonzero generation, and recorded health. These are the latest reconcile
+facts; refreshing the projection does not itself perform a WTS/Agent probe.
+
 `delete_job_pool` is asynchronous and safe by construction. It changes the
 pool target to zero and drains new work first; the pool configuration is
 removed only after every managed slot has reached `deleted` and no slot lease
