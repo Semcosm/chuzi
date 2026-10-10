@@ -643,8 +643,9 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	}
 	// A NetUserAdd race can return an identity created by another reconcile.
 	// Treat that account as pre-existing for rollback so a later failure in
-	// this attempt cannot delete the winner's user/profile/session.
+	// this attempt cannot delete the winner's user/profile/session or root.
 	userExisted = userExisted || !managed.created
+	rootExisted = rootExisted || !managed.created
 	sid = managed.SID
 	if err := p.ensureManagedProfile(ctx, paths.UserName, managed); err != nil {
 		return slot.ProvisionResult{}, err
