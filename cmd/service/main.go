@@ -380,12 +380,12 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			RequireTrusted:     cfg.JobPool.RequireTrusted,
 		}
 	}
-	if cfg.WindowsJobPool.Enabled {
-		environmentManager, err = newConfiguredEnvironmentManager(cfg, serviceTarget())
-		if err != nil {
-			_ = database.Close()
-			return nil, err
-		}
+	environmentManager, err = newConfiguredEnvironmentManager(cfg, serviceTarget())
+	if err != nil {
+		_ = database.Close()
+		return nil, err
+	}
+	if _, stateErr := os.Stat(environmentStatePath(cfg)); cfg.WindowsJobPool.Enabled || stateErr == nil {
 		if err := environmentManager.SyncRecords(database); err != nil {
 			_ = database.Close()
 			return nil, err
@@ -683,7 +683,7 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	var environmentExecutor core.EnvironmentExecutor
 	var environmentControl core.EnvironmentControlPort = database
 	if environmentManager != nil {
-		environmentExecutor = serviceEnvironmentExecutor{manager: environmentManager, store: database}
+		environmentExecutor = serviceEnvironmentExecutor{manager: environmentManager, store: database, config: cfg}
 		environmentControl = serviceEnvironmentControl{manager: environmentManager, store: database}
 	}
 	executionMode := "logical"

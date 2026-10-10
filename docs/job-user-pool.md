@@ -58,6 +58,9 @@ pool 的 `desired_slots` 表示目标数量。启动时 reconcile 只补齐逻�
 而非执行任意插件脚本。
 环境版本升级也会先 drain 仍持有 lease 的旧 slot；lease 释放后才按新的 generation
 重新 provision，旧环境不会接收新作业。
+环境不再 ready 时仍允许缩容至 0；operation 必须等待 retiring slot 的实际回收，
+不能因目标数量已为零就提前完成。quarantined 资源继续要求显式恢复或删除，
+不会自动跳过隔离边界。
 
 ## 租约和恢复
 
@@ -256,3 +259,9 @@ Core、UI、Matrix、日志、诊断、环境变量、临时文件或持久化�
 用户名/密码字段。适配器返回的 session ID 也不能作为事实，provisioner 必须再次执行
 `FindSession(managed SID)` 并确认 SID 和 active 状态。没有真实适配器时稳定返回
 `session_unavailable`，阶段 4 不得声称 native acceptance 完成。
+固定 pipe 客户端的连接和读写受调用方 deadline 与最长 30 秒限制；取消会中断正在
+等待的 I/O。响应操作必须匹配请求，start 成功要求非零 active session，stop 成功
+要求 stopped 状态；无 broker、超时或无效响应均返回稳定的 `session_unavailable`。fake provider 与协议
+测试可在非 Windows 主机验证 ownership、重复请求和失败分类，但不能证明真实
+Winlogon/WTS 登录、desktop ACL 或 Agent heartbeat。部署方仍须提供受控登录
+适配器、pipe ACL 和所需 Windows 服务权限，再运行原生 smoke 验收。

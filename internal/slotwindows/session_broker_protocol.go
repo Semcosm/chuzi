@@ -140,7 +140,7 @@ func (r SessionBrokerResponse) validate() error {
 		if r.Operation == SessionBrokerStart && (r.SessionID == 0 || r.State != "active") {
 			return ErrSessionBrokerInvalidRequest
 		}
-		if r.Operation == SessionBrokerStop && r.SessionID != 0 && r.State != "stopped" {
+		if r.Operation == SessionBrokerStop && r.State != "stopped" {
 			return ErrSessionBrokerInvalidRequest
 		}
 	}

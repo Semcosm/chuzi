@@ -36,4 +36,14 @@ func TestSameResolvedPathAcceptsShortNameAlias(t *testing.T) {
 	if !sameResolvedPath(resolved, shortPath) {
 		t.Fatal("short and long forms of the same package path were rejected")
 	}
+	if err := os.WriteFile(filepath.Join(longPath, "worker.mjs"), []byte("bundled worker"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	resource, err := ResolveRegularResource(shortPath, "worker.mjs")
+	if err != nil {
+		t.Fatalf("bundled resource through short-name root: %v", err)
+	}
+	if data, err := os.ReadFile(resource); err != nil || string(data) != "bundled worker" {
+		t.Fatalf("bundled resource = %q, error = %v", data, err)
+	}
 }

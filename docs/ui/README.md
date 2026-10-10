@@ -53,6 +53,13 @@ projection and show `stale revision`; package and trust/health failures use
 stable redacted failure classes. Package input is an opaque service-owned
 reference only. The UI never accepts paths, commands, executables, profiles,
 credentials, Windows identities, RDP endpoints, named pipes, or tokens.
+The Environments panel selects the built-in Windows test package by its fixed
+opaque reference. A green Windows environment ready label means that package
+gates passed; it does not claim a user, WTS session, desktop, or Agent. The
+pool card identifies logical test capacity separately from Windows reconcile
+health, while slot-session details show current Agent readiness. Stable
+`environment_untrusted`, `package_unavailable`, and
+`session_unavailable` failures remain visible without raw OS details.
 
 Settings includes a Windows user pool mode card above Job pools. Saved mode
 comes from launcher status; active execution mode comes from Core pool status.

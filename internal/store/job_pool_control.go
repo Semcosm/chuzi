@@ -749,7 +749,9 @@ func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolPro
 		operation = operations[len(operations)-1]
 	}
 	ready, readiness, _ := s.environmentReadiness(config)
-	needsEnvironment := config.DesiredState != "draining" && config.DesiredState != "disabled"
+	// Retiring all capacity must remain possible after package health or trust
+	// fails. Cleanup does not launch the environment and still waits for slots.
+	needsEnvironment := config.DesiredSlots > 0 && config.DesiredState != "draining" && config.DesiredState != "disabled"
 	if !terminalJobPoolOperation(operation.State) && needsEnvironment && !ready {
 		updated, rollbackErr := s.RollbackJobPoolOperation(operation.OperationID, readiness, at)
 		if rollbackErr != nil {
@@ -791,7 +793,7 @@ func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolPro
 	if err != nil {
 		return JobPoolProjection{}, err
 	}
-	if !projection.EnvironmentReady && config.DesiredState != "disabled" && config.DesiredState != "draining" {
+	if !projection.EnvironmentReady && needsEnvironment {
 		updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolFailed, "failed", projection.EnvironmentReadiness, at)
 	} else if config.DesiredState == "draining" || config.DesiredState == "disabled" {
 		updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolDraining, "draining", "", at)
@@ -804,7 +806,7 @@ func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolPro
 		}
 	} else {
 		updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolProvisioning, "provisioning", "", at)
-		if err == nil && projection.EnvironmentReady && projection.Status.Ready >= config.DesiredSlots && projection.Status.Provisioning == 0 && projection.Status.Unprovisioned == 0 && projection.Status.Draining == 0 {
+		if err == nil && (!needsEnvironment || projection.EnvironmentReady) && projection.Status.Ready >= config.DesiredSlots && projection.Status.Provisioning == 0 && projection.Status.Unprovisioned == 0 && projection.Status.Draining == 0 && projection.Status.Retiring == 0 {
 			updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolHealthCheck, "health_check", "", at)
 			if err == nil {
 				updated, err = s.UpdateJobPoolOperation(projection.OperationID, JobPoolCommitting, "committing", "", at)

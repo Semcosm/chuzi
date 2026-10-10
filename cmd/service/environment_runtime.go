@@ -48,7 +48,13 @@ func newConfiguredEnvironmentManager(cfg config.Config, target string) (*environ
 	}
 	trust, err := environment.LoadTrustStore(environmentTrustStorePath(cfg))
 	if err != nil {
-		return nil, fmt.Errorf("service: environment trust store unavailable")
+		if !os.IsNotExist(err) || cfg.WindowsJobPool.Enabled {
+			return nil, fmt.Errorf("service: environment trust store unavailable")
+		}
+		if _, stateErr := os.Stat(environmentStatePath(cfg)); !os.IsNotExist(stateErr) {
+			return nil, fmt.Errorf("service: environment trust store unavailable")
+		}
+		trust = environment.TrustStore{}
 	}
 	manager, err := environment.NewManager(environment.Options{
 		InstallRoot: environmentInstallRoot(cfg),

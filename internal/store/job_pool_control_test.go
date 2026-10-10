@@ -112,6 +112,67 @@ func TestJobPoolDrainRetainsLeasedSlotUntilRelease(t *testing.T) {
 	}
 }
 
+func TestJobPoolScaleToZeroWaitsForCleanupWithoutReadyEnvironment(t *testing.T) {
+	for _, failure := range []string{"unhealthy", "disabled", "untrusted"} {
+		t.Run(failure, func(t *testing.T) {
+			database, cfg := openTestStore(t)
+			record := environment.Record{EnvironmentID: "env/v1", Version: "1.0.0", ManifestDigest: strings.Repeat("a", 64), Signer: "signer", Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: storeTestTime}
+			if err := database.PutEnvironmentRecord(record); err != nil {
+				t.Fatal(err)
+			}
+			config := slot.PoolConfig{PoolID: "pool-zero", EnvironmentID: record.EnvironmentID, EnvironmentVersion: record.Version, ManifestDigest: record.ManifestDigest, Signer: record.Signer, RequireTrusted: true, DesiredSlots: 1}
+			if _, _, err := database.ApplyJobPool(JobPoolMutation{Config: config, IdempotencyKey: "initial", Actor: "operator", RequestedAt: storeTestTime}); err != nil {
+				t.Fatal(err)
+			}
+			if err := database.MarkSlotReady("pool-zero-001", slot.EnvironmentSummary{EnvironmentID: config.EnvironmentID, Version: config.EnvironmentVersion, ManifestDigest: config.ManifestDigest, Signer: config.Signer, Trusted: true, Generation: 1, UpdatedAt: storeTestTime}, storeTestTime); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.ReconcileJobPoolControl(config.PoolID, storeTestTime); err != nil {
+				t.Fatal(err)
+			}
+			record.Ready, record.Generation = false, 2
+			switch failure {
+			case "unhealthy":
+				record.Healthy = false
+			case "disabled":
+				record.Enabled = false
+			case "untrusted":
+				record.Trusted, record.Enabled = false, false
+			}
+			if err := database.PutEnvironmentRecord(record); err != nil {
+				t.Fatal(err)
+			}
+			operation, _, err := database.ScaleJobPool(config.PoolID, 0, 1, "zero", "operator", storeTestTime.Add(time.Second))
+			if err != nil {
+				t.Fatal(err)
+			}
+			projection, err := database.ReconcileJobPoolControl(config.PoolID, storeTestTime.Add(2*time.Second))
+			if err != nil || projection.Config.DesiredSlots != 0 || projection.Status.Retiring != 1 || terminalJobPoolOperation(projection.ReconcileState) {
+				t.Fatalf("cleanup pending = %#v, error = %v", projection, err)
+			}
+			if err := database.Close(); err != nil {
+				t.Fatal(err)
+			}
+			restarted, err := Open(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer restarted.Close()
+			projection, err = restarted.ReconcileJobPoolControl(config.PoolID, storeTestTime.Add(3*time.Second))
+			if err != nil || projection.Status.Retiring != 1 || terminalJobPoolOperation(projection.ReconcileState) {
+				t.Fatalf("restart cleanup pending = %#v, error = %v", projection, err)
+			}
+			if err := restarted.SetSlotStatus("pool-zero-001", slot.Deleted, storeTestTime.Add(4*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			projection, err = restarted.ReconcileJobPoolControl(config.PoolID, storeTestTime.Add(5*time.Second))
+			if err != nil || projection.EnvironmentReady || projection.ReconcileState != JobPoolApplied || projection.OperationID != operation.OperationID || projection.Status.Retiring != 0 {
+				t.Fatalf("cleaned pool = %#v, error = %v", projection, err)
+			}
+		})
+	}
+}
+
 func TestDeleteJobPoolWaitsForSlotCleanupAndRetainsOperation(t *testing.T) {
 	database, _ := openTestStore(t)
 	config := slot.PoolConfig{PoolID: "pool-delete", EnvironmentID: "env/v1", EnvironmentVersion: "1.0.0", DesiredSlots: 1, ManifestDigest: "digest", Signer: "signer"}

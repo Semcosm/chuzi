@@ -106,7 +106,7 @@ export component ChuziEnvironmentCard inherits Rectangle {
         padding: ChuziTheme.space-4;
         spacing: ChuziTheme.space-2;
         HorizontalBox { spacing: ChuziTheme.space-2; Text { text: root.item.environment_id; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-body; font-weight: 650; horizontal-stretch: 1; overflow: elide; } Text { text: root.item.version; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; } }
-        Text { text: root.item.lifecycle + "  ·  generation " + root.item.generation; color: root.item.lifecycle == "ready" ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-caption; vertical-stretch: 0; }
+        Text { text: root.item.lifecycle + "  ·  generation " + root.item.generation; color: root.item.lifecycle == "Windows environment ready" || root.item.lifecycle == "Environment ready" ? ChuziTheme.status-positive : ChuziTheme.status-warning; font-size: ChuziTheme.type-caption; vertical-stretch: 0; }
         HorizontalBox {
             spacing: ChuziTheme.space-1;
             height: 30px;

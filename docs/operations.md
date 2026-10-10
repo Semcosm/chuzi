@@ -80,6 +80,13 @@ pool 后仍由受管 provisioner 执行真实资源的 provision/retire。
 
 Windows UI 的 Settings 顶部提供 **Windows user pool** 模式入口。未启用时，
 卡片明确显示 Logical test；逻辑 ready 不证明 Windows 用户、session 或 Agent 存在。
+在 Environments 中选择 Windows test package 后，使用固定的
+`chuzi-windows-test-v1` 引用依次执行 install、verify、trust、enable、health。
+首次 install 从已安装 CorePayload 的固定 browser-worker 资源构造本地测试签名包；
+缺少资源会返回 `package_unavailable`。刷新 `environment-list`，确认
+`chuzi/windows-test` 的 installed、verified、trusted、enabled、healthy、ready
+全部为 true，再在 Apply or scale a pool 中使用该环境。Core 会从 ready 记录绑定
+manifest digest 和 signer；test signer 仅用于本地验证，不是生产包签名机构。
 切换流程如下：
 
 1. Core 运行时先安装、验证并启用签名环境。在 Apply or scale a pool 中选择该环境，
@@ -88,6 +95,11 @@ Windows UI 的 Settings 顶部提供 **Windows user pool** 模式入口。未启
    回收。刷新池后选择目标池，让 UI 保留当前 revision，再停止 Core。
 3. 在 Windows user pool 确认 Enable Windows users。保存成功显示 restart required；
    启动 Core 后再扩容。Use logical test mode 也需要先完成相同的资源回收。
+
+环境失去 ready 状态后仍可将池缩容至 0，以完成已有资源的清理；operation 会等待
+retiring slot 回收。UI 的 apply 和 Core 的 scale 都保留已有签名绑定；清理 apply
+不会借此新建池或更换环境身份，仍校验 revision。quarantined 资源仍需显式恢复或
+删除，不会被自动绕过。
 
 保存通过固定 launcher 命令交给离线 Core 维护边界；维护进程取得 bbolt 独占锁，
 验证零容量、终态 operation、所有槽位和包括过期项的租约，原子保存配置。Windows 模式
@@ -105,6 +117,25 @@ launcher 启动保留已有合法部署配置；损坏或 data_dir 不匹配时�
 会 fail closed。Start basic session 的 Windows Agent ready 表示最近一次 reconcile
 记录的健康状态；历史 operation ready 不能替代当前健康状态，也不代表此刻完成
 WTS 探测。test 包构建通过仍不能替代真机生产验收。
+
+安装后的 Windows 主机可用只读 PowerShell 检查分别确认各层状态：
+
+```powershell
+$launcher = 'C:\Program Files\Chuzi\CorePayload\chuzi-launcher.exe'
+& $launcher -command core-status
+& $launcher -command environment-list
+& $launcher -command job-pool-list
+Get-LocalUser | Where-Object Name -Like 'ChuziJob*'
+Get-CimInstance Win32_Process | Where-Object Name -EQ 'chuzi-user-agent.exe' |
+    Select-Object ProcessId, Name
+```
+
+`environment-list` ready 仅证明环境包门控通过；`job-pool-list` 的
+logical ready 仍不代表受管 Windows 用户或 Agent。只有 Windows execution mode、
+ready slot 与 active WTS session、desktop 和 Agent heartbeat 同时成立，才能验收
+Windows 用户池。broker 缺失或登录失败时按 `session_unavailable` 分类，
+非 Windows 平台按 `windows_platform_unavailable` 分类；不要把配置保存成功
+或测试签名包 ready 当成生产端到端完成。
 
 每次 lifecycle reconcile 失败都会写入脱敏的 `slot/reconcile` 事件，并递增
 `chuzi_slot_reconcile_errors_total`；错误正文、SID、路径和凭证不会写入日志。最近一次

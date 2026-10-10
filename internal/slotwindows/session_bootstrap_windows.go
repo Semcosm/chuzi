@@ -3,10 +3,9 @@
 package slotwindows
 
 import (
-	"bufio"
 	"context"
-	"io"
-	"os"
+
+	"github.com/Microsoft/go-winio"
 )
 
 // runnerSessionBootstrapPipe is fixed at build time. It is not configurable
@@ -43,52 +42,15 @@ func callRunnerSessionProvider(ctx context.Context, request SessionBrokerRequest
 	if ctx == nil || ctx.Err() != nil {
 		return BootstrapSession{}, ErrSessionUnavailable
 	}
-	payload, err := EncodeSessionBrokerRequest(request)
+	if err := request.validate(); err != nil {
+		return BootstrapSession{}, ErrSessionUnavailable
+	}
+	callCtx, cancel := context.WithTimeout(ctx, sessionBrokerCallTimeout)
+	defer cancel()
+	conn, err := winio.DialPipeContext(callCtx, runnerSessionBootstrapPipe)
 	if err != nil {
 		return BootstrapSession{}, ErrSessionUnavailable
 	}
-	payload = append(payload, '\n')
-	type callResult struct {
-		session BootstrapSession
-		err     error
-	}
-	result := make(chan callResult, 1)
-	go func() {
-		defer clear(payload)
-		file, openErr := os.OpenFile(runnerSessionBootstrapPipe, os.O_RDWR, 0)
-		if openErr != nil {
-			result <- callResult{err: ErrSessionUnavailable}
-			return
-		}
-		defer file.Close()
-		if _, writeErr := file.Write(payload); writeErr != nil {
-			result <- callResult{err: ErrSessionUnavailable}
-			return
-		}
-		reader := bufio.NewReader(io.LimitReader(file, 8192))
-		data, readErr := reader.ReadBytes('\n')
-		if readErr != nil {
-			result <- callResult{err: ErrSessionUnavailable}
-			return
-		}
-		response, decodeErr := DecodeSessionBrokerResponse(data)
-		if decodeErr != nil || response.Code != SessionBrokerOK {
-			result <- callResult{err: ErrSessionUnavailable}
-			return
-		}
-		if request.Operation == SessionBrokerStart && (response.SessionID == 0 || response.State != "active") {
-			result <- callResult{err: ErrSessionUnavailable}
-			return
-		}
-		result <- callResult{session: BootstrapSession{ID: response.SessionID, State: response.State}}
-	}()
-	select {
-	case <-ctx.Done():
-		return BootstrapSession{}, ErrSessionUnavailable
-	case result := <-result:
-		if result.err != nil {
-			return BootstrapSession{}, result.err
-		}
-		return result.session, nil
-	}
+	defer conn.Close()
+	return exchangeSessionBroker(callCtx, conn, request)
 }
