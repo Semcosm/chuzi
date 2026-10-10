@@ -111,6 +111,46 @@ pub(crate) struct CoreJobPoolOperation {
     pub(crate) idempotent: bool,
 }
 
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub(crate) struct CoreSlotSessionStatus {
+    #[serde(default)]
+    pub(crate) pool_id: String,
+    #[serde(default)]
+    pub(crate) slot_id: String,
+    #[serde(default)]
+    pub(crate) ordinal: i32,
+    #[serde(default)]
+    pub(crate) status: String,
+    #[serde(default)]
+    pub(crate) environment_generation: u64,
+    #[serde(default)]
+    pub(crate) session_state: String,
+    #[serde(default)]
+    pub(crate) agent_ready: bool,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct CoreSlotSessionOperation {
+    #[serde(default)]
+    pub(crate) operation_id: String,
+    #[serde(default)]
+    pub(crate) pool_id: String,
+    #[serde(default)]
+    pub(crate) slot_id: String,
+    #[serde(default)]
+    pub(crate) ordinal: i32,
+    #[serde(default)]
+    pub(crate) state: String,
+    #[serde(default)]
+    pub(crate) failure_code: String,
+    #[serde(default)]
+    pub(crate) environment_generation: u64,
+    #[serde(default)]
+    pub(crate) status: CoreSlotSessionStatus,
+    #[serde(default)]
+    pub(crate) idempotent: bool,
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct CoreEnvironmentList {
     pub(crate) environments: Vec<CoreEnvironment>,
@@ -155,7 +195,7 @@ pub(crate) struct CoreEnvironmentOperation {
 
 #[cfg(test)]
 mod tests {
-    use super::CoreJobPoolStatus;
+    use super::{CoreJobPoolStatus, CoreSlotSessionOperation};
 
     #[test]
     fn job_pool_status_keeps_failure_classification_redacted() {
@@ -167,6 +207,41 @@ mod tests {
         let encoded = serde_json::to_string(&status).expect("status should encode");
         assert!(!encoded.contains("password"));
         assert!(!encoded.contains("secret"));
+    }
+
+    #[test]
+    fn slot_session_operation_decodes_nested_status_without_sensitive_fields() {
+        let operation: CoreSlotSessionOperation = serde_json::from_str(
+            r#"{
+                "operation_id":"slotop-1",
+                "pool_id":"pool-a",
+                "slot_id":"pool-a-001",
+                "ordinal":1,
+                "state":"ready",
+                "environment_generation":7,
+                "status":{
+                    "pool_id":"pool-a",
+                    "slot_id":"pool-a-001",
+                    "ordinal":1,
+                    "status":"ready",
+                    "environment_generation":7,
+                    "session_state":"ready",
+                    "agent_ready":true
+                },
+                "idempotent":true,
+                "password":"secret",
+                "profile_path":"private"
+            }"#,
+        )
+        .expect("slot-session operation should decode");
+        assert_eq!(operation.operation_id, "slotop-1");
+        assert_eq!(operation.status.session_state, "ready");
+        assert!(operation.status.agent_ready);
+        assert!(operation.idempotent);
+        let encoded = serde_json::to_string(&operation).expect("projection should encode");
+        assert!(!encoded.contains("password"));
+        assert!(!encoded.contains("secret"));
+        assert!(!encoded.contains("profile_path"));
     }
 }
 

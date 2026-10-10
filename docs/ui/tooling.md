@@ -81,13 +81,18 @@ Generate the deterministic layout matrix with the existing example:
 
 ~~~bash
 for state in mixed empty loading error unavailable mixed-selected settings \
-  compact-inspector more-menu cancel-confirmation delete-confirmation keyboard-focus disabled-action; do
+  compact-inspector more-menu cancel-confirmation delete-confirmation keyboard-focus disabled-action \
+  slot-session-normal slot-session-provisioning slot-session-ready slot-session-failed slot-session-unavailable; do
   cargo run --manifest-path ui/windows/Cargo.toml --features layout-snapshot --locked --example layout_snapshot -- --session-state "$state" --theme both --output dist/ui-sessions
 done
 ~~~
 
 The snapshot probe verifies dimensions and rejects blank renders. It is not a
 golden-image diff yet; visual pixel comparison remains a follow-up tool task.
+Settings job-pool coverage also includes slot-session-normal,
+slot-session-provisioning, slot-session-ready, slot-session-failed, and
+slot-session-unavailable. These fixtures validate the redacted execution-slot
+operation panel and are not evidence of a native Windows WTS session.
 Windows-only UI Automation smoke tests should run in the Windows CI job and
 cover launch, selection, search/filter, Inspector visibility, theme switching,
 and keyboard focus behavior.
