@@ -167,11 +167,14 @@ scripts/test_windows_job_pool_smoke.ps1 -LocalRdp
 `session bpp:i:32`、`compression:i:1`、`redirectclipboard:i:1`、
 `autoreconnection enabled:i:1`、`authentication level:i:2`、
 `negotiate security layer:i:1`。目标 Credential Manager 项会在测试期间暂存并在退出时恢复；
+密码写入走 `CredWriteW` native helper，密码不进入 `cmdkey` 参数、环境变量、RDP profile 或临时明文，
+并在 native buffer 使用后清零。已有 target 只在能核对本轮用户名和类型时恢复；否则保留并报告清理错误。
 新建的测试项会在退出时删除，
 生成的 profile 使用后删除。`-RdpProfileTemplatePath` 仍可用于显式验证一个操作者提供的
 loopback/3389 profile，但不是默认路径。
 凭据写入后会立即核对保存用户名是否等于本轮临时用户；WTS active session 建立后还会再次核对
 session 用户名和 Shell readiness，任一检查失败都会在启动后续 smoke 前停止。
+`-ValidateOnly` 还执行一次 disposable Credential Manager 写入、用户名匹配、受控恢复/删除和 ownership guard 回归。
 
 脚本在 `RUNNER_TEMP` 下创建一次性 runtime、data 和 Profile 目录，构建固定的
 `chuzi-user-agent.exe`，复制 runner 提供的 `node.exe` 与 `browser-worker/src/worker.mjs`，
