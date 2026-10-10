@@ -1,7 +1,7 @@
 # CR-0113: isolate Windows slot identities across pools
 
 Base: main
-Head or Range: 32727067eda9c9614bf006ad25500569a3fc2cd8
+Head or Range: 2853b6e6d27469ae790170e07a2760fcb670b7bb
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): isolate slot identities across pools
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 1705e425d1234b355079a3c6bec539dd4b22cf46
-Head OID: 32727067eda9c9614bf006ad25500569a3fc2cd8
+Head OID: 2853b6e6d27469ae790170e07a2760fcb670b7bb
 Integrated Result: pending
 
 ## Summary
@@ -83,7 +83,8 @@ None
   `ce94cb4ba62717bfc1c35577fcafb3501275420b`, and
   `51470a53a2430ccbe577e0906b56379314fd5584`, and
   `e95e91bbf4458326b0164dc720b2e7cc6283d005`, and
-  `32727067eda9c9614bf006ad25500569a3fc2cd8`.
+  `32727067eda9c9614bf006ad25500569a3fc2cd8`, and
+  `2853b6e6d27469ae790170e07a2760fcb670b7bb`.
 - Identity contract: `ManagedIdentityAlgorithm = sha256-scope-slot-v2`;
   `UserPrefix + lower_hex(SHA256(algorithm NUL scope NUL slot_id NUL ordinal))[0:8]`.
 - Scope: canonical absolute `DataDir`, existing symlinks resolved, lower-cased
@@ -97,7 +98,8 @@ None
 - Collision race: allocation records are scanned before OS mutation; ownership
   records are created atomically, and competing same-name claims fail closed.
 - A loser of a concurrent `NetUserAdd` race marks the observed identity as
-  pre-existing, so later rollback cannot delete the winner's account.
+  pre-existing, so later rollback cannot delete the winner's account or slot
+  root.
 - Native status: Windows compile/vet only; no native user/ACL/WTS smoke on Linux.
 - Assembly need: service and broker must call `Options.DeriveUsername` (or a
   shared contract wrapper) and must not duplicate or expose the format.
