@@ -120,6 +120,36 @@ session broker 登录服务及所需 Windows 权限。配置保存不会创建�
 
 ## Windows 阶段 2
 
+### 受管用户 identity mapping
+
+同一台主机上的多个逻辑 pool 共用一个安装 scope；scope 是服务校验后的
+`DataDir` 绝对路径（规范化、斜杠统一并按 Windows 大小写不敏感规则折叠）。
+slot 用户名使用固定的 `sha256-scope-slot-v2` 算法：
+
+```text
+username = UserPrefix + lower_hex(SHA-256(
+  "sha256-scope-slot-v2" + NUL + scope + NUL + slot_id + NUL + ordinal
+))[0:8]
+```
+
+`UserPrefix` 最多 12 个 ASCII 字符，因此用户名最多 20 个 ASCII 字符，满足
+Windows local-account 的常见 20 字符限制。environment generation 不在输入中，
+所以 generation 更新会复用同一个用户名和 SID。路径、用户名和 desktop 只能由
+该 mapping 派生，Core/Matrix DTO 不携带这些值。
+
+8 位 hash 是长度约束，不是唯一性假设。provisioner 在 `NetUserAdd` 前扫描同一
+installation scope 下的所有有效 `ownership.json` allocation；不同 slot claim
+得到相同用户名时返回 `ErrIdentityCollision` 并不创建或接管任何 OS 用户。
+并行创建由 ownership 文件的原子创建和 OS 用户检查共同设防：竞争者只能幂等
+继续同一 claim，或 fail closed。
+
+旧版本 `UserPrefix+ordinal(4 位)` 用户只在 slot ownership 记录存在、record SID
+与当前账号 SID 一致且没有新旧账号同时存在时保留；不会凭 username/comment 接管。
+缺失 metadata、SID drift、foreign same-name、administrator 或 malformed ownership
+均失败关闭。更换安装 `DataDir` 或 prefix 属于显式迁移，不能自动删除旧 profile/session。
+后续 service assembly 和 session broker 必须调用 `slotwindows.Options.DeriveUsername`
+使用相同的算法版本，不能复制另一套格式。
+
 Windows 构建包含 `chuzi-user-agent.exe`。服务在 Windows-only provisioner 中按
 `data_dir/job-slots/<slot-id>/generation-<generation>` 派生目录和本地用户；用户备注
 保存 `CHUZI-MANAGED:<slot-id>:<ordinal>` 标记，SID 与该标记一起写入受保护的
