@@ -36,12 +36,50 @@ func TestDerivePathsIsSlotAndGenerationScoped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.UserName != "ChuziJob0001" || first.Desktop == second.Desktop || first.Desktop == "ChuziSlot0001" || first.Work == second.Work || first.Work != filepath.Join(first.Generation, "work") {
+	if first.UserName == second.UserName || len(first.UserName) > 20 || first.Desktop == second.Desktop || first.Desktop == "ChuziSlot0001" || first.Work == second.Work || first.Work != filepath.Join(first.Generation, "work") {
 		t.Fatalf("unexpected paths: %#v %#v", first, second)
 	}
 	nextGeneration, _ := options.DerivePaths("pool-001", 1, 5)
 	if first.Generation == nextGeneration.Generation {
 		t.Fatal("generation path did not change")
+	}
+	if first.UserName != nextGeneration.UserName {
+		t.Fatal("environment generation changed the managed username")
+	}
+}
+
+func TestDeriveUsernameUsesInstallationScopeAndOrdinal(t *testing.T) {
+	base := Options{DataDir: filepath.Join(t.TempDir(), "one"), UserPrefix: "LongPrefix12", EnvironmentID: "env/v1", Version: "1.0.0"}
+	one, err := base.DeriveUsername("pool-a-001", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(one) > 20 || !managedUsernamePattern.MatchString(one) {
+		t.Fatalf("invalid derived username %q", one)
+	}
+	if other, err := (Options{DataDir: filepath.Join(t.TempDir(), "two"), UserPrefix: base.UserPrefix, EnvironmentID: base.EnvironmentID, Version: base.Version}).DeriveUsername("pool-a-001", 1); err != nil || other == one {
+		t.Fatalf("installation scopes collided: %q, %v", other, err)
+	}
+	if other, err := base.DeriveUsername("pool-a-002", 2); err != nil || other == one {
+		t.Fatalf("slot ordinals collided: %q, %v", other, err)
+	}
+}
+
+func TestDeriveUsernameRejectsLongAndPathShapedSlotIDs(t *testing.T) {
+	options := Options{DataDir: filepath.Join(t.TempDir(), "state"), UserPrefix: "ChuziJob", EnvironmentID: "env/v1", Version: "1.0.0"}
+	for _, id := range []string{strings.Repeat("x", 129), "../outside", `pool\001`, `/tmp`} {
+		if _, err := options.DeriveUsername(id, 1); err == nil {
+			t.Errorf("accepted unsafe slot ID %q", id)
+		}
+	}
+}
+
+func TestIdentityClaimCollisionIsFailClosed(t *testing.T) {
+	if !identityClaimCollides("ChuziJobdeadbeef", "pool-b-001", 1, "ChuziJobdeadbeef", "pool-a-001", 1) {
+		t.Fatal("forced truncated-hash collision was not detected")
+	}
+	if identityClaimCollides("ChuziJobdeadbeef", "pool-a-001", 1, "ChuziJobdeadbeef", "pool-a-001", 1) {
+		t.Fatal("same identity claim was treated as a collision")
 	}
 }
 

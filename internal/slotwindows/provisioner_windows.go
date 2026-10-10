@@ -435,6 +435,117 @@ func New(options Options) (Provisioner, error) {
 	return &windowsProvisioner{options: options, agents: make(map[string]agentProcess), boots: make(map[string]sessionBootstrapState)}, nil
 }
 
+// resolvePaths keeps an existing pre-v2 identity only when the durable
+// ownership record and the current SID agree. A username or forgeable comment
+// alone never authorizes migration. New identities use DerivePaths, whose
+// username includes the installation scope and slot identity.
+func (p *windowsProvisioner) resolvePaths(request slot.ProvisionRequest) (Paths, error) {
+	paths, err := p.options.DerivePaths(request.SlotID, request.Ordinal, request.EnvironmentGeneration)
+	if err != nil {
+		return Paths{}, err
+	}
+	if err := p.checkIdentityCollision(paths, request); err != nil {
+		return Paths{}, err
+	}
+	legacyUsername, err := p.options.LegacyUsername(request.Ordinal)
+	if err != nil || legacyUsername == paths.UserName {
+		return paths, err
+	}
+	legacy := paths
+	legacy.UserName = legacyUsername
+	record, recordErr := readOwnership(paths.Metadata)
+	if errors.Is(recordErr, fs.ErrNotExist) {
+		// A leftover old account without metadata is unadoptable. Returning the
+		// new paths lets ensureManagedUser reject a foreign/new account while
+		// this explicit probe prevents silently abandoning a legacy session.
+		if _, legacyErr := lookupSID(legacy.UserName); legacyErr == nil {
+			return Paths{}, ErrOwnership
+		} else if !errors.Is(legacyErr, windows.ERROR_NONE_MAPPED) {
+			return Paths{}, ErrOwnership
+		}
+		return paths, nil
+	}
+	if recordErr != nil || record.SlotID != request.SlotID || record.Ordinal != request.Ordinal {
+		return Paths{}, ErrOwnership
+	}
+	candidateSID, candidateExists, err := lookupManagedSID(paths.UserName)
+	if err != nil {
+		return Paths{}, ErrOwnership
+	}
+	legacySID, legacyExists, err := lookupManagedSID(legacy.UserName)
+	if err != nil {
+		return Paths{}, ErrOwnership
+	}
+	if candidateExists {
+		if candidateSID != record.SID {
+			// A foreign same-name account is never displaced or adopted.
+			return Paths{}, ErrOwnership
+		}
+		if legacyExists {
+			return Paths{}, ErrOwnership
+		}
+		return paths, nil
+	}
+	if legacyExists {
+		if legacySID != record.SID {
+			return Paths{}, ErrOwnership
+		}
+		// Preserve the old account/profile/session for this slot. The root and
+		// generation paths remain unchanged; only the username lookup changes.
+		return legacy, nil
+	}
+	return paths, nil
+}
+
+func lookupManagedSID(username string) (string, bool, error) {
+	sid, err := lookupSID(username)
+	if err == nil {
+		return sid, true, nil
+	}
+	if errors.Is(err, windows.ERROR_NONE_MAPPED) {
+		return "", false, nil
+	}
+	return "", false, err
+}
+
+// checkIdentityCollision is the allocation fence for the deliberately short
+// Windows username hash. Ownership records are the durable allocation index;
+// a collision is rejected before NetUserAdd, so no ambiguous OS side effect is
+// created.
+func (p *windowsProvisioner) checkIdentityCollision(paths Paths, request slot.ProvisionRequest) error {
+	root := filepath.Join(filepath.Clean(p.options.DataDir), "job-slots")
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil || inspectNoReparseChain(root) != nil {
+		return ErrOwnership
+	}
+	for _, entry := range entries {
+		if entry.Name() == request.SlotID {
+			continue
+		}
+		if !entry.IsDir() || !slotIDPattern.MatchString(entry.Name()) {
+			return ErrIdentityCollision
+		}
+		record, recordErr := readOwnership(filepath.Join(root, entry.Name(), "ownership.json"))
+		if errors.Is(recordErr, fs.ErrNotExist) {
+			continue
+		}
+		if recordErr != nil || record.SlotID != entry.Name() {
+			return ErrIdentityCollision
+		}
+		username, deriveErr := p.options.DeriveUsername(record.SlotID, record.Ordinal)
+		if deriveErr != nil {
+			return ErrIdentityCollision
+		}
+		if identityClaimCollides(paths.UserName, request.SlotID, request.Ordinal, username, record.SlotID, record.Ordinal) {
+			return ErrIdentityCollision
+		}
+	}
+	return nil
+}
+
 func (p *windowsProvisioner) Provision(ctx context.Context, request slot.ProvisionRequest) (result slot.ProvisionResult, provisionErr error) {
 	if p == nil {
 		return slot.ProvisionResult{}, ErrInvalidOptions
@@ -447,7 +558,7 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	if err := ctx.Err(); err != nil {
 		return slot.ProvisionResult{}, err
 	}
-	paths, err := p.options.DerivePaths(request.SlotID, request.Ordinal, request.EnvironmentGeneration)
+	paths, err := p.resolvePaths(request)
 	if err != nil {
 		return slot.ProvisionResult{}, err
 	}
@@ -606,7 +717,7 @@ func (p *windowsProvisioner) Inspect(ctx context.Context, request slot.Provision
 	if err := ctx.Err(); err != nil {
 		return slot.EnvironmentSummary{}, err
 	}
-	paths, err := p.options.DerivePaths(request.SlotID, request.Ordinal, request.EnvironmentGeneration)
+	paths, err := p.resolvePaths(request)
 	if err != nil {
 		return slot.EnvironmentSummary{}, err
 	}
@@ -659,7 +770,7 @@ func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionR
 			return retireFail("capability_revoke", ErrCleanup)
 		}
 	}
-	paths, err := p.options.DerivePaths(request.SlotID, request.Ordinal, request.EnvironmentGeneration)
+	paths, err := p.resolvePaths(request)
 	if err != nil {
 		return retireFail("path_derivation", err)
 	}
