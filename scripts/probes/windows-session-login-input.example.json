@@ -1,0 +1,15 @@
+{
+  "schema": "chuzi.session-probe-input/v1",
+  "run_id": "run-example",
+  "login_method": "registered-interactive-helper-loopback-rdp",
+  "sid": "S-1-5-21-100-200-300-400",
+  "session_id": 42,
+  "old_session_gone": true,
+  "shell_ready": true,
+  "agent_ready": false,
+  "worker_ready": false,
+  "identity_check": "helper_sid_and_session_verified",
+  "login_check": "automatic_credential_manager_relogin",
+  "hive_check": "sid_derived_profile_hive_reused",
+  "native_pending": true
+}
