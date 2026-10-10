@@ -156,18 +156,6 @@ function New-SmokePassword {
     }
 }
 
-function Convert-SmokeSecureStringToPlainText([System.Security.SecureString] $Value) {
-    $buffer = [IntPtr]::Zero
-    try {
-        $buffer = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($Value)
-        return [System.Runtime.InteropServices.Marshal]::PtrToStringBSTR($buffer)
-    } finally {
-        if ($buffer -ne [IntPtr]::Zero) {
-            [System.Runtime.InteropServices.Marshal]::ZeroFreeBSTR($buffer)
-        }
-    }
-}
-
 function Initialize-SmokeSessionShellRegistryHelper {
     if ('ChuziSmokeSessionShellRegistryV2' -as [type]) {
         return
@@ -216,7 +204,7 @@ public static class ChuziSmokeSessionShellRegistryV2
 }
 
 function Initialize-SmokeRdpCredentialOverrideHelper {
-    if ('ChuziSmokeRdpCredentialOverrideV3' -as [type]) {
+    if ('ChuziSmokeRdpCredentialOverrideV4' -as [type]) {
         return
     }
     Add-Type -TypeDefinition @'
@@ -225,7 +213,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Security;
 
-public static class ChuziSmokeRdpCredentialOverrideV3
+public static class ChuziSmokeRdpCredentialOverrideV4
 {
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct NativeCredential
@@ -260,6 +248,7 @@ public static class ChuziSmokeRdpCredentialOverrideV3
     private static string activeTarget;
     private static bool replacementWritten;
     private static uint replacementType = 2;
+    private static string replacementUserName;
 
     private static bool TryRead(string targetName, out IntPtr credential)
     {
@@ -307,6 +296,8 @@ public static class ChuziSmokeRdpCredentialOverrideV3
 
     public static void Write(string targetName, string userName, SecureString password)
     {
+        if (String.IsNullOrWhiteSpace(targetName) || String.IsNullOrWhiteSpace(userName) || password == null)
+            throw new ArgumentException("credential override arguments are required");
         if (activeTarget != null) throw new InvalidOperationException("credential override is already active");
         IntPtr existing;
         if (TryRead(targetName, out existing))
@@ -320,11 +311,10 @@ public static class ChuziSmokeRdpCredentialOverrideV3
             int error = Marshal.GetLastWin32Error();
             if (error != 1168) throw new Win32Exception(error);
         }
-        activeTarget = targetName;
-
         IntPtr target = IntPtr.Zero;
         IntPtr user = IntPtr.Zero;
         IntPtr blob = IntPtr.Zero;
+        bool writeSucceeded = false;
         try
         {
             target = Marshal.StringToHGlobalUni(targetName);
@@ -342,12 +332,24 @@ public static class ChuziSmokeRdpCredentialOverrideV3
             if (!CredWrite(ref credential, 0))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
             replacementWritten = true;
+            replacementUserName = userName;
+            activeTarget = targetName;
+            writeSucceeded = true;
         }
         finally
         {
             if (blob != IntPtr.Zero) Marshal.ZeroFreeGlobalAllocUnicode(blob);
             if (user != IntPtr.Zero) Marshal.FreeHGlobal(user);
             if (target != IntPtr.Zero) Marshal.FreeHGlobal(target);
+            if (!writeSucceeded)
+            {
+                if (previousCredential != IntPtr.Zero) CredFree(previousCredential);
+                previousCredential = IntPtr.Zero;
+                replacementWritten = false;
+                replacementType = 2;
+                replacementUserName = null;
+                activeTarget = null;
+            }
         }
     }
 
@@ -357,18 +359,50 @@ public static class ChuziSmokeRdpCredentialOverrideV3
         if (!String.Equals(activeTarget, targetName, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("credential override target mismatch");
 
+        IntPtr current;
+        if (!TryRead(targetName, out current))
+        {
+            ClearState();
+            throw new InvalidOperationException("credential override ownership check failed");
+        }
+        try
+        {
+            NativeCredential value = (NativeCredential)Marshal.PtrToStructure(current, typeof(NativeCredential));
+            string currentUserName = Marshal.PtrToStringUni(value.UserName) ?? String.Empty;
+            if (value.Type != replacementType ||
+                !String.Equals(currentUserName, replacementUserName, StringComparison.OrdinalIgnoreCase))
+            {
+                ClearState();
+                throw new InvalidOperationException("credential override ownership check failed");
+            }
+        }
+        finally
+        {
+            CredFree(current);
+        }
+
         if (previousCredential != IntPtr.Zero)
         {
             NativeCredential previous = (NativeCredential)Marshal.PtrToStructure(previousCredential, typeof(NativeCredential));
             if (!CredWrite(ref previous, 0))
                 throw new Win32Exception(Marshal.GetLastWin32Error());
         }
-        else if (replacementWritten && !CredDelete(targetName, 2, 0))
+        else if (replacementWritten && !CredDelete(targetName, replacementType, 0))
         {
             int error = Marshal.GetLastWin32Error();
             if (error != 1168) throw new Win32Exception(error);
         }
 
+        ClearState();
+    }
+
+    public static bool IsActive()
+    {
+        return activeTarget != null;
+    }
+
+    private static void ClearState()
+    {
         if (previousCredential != IntPtr.Zero)
         {
             CredFree(previousCredential);
@@ -377,6 +411,7 @@ public static class ChuziSmokeRdpCredentialOverrideV3
         activeTarget = null;
         replacementWritten = false;
         replacementType = 2;
+        replacementUserName = null;
     }
 }
 '@
@@ -526,7 +561,7 @@ public static class ChuziSmokeProfileBootstrap
     private static extern bool CreateProcessWithLogonW(
         string userName,
         string domain,
-        string password,
+        IntPtr password,
         uint logonFlags,
         string applicationName,
         StringBuilder commandLine,
@@ -547,8 +582,9 @@ public static class ChuziSmokeProfileBootstrap
     private const uint CreateNoWindow = 0x08000000;
     private const uint Infinite = 0xFFFFFFFF;
 
-    public static void Run(string userName, string domain, string password)
+    public static void Run(string userName, string domain, SecureString password)
     {
+        if (password == null) throw new ArgumentNullException("password");
         string systemDirectory = Environment.GetFolderPath(Environment.SpecialFolder.System);
         string applicationName = System.IO.Path.Combine(systemDirectory, "cmd.exe");
         StartupInfo startupInfo = new StartupInfo
@@ -557,19 +593,31 @@ public static class ChuziSmokeProfileBootstrap
         };
         ProcessInformation processInformation;
         StringBuilder commandLine = new StringBuilder("cmd.exe /c exit");
-        bool created = CreateProcessWithLogonW(
-            userName,
-            domain,
-            password,
-            LogonWithProfile,
-            applicationName,
-            commandLine,
-            CreateUnicodeEnvironment | CreateNoWindow,
-            IntPtr.Zero,
-            systemDirectory,
-            ref startupInfo,
-            out processInformation);
-        int error = created ? 0 : Marshal.GetLastWin32Error();
+        IntPtr passwordBuffer = IntPtr.Zero;
+        bool created;
+        int error;
+        try
+        {
+            passwordBuffer = Marshal.SecureStringToGlobalAllocUnicode(password);
+            created = CreateProcessWithLogonW(
+                userName,
+                domain,
+                passwordBuffer,
+                LogonWithProfile,
+                applicationName,
+                commandLine,
+                CreateUnicodeEnvironment | CreateNoWindow,
+                IntPtr.Zero,
+                systemDirectory,
+                ref startupInfo,
+                out processInformation);
+            error = created ? 0 : Marshal.GetLastWin32Error();
+        }
+        finally
+        {
+            if (passwordBuffer != IntPtr.Zero)
+                Marshal.ZeroFreeGlobalAllocUnicode(passwordBuffer);
+        }
         if (!created) throw new Win32Exception(error);
 
         try
@@ -729,12 +777,7 @@ function Wait-SmokeUserProfileReleased([string] $Sid, [int] $TimeoutSeconds = 30
 }
 
 function Initialize-SmokeUserProfile([string] $Name, [System.Security.SecureString] $Password) {
-    $plainPassword = Convert-SmokeSecureStringToPlainText $Password
-    try {
-        [ChuziSmokeProfileBootstrap]::Run($Name, '.', $plainPassword)
-    } finally {
-        $plainPassword = $null
-    }
+    [ChuziSmokeProfileBootstrap]::Run($Name, '.', $Password)
     $targetUser = Get-LocalUser -Name $Name -ErrorAction Stop
     $profile = Wait-SmokeUserProfile $targetUser.SID.Value
     if ($null -eq $profile) {
@@ -957,7 +1000,7 @@ function Capture-RdpDiagnostics([string] $Label, [string] $Name) {
     try {
         Write-RdpDiagnostic ('RDP_CREDENTIAL_PRESENT=' + [ChuziSmokeCredentialStoreV2]::Exists($script:rdpCredentialTarget))
         if (-not [string]::IsNullOrWhiteSpace($script:rdpCredentialUserName)) {
-            Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_MATCHES=' + [ChuziSmokeRdpCredentialOverrideV3]::UserNameMatches($script:rdpCredentialTarget, $script:rdpCredentialUserName))
+            Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_MATCHES=' + [ChuziSmokeRdpCredentialOverrideV4]::UserNameMatches($script:rdpCredentialTarget, $script:rdpCredentialUserName))
         }
     } catch {
         Write-RdpDiagnostic 'CREDENTIAL_QUERY_ERROR=unavailable'
@@ -993,10 +1036,11 @@ function Get-SmokeRdpCredentialListing {
     return (& $cmdkey '/list' 2>&1 | Out-String)
 }
 
-function Test-SmokeRdpCredential([string] $Target) {
-    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
-    $output = (& $cmdkey (('/list:' + $Target)) 2>&1 | Out-String)
-    return $output.IndexOf($Target, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+function Assert-SmokeRdpCredentialTarget([string] $Target) {
+    if ([string]::IsNullOrWhiteSpace($Target) -or
+        $Target -notmatch '(?i)^TERMSRV/127\.0\.0\.(?:[2-9]|[1-9]\d|1\d\d|2[0-4]\d|25[0-4])$') {
+        throw 'RDP credential target must be a TERMSRV loopback alias owned by this smoke'
+    }
 }
 
 function Get-LocalRdpTarget([string] $ProfileTemplatePath) {
@@ -1078,28 +1122,105 @@ function Get-SmokeRdpProfileLines([string] $TargetHost, [string] $TargetUsername
 }
 
 function Set-SmokeRdpCredential([string] $Target, [string] $UserName, [System.Security.SecureString] $Password) {
-    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
-    $plainPassword = Convert-SmokeSecureStringToPlainText $Password
-    try {
-        $argumentList = @(
-            ('/generic:' + $Target),
-            ('/user:' + $UserName),
-            ('/pass:"' + $plainPassword + '"')
-        )
-        $process = Start-Process -FilePath $cmdkey -ArgumentList $argumentList -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
-        if ($process.ExitCode -ne 0) {
-            throw ('cmdkey credential write failed with exit code ' + $process.ExitCode)
-        }
-    } finally {
-        $plainPassword = $null
-    }
+    Assert-SmokeRdpCredentialTarget $Target
+    [ChuziSmokeRdpCredentialOverrideV4]::Write($Target, $UserName, $Password)
 }
 
-function Remove-SmokeRdpCredential([string] $Target) {
-    $cmdkey = (Get-Command cmdkey.exe -CommandType Application -ErrorAction Stop).Source
-    $process = Start-Process -FilePath $cmdkey -ArgumentList @('/delete:' + $Target) -Wait -PassThru -WindowStyle Hidden -ErrorAction Stop
-    if ($process.ExitCode -ne 0 -and (Test-SmokeRdpCredential $Target)) {
-        throw ('cmdkey credential cleanup failed with exit code ' + $process.ExitCode)
+function Restore-SmokeRdpCredential([string] $Target) {
+    Assert-SmokeRdpCredentialTarget $Target
+    if (-not [ChuziSmokeRdpCredentialOverrideV4]::IsActive()) {
+        throw 'RDP credential override is no longer active'
+    }
+    [ChuziSmokeRdpCredentialOverrideV4]::Restore($Target)
+}
+
+function Test-SmokeRdpCredentialHelper {
+    $target = $null
+    $secondTarget = $null
+    $originalPassword = $null
+    $replacementPassword = $null
+    $externalPassword = $null
+    $originalCreated = $false
+    $externalCreated = $false
+    $cleanupErrors = [System.Collections.Generic.List[string]]::new()
+    try {
+        $target = 'TERMSRV/' + (Get-LocalRdpTarget '')
+        Assert-SmokeRdpCredentialTarget $target
+        if ([ChuziSmokeCredentialStoreV2]::Exists($target)) {
+            throw 'credential helper test target became occupied'
+        }
+        $originalUser = $env:COMPUTERNAME + '\CzSmokeOriginal'
+        $replacementUser = $env:COMPUTERNAME + '\CzSmokeReplacement'
+        $externalUser = $env:COMPUTERNAME + '\CzSmokeExternal'
+        $originalPassword = New-SmokePassword
+        $replacementPassword = New-SmokePassword
+        $externalPassword = New-SmokePassword
+
+        # Exercise controlled backup/restore of an existing target without exposing its blob.
+        [ChuziSmokeCredentialStoreV2]::Write($target, $originalUser, $originalPassword)
+        $originalCreated = $true
+        [ChuziSmokeRdpCredentialOverrideV4]::Write($target, $replacementUser, $replacementPassword)
+        if (-not [ChuziSmokeRdpCredentialOverrideV4]::UserNameMatches($target, $replacementUser)) {
+            throw 'credential helper write/read username check failed'
+        }
+        $collisionRejected = $false
+        try {
+            [ChuziSmokeRdpCredentialOverrideV4]::Write($target, $externalUser, $externalPassword)
+        } catch {
+            $collisionRejected = $true
+        }
+        if (-not $collisionRejected) {
+            throw 'credential helper accepted a second active override'
+        }
+        [ChuziSmokeRdpCredentialOverrideV4]::Restore($target)
+        if (-not [ChuziSmokeRdpCredentialOverrideV4]::UserNameMatches($target, $originalUser)) {
+            throw 'credential helper did not restore the existing target'
+        }
+        [ChuziSmokeCredentialStoreV2]::Delete($target)
+        $originalCreated = $false
+
+        # Exercise deletion of a newly created target and refusal to restore over an owner change.
+        $secondTarget = 'TERMSRV/' + (Get-LocalRdpTarget '')
+        Assert-SmokeRdpCredentialTarget $secondTarget
+        [ChuziSmokeRdpCredentialOverrideV4]::Write($secondTarget, $replacementUser, $replacementPassword)
+        [ChuziSmokeRdpCredentialOverrideV4]::Restore($secondTarget)
+        if ([ChuziSmokeCredentialStoreV2]::Exists($secondTarget)) {
+            throw 'credential helper did not delete a new target'
+        }
+        [ChuziSmokeRdpCredentialOverrideV4]::Write($secondTarget, $replacementUser, $replacementPassword)
+        [ChuziSmokeCredentialStoreV2]::Write($secondTarget, $externalUser, $externalPassword)
+        $externalCreated = $true
+        $ownershipRejected = $false
+        try {
+            [ChuziSmokeRdpCredentialOverrideV4]::Restore($secondTarget)
+        } catch {
+            $ownershipRejected = $true
+        }
+        if (-not $ownershipRejected -or
+            -not [ChuziSmokeRdpCredentialOverrideV4]::UserNameMatches($secondTarget, $externalUser)) {
+            throw 'credential helper ownership guard failed'
+        }
+        [ChuziSmokeCredentialStoreV2]::Delete($secondTarget)
+        $externalCreated = $false
+    } finally {
+        if (-not [string]::IsNullOrWhiteSpace($target)) {
+            try { [ChuziSmokeRdpCredentialOverrideV4]::Restore($target) } catch { $cleanupErrors.Add('target_restore_failed') }
+        }
+        if (-not [string]::IsNullOrWhiteSpace($secondTarget)) {
+            try { [ChuziSmokeRdpCredentialOverrideV4]::Restore($secondTarget) } catch { $cleanupErrors.Add('second_target_restore_failed') }
+        }
+        if ($originalCreated -and -not [string]::IsNullOrWhiteSpace($target)) {
+            try { [ChuziSmokeCredentialStoreV2]::Delete($target) } catch { $cleanupErrors.Add('target_delete_failed') }
+        }
+        if ($externalCreated -and -not [string]::IsNullOrWhiteSpace($secondTarget)) {
+            try { [ChuziSmokeCredentialStoreV2]::Delete($secondTarget) } catch { $cleanupErrors.Add('second_target_delete_failed') }
+        }
+        if ($null -ne $originalPassword) { $originalPassword.Dispose() }
+        if ($null -ne $replacementPassword) { $replacementPassword.Dispose() }
+        if ($null -ne $externalPassword) { $externalPassword.Dispose() }
+        if ($cleanupErrors.Count -gt 0) {
+            throw ('credential helper cleanup failed: ' + ($cleanupErrors -join ','))
+        }
     }
 }
 
@@ -1129,6 +1250,8 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
     Set-RdpFailurePhase 'password_generation'
     $password = New-SmokePassword
     try {
+        $existingCredentialUserName = [ChuziSmokeRdpCredentialOverrideV4]::ReadUserName($script:rdpCredentialTarget)
+        Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_BEFORE_PRESENT=' + (-not [string]::IsNullOrWhiteSpace($existingCredentialUserName)))
         Set-RdpFailurePhase 'user_create'
         if (Get-LocalUser -Name $Name -ErrorAction SilentlyContinue) {
             throw 'temporary smoke user already exists'
@@ -1138,10 +1261,10 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
         $rdpGroup = Get-LocalGroup -SID ([System.Security.Principal.SecurityIdentifier]::new('S-1-5-32-555')) -ErrorAction Stop
         Add-LocalGroupMember -Group $rdpGroup.Name -Member $Name -ErrorAction Stop
         Set-RdpFailurePhase 'credential_write'
-        $script:rdpCredentialOwned = $true
         $script:rdpCredentialUserName = $credentialUsername
         Set-SmokeRdpCredential $script:rdpCredentialTarget $credentialUsername $password
-        $credentialUsernameMatches = [ChuziSmokeRdpCredentialOverrideV3]::UserNameMatches($script:rdpCredentialTarget, $credentialUsername)
+        $script:rdpCredentialOwned = $true
+        $credentialUsernameMatches = [ChuziSmokeRdpCredentialOverrideV4]::UserNameMatches($script:rdpCredentialTarget, $credentialUsername)
         Write-RdpDiagnostic ('RDP_CREDENTIAL_USERNAME_MATCHES=' + $credentialUsernameMatches)
         Write-Host ('RDP DEBUG: credential_username_matches=' + $credentialUsernameMatches)
         if (-not $credentialUsernameMatches) {
@@ -1235,7 +1358,7 @@ function Start-LocalRdpSession([string] $Name, [string] $RuntimeRoot, [string] $
                 Capture-RdpDiagnostics 'session_shell_not_ready' $Name
                 throw 'PowerShell session shell did not report readiness'
             }
-            Remove-SmokeRdpCredential $script:rdpCredentialTarget
+            Restore-SmokeRdpCredential $script:rdpCredentialTarget
             $script:rdpCredentialOwned = $false
             Set-RdpFailurePhase 'complete'
             return
@@ -1620,13 +1743,25 @@ if ($ValidateOnly) {
     if ($null -eq $credentialStoreType -or $null -eq $credentialStoreType.GetMethod('Exists')) {
         throw 'RDP credential store helper contract validation failed'
     }
-    $credentialHelperType = 'ChuziSmokeRdpCredentialOverrideV3' -as [type]
+    $credentialHelperType = 'ChuziSmokeRdpCredentialOverrideV4' -as [type]
     if ($null -eq $credentialHelperType -or
         $null -eq $credentialHelperType.GetMethod('UserNameMatches') -or
-        $null -eq $credentialHelperType.GetMethod('ReadUserName') -or
-        $null -eq $credentialHelperType.GetMethod('Write') -or
-        $null -eq $credentialHelperType.GetMethod('Restore')) {
+            $null -eq $credentialHelperType.GetMethod('ReadUserName') -or
+            $null -eq $credentialHelperType.GetMethod('Write') -or
+            $null -eq $credentialHelperType.GetMethod('Restore') -or
+            $null -eq $credentialHelperType.GetMethod('IsActive')) {
         throw 'RDP credential override helper contract validation failed'
+    }
+    $scriptText = Get-Content -LiteralPath $PSCommandPath -Raw -ErrorAction Stop
+    $legacyConverterName = 'Convert-SmokeSecureString' + 'ToPlainText'
+    $legacyBstrName = 'SecureStringTo' + 'BSTR'
+    $legacyPtrName = 'PtrToString' + 'BSTR'
+    if ($scriptText.IndexOf($legacyConverterName, [System.StringComparison]::Ordinal) -ge 0 -or
+        $scriptText.IndexOf($legacyBstrName, [System.StringComparison]::Ordinal) -ge 0 -or
+        $scriptText.IndexOf($legacyPtrName, [System.StringComparison]::Ordinal) -ge 0 -or
+        $scriptText.IndexOf(('/' + 'pass'), [System.StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+        $scriptText -match 'Start-Process\s+-FilePath\s+\$cmdkey') {
+        throw 'RDP credential boundary still exposes password material'
     }
     Assert-NativeSmokeTaskSupport
     $profileEvidence = @(Get-SmokeRdpProfileLines 'loopback-target' 'smoke-user')
@@ -1640,6 +1775,7 @@ if ($ValidateOnly) {
     if (-not [string]::IsNullOrWhiteSpace($RdpProfileTemplatePath)) {
         [void](Get-LocalRdpTarget $RdpProfileTemplatePath)
     }
+    Test-SmokeRdpCredentialHelper
     Write-Host 'Windows job-pool smoke script validation passed'
     return
 }
@@ -1802,7 +1938,7 @@ try {
     }
     if ($script:rdpCredentialOwned) {
         try {
-            Remove-SmokeRdpCredential $script:rdpCredentialTarget
+            Restore-SmokeRdpCredential $script:rdpCredentialTarget
             $script:rdpCredentialOwned = $false
         } catch {
             $cleanupErrors.Add('rdp_credential_cleanup_failed')
