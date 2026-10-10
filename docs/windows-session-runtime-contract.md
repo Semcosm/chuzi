@@ -315,6 +315,8 @@ controlled login proof for the chosen identity combination and a regression
 probe for cold Profile, first login, logout, and re-login. Native Agent/browser
 checks remain pending and must still run scripts/test_windows_job_pool_smoke.ps1
 without the LocalRdp handoff shortcut.
+Credential Manager writes refuse an occupied target and cleanup verifies the
+run-owned username before deletion; an ownership change fails closed.
 
 Validation-only command (no user/session is created):
 

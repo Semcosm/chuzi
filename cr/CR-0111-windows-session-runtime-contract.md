@@ -77,6 +77,8 @@ controlled harness uses a run-scoped test signer and disposable local account;
 it is opt-in and removes the account, Profile, Credential Manager target,
 certificate trust, task, sessions, and runtime only when ownership checks pass.
 An ownership or cleanup mismatch fails closed and may require operator repair.
+Credential Manager writes refuse an occupied target and deletes verify the
+run-owned username before removal.
 Native RDP policy, certificate trust, helper registration, WTS privileges,
 Authenticode behavior, and Agent/worker readiness require the controlled
 Windows runner before production readiness can be claimed.

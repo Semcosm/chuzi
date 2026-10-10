@@ -101,6 +101,10 @@ public static class ChuziSessionProbeNativeV1
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CredWrite(ref NativeCredential credential, uint flags);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool CredRead(string targetName, uint type, uint flags, out IntPtr credential);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern void CredFree(IntPtr credential);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CredDelete(string targetName, uint type, uint flags);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcessWithLogonW(string userName, string domain, IntPtr password, uint logonFlags, string applicationName, IntPtr commandLine, uint creationFlags, IntPtr environment, string currentDirectory, ref StartupInfo startupInfo, out ProcessInformation processInformation);
@@ -109,6 +113,7 @@ public static class ChuziSessionProbeNativeV1
 
     public static void WriteCredential(string target, string user, SecureString password)
     {
+        if (CredentialExists(target)) throw new InvalidOperationException("credential target is occupied");
         IntPtr targetPtr = IntPtr.Zero, userPtr = IntPtr.Zero, passwordPtr = IntPtr.Zero;
         try
         {
@@ -125,8 +130,38 @@ public static class ChuziSessionProbeNativeV1
         }
     }
 
-    public static void DeleteCredential(string target)
+    private static bool CredentialExists(string target)
     {
+        IntPtr credential;
+        if (CredRead(target, 2, 0, out credential))
+        {
+            CredFree(credential);
+            return true;
+        }
+        int error = Marshal.GetLastWin32Error();
+        if (error == 1168) return false;
+        throw new Win32Exception(error);
+    }
+
+    public static void DeleteCredential(string target, string expectedUser)
+    {
+        IntPtr credential;
+        if (CredRead(target, 2, 0, out credential))
+        {
+            try
+            {
+                NativeCredential value = (NativeCredential)Marshal.PtrToStructure(credential, typeof(NativeCredential));
+                string actualUser = value.UserName == IntPtr.Zero ? String.Empty : (Marshal.PtrToStringUni(value.UserName) ?? String.Empty);
+                if (!String.Equals(actualUser, expectedUser, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("credential ownership changed");
+            }
+            finally { CredFree(credential); }
+        }
+        else
+        {
+            int readError = Marshal.GetLastWin32Error();
+            if (readError == 1168) return;
+            throw new Win32Exception(readError);
+        }
         if (!CredDelete(target, 2, 0))
         {
             int error = Marshal.GetLastWin32Error();
@@ -395,7 +430,7 @@ try {
     $password.Dispose()
     $password = New-ProbePassword
     Set-LocalUser -Name $userName -Password $password
-    [ChuziSessionProbeNativeV1]::DeleteCredential($credentialTarget)
+    [ChuziSessionProbeNativeV1]::DeleteCredential($credentialTarget, $userName)
     [ChuziSessionProbeNativeV1]::WriteCredential($credentialTarget, $userName, $password)
     $second = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\mstsc.exe') -ArgumentList ('"' + $rdpPath + '"') -PassThru
     $mstsc += $second
@@ -415,7 +450,7 @@ finally {
     foreach ($process in $mstsc) { try { if (-not $process.HasExited) { $process.CloseMainWindow() | Out-Null; $process.WaitForExit(5000) } } catch {} }
     if ($secondSessionID -gt 0) { & logoff.exe $secondSessionID 1>$null 2>$null }
     if ($firstSessionID -gt 0) { & logoff.exe $firstSessionID 1>$null 2>$null }
-    if ($credentialWritten -and $credentialTarget) { try { [ChuziSessionProbeNativeV1]::DeleteCredential($credentialTarget) } catch {} }
+    if ($credentialWritten -and $credentialTarget) { try { [ChuziSessionProbeNativeV1]::DeleteCredential($credentialTarget, $userName) } catch { $cleanupFailed = $true } }
     if ($userName) {
         try {
             Remove-OwnedProfile $userSID $profilePath
