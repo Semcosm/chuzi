@@ -80,6 +80,8 @@ certificate trust, task, sessions, and runtime only when ownership checks pass.
 An ownership or cleanup mismatch fails closed and may require operator repair.
 Credential Manager writes refuse an occupied target and deletes verify the
 run-owned username before removal.
+The private run root grants the disposable SID traversal only, with read/execute
+on the signed shell file; manifests and reports remain private.
 Native RDP policy, certificate trust, helper registration, WTS privileges,
 Authenticode behavior, and Agent/worker readiness require the controlled
 Windows runner before production readiness can be claimed.
