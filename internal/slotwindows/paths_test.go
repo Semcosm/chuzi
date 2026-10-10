@@ -57,11 +57,17 @@ func TestDeriveUsernameUsesInstallationScopeAndOrdinal(t *testing.T) {
 	if len(one) > 20 || !managedUsernamePattern.MatchString(one) {
 		t.Fatalf("invalid derived username %q", one)
 	}
+	if repeat, err := base.DeriveUsername("pool-a-001", 1); err != nil || repeat != one {
+		t.Fatalf("identity derivation was not repeatable: %q, %v", repeat, err)
+	}
 	if other, err := (Options{DataDir: filepath.Join(t.TempDir(), "two"), UserPrefix: base.UserPrefix, EnvironmentID: base.EnvironmentID, Version: base.Version}).DeriveUsername("pool-a-001", 1); err != nil || other == one {
 		t.Fatalf("installation scopes collided: %q, %v", other, err)
 	}
 	if other, err := base.DeriveUsername("pool-a-002", 2); err != nil || other == one {
 		t.Fatalf("slot ordinals collided: %q, %v", other, err)
+	}
+	if other, err := base.DeriveUsername("pool-a-001", 2); err != nil || other == one {
+		t.Fatalf("same pool ordinals collided: %q, %v", other, err)
 	}
 }
 
