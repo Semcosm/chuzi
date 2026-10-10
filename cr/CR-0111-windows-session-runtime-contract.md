@@ -1,22 +1,23 @@
 # CR-0111: define the Windows slot session runtime contract
 
 Base: main
-Head or Range: 87ccda2a10bd1a26d9cf219bd36b740ce9f1b980
+Head or Range: 01af5bb6704fd7ee5d508c9710b4b95709c57749
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): define slot session runtime contract
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 9d8de9352a2a14429a6b1039bd91f26683a94ff1
-Head OID: 87ccda2a10bd1a26d9cf219bd36b740ce9f1b980
+Head OID: 01af5bb6704fd7ee5d508c9710b4b95709c57749
 Integrated Result: pending
 
 ## Summary
 
-Implementation is recorded in signed commit
-87ccda2a10bd1a26d9cf219bd36b740ce9f1b980 on
+Implementation is recorded in signed commits
+87ccda2a10bd1a26d9cf219bd36b740ce9f1b980 and
+01af5bb6704fd7ee5d508c9710b4b95709c57749 on
 feat/windows-slot-session-ui. It adds the platform-neutral
 `internal/sessionruntime` contract and pure tests, the redacted Windows SYSTEM
 WTS probe at `cmd/session-login-probe`, the controlled PowerShell login/re-login
@@ -86,8 +87,8 @@ Windows runner before production readiness can be claimed.
 ## Rollback
 
 Stop any opt-in probe and wait for its owned sessions and cleanup to finish.
-Revert signed implementation commit
-87ccda2a10bd1a26d9cf219bd36b740ce9f1b980 while preserving existing bbolt
+Revert signed implementation commits through
+01af5bb6704fd7ee5d508c9710b4b95709c57749 while preserving existing bbolt
 state, Profiles, account credentials, and ownership records. Do not manually
 delete a user, Profile, Credential Manager entry, certificate, or session whose
 ownership cannot be verified; quarantine it for explicit operator recovery.
