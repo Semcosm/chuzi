@@ -189,6 +189,8 @@ scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和
 agent 链路。该模式创建本轮随机命名的普通本地用户，
 用系统随机密码，并把凭据仅短暂写入当前交互用户的 session-scoped Windows Credential
 Manager；密码、token 和 Profile 原始路径不写入普通日志或 Core/Matrix DTO。`-LocalRdp`
+凭据写入使用受控的 `CredWriteW` native helper，密码不会进入 `cmdkey` 参数、环境变量、RDP profile 或临时明文；
+native buffer 在调用返回后清零。
 解析 `cmdkey /list` 中已占用的 `TERMSRV/127.0.0.x`，从 `127.0.0.2` 到
 `127.0.0.254` 选择最低的未占用 loopback alias；随后在 smoke
 目录生成一次性 profile。profile 固定保留已验证的 `prompt for credentials`、
@@ -212,9 +214,12 @@ Node worker 和 browser handshake。
 `rdp-diagnostics.log`；其中记录 `mstsc` 启动阶段、Credential Manager 身份匹配结果、WTS
 session 和可用的 RDP/Security 事件，便于区分凭据选择、loopback console 重连和
 目标登录失败。
+Credential Manager 的已有 target 只通过 helper 的受控备份/恢复路径处理；清理前会核对本轮用户名和类型，
+无法证明仍归本轮的记录会保留并报告清理错误。
 
 Windows hosted preflight 使用 -ValidateOnly 解析 smoke 脚本并编译 Credential Manager
-与 WTS API helper，不创建用户、session 或临时目录。
+与 WTS API helper；它不创建用户、session 或临时目录，但会写入并清理 disposable
+Credential Manager target 以验证 ownership guard。
 
 -LocalRdp 是本机诊断路径，不启动或模拟 session broker，也不验证 broker pipe
 ACL、协议 ownership 生命周期或生产 RDP authorizer；不能单独作为阶段 4 生产验收。
