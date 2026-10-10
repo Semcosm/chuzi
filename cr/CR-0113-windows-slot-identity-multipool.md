@@ -1,7 +1,7 @@
 # CR-0113: isolate Windows slot identities across pools
 
 Base: main
-Head or Range: ce94cb4ba62717bfc1c35577fcafb3501275420b
+Head or Range: 51470a53a2430ccbe577e0906b56379314fd5584
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): isolate slot identities across pools
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 1705e425d1234b355079a3c6bec539dd4b22cf46
-Head OID: ce94cb4ba62717bfc1c35577fcafb3501275420b
+Head OID: 51470a53a2430ccbe577e0906b56379314fd5584
 Integrated Result: pending
 
 ## Summary
@@ -79,8 +79,9 @@ None
 
 ## Handoff
 
-- Implementation full SHAs: `ef57df4f724a00a0a357be8daa00bb4f6bed8bb1` and
-  `ce94cb4ba62717bfc1c35577fcafb3501275420b`.
+- Implementation full SHAs: `ef57df4f724a00a0a357be8daa00bb4f6bed8bb1`,
+  `ce94cb4ba62717bfc1c35577fcafb3501275420b`, and
+  `51470a53a2430ccbe577e0906b56379314fd5584`.
 - Identity contract: `ManagedIdentityAlgorithm = sha256-scope-slot-v2`;
   `UserPrefix + lower_hex(SHA256(algorithm NUL scope NUL slot_id NUL ordinal))[0:8]`.
 - Scope: canonical absolute `DataDir`, existing symlinks resolved, lower-cased
