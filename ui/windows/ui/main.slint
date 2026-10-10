@@ -130,6 +130,7 @@ export component MainWindow inherits Window {
     callback job-pool-apply(string, string, string, int, int);
     callback job-pool-action(string, string);
     callback job-pool-operation(string);
+    callback refresh-operation(string);
     callback environment-operation(string, string, string, string);
     callback environment-operation-poll(string);
     callback operation-confirmed();
@@ -557,6 +558,25 @@ export component MainWindow inherits Window {
                             Button { text: root.job-pool-phase == "loading" ? "Refreshing…" : "Refresh"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
                         }
                         Text { text: "Capacity, environment readiness, reconcile state, and safe lifecycle controls."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
+                        if root.operation-phase != "idle": Rectangle {
+                            background: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" ? ChuziTheme.status-danger.with-alpha(0.10) : ChuziTheme.accent-soft;
+                            border-color: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" ? ChuziTheme.status-danger : ChuziTheme.accent.with-alpha(0.35);
+                            border-width: 1px;
+                            border-radius: ChuziTheme.radius-small;
+                            height: 132px;
+                            VerticalBox {
+                                padding: ChuziTheme.space-3;
+                                spacing: 2px;
+                                HorizontalBox { spacing: ChuziTheme.space-2; Text { text: "Operation " + root.operation-id; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-caption; font-weight: 600; horizontal-stretch: 1; overflow: elide; } Text { text: root.operation-phase; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; } }
+                                Text { text: root.operation-state + "  ·  " + root.operation-detail; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 1; }
+                                HorizontalBox {
+                                    spacing: ChuziTheme.space-2;
+                                    height: ChuziTheme.control-height;
+                                    if root.operation-id != "": Button { text: "Refresh operation"; enabled: !root.busy && root.operation-phase != "submitting"; clicked => { root.refresh-operation(root.operation-id); } }
+                                    if root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" || root.operation-phase == "service restarted" || root.operation-phase == "polling": Button { text: "Refresh projection"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
+                                }
+                            }
+                        }
                         if root.job-pool-rows.length == 0: Text { text: root.job-pool-phase == "loading" ? "Loading pools…" : "No job pools are configured."; color: ChuziTheme.text-tertiary; font-size: ChuziTheme.type-body; vertical-stretch: 0; }
                         for pool in root.job-pool-rows: ChuziJobPoolCard {
                             item: pool;
@@ -574,27 +594,12 @@ export component MainWindow inherits Window {
                                 } else {
                                     root.pending-operation = kind;
                                     root.pending-pool-id = value;
-                                    root.operation-confirmation-title = kind == "drain" ? "Drain this pool?" : kind == "delete" ? "Delete this pool?" : "Resume this pool?";
-                                    root.operation-confirmation-message = kind == "drain" ? "New work will stop while leased slots finish safely." : kind == "delete" ? "New work will stop. The pool and its managed slots will be removed after leases and resources finish cleanup." : "The pool will accept new work after reconciliation.";
+                                    root.operation-confirmation-title = kind == "start-slot-session" ? "Start a basic session?" : kind == "drain" ? "Drain this pool?" : kind == "delete" ? "Delete this pool?" : "Resume this pool?";
+                                    root.operation-confirmation-message = kind == "start-slot-session" ? "Core will choose the first available execution slot and report its redacted readiness." : kind == "drain" ? "New work will stop while leased slots finish safely." : kind == "delete" ? "New work will stop. The pool and its managed slots will be removed after leases and resources finish cleanup." : "The pool will accept new work after reconciliation.";
                                     root.operation-confirmation-visible = true;
                                 }
                             }
                             vertical-stretch: 0;
-                        }
-                        if root.operation-phase != "idle": Rectangle {
-                            background: root.operation-phase == "failed" || root.operation-phase == "stale revision" ? ChuziTheme.status-danger.with-alpha(0.10) : ChuziTheme.accent-soft;
-                            border-color: root.operation-phase == "failed" || root.operation-phase == "stale revision" ? ChuziTheme.status-danger : ChuziTheme.accent.with-alpha(0.35);
-                            border-width: 1px;
-                            border-radius: ChuziTheme.radius-small;
-                            height: 92px;
-                            VerticalBox {
-                                padding: ChuziTheme.space-3;
-                                spacing: 2px;
-                                HorizontalBox { spacing: ChuziTheme.space-2; Text { text: "Operation " + root.operation-id; color: ChuziTheme.text-primary; font-size: ChuziTheme.type-caption; font-weight: 600; horizontal-stretch: 1; overflow: elide; } Text { text: root.operation-phase; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; } }
-                                Text { text: root.operation-state + "  ·  " + root.operation-detail; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-caption; wrap: word-wrap; vertical-stretch: 1; }
-                                if root.operation-phase == "polling": Button { text: "Refresh operation"; enabled: !root.busy; clicked => { root.job-pool-operation(root.operation-id); } }
-                                if root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "service restarted": Button { text: "Refresh projection"; clicked => { root.refresh-job-pools(); } }
-                            }
                         }
                     }
                 }

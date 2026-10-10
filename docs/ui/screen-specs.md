@@ -39,6 +39,17 @@ health_check, committing, applied, or failed) and maps stable failure classes
 to bounded recovery text. A stale revision refreshes the projection before
 retry.
 
+Each pool card also exposes Start basic session. It confirms the intent, submits
+the current pool revision and an idempotency key through launcher/Core, and lets
+Core choose the first available execution slot. The operation panel shows slot
+ordinal, session state, agent readiness, environment generation, and idempotent
+result while polling requested, provisioning, ready, or failed. This execution
+slot session remains separate from the business request Sessions list.
+The operation panel appears above the pool cards. Refresh operation remains
+available after ready or failed results, preserves the initial idempotent
+marker for the same operation, and uses the slot-session polling method.
+Controls remain disabled while a background operation owns the busy guard.
+
 Environment cards and the environment form expose install, verify, trust,
 enable, disable, health, upgrade, and rollback. Package input is an opaque
 service-owned reference; local paths, commands, executable names, credentials,

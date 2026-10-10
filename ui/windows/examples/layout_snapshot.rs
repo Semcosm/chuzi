@@ -68,6 +68,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     window.set_operation_id("envop-package-0001".into());
                     window.set_operation_state("failed".into());
                     window.set_operation_detail("failed · package_unavailable".into());
+                } else if session_state == "slot-session-normal" {
+                    window.set_operation_kind("slot-session".into());
+                    window.set_operation_phase("requested".into());
+                    window.set_operation_id("slotop-snapshot-0000".into());
+                    window.set_operation_state("requested".into());
+                    window.set_operation_detail(
+                        "A basic execution slot session can be started from this pool card.".into(),
+                    );
+                } else if session_state == "slot-session-provisioning" {
+                    window.set_operation_kind("slot-session".into());
+                    window.set_operation_phase("polling".into());
+                    window.set_operation_id("slotop-snapshot-0001".into());
+                    window.set_operation_state("provisioning".into());
+                    window.set_operation_detail("slot #1 · status provisioning · session provisioning · agent not ready · environment generation 7".into());
+                } else if session_state == "slot-session-ready" {
+                    window.set_operation_kind("slot-session".into());
+                    window.set_operation_phase("ready".into());
+                    window.set_operation_id("slotop-snapshot-0002".into());
+                    window.set_operation_state("ready".into());
+                    window.set_operation_detail("slot #1 · status ready · session ready · agent ready · environment generation 7 · idempotent".into());
+                } else if session_state == "slot-session-failed" {
+                    window.set_operation_kind("slot-session".into());
+                    window.set_operation_phase("failed".into());
+                    window.set_operation_id("slotop-snapshot-0003".into());
+                    window.set_operation_state("failed".into());
+                    window.set_operation_detail("failed · slot_quarantined · slot #1 · status quarantined · session quarantined · agent not ready · environment generation 7".into());
+                } else if session_state == "slot-session-unavailable" {
+                    window.set_operation_kind("slot-session".into());
+                    window.set_operation_phase("slot unavailable".into());
+                    window.set_operation_id("slotop-snapshot-0004".into());
+                    window.set_operation_state("failed".into());
+                    window.set_operation_detail("No available execution slot was found in this pool. Refresh the pool and try again.".into());
                 }
                 if matches!(
                     session_state.as_str(),
@@ -299,6 +331,11 @@ fn parse_args() -> Result<(PathBuf, Vec<(u32, u32)>, String, String), Box<dyn st
         "operation-polling",
         "stale-revision",
         "package-unavailable",
+        "slot-session-normal",
+        "slot-session-provisioning",
+        "slot-session-ready",
+        "slot-session-failed",
+        "slot-session-unavailable",
         "unavailable-core",
         "narrow-confirmation",
         "delete-confirmation",
@@ -341,6 +378,11 @@ fn is_settings_fixture(state: &str) -> bool {
             | "operation-polling"
             | "stale-revision"
             | "package-unavailable"
+            | "slot-session-normal"
+            | "slot-session-provisioning"
+            | "slot-session-ready"
+            | "slot-session-failed"
+            | "slot-session-unavailable"
             | "unavailable-core"
             | "narrow-confirmation"
             | "delete-confirmation"
@@ -350,7 +392,18 @@ fn is_settings_fixture(state: &str) -> bool {
 fn job_pool_fixture_for(state: &str) -> Vec<JobPoolRowData> {
     match state {
         "pool-empty" => Vec::new(),
-        "pool-single" => job_pool_fixture().into_iter().take(1).collect(),
+        "pool-single"
+        | "slot-session-normal"
+        | "slot-session-ready"
+        | "slot-session-unavailable" => job_pool_fixture().into_iter().take(1).collect(),
+        "slot-session-provisioning" => job_pool_fixture()
+            .into_iter()
+            .filter(|row| row.reconcile_state == "provisioning")
+            .collect(),
+        "slot-session-failed" => job_pool_fixture()
+            .into_iter()
+            .filter(|row| row.pool_id == "pool-quarantined")
+            .collect(),
         "pool-provisioning" => job_pool_fixture()
             .into_iter()
             .filter(|row| row.reconcile_state == "provisioning")

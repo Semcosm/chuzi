@@ -38,7 +38,7 @@ export component ChuziJobPoolCard inherits Rectangle {
     callback action(string, string);
     callback selected(string);
 
-    height: 230px;
+    height: 300px;
     background: root.item.selected ? ChuziTheme.accent-soft : ChuziTheme.surface-background;
     border-color: root.item.selected ? ChuziTheme.accent.with-alpha(0.45) : ChuziTheme.separator;
     border-width: 1px;
@@ -75,6 +75,11 @@ export component ChuziJobPoolCard inherits Rectangle {
             spacing: ChuziTheme.space-2;
             vertical-stretch: 0;
             Text { text: "Revision " + root.item.config_revision; color: ChuziTheme.text-tertiary; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; }
+            ChuziActionButton { label: "Start basic session"; enabled: !root.busy; width: 132px; pressed => { root.action(root.item.pool_id, "start-slot-session"); } }
+        }
+        HorizontalBox {
+            spacing: ChuziTheme.space-2;
+            vertical-stretch: 0;
             if root.item.operation_id != "": ChuziActionButton { label: "Operation"; enabled: !root.busy; width: 88px; pressed => { root.action(root.item.operation_id, "operation"); } }
             if root.item.desired_state == "draining": ChuziActionButton { label: "Resume"; enabled: !root.busy; width: 82px; pressed => { root.action(root.item.pool_id, "resume"); } }
             if root.item.desired_state != "draining": ChuziActionButton { label: "Drain"; enabled: !root.busy; destructive: true; width: 74px; pressed => { root.action(root.item.pool_id, "drain"); } }

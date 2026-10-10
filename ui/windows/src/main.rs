@@ -8,8 +8,8 @@ use desktop_rdp::RdpHost;
 use models::{
     default_theme, BehaviorSettings, BrowserView, CoreEnvironment, CoreEnvironmentList,
     CoreEnvironmentOperation, CoreJobPool, CoreJobPoolList, CoreJobPoolOperation, CoreRequest,
-    CoreRequestList, CoreStatus, DiagnosticCoreStatus, DiagnosticEvent, DiagnosticSnapshot,
-    UiPreferences,
+    CoreRequestList, CoreSlotSessionOperation, CoreStatus, DiagnosticCoreStatus, DiagnosticEvent,
+    DiagnosticSnapshot, UiPreferences,
 };
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
@@ -33,6 +33,7 @@ struct AppState {
     payload_root: PathBuf,
     release_index_url: Option<String>,
     busy: bool,
+    slot_session_retry: Mutex<Option<(String, bool)>>,
     settings: BehaviorSettings,
     session_view_model: SessionViewModel,
     workspace_host: RdpHost,
@@ -95,6 +96,7 @@ impl AppState {
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty()),
             busy: false,
+            slot_session_retry: Mutex::new(None),
             settings: BehaviorSettings {
                 auto_check_updates: false,
                 auto_repair: false,
@@ -335,6 +337,8 @@ enum CoreMethod {
     ResumeJobPool,
     DeleteJobPool,
     GetJobPoolOperation,
+    StartSlotSession,
+    GetSlotSessionOperation,
     ListEnvironments,
     EnvironmentOperation,
     GetEnvironmentOperation,
@@ -356,6 +360,8 @@ impl CoreMethod {
             Self::ResumeJobPool => "resume_job_pool",
             Self::DeleteJobPool => "delete_job_pool",
             Self::GetJobPoolOperation => "get_job_pool_operation",
+            Self::StartSlotSession => "start_slot_session",
+            Self::GetSlotSessionOperation => "get_slot_session_operation",
             Self::ListEnvironments => "list_environments",
             Self::EnvironmentOperation => "environment_operation",
             Self::GetEnvironmentOperation => "get_environment_operation",
@@ -489,6 +495,38 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     });
     let weak = ui.as_weak();
     let operation_state = Arc::clone(&state);
+    ui.on_refresh_operation(move |operation_id| {
+        if weak
+            .upgrade()
+            .is_some_and(|window| window.get_operation_kind() == "environment")
+        {
+            poll_environment_operation(
+                &weak,
+                Arc::clone(&operation_state),
+                operation_id.to_string(),
+            );
+            return;
+        }
+        let is_slot_session = weak
+            .upgrade()
+            .map(|window| window.get_operation_kind() == "slot-session")
+            .unwrap_or(false);
+        if is_slot_session {
+            poll_slot_session_operation(
+                &weak,
+                Arc::clone(&operation_state),
+                operation_id.to_string(),
+            );
+        } else {
+            poll_job_pool_operation(
+                &weak,
+                Arc::clone(&operation_state),
+                operation_id.to_string(),
+            );
+        }
+    });
+    let weak = ui.as_weak();
+    let operation_state = Arc::clone(&state);
     ui.on_environment_operation(move |environment_id, version, operation, package_ref| {
         submit_environment_operation(
             &weak,
@@ -542,6 +580,9 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             ),
             "drain" | "resume" | "delete" => {
                 submit_job_pool_action(&weak, Arc::clone(&operation_state), pool_id, pending)
+            }
+            "start-slot-session" => {
+                submit_slot_session(&weak, Arc::clone(&operation_state), pool_id)
             }
             value if value.starts_with("environment:") => submit_environment_operation(
                 &weak,
@@ -1966,6 +2007,63 @@ fn submit_job_pool_action(
     });
 }
 
+fn submit_slot_session(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>, pool_id: String) {
+    let pool_id_for_key = pool_id.clone();
+    start_operation(
+        ui,
+        state,
+        "slot-session",
+        pool_id,
+        move |state| {
+            validate_text(&pool_id_for_key, "pool ID")?;
+            let revision = pool_revision(state, &pool_id_for_key)?;
+            let key = idempotency_key("start_slot_session", &pool_id_for_key, revision, "");
+            let value = core_call(
+                state,
+                CoreMethod::StartSlotSession,
+                json!({
+                    "pool_id": pool_id_for_key,
+                    "expected_revision": revision,
+                    "idempotency_key": key,
+                    "actor": "windows-ui"
+                }),
+            )
+            .map_err(|error| {
+                if error.contains("chuzi core: unavailable")
+                    && core_status(state)
+                        .map(|status| status.ready)
+                        .unwrap_or(false)
+                {
+                    "slot_unavailable".to_owned()
+                } else {
+                    error
+                }
+            })?;
+            slot_session_projection(state, value.clone())?;
+            Ok(value)
+        },
+        move |state, operation_id| {
+            let value = core_call(
+                state,
+                CoreMethod::GetSlotSessionOperation,
+                json!({"operation_id": operation_id}),
+            )
+            .map_err(|error| {
+                if error.contains("chuzi core: unavailable")
+                    && core_status(state)
+                        .map(|status| status.ready)
+                        .unwrap_or(false)
+                {
+                    "session_unavailable".to_owned()
+                } else {
+                    error
+                }
+            })?;
+            slot_session_projection(state, value)
+        },
+    );
+}
+
 fn start_job_pool_operation<F>(
     ui: &slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
@@ -1974,23 +2072,30 @@ fn start_job_pool_operation<F>(
 ) where
     F: FnOnce(&AppState) -> Result<Value, String> + Send + 'static,
 {
-    start_operation(ui, state, pool_id, request, |state, operation_id| {
-        let value = core_call(
-            state,
-            CoreMethod::GetJobPoolOperation,
-            json!({"operation_id": operation_id}),
-        )?;
-        decode_job_pool_operation(value)
-            .map_err(|_| "invalid_operation_projection".to_owned())
-            .map(|operation| {
-                (
-                    operation.state,
-                    operation.operation_id,
-                    operation.failure_code,
-                    operation.result,
-                )
-            })
-    });
+    start_operation(
+        ui,
+        state,
+        "job-pool",
+        pool_id,
+        request,
+        |state, operation_id| {
+            let value = core_call(
+                state,
+                CoreMethod::GetJobPoolOperation,
+                json!({"operation_id": operation_id}),
+            )?;
+            decode_job_pool_operation(value)
+                .map_err(|_| "invalid_operation_projection".to_owned())
+                .map(|operation| {
+                    (
+                        operation.state,
+                        operation.operation_id,
+                        operation.failure_code,
+                        operation.result,
+                    )
+                })
+        },
+    );
 }
 
 fn poll_job_pool_operation(
@@ -1998,23 +2103,61 @@ fn poll_job_pool_operation(
     state: Arc<Mutex<AppState>>,
     operation_id: String,
 ) {
-    start_operation_with_id(ui, state, operation_id, |state, operation_id| {
-        let value = core_call(
-            state,
-            CoreMethod::GetJobPoolOperation,
-            json!({"operation_id": operation_id}),
-        )?;
-        decode_job_pool_operation(value)
-            .map_err(|_| "invalid_operation_projection".to_owned())
-            .map(|operation| {
-                (
-                    operation.state,
-                    operation.operation_id,
-                    operation.failure_code,
-                    operation.result,
-                )
-            })
-    });
+    start_operation_with_id(
+        ui,
+        state,
+        "job-pool",
+        operation_id,
+        |state, operation_id| {
+            let value = core_call(
+                state,
+                CoreMethod::GetJobPoolOperation,
+                json!({"operation_id": operation_id}),
+            )?;
+            decode_job_pool_operation(value)
+                .map_err(|_| "invalid_operation_projection".to_owned())
+                .map(|operation| {
+                    (
+                        operation.state,
+                        operation.operation_id,
+                        operation.failure_code,
+                        operation.result,
+                    )
+                })
+        },
+    );
+}
+
+fn poll_slot_session_operation(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    operation_id: String,
+) {
+    start_operation_with_id(
+        ui,
+        state,
+        "slot-session",
+        operation_id,
+        |state, operation_id| {
+            let value = core_call(
+                state,
+                CoreMethod::GetSlotSessionOperation,
+                json!({"operation_id": operation_id}),
+            )
+            .map_err(|error| {
+                if error.contains("chuzi core: unavailable")
+                    && core_status(state)
+                        .map(|status| status.ready)
+                        .unwrap_or(false)
+                {
+                    "session_unavailable".to_owned()
+                } else {
+                    error
+                }
+            })?;
+            slot_session_projection(state, value)
+        },
+    );
 }
 
 fn submit_environment_operation(
@@ -2102,23 +2245,30 @@ fn start_environment_operation<F>(
 ) where
     F: FnOnce(&AppState) -> Result<Value, String> + Send + 'static,
 {
-    start_operation(ui, state, subject, request, |state, operation_id| {
-        let value = core_call(
-            state,
-            CoreMethod::GetEnvironmentOperation,
-            json!({"operation_id": operation_id}),
-        )?;
-        decode_environment_operation(value)
-            .map_err(|_| "invalid_operation_projection".to_owned())
-            .map(|operation| {
-                (
-                    operation.state,
-                    operation.operation_id,
-                    operation.failure_code,
-                    String::new(),
-                )
-            })
-    });
+    start_operation(
+        ui,
+        state,
+        "environment",
+        subject,
+        request,
+        |state, operation_id| {
+            let value = core_call(
+                state,
+                CoreMethod::GetEnvironmentOperation,
+                json!({"operation_id": operation_id}),
+            )?;
+            decode_environment_operation(value)
+                .map_err(|_| "invalid_operation_projection".to_owned())
+                .map(|operation| {
+                    (
+                        operation.state,
+                        operation.operation_id,
+                        operation.failure_code,
+                        String::new(),
+                    )
+                })
+        },
+    );
 }
 
 fn poll_environment_operation(
@@ -2126,27 +2276,120 @@ fn poll_environment_operation(
     state: Arc<Mutex<AppState>>,
     operation_id: String,
 ) {
-    start_operation_with_id(ui, state, operation_id, |state, operation_id| {
-        let value = core_call(
-            state,
-            CoreMethod::GetEnvironmentOperation,
-            json!({"operation_id": operation_id}),
-        )?;
-        decode_environment_operation(value)
-            .map_err(|_| "invalid_operation_projection".to_owned())
-            .map(|operation| {
-                (
-                    operation.state,
-                    operation.operation_id,
-                    operation.failure_code,
-                    String::new(),
-                )
-            })
-    });
+    start_operation_with_id(
+        ui,
+        state,
+        "environment",
+        operation_id,
+        |state, operation_id| {
+            let value = core_call(
+                state,
+                CoreMethod::GetEnvironmentOperation,
+                json!({"operation_id": operation_id}),
+            )?;
+            decode_environment_operation(value)
+                .map_err(|_| "invalid_operation_projection".to_owned())
+                .map(|operation| {
+                    (
+                        operation.state,
+                        operation.operation_id,
+                        operation.failure_code,
+                        String::new(),
+                    )
+                })
+        },
+    );
 }
 
 fn decode_job_pool_operation(value: Value) -> Result<CoreJobPoolOperation, serde_json::Error> {
     serde_json::from_value(value.get("operation").cloned().unwrap_or(Value::Null))
+}
+
+fn decode_slot_session_operation(
+    value: Value,
+) -> Result<CoreSlotSessionOperation, serde_json::Error> {
+    let mut operation: CoreSlotSessionOperation =
+        serde_json::from_value(value.get("operation").cloned().unwrap_or(Value::Null))?;
+    if !matches!(
+        operation.state.as_str(),
+        "requested" | "provisioning" | "ready" | "failed" | "cancelled"
+    ) {
+        operation.state = "failed".to_owned();
+        operation.failure_code = "invalid_operation_projection".to_owned();
+    }
+    if !matches!(
+        operation.failure_code.as_str(),
+        "" | "slot_quarantined"
+            | "slot_not_found"
+            | "slot_unavailable"
+            | "session_unavailable"
+            | "stale_revision"
+            | "timeout"
+            | "invalid_operation_projection"
+    ) {
+        operation.failure_code = "session_failed".to_owned();
+    }
+    Ok(operation)
+}
+
+fn slot_session_projection(
+    state: &AppState,
+    value: Value,
+) -> Result<(String, String, String, String), String> {
+    let operation = decode_slot_session_operation(value)
+        .map_err(|_| "invalid_operation_projection".to_owned())?;
+    let mut retry = state.slot_session_retry.lock().unwrap();
+    let idempotent = operation.idempotent
+        || retry
+            .as_ref()
+            .is_some_and(|(id, repeated)| id == &operation.operation_id && *repeated);
+    *retry = Some((operation.operation_id.clone(), idempotent));
+    Ok((
+        operation.state.clone(),
+        operation.operation_id.clone(),
+        operation.failure_code.clone(),
+        format_slot_session_detail(&operation, idempotent),
+    ))
+}
+
+fn redacted_slot_state(value: &str) -> &str {
+    match value {
+        "unprovisioned" | "provisioning" | "ready" | "leased" | "quarantined" | "draining"
+        | "retiring" | "deleted" => value,
+        _ => "unknown",
+    }
+}
+
+fn format_slot_session_detail(
+    operation: &CoreSlotSessionOperation,
+    initial_idempotent: bool,
+) -> String {
+    let status = redacted_slot_state(&operation.status.status);
+    let session_state = redacted_slot_state(&operation.status.session_state);
+    let agent = if operation.status.agent_ready {
+        "ready"
+    } else {
+        "not ready"
+    };
+    let mut detail = format!(
+        "slot #{} · status {} · session {} · agent {} · environment generation {}",
+        operation.ordinal, status, session_state, agent, operation.environment_generation,
+    );
+    if operation.idempotent || initial_idempotent {
+        detail.push_str(" · idempotent");
+    }
+    detail
+}
+
+fn set_operation_kind(ui: &slint::Weak<MainWindow>, kind: &str) {
+    let weak = ui.clone();
+    let kind = kind.to_owned();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(window) = weak.upgrade() {
+            window.set_operation_kind(kind.into());
+            window.set_busy(true);
+        }
+    });
 }
 
 fn decode_environment_operation(
@@ -2158,6 +2401,7 @@ fn decode_environment_operation(
 fn start_operation<F, P>(
     ui: &slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
+    kind: &str,
     subject: String,
     request: F,
     poll: P,
@@ -2177,6 +2421,7 @@ fn start_operation<F, P>(
         }
         guard.busy = true;
     }
+    set_operation_kind(ui, kind);
     set_operation_progress(
         &weak,
         "submitting",
@@ -2205,6 +2450,7 @@ fn start_operation<F, P>(
 fn start_operation_with_id<P>(
     ui: &slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
+    kind: &str,
     operation_id: String,
     poll: P,
 ) where
@@ -2222,6 +2468,7 @@ fn start_operation_with_id<P>(
         }
         guard.busy = true;
     }
+    set_operation_kind(ui, kind);
     set_operation_progress(
         &weak,
         "polling",
@@ -2281,10 +2528,16 @@ where
 }
 
 fn is_terminal_operation(state: &str) -> bool {
-    matches!(state, "applied" | "failed" | "rolled_back" | "cancelled")
+    matches!(
+        state,
+        "applied" | "ready" | "failed" | "rolled_back" | "cancelled"
+    )
 }
 
 fn format_operation_detail(state: &str, failure: &str, result: &str) -> String {
+    if !failure.is_empty() && !result.is_empty() {
+        return format!("{state} · {failure} · {result}");
+    }
     if !failure.is_empty() {
         return format!("{state} · {failure}");
     }
@@ -2325,10 +2578,20 @@ fn finish_operation(
     let weak = ui.clone();
     let _ = slint::invoke_from_event_loop(move || {
         if let Some(window) = weak.upgrade() {
+            window.set_busy(false);
             match result {
                 Ok((operation_state, operation_id, failure, outcome)) => {
                     let failed = operation_state == "failed" || !failure.is_empty();
-                    window.set_operation_phase(if failed { "failed" } else { "applied" }.into());
+                    window.set_operation_phase(
+                        if failed {
+                            operation_error_phase(&failure)
+                        } else if operation_state == "ready" {
+                            "ready"
+                        } else {
+                            "applied"
+                        }
+                        .into(),
+                    );
                     window.set_operation_id(operation_id.into());
                     window.set_operation_state(operation_state.clone().into());
                     window.set_operation_detail(
@@ -2376,6 +2639,12 @@ fn operation_error_phase(error: &str) -> &'static str {
     let value = error.to_ascii_lowercase();
     if value.contains("conflict") || value.contains("stale") {
         "stale revision"
+    } else if value.contains("slot_unavailable") {
+        "slot unavailable"
+    } else if value.contains("session_unavailable") {
+        "session unavailable"
+    } else if value.contains("timeout") {
+        "timeout"
     } else if value.contains("package_unavailable") {
         "package unavailable"
     } else if value.contains("environment_untrusted") {
@@ -3012,6 +3281,13 @@ fn friendly_error(error: &str) -> String {
     if value.contains("service_restarted") {
         return "Core restarted while this operation was running. Refresh the projection before retrying.".to_owned();
     }
+    if value.contains("slot_unavailable") {
+        return "No available execution slot was found in this pool. Refresh the pool and try again.".to_owned();
+    }
+    if value.contains("session_unavailable") {
+        return "The execution slot session is unavailable. Refresh the operation and try again."
+            .to_owned();
+    }
     if value.contains("stale_revision")
         || value.contains("stale revision")
         || value.contains("conflict")
@@ -3021,6 +3297,9 @@ fn friendly_error(error: &str) -> String {
     if value.contains("operation_timeout") {
         return "The operation is still running. Use its operation ID to check the final status."
             .to_owned();
+    }
+    if value.contains("timeout") {
+        return "The basic session did not become ready before the timeout. Refresh the operation and try again.".to_owned();
     }
     if value.contains("invalid_operation_projection") {
         return "Core returned an operation status this client could not read. Refresh and try again.".to_owned();
@@ -3068,6 +3347,7 @@ fn is_core_unavailable(error: &str) -> bool {
     value.contains("core_capability_mismatch")
         || value.contains("core_unavailable")
         || value.contains("core unavailable")
+        || value.contains("core: unavailable")
         || value.contains("connect core pipe")
         || value.contains("core_start_timeout")
 }
@@ -3075,6 +3355,174 @@ fn is_core_unavailable(error: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn slot_session_callbacks_use_launcher_polling_and_refresh() {
+        use slint::Model;
+        use std::cell::Cell;
+        use std::os::unix::fs::PermissionsExt;
+        use std::rc::Rc;
+        use std::time::Instant;
+
+        i_slint_backend_testing::init_integration_test_with_system_time();
+        let root = std::env::temp_dir().join(format!(
+            "chuzi-slot-ui-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let state = Arc::new(Mutex::new(AppState {
+            data_root: root.clone(),
+            payload_root: root.clone(),
+            ..AppState::default()
+        }));
+        let launcher = state.lock().unwrap().launcher_path();
+        fs::write(
+            &launcher,
+            include_str!("../tests/fixtures/slot_session_launcher.py"),
+        )
+        .unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(root.join("scenario"), "ready").unwrap();
+        let ui = MainWindow::new().unwrap();
+        connect_callbacks(&ui, Arc::clone(&state));
+        let confirm = |window: &MainWindow| {
+            window.set_pending_operation("start-slot-session".into());
+            window.set_pending_pool_id("pool-a".into());
+            window.set_operation_confirmation_visible(true);
+            window.invoke_operation_confirmed();
+            assert!(!window.get_operation_confirmation_visible());
+        };
+        confirm(&ui);
+        // A rejected action must leave the active operation's refresh route alone.
+        ui.invoke_job_pool_operation("unrelated-pool-operation".into());
+        let stage = Rc::new(Cell::new(0));
+        let stage_for_timer = Rc::clone(&stage);
+        let weak = ui.as_weak();
+        let state_for_timer = Arc::clone(&state);
+        let fixture_root = root.clone();
+        let began = Instant::now();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(20),
+            move || {
+                assert!(
+                    began.elapsed() < Duration::from_secs(20),
+                    "UI callback fixture timed out"
+                );
+                let window = weak.upgrade().unwrap();
+                if window.get_busy() || state_for_timer.lock().unwrap().busy {
+                    return;
+                }
+                let expected = match stage_for_timer.get() {
+                    0..=2 => "ready",
+                    3..=4 => "failed",
+                    5 => "stale revision",
+                    _ => "slot unavailable",
+                };
+                if window.get_operation_phase() != expected {
+                    return;
+                }
+                assert_eq!(window.get_operation_kind(), "slot-session");
+                assert_eq!(window.get_session_rows().row_count(), 0);
+                match stage_for_timer.get() {
+                    0 => {
+                        assert!(window.get_operation_detail().contains("agent ready"));
+                        assert!(!window.get_operation_detail().contains("idempotent"));
+                        confirm(&window);
+                    }
+                    1 => {
+                        assert!(window.get_operation_detail().contains("idempotent"));
+                        window.invoke_refresh_operation(window.get_operation_id());
+                    }
+                    2 => {
+                        assert!(window.get_operation_detail().contains("idempotent"));
+                        fs::write(fixture_root.join("scenario"), "failed").unwrap();
+                        confirm(&window);
+                    }
+                    3 => {
+                        assert!(window.get_operation_detail().contains("slot_quarantined"));
+                        assert!(!window.get_operation_detail().contains("idempotent"));
+                        window.invoke_refresh_operation(window.get_operation_id());
+                    }
+                    4 => {
+                        fs::write(fixture_root.join("scenario"), "stale_revision").unwrap();
+                        confirm(&window);
+                    }
+                    5 => {
+                        assert!(window.get_operation_detail().contains("changed"));
+                        fs::write(fixture_root.join("scenario"), "slot_unavailable").unwrap();
+                        confirm(&window);
+                    }
+                    _ => {
+                        slint::quit_event_loop().unwrap();
+                    }
+                }
+                stage_for_timer.set(stage_for_timer.get() + 1);
+            },
+        );
+        slint::run_event_loop().unwrap();
+        timer.stop();
+        assert_eq!(stage.get(), 7);
+        let calls = fs::read_to_string(root.join("calls.jsonl")).unwrap();
+        let calls = calls
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        assert!(!calls
+            .iter()
+            .any(|call| call["method"] == "get_job_pool_operation"));
+        let starts = calls
+            .iter()
+            .filter(|call| call["method"] == "start_slot_session")
+            .collect::<Vec<_>>();
+        assert_eq!(starts.len(), 5);
+        assert_eq!(starts[0]["params"], starts[1]["params"]);
+        for call in starts {
+            let params = call["params"].as_object().unwrap();
+            assert_eq!(params.len(), 4);
+            assert_eq!(params["pool_id"], "pool-a");
+            assert_eq!(params["expected_revision"], 7);
+            assert_eq!(params["actor"], "windows-ui");
+            assert!(params["idempotency_key"]
+                .as_str()
+                .unwrap()
+                .starts_with("windows-ui-start_slot_session-"));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn slot_session_strings_are_redacted_and_retry_is_scoped_to_operation() {
+        let state = AppState::default();
+        let value = json!({"operation": {
+            "operation_id": "op-one", "state": "failed", "idempotent": true,
+            "failure_code": "password=secret",
+            "status": {"status": "C:\\private\\profile", "session_state": "cookie=secret"}
+        }});
+        let first = slot_session_projection(&state, value.clone()).unwrap();
+        assert_eq!(first.2, "session_failed");
+        assert!(first.3.contains("status unknown"));
+        assert!(first.3.contains("session unknown"));
+        assert!(!first.3.contains("secret"));
+        let mut refresh = value;
+        refresh["operation"]["idempotent"] = json!(false);
+        assert!(slot_session_projection(&state, refresh.clone())
+            .unwrap()
+            .3
+            .contains("idempotent"));
+        refresh["operation"]["operation_id"] = json!("op-two");
+        refresh["operation"]["state"] = json!("password=secret");
+        let changed = slot_session_projection(&state, refresh).unwrap();
+        assert_eq!(changed.0, "failed");
+        assert_eq!(changed.2, "invalid_operation_projection");
+        assert!(!changed.3.contains("idempotent"));
+    }
 
     #[test]
     fn theme_values_fail_closed_to_system() {
@@ -3090,6 +3538,7 @@ mod tests {
             "Core could not find that item. Check the ID and try again."
         );
         assert!(is_core_unavailable("core_unavailable"));
+        assert!(is_core_unavailable("chuzi core: unavailable"));
         assert!(is_core_unavailable("core_capability_mismatch"));
         assert_eq!(
             diagnostic_error_class("core_capability_mismatch"),
@@ -3111,6 +3560,14 @@ mod tests {
     fn core_method_names_are_fixed_and_package_refs_are_not_paths() {
         assert_eq!(CoreMethod::ListJobPools.wire_name(), "list_job_pools");
         assert_eq!(CoreMethod::DeleteJobPool.wire_name(), "delete_job_pool");
+        assert_eq!(
+            CoreMethod::StartSlotSession.wire_name(),
+            "start_slot_session"
+        );
+        assert_eq!(
+            CoreMethod::GetSlotSessionOperation.wire_name(),
+            "get_slot_session_operation"
+        );
         assert_eq!(
             CoreMethod::EnvironmentOperation.wire_name(),
             "environment_operation"
@@ -3139,11 +3596,23 @@ mod tests {
         );
         assert_eq!(operation_error_phase("core_unavailable"), "unavailable");
         assert_eq!(
+            operation_error_phase("slot_unavailable"),
+            "slot unavailable"
+        );
+        assert_eq!(
+            operation_error_phase("session_unavailable"),
+            "session unavailable"
+        );
+        assert_eq!(operation_error_phase("timeout"), "timeout");
+        assert_eq!(
             operation_error_phase("service_restarted"),
             "service restarted"
         );
         assert!(friendly_error("package_unavailable").contains("package"));
         assert!(friendly_error("stale_revision").contains("changed"));
+        assert!(friendly_error("slot_unavailable").contains("execution slot"));
+        assert!(friendly_error("session_unavailable").contains("session"));
+        assert!(!friendly_error("slot_unavailable: C:\\private\\profile").contains("profile"));
     }
 
     #[test]
@@ -3160,6 +3629,61 @@ mod tests {
         .expect("environment operation envelope should decode");
         assert_eq!(environment.operation_id, "envop-1");
         assert_eq!(environment.state, "failed");
+    }
+
+    #[test]
+    fn slot_session_operation_projection_carries_readiness_and_idempotency() {
+        let operation = decode_slot_session_operation(serde_json::json!({
+            "operation": {
+                "operation_id": "slotop-1",
+                "pool_id": "pool-a",
+                "slot_id": "pool-a-001",
+                "ordinal": 1,
+                "state": "ready",
+                "environment_generation": 7,
+                "status": {
+                    "status": "ready",
+                    "session_state": "ready",
+                    "agent_ready": true
+                },
+                "idempotent": true
+            }
+        }))
+        .expect("slot-session operation envelope should decode");
+        let detail = format_slot_session_detail(&operation, false);
+        assert!(detail.contains("slot #1"));
+        assert!(detail.contains("status ready"));
+        assert!(detail.contains("session ready"));
+        assert!(detail.contains("agent ready"));
+        assert!(detail.contains("idempotent"));
+        assert!(is_terminal_operation("ready"));
+    }
+
+    #[test]
+    fn slot_session_failure_detail_retains_redacted_readiness() {
+        let operation = decode_slot_session_operation(serde_json::json!({
+            "operation": {
+                "operation_id": "slotop-2",
+                "ordinal": 2,
+                "state": "failed",
+                "failure_code": "slot_quarantined",
+                "environment_generation": 3,
+                "status": {
+                    "status": "quarantined",
+                    "session_state": "quarantined",
+                    "agent_ready": false
+                }
+            }
+        }))
+        .expect("failed slot-session operation should decode");
+        let detail = format_operation_detail(
+            &operation.state,
+            &operation.failure_code,
+            &format_slot_session_detail(&operation, false),
+        );
+        assert!(detail.contains("slot_quarantined"));
+        assert!(detail.contains("slot #2"));
+        assert!(detail.contains("agent not ready"));
     }
 
     #[test]

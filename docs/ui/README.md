@@ -54,6 +54,15 @@ stable redacted failure classes. Package input is an opaque service-owned
 reference only. The UI never accepts paths, commands, executables, profiles,
 credentials, Windows identities, RDP endpoints, named pipes, or tokens.
 
+Each pool card also offers an explicit Start basic session action. It calls
+start_slot_session through the launcher/Core boundary with the current pool
+revision, actor, and deterministic idempotency key; Core chooses the first
+available execution slot. The UI polls get_slot_session_operation and shows
+only slot ordinal, redacted slot/session state, environment generation, agent
+readiness, idempotent result, and stable failure classes. This execution slot
+session is separate from the business request Sessions list and does not expose
+Windows identities, Profile paths, RDP endpoints, or credentials.
+
 RDP is a Session Workspace capability. The default host is the main window;
 `DesktopRdpWindow` is the optional floating host for the same RDP runtime.
 Dock/Float/Hide/Stop change presentation or explicitly end the runtime; they do
