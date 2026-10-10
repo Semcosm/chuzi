@@ -164,6 +164,7 @@ type sessionBootstrapState struct {
 type managedUserCredentials struct {
 	SID      string
 	password []uint16
+	created  bool
 }
 
 func (c *managedUserCredentials) clear() {
@@ -640,6 +641,10 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	if err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	// A NetUserAdd race can return an identity created by another reconcile.
+	// Treat that account as pre-existing for rollback so a later failure in
+	// this attempt cannot delete the winner's user/profile/session.
+	userExisted = userExisted || !managed.created
 	sid = managed.SID
 	if err := p.ensureManagedProfile(ctx, paths.UserName, managed); err != nil {
 		return slot.ProvisionResult{}, err
@@ -1849,7 +1854,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 				return managedUserCredentials{}, err
 			}
 		}
-		return managedUserCredentials{SID: sid}, nil
+		return managedUserCredentials{SID: sid, created: false}, nil
 	} else if !errors.Is(err, windows.ERROR_NONE_MAPPED) {
 		return managedUserCredentials{}, ErrOwnership
 	}
@@ -1909,7 +1914,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 					return managedUserCredentials{}, err
 				}
 			}
-			return managedUserCredentials{SID: sid}, nil
+			return managedUserCredentials{SID: sid, created: false}, nil
 		}
 		// NetUserAdd can race another provision attempt, but a missing or
 		// unreadable ownership record still cannot establish which SID owns the
@@ -1934,7 +1939,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 		return managedUserCredentials{}, ErrOwnership
 	}
 	keepPassword = true
-	return managedUserCredentials{SID: sid, password: password}, nil
+	return managedUserCredentials{SID: sid, password: password, created: true}, nil
 }
 
 func replaceOwnership(path string, record ownershipRecord) error {
