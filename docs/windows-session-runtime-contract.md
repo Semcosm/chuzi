@@ -317,6 +317,9 @@ checks remain pending and must still run scripts/test_windows_job_pool_smoke.ps1
 without the LocalRdp handoff shortcut.
 Credential Manager writes refuse an occupied target and cleanup verifies the
 run-owned username before deletion; an ownership change fails closed.
+The private run root grants the disposable SID traversal only, and grants that
+SID read/execute on the signed shell file; manifests and reports remain
+inaccessible to the managed user.
 
 Validation-only command (no user/session is created):
 

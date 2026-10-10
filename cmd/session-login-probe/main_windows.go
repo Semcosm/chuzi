@@ -9,6 +9,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -116,6 +117,12 @@ func readInput(path string) (probeInput, error) {
 	var input probeInput
 	if err := decoder.Decode(&input); err != nil || input.Schema != "chuzi.session-probe-input/v1" || !probeRunIDPattern.MatchString(input.RunID) || input.LoginMethod != probeLoginMethod || !probeSIDPattern.MatchString(input.SID) || input.SessionID == 0 || !validInputValues(input) {
 		return probeInput{}, errors.New("invalid manifest")
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return probeInput{}, errors.New("trailing manifest data")
+	} else if !errors.Is(err, io.EOF) {
+		return probeInput{}, errors.New("invalid manifest tail")
 	}
 	return input, nil
 }

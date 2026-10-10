@@ -403,11 +403,13 @@ try {
     Add-LocalGroupMember -SID 'S-1-5-32-555' -Member $userName
     $user = Get-LocalUser -Name $userName
     $userSID = $user.SID.Value
+    if ((& icacls.exe $runRoot /grant:r ($userSID + ':(X)') 1>$null 2>$null; $LASTEXITCODE) -ne 0) { throw 'probe runtime traversal ACL failed' }
     [ChuziSessionProbeNativeV1]::BootstrapProfile($userName, $password)
     $profile = @(Get-CimInstance Win32_UserProfile -Filter ("SID='" + $userSID + "'")) | Select-Object -First 1
     if ($null -eq $profile -or [string]::IsNullOrWhiteSpace($profile.LocalPath) -or -not (Test-Path -LiteralPath (Join-Path $profile.LocalPath 'NTUSER.DAT') -PathType Leaf)) { throw 'profile bootstrap failed' }
     $profilePath = [string]$profile.LocalPath
     $shellCommand = Get-SessionShellCommand $runRoot
+    if ((& icacls.exe (Join-Path $runRoot 'session-shell.ps1') /grant:r ($userSID + ':(RX)') 1>$null 2>$null; $LASTEXITCODE) -ne 0) { throw 'probe session shell ACL failed' }
     Set-SessionShell $userSID $profile.LocalPath $shellCommand
     $credentialTarget = 'TERMSRV/' + (New-RdpTarget)
     [ChuziSessionProbeNativeV1]::WriteCredential($credentialTarget, $userName, $password)
