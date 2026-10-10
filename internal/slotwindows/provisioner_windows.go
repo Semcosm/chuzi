@@ -530,7 +530,10 @@ func (p *windowsProvisioner) checkIdentityCollision(paths Paths, request slot.Pr
 		}
 		record, recordErr := readOwnership(filepath.Join(root, entry.Name(), "ownership.json"))
 		if errors.Is(recordErr, fs.ErrNotExist) {
-			continue
+			// An existing slot root without its allocation record is an
+			// ambiguous partial side effect. Do not let another slot proceed
+			// while that root could still own a username or session.
+			return ErrIdentityCollision
 		}
 		if recordErr != nil || record.SlotID != entry.Name() {
 			return ErrIdentityCollision

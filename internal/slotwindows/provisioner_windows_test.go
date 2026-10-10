@@ -23,6 +23,22 @@ func TestStopSlotLeaseRequiresOwnedAgentAfterRestart(t *testing.T) {
 	}
 }
 
+func TestIdentityAllocationRejectsOrphanSlotRoot(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dataDir, "job-slots", "orphan"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	p := &windowsProvisioner{options: Options{DataDir: dataDir, UserPrefix: "ChuziJob", EnvironmentID: "env/v1", Version: "1.0.0"}}
+	paths, err := p.options.DerivePaths("current", 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = p.checkIdentityCollision(paths, slot.ProvisionRequest{SlotID: "current", Ordinal: 1})
+	if !errors.Is(err, ErrIdentityCollision) {
+		t.Fatalf("orphan allocation root returned %v, want ErrIdentityCollision", err)
+	}
+}
+
 func TestManagedUserPrivilegeAllowed(t *testing.T) {
 	for _, privilege := range []uint32{userPrivGuest, userPrivUser} {
 		if !managedUserPrivilegeAllowed(privilege) {
