@@ -127,6 +127,9 @@ type ownershipRecord struct {
 	Ordinal    int
 	SID        string
 	Generation uint64
+	// Username is populated for v2 allocations. Empty remains valid for the
+	// legacy prefix+ordinal record and is resolved by the recorded SID.
+	Username string `json:"username,omitempty"`
 }
 type profileGrantRecord struct {
 	Version int
@@ -468,6 +471,15 @@ func (p *windowsProvisioner) resolvePaths(request slot.ProvisionRequest) (Paths,
 	if recordErr != nil || record.SlotID != request.SlotID || record.Ordinal != request.Ordinal {
 		return Paths{}, ErrOwnership
 	}
+	if record.Username != "" {
+		if validateManagedUsername(record.Username) != nil {
+			return Paths{}, ErrOwnership
+		}
+		recordedSID, recordedExists, lookupErr := lookupManagedSID(record.Username)
+		if lookupErr != nil || !recordedExists || recordedSID != record.SID {
+			return Paths{}, ErrOwnership
+		}
+	}
 	candidateSID, candidateExists, err := lookupManagedSID(paths.UserName)
 	if err != nil {
 		return Paths{}, ErrOwnership
@@ -494,7 +506,33 @@ func (p *windowsProvisioner) resolvePaths(request slot.ProvisionRequest) (Paths,
 		// generation paths remain unchanged; only the username lookup changes.
 		return legacy, nil
 	}
+	// Older ownership records did not persist the prefix. Resolve the exact
+	// account by its recorded SID, then require the non-forgeable marker and
+	// managed-account restrictions before retaining that legacy username.
+	if record.Username == "" {
+		if username, lookupErr := accountNameForSID(record.SID); lookupErr == nil && username != paths.UserName && username != legacy.UserName {
+			legacy.UserName = username
+			if validateLegacyManagedUser(legacy.UserName, request, record.SID) == nil {
+				return legacy, nil
+			}
+		}
+	}
 	return paths, nil
+}
+
+func validateLegacyManagedUser(username string, request slot.ProvisionRequest, expectedSID string) error {
+	if validateManagedUsername(username) != nil {
+		return ErrOwnership
+	}
+	info, err := getUserInfo(username)
+	if err != nil || info.comment != fmt.Sprintf("CHUZI-MANAGED:%s:%d", request.SlotID, request.Ordinal) || !managedUserPrivilegeAllowed(info.priv) || info.flags&userFlagNormalAccount == 0 || info.flags&userFlagDisabled != 0 || hasAdministratorsMembership(username) {
+		return ErrOwnership
+	}
+	sid, err := lookupSID(username)
+	if err != nil || sid != expectedSID {
+		return ErrOwnership
+	}
+	return nil
 }
 
 func lookupManagedSID(username string) (string, bool, error) {
@@ -539,7 +577,12 @@ func (p *windowsProvisioner) checkIdentityCollision(paths Paths, request slot.Pr
 			return ErrIdentityCollision
 		}
 		username, deriveErr := p.options.DeriveUsername(record.SlotID, record.Ordinal)
-		if deriveErr != nil {
+		if record.Username != "" {
+			if validateManagedUsername(record.Username) != nil {
+				return ErrIdentityCollision
+			}
+			username = record.Username
+		} else if deriveErr != nil {
 			return ErrIdentityCollision
 		}
 		if identityClaimCollides(paths.UserName, request.SlotID, request.Ordinal, username, record.SlotID, record.Ordinal) {
@@ -1792,7 +1835,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 			// Require the durable ownership record and fail closed on its loss.
 			return managedUserCredentials{}, ErrOwnership
 		}
-		if recordErr != nil || record.SlotID != request.SlotID || record.Ordinal != request.Ordinal || record.SID != sid {
+		if recordErr != nil || record.SlotID != request.SlotID || record.Ordinal != request.Ordinal || record.SID != sid || (record.Username != "" && record.Username != paths.UserName) {
 			return managedUserCredentials{}, ErrOwnership
 		}
 		if record.Generation > request.EnvironmentGeneration {
@@ -1886,7 +1929,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 		return managedUserCredentials{}, ErrOwnership
 	} else if !errors.Is(recordErr, fs.ErrNotExist) {
 		return managedUserCredentials{}, ErrOwnership
-	} else if err := writeOwnership(paths.Metadata, ownershipRecord{Version: 1, SlotID: request.SlotID, Ordinal: request.Ordinal, SID: sid, Generation: request.EnvironmentGeneration}); err != nil {
+	} else if err := writeOwnership(paths.Metadata, ownershipRecord{Version: 1, SlotID: request.SlotID, Ordinal: request.Ordinal, SID: sid, Generation: request.EnvironmentGeneration, Username: paths.UserName}); err != nil {
 		_ = deleteManagedUser(paths.UserName, request.SlotID, request.Ordinal, sid)
 		return managedUserCredentials{}, ErrOwnership
 	}
@@ -2677,6 +2720,28 @@ func currentProcessSID() (string, error) {
 }
 
 func groupNameForSID(value string) (string, error) {
+	sid, err := windows.StringToSid(value)
+	if err != nil {
+		return "", err
+	}
+	nameSize, domainSize := uint32(0), uint32(0)
+	var use uint32
+	err = windows.LookupAccountSid(nil, sid, nil, &nameSize, nil, &domainSize, &use)
+	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		return "", err
+	}
+	name := make([]uint16, nameSize+1)
+	domain := make([]uint16, domainSize+1)
+	if err := windows.LookupAccountSid(nil, sid, &name[0], &nameSize, &domain[0], &domainSize, &use); err != nil {
+		return "", err
+	}
+	return windows.UTF16ToString(name[:nameSize]), nil
+}
+
+// accountNameForSID resolves only the local account name portion. The caller
+// still validates the marker, account flags, administrator membership, and
+// exact SID before treating the result as a legacy managed identity.
+func accountNameForSID(value string) (string, error) {
 	sid, err := windows.StringToSid(value)
 	if err != nil {
 		return "", err
