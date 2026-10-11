@@ -390,6 +390,12 @@ jobs:
           }
           $service = Join-Path $runtimeRoot 'chuzi.exe'
           if (-not (Test-Path $service)) { throw "Core service was not installed: $service" }
+          # The lifecycle smoke intentionally runs Core as a foreground user
+          # process. Rebuild only the launcher with the explicit native-test
+          # transport boundary so the production LocalSystem server check is
+          # never weakened in release binaries.
+          & go build -trimpath -tags=coretransport_native_test -o $launcher ./cmd/launcher
+          if ($LASTEXITCODE -ne 0) { throw "Native-test launcher build failed" }
           $configPath = Join-Path $dataRoot 'core-ci-config.json'
           @{
             data_dir = $dataRoot
@@ -579,6 +585,10 @@ jobs:
           }
           $service = Join-Path $runtimeRoot 'chuzi.exe'
           if (-not (Test-Path $service)) { throw "Installed Core service is missing: $service" }
+          # See the unpackaged Core smoke above: this binary is test-only and
+          # remains at the installed launcher path for caller authorization.
+          & go build -trimpath -tags=coretransport_native_test -o $launcher ./cmd/launcher
+          if ($LASTEXITCODE -ne 0) { throw "Native-test launcher build failed" }
           $configPath = Join-Path $dataRoot 'core-installed-config.json'
           @{
             data_dir = $dataRoot
