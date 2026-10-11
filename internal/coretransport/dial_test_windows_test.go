@@ -7,6 +7,7 @@ import (
 	"net"
 
 	"github.com/Microsoft/go-winio"
+	"golang.org/x/sys/windows"
 )
 
 func dialTestEndpoint(ctx context.Context, path string) (net.Conn, error) {
@@ -14,5 +15,10 @@ func dialTestEndpoint(ctx context.Context, path string) (net.Conn, error) {
 }
 
 func dialPipeUnverified(ctx context.Context, path string) (net.Conn, error) {
-	return winio.DialPipeContext(ctx, path)
+	return winio.DialPipeAccessImpLevel(
+		ctx,
+		path,
+		uint32(windows.GENERIC_READ|windows.GENERIC_WRITE),
+		winio.PipeImpLevelImpersonation,
+	)
 }
