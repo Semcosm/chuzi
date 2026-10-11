@@ -175,6 +175,11 @@ grep -Fq 'CHUZI_AUTHENTICODE_THUMBPRINTS' "$repo_root/.github/workflows/chuzi-bu
 grep -Fq 'CHUZI_AUTHENTICODE_TIMESTAMP_URL' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Authenticode timestamp configuration"
 grep -Fq 'CHUZI_NODE_RUNTIME' "$repo_root/scripts/assemble_target.sh" || fail "Unix target assembly misses Windows Node runtime handoff"
 grep -Fq 'CHUZI_PRESENTMON_PATH' "$repo_root/scripts/assemble_target.sh" || fail "Unix target assembly misses pinned PresentMon handoff"
+grep -Fq 'presentmon_path="${CHUZI_PRESENTMON_PATH:-}"' "$repo_root/scripts/assemble_target.sh" || fail "Unix target assembly does not expand PresentMon handoff"
+grep -Fq 'presentmon_path="${CHUZI_PRESENTMON_PATH:-}"' "$repo_root/scripts/build.sh" || fail "Windows build does not expand PresentMon handoff"
+if grep -Fq 'presentmon_path="\${CHUZI_PRESENTMON_PATH:-}"' "$repo_root/scripts/assemble_target.sh" "$repo_root/scripts/build.sh"; then
+  fail "PresentMon handoff is escaped as a literal placeholder"
+fi
 grep -Fq 'node.exe' "$repo_root/scripts/generate_release_manifest.py" || fail "Windows release manifest misses packaged Node runtime"
 grep -Fq 'release-manifest.json' "$repo_root/scripts/package.sh" || fail "package.sh misses release manifest sidecar"
 grep -Fq 'release-manifest.json' "$repo_root/scripts/package.ps1" || fail "package.ps1 misses release manifest sidecar"

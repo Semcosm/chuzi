@@ -238,7 +238,10 @@ func clearUTF16(value []uint16) {
 
 func verifySignedSessionShell(path string) error {
 	policy, err := LoadAuthenticodePolicy(filepath.Join(filepath.Dir(path), "authenticode-policy.json"))
-	if err != nil || len(policy.AllowedThumbprints) == 0 {
+	if err != nil || len(policy.AllowedThumbprints) == 0 ||
+		policy.Status != "production-signed" ||
+		policy.ArtifactKind != "payload" ||
+		!policy.ProductionReleaseAllowed {
 		return ErrProfilePolicySignature
 	}
 	filePath, err := windows.UTF16PtrFromString(path)

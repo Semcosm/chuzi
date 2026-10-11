@@ -47,7 +47,7 @@ if [ "$target" = "windows-amd64" ]; then
   cp "$repo_root/scripts/session-shell.ps1" "$stage_dir/session-shell.ps1"
   cp "$repo_root/scripts/windows-service-management.ps1" "$stage_dir/windows-service-management.ps1"
   cp "$repo_root/scripts/validate_windows_payload.ps1" "$stage_dir/validate_windows_payload.ps1"
-  presentmon_path="\${CHUZI_PRESENTMON_PATH:-}"
+  presentmon_path="${CHUZI_PRESENTMON_PATH:-}"
   if [ -z "$presentmon_path" ] || [ ! -f "$presentmon_path" ]; then
     echo "windows-amd64 packaging requires CHUZI_PRESENTMON_PATH to point to PresentMon.exe" >&2
     exit 1
