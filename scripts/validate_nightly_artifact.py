@@ -25,6 +25,7 @@ BASE_COMPONENTS = ("launcher", "service", "browser-worker")
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 TEST_VERSION_RE = re.compile(r"^test-[0-9]+-[0-9a-fA-F]{12}$")
+THUMBPRINT_RE = re.compile(r"^[0-9A-Fa-f]{40}$")
 
 
 def digest(path: Path) -> str:
@@ -33,6 +34,13 @@ def digest(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             hasher.update(block)
     return hasher.hexdigest()
+
+
+def normalise_thumbprint(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.replace(" ", "").upper()
+    return value if THUMBPRINT_RE.fullmatch(value) else None
 
 
 def normalise_member(name: str) -> str:
@@ -145,6 +153,94 @@ def validate_bundle(path: Path, extension: str, manifest: dict, target: str, ver
             data = members[name]
             if resource.get("size") != len(data) or hashlib.sha256(data).hexdigest().lower() != str(resource.get("sha256", "")).lower():
                 raise ValueError(f"{path.name} resource digest mismatch: {name}")
+
+
+def validate_windows_signing(path: Path, extension: str, manifest: dict, channel: str) -> None:
+    members = dict(archive_members(path, extension))
+    policy_data = members.get("authenticode-policy.json")
+    evidence_data = members.get("authenticode-signing.json")
+    if policy_data is None or evidence_data is None:
+        raise ValueError(f"{path.name} is missing Authenticode policy/evidence")
+    try:
+        policy = json.loads(policy_data.decode("utf-8"))
+        evidence = json.loads(evidence_data.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"{path.name} has invalid Authenticode metadata: {exc}") from exc
+    if policy.get("format") != "chuzi-authenticode-policy/v1":
+        raise ValueError(f"{path.name} has an invalid Authenticode policy")
+    if evidence.get("format") != "chuzi-authenticode-evidence/v1":
+        raise ValueError(f"{path.name} has invalid Authenticode evidence")
+    if policy.get("artifact_kind") != "payload" or evidence.get("artifact_kind") != "payload":
+        raise ValueError(f"{path.name} has an invalid Authenticode artifact scope")
+    if not isinstance(policy.get("publisher_subject_prefix"), str) or evidence.get("publisher_subject_prefix") != policy.get("publisher_subject_prefix"):
+        raise ValueError(f"{path.name} has an invalid Authenticode publisher binding")
+    signing_order = ["authenticode", "release-manifest", "archive", "release-index", "attestation"]
+    if policy.get("signing_order") != signing_order or evidence.get("signing_order") != signing_order:
+        raise ValueError(f"{path.name} has an invalid signing order")
+    allowlist = policy.get("allowed_thumbprints")
+    normalized_allowlist = ([normalise_thumbprint(item) for item in allowlist]
+                            if isinstance(allowlist, list) else [])
+    if (not isinstance(allowlist, list) or any(item is None for item in normalized_allowlist)
+            or len(set(normalized_allowlist)) != len(normalized_allowlist)):
+        raise ValueError(f"{path.name} has an invalid Authenticode publisher allowlist")
+    required = policy.get("required_files")
+    if not isinstance(required, list) or not required or any(item not in members for item in required):
+        raise ValueError(f"{path.name} Authenticode required file set is incomplete")
+    evidence_allowlist = evidence.get("allowed_thumbprints")
+    normalized_evidence_allowlist = ([normalise_thumbprint(item) for item in evidence_allowlist]
+                                     if isinstance(evidence_allowlist, list) else [])
+    if (not isinstance(evidence_allowlist, list)
+            or any(item is None for item in normalized_evidence_allowlist)
+            or len(set(normalized_evidence_allowlist)) != len(normalized_evidence_allowlist)):
+        raise ValueError(f"{path.name} has an invalid Authenticode evidence allowlist")
+    if set(normalized_evidence_allowlist) != set(normalized_allowlist):
+        raise ValueError(f"{path.name} has an Authenticode allowlist mismatch")
+
+    evidence_files = evidence.get("files")
+    if not isinstance(evidence_files, list):
+        raise ValueError(f"{path.name} has invalid Authenticode file evidence")
+    evidence_by_path = {}
+    for record in evidence_files:
+        if not isinstance(record, dict) or not isinstance(record.get("path"), str):
+            raise ValueError(f"{path.name} has invalid Authenticode file evidence")
+        record_path = record["path"]
+        if record_path in evidence_by_path or record_path not in members:
+            raise ValueError(f"{path.name} has an unknown or duplicate Authenticode file: {record_path}")
+        record_thumbprint = normalise_thumbprint(record.get("thumbprint"))
+        if record_thumbprint is None or record_thumbprint not in set(normalized_allowlist):
+            raise ValueError(f"{path.name} has an Authenticode signer outside the allowlist: {record_path}")
+        record_sha256 = record.get("sha256")
+        if not isinstance(record_sha256, str) or not SHA256_RE.fullmatch(record_sha256):
+            raise ValueError(f"{path.name} has an invalid Authenticode file hash: {record_path}")
+        if hashlib.sha256(members[record_path]).hexdigest().lower() != record_sha256.lower():
+            raise ValueError(f"{path.name} Authenticode evidence hash mismatch: {record_path}")
+        evidence_by_path[record_path] = record
+    if channel == "stable":
+        production = policy.get("production_required_files")
+        production_paths = ([item for item in production if isinstance(item, str)]
+                            if isinstance(production, list) else [])
+        if (not isinstance(production, list) or len(production_paths) != len(production)
+                or len(set(production_paths)) != len(production_paths)
+                or any(item not in members for item in production_paths)):
+            raise ValueError(f"{path.name} is missing a production Windows helper")
+        if evidence.get("status") != "production-signed" or policy.get("status") != "production-signed":
+            raise ValueError(f"{path.name} is not production Authenticode signed")
+        if policy.get("production_release_allowed") is not True or evidence.get("production_release_allowed") is not True:
+            raise ValueError(f"{path.name} does not allow production release")
+        if evidence.get("hashes_computed_after_signing") is not True:
+            raise ValueError(f"{path.name} has invalid signing/hash order")
+        if not allowlist or evidence_allowlist != allowlist:
+            raise ValueError(f"{path.name} has no production publisher binding")
+        if set(evidence_by_path) != set(production):
+            raise ValueError(f"{path.name} has incomplete Authenticode evidence")
+        timestamp = evidence.get("timestamp")
+        if (not isinstance(timestamp, dict) or timestamp.get("present") is not True or
+                any(item.get("timestamp_present") is not True for item in evidence_files)):
+            raise ValueError(f"{path.name} is missing a required Authenticode timestamp")
+    elif policy.get("production_release_allowed") or evidence.get("production_release_allowed"):
+        raise ValueError(f"{path.name} incorrectly marks a non-stable package as production")
+    elif evidence.get("status") == "unsigned-development" and evidence.get("files"):
+        raise ValueError(f"{path.name} has unsigned metadata with signed files")
 
 
 def validate_adapter_archive(path: Path, extension: str, plugin: dict, target: str, version: str) -> None:
@@ -322,6 +418,8 @@ def validate(args) -> dict:
         validate_adapter_archive(root / artifact["path"], plugin_extension, plugin, args.target, index["version"])
     bundle = artifact_by_component["bundle"]
     validate_bundle(root / bundle["path"], extension, manifest, args.target, index["version"], index["commit"])
+    if args.target == "windows-amd64":
+        validate_windows_signing(root / bundle["path"], extension, manifest, args.channel)
     return {
         "target": args.target,
         "version": index["version"],

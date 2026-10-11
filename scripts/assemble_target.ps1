@@ -15,6 +15,11 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+
+function Write-Utf8NoBom([string]$path, [string]$content) {
+    $encoding = New-Object System.Text.UTF8Encoding($false)
+    [IO.File]::WriteAllText($path, $content, $encoding)
+}
 $targetDir = Join-Path $DistRoot $Target
 $stageDir = Join-Path $targetDir "stage"
 if (Test-Path $targetDir) { Remove-Item -Recurse -Force $targetDir }
@@ -30,6 +35,18 @@ if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath 
 }
 Copy-Item -Force $nodePath (Join-Path $stageDir "node.exe")
 Copy-Item -Force (Join-Path $repoRoot "scripts/session-shell.ps1") (Join-Path $stageDir "session-shell.ps1")
+Copy-Item -Force (Join-Path $repoRoot "scripts/windows-service-management.ps1") (Join-Path $stageDir "windows-service-management.ps1")
+Copy-Item -Force (Join-Path $repoRoot "scripts/validate_windows_payload.ps1") (Join-Path $stageDir "validate_windows_payload.ps1")
+$signParameters = @{
+    PayloadDir = $stageDir
+    PolicyPath = (Join-Path $repoRoot "packaging/windows/authenticode-policy.json")
+    Version = $Version
+}
+if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $env:CHUZI_REQUIRE_AUTHENTICODE -eq "1") {
+    $signParameters.RequireProductionSigner = $true
+}
+& (Join-Path $repoRoot "scripts/sign_windows_payload.ps1") @signParameters
+if ($LASTEXITCODE -ne 0) { throw "Windows Authenticode signing failed" }
 tar -xzf $WorkerArchive -C (Join-Path $stageDir "browser-worker")
 if ($LASTEXITCODE -ne 0) { throw "browser worker archive extraction failed" }
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
@@ -59,7 +76,7 @@ if ([string]::IsNullOrWhiteSpace($commit)) { $commit = (& git -C $repoRoot rev-p
     goos = "windows"
     goarch = "amd64"
     cgo = $false
-} | ConvertTo-Json | Set-Content -Encoding utf8 (Join-Path $stageDir "build-manifest.json")
+} | ConvertTo-Json | ForEach-Object { Write-Utf8NoBom (Join-Path $stageDir "build-manifest.json") $_ }
 
 $channel = if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { "stable" } elseif ($Version -like 'test-*') { "test" } else { "nightly" }
 & python (Join-Path $repoRoot "scripts/generate_release_manifest.py") --stage $stageDir --target $Target --version $Version --commit $commit --channel $channel --adapter-archive $adapterArchive --adapter-manifest $adapterManifest

@@ -14,6 +14,16 @@ $artifact = Join-Path $repoRoot "dist/chuzi-$Version-$Target.zip"
 if (-not (Test-Path $stageDir)) {
     throw "build stage does not exist: $stageDir"
 }
+if ($Target -eq "windows-amd64") {
+    $signatureParameters = @{
+        PayloadDir = $stageDir
+        PolicyPath = (Join-Path $stageDir "authenticode-policy.json")
+        Offline = $true
+    }
+    if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$') { $signatureParameters.Production = $true }
+    & (Join-Path $repoRoot "scripts/validate_windows_payload.ps1") @signatureParameters
+    if ($LASTEXITCODE -ne 0) { throw "Windows payload signature validation failed" }
+}
 if (Test-Path $artifact) {
     Remove-Item -Force $artifact
 }
@@ -35,6 +45,12 @@ foreach ($component in $components) {
             Copy-Item -Force (Join-Path $stageDir "chuzi-user-agent.exe") $componentRoot
             Copy-Item -Force (Join-Path $stageDir "node.exe") $componentRoot
             Copy-Item -Force (Join-Path $stageDir "session-shell.ps1") $componentRoot
+            Copy-Item -Force (Join-Path $stageDir "windows-service-management.ps1") $componentRoot
+            Copy-Item -Force (Join-Path $stageDir "validate_windows_payload.ps1") $componentRoot
+            Copy-Item -Force (Join-Path $stageDir "authenticode-policy.json") $componentRoot
+            Copy-Item -Force (Join-Path $stageDir "authenticode-signing.json") $componentRoot
+            $brokerPath = Join-Path $stageDir "chuzi-session-broker.exe"
+            if (Test-Path $brokerPath) { Copy-Item -Force $brokerPath $componentRoot }
         }
         "browser-worker" { Copy-Item -Recurse -Force (Join-Path $stageDir "browser-worker") $componentRoot }
         "presentmon" { Copy-Item -Force (Join-Path $stageDir "PresentMon.exe") $componentRoot; Copy-Item -Force (Join-Path $stageDir "PresentMon-LICENSE.txt") $componentRoot }

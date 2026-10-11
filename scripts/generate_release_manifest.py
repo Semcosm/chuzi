@@ -19,6 +19,13 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def normalise_thumbprint(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.replace(" ", "").upper()
+    return value if re.fullmatch(r"[0-9A-F]{40}", value) else None
+
+
 def resource(stage: Path, relative: str) -> dict:
     path = stage / relative
     return {"path": relative, "sha256": sha256(path), "size": path.stat().st_size}
@@ -141,7 +148,74 @@ def main() -> int:
     archive_extension = "zip" if args.target == "windows-amd64" else "tar.gz"
     service_files = [binary]
     if args.target == "windows-amd64":
-        service_files.extend([browser_launcher, user_agent, node_runtime, "session-shell.ps1"])
+        service_files.extend([
+            browser_launcher,
+            user_agent,
+            node_runtime,
+            "session-shell.ps1",
+            "windows-service-management.ps1",
+            "validate_windows_payload.ps1",
+            "authenticode-policy.json",
+            "authenticode-signing.json",
+        ])
+        if args.channel == "stable":
+            try:
+                signing_policy = json.loads((stage / "authenticode-policy.json").read_text(encoding="utf-8"))
+                signing_evidence = json.loads((stage / "authenticode-signing.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise SystemExit(f"production Authenticode metadata is missing or invalid: {exc}") from exc
+            production_files = signing_policy.get("production_required_files")
+            if (not isinstance(production_files, list) or not production_files or
+                    len(set(production_files)) != len(production_files) or
+                    any(not isinstance(item, str) or not item or "\\" in item or
+                        any(part in ("", ".", "..") for part in item.split("/"))
+                        for item in production_files)):
+                raise SystemExit("production Authenticode file policy is missing")
+            missing_production = [item for item in production_files if not (stage / item).is_file()]
+            if missing_production:
+                raise SystemExit("production Windows helper files are missing: " + ", ".join(missing_production))
+            signing_order = ["authenticode", "release-manifest", "archive", "release-index", "attestation"]
+            if signing_policy.get("status") != "production-signed" or not signing_policy.get("production_release_allowed"):
+                raise SystemExit("production Authenticode signer is not configured")
+            if signing_policy.get("artifact_kind") != "payload" or signing_evidence.get("artifact_kind") != "payload":
+                raise SystemExit("production Authenticode artifact scope is invalid")
+            if signing_policy.get("signing_order") != signing_order or signing_evidence.get("signing_order") != signing_order:
+                raise SystemExit("production Authenticode signing order is invalid")
+            allowlist = signing_policy.get("allowed_thumbprints")
+            normalized_allowlist = ([normalise_thumbprint(item) for item in allowlist]
+                                    if isinstance(allowlist, list) else [])
+            if (not isinstance(allowlist, list) or not allowlist or
+                    any(item is None for item in normalized_allowlist) or
+                    len(set(normalized_allowlist)) != len(normalized_allowlist)):
+                raise SystemExit("production Authenticode publisher binding is invalid")
+            if signing_evidence.get("status") != "production-signed" or not signing_evidence.get("production_release_allowed") or not signing_evidence.get("hashes_computed_after_signing"):
+                raise SystemExit("production Authenticode evidence is invalid")
+            evidence_allowlist = signing_evidence.get("allowed_thumbprints")
+            normalized_evidence_allowlist = ([normalise_thumbprint(item) for item in evidence_allowlist]
+                                             if isinstance(evidence_allowlist, list) else [])
+            if (signing_evidence.get("publisher_subject_prefix") != signing_policy.get("publisher_subject_prefix") or
+                    set(normalized_evidence_allowlist) != set(normalized_allowlist) or
+                    any(item is None for item in normalized_evidence_allowlist)):
+                raise SystemExit("production Authenticode publisher evidence is invalid")
+            evidence_files = signing_evidence.get("files")
+            if (not isinstance(evidence_files, list) or
+                    {item.get("path") for item in evidence_files if isinstance(item, dict)} != set(production_files) or
+                    len(evidence_files) != len(production_files)):
+                raise SystemExit("production Authenticode file evidence is incomplete")
+            timestamp = signing_evidence.get("timestamp")
+            if not isinstance(timestamp, dict) or not timestamp.get("present") or any(not isinstance(item, dict) or not item.get("timestamp_present") for item in evidence_files):
+                raise SystemExit("production Authenticode timestamp evidence is missing")
+            for record in evidence_files:
+                if not isinstance(record, dict) or record.get("path") not in production_files:
+                    raise SystemExit("production Authenticode file evidence is invalid")
+                record_thumbprint = normalise_thumbprint(record.get("thumbprint"))
+                record_hash = record.get("sha256")
+                if record_thumbprint not in set(normalized_allowlist) or not isinstance(record_hash, str) or not re.fullmatch(r"[0-9a-fA-F]{64}", record_hash):
+                    raise SystemExit("production Authenticode file evidence is invalid")
+                if sha256(stage / record["path"]).lower() != record_hash.lower():
+                    raise SystemExit("production Authenticode evidence hash mismatch")
+        if (stage / "chuzi-session-broker.exe").is_file():
+            service_files.append("chuzi-session-broker.exe")
     groups = {
         "launcher": ([launcher,], True),
         "service": (service_files, False),

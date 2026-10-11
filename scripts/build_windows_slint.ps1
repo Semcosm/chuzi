@@ -73,6 +73,22 @@ else {
 }
 if (-not (Test-Path $builtBinary)) { throw "Slint Windows executable is missing: $builtBinary" }
 Copy-Item $builtBinary (Join-Path $payloadDir "Chuzi.Native.Windows.exe") -Force
+$uiBinary = Join-Path $payloadDir "Chuzi.Native.Windows.exe"
+$signParameters = @{
+    PayloadDir = $payloadDir
+    PolicyPath = (Join-Path $repoRoot "packaging/windows/authenticode-policy.json")
+    EvidencePath = (Join-Path $OutputDir "ui-authenticode-signing.json")
+    Version = $version
+    Files = @($uiBinary)
+    ArtifactKind = "ui"
+}
+if ($version -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $env:CHUZI_REQUIRE_AUTHENTICODE -eq "1") {
+    $signParameters.RequireProductionSigner = $true
+}
+& (Join-Path $repoRoot "scripts/sign_windows_payload.ps1") @signParameters
+if ($LASTEXITCODE -ne 0) { throw "Windows UI Authenticode signing failed" }
+# The CorePayload already carries its payload policy/evidence. UI signing
+# metadata stays beside the installer so it cannot replace the Core policy.
 
 if ($Mode -eq "UnpackagedZip") {
 	$artifact = Join-Path $OutputDir "chuzi-native-windows-$version.zip"
@@ -85,7 +101,8 @@ if ($Mode -eq "UnpackagedZip") {
 
 $installerScript = Join-Path $repoRoot "packaging/windows/Chuzi.iss"
 if (-not (Test-Path $installerScript)) { throw "Windows installer script is missing" }
-$iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+$isccCommand = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+$iscc = if ($null -ne $isccCommand) { $isccCommand.Source } else { "" }
 if ([string]::IsNullOrWhiteSpace($iscc)) {
     foreach ($candidate in @(
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
@@ -106,6 +123,19 @@ if ($LASTEXITCODE -ne 0) { throw "Windows Slint installer build failed" }
 
 $artifact = Join-Path $OutputDir "ChuziSetup.exe"
 if (-not (Test-Path $artifact)) { throw "No Windows Slint installer EXE was generated" }
+$installerSignParameters = @{
+    PayloadDir = $OutputDir
+    PolicyPath = (Join-Path $repoRoot "packaging/windows/authenticode-policy.json")
+    EvidencePath = (Join-Path $OutputDir "installer-authenticode-signing.json")
+    Version = $version
+    Files = @($artifact)
+    ArtifactKind = "installer"
+}
+if ($version -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $env:CHUZI_REQUIRE_AUTHENTICODE -eq "1") {
+    $installerSignParameters.RequireProductionSigner = $true
+}
+& (Join-Path $repoRoot "scripts/sign_windows_payload.ps1") @installerSignParameters
+if ($LASTEXITCODE -ne 0) { throw "Windows installer Authenticode signing failed" }
 $hash = (Get-FileHash -Algorithm SHA256 $artifact).Hash.ToLowerInvariant()
 "$hash  $(Split-Path -Leaf $artifact)" | Set-Content -Encoding ascii "$artifact.sha256"
 Write-Output "built Slint Windows installer at $artifact"

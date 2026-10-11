@@ -66,6 +66,12 @@ if [ "$target" = "windows-amd64" ]; then
   fi
   cp "$node_runtime" "$stage_dir/node.exe"
   cp "$repo_root/scripts/session-shell.ps1" "$stage_dir/session-shell.ps1"
+  cp "$repo_root/scripts/windows-service-management.ps1" "$stage_dir/windows-service-management.ps1"
+  cp "$repo_root/scripts/validate_windows_payload.ps1" "$stage_dir/validate_windows_payload.ps1"
+  python3 "$repo_root/scripts/prepare_windows_signing_metadata.py" \
+    --stage "$stage_dir" \
+    --policy "$repo_root/packaging/windows/authenticode-policy.json" \
+    --output "$stage_dir/authenticode-signing.json"
 fi
 adapter_extension=tar.gz
 if [ "$target" = "windows-amd64" ]; then

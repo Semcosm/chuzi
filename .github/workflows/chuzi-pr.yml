@@ -26,6 +26,7 @@ jobs:
           scripts/test_build_contract.sh
           scripts/test_rdp_perf_analysis.sh
           scripts/test_nightly_package.sh
+          scripts/test_windows_signing_contract.sh
           scripts/test_nightly_artifact_validator.sh
           git diff --check
 

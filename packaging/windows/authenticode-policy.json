@@ -1,0 +1,31 @@
+{
+  "format": "chuzi-authenticode-policy/v1",
+  "artifact_kind": "payload",
+  "publisher_subject_prefix": "CN=Semcosm",
+  "allowed_thumbprints": [],
+  "required_timestamp": true,
+  "revocation": "timestamp-online-cached-offline",
+  "offline_validation": "cached-chain-and-timestamp",
+  "rotation_overlap_days": 30,
+  "required_files": [
+    "chuzi.exe",
+    "chuzi-launcher.exe",
+    "chuzi-browser-launcher.exe",
+    "chuzi-user-agent.exe",
+    "node.exe",
+    "session-shell.ps1",
+    "windows-service-management.ps1",
+    "validate_windows_payload.ps1"
+  ],
+  "production_required_files": [
+    "chuzi.exe",
+    "chuzi-launcher.exe",
+    "chuzi-browser-launcher.exe",
+    "chuzi-user-agent.exe",
+    "chuzi-session-broker.exe",
+    "node.exe",
+    "session-shell.ps1",
+    "windows-service-management.ps1",
+    "validate_windows_payload.ps1"
+  ]
+}

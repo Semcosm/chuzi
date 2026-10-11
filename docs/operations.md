@@ -467,6 +467,48 @@ Windows runner 使用对应的 `*.ps1` 脚本。`build.sh`/`build.ps1` 保留为
 和 `build-manifest.json`，并生成 SHA256 校验文件。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 
+Windows payload 和 Inno Setup installer 在生成 release manifest、归档、release index
+和 attestation 之前完成 Authenticode 签名。签名脚本从 Windows certificate store
+读取证书私钥，并要求配置 `CHUZI_AUTHENTICODE_THUMBPRINTS` 和
+`CHUZI_AUTHENTICODE_TIMESTAMP_URL`；仓库不保存 PFX、私钥或密码。签名策略绑定
+`CN=Semcosm` publisher 和明确的 thumbprint allowlist，生产文件集合还包括
+`chuzi-session-broker.exe`。`scripts/validate_windows_payload.ps1` 和
+`scripts/validate_windows_installer.ps1` 会校验签名、publisher、timestamp、证据
+SHA-256 以及签名后的 hash 顺序。
+
+Inno Setup 在复制 Core 资源后、注册生产服务前会再次运行 payload 校验；服务管理脚本只使用固定的 `%ProgramData%\chuzi\data` 配置路径，创建并校验 `core-config.json`，然后设置 SYSTEM 可写、Users 只读的 ACL；Users 只在 `data\.chuzi` launcher 元数据目录拥有写权限。
+
+生产升级由同一固定管理入口执行 `UpgradePrepare -> Backup -> Install ->
+CleanupBackup`。`UpgradePrepare` 会停止 Core/Session Broker，并对实际的
+`chuzi.db`、`profiles` 和 `journal` 做独占句柄检查；任何占用都以
+`resource_busy_database`、`resource_busy_profiles` 或 `resource_busy_journal`
+失败，安装器不会覆盖资源。回滚点只记录到受 ACL 保护的
+`data\.chuzi\installer-backups`，包含安装目录和 launcher/service 元数据，
+不复制或删除数据库、凭证、Profile 或 journal。用户取消或下次安装发现未完成
+回滚点时，入口先恢复并清理该受管回滚点；校验、服务注册或配置健康检查失败也会
+调用 `Rollback`，恢复旧运行时和服务注册。
+
+卸载先运行 `UninstallPrepare` 并重复资源确认，再删除服务和安装目录；保留数据
+只跳过 `%ProgramData%\chuzi` 删除，删除数据则只在确认成功后执行，忙碌或 ownership
+不明时不会递归删除来掩盖失败。
+
+`test`/`nightly` Windows 包会明确标记为 `unsigned-development`，只能用于契约和
+隔离测试；stable `vX.Y.Z` 构建在缺少证书、thumbprint、timestamp、签名 helper
+或 broker 时失败，不能把 unsigned 包发布为 production。Windows 端可执行以下
+检查：
+
+```powershell
+./scripts/validate_windows_payload.ps1 -PayloadDir .\dist\windows-amd64\stage -Offline
+./scripts/validate_windows_installer.ps1 -InstallerPath .\dist\windows-ui\ChuziSetup.exe `
+  -EvidencePath .\dist\windows-ui\installer-authenticode-signing.json -Offline
+./scripts/windows-service-management.ps1 -Operation Status
+```
+
+本地 Linux checkout 没有 Windows certificate store、signtool、SCM、ACL 或 Inno
+Setup，因此 native signer、installer upgrade/rollback/uninstall、服务注册和
+WTS/Agent smoke 必须在受控 Windows runner 留存证据；`scripts/test_windows_signing_contract.sh`
+只验证元数据和 stable 缺失 signer 的 fail-closed 行为。
+
 稳定版只能由人工确认后创建的带签名 annotated semver tag 触发。tag 构建会复用四平台构建矩阵，
 为每个归档生成并签署 UGS attestation，校验签名者、tag/commit 绑定和归档
 SHA-256 后才创建 GitHub Release。发布需要仓库 Secret

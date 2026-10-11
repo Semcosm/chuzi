@@ -76,6 +76,7 @@ jobs:
           scripts/test_build_contract.sh
           scripts/test_rdp_perf_analysis.sh
           scripts/test_nightly_package.sh
+          scripts/test_windows_signing_contract.sh
           scripts/test_nightly_artifact_validator.sh
           scripts/test_release_catalog.sh
           scripts/test_release_channels.sh
@@ -301,6 +302,12 @@ jobs:
     permissions:
       contents: read
       actions: write
+    env:
+      # The certificate and private key remain in the Windows certificate
+      # store; only the configured thumbprint and public timestamp endpoint
+      # are passed to the signing scripts.
+      CHUZI_AUTHENTICODE_THUMBPRINTS: ${{ secrets.CHUZI_AUTHENTICODE_THUMBPRINTS }}
+      CHUZI_AUTHENTICODE_TIMESTAMP_URL: ${{ vars.CHUZI_AUTHENTICODE_TIMESTAMP_URL }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -346,6 +353,17 @@ jobs:
         run: ./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload" -PrebuiltBinaryPath "$env:RUNNER_TEMP\chuzi-ui-prebuilt\chuzi-native-windows.exe"
         env:
           CHUZI_BUILD_VERSION: ${{ needs.release_context.outputs.version }}
+      - name: Validate Windows signatures and package metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = "${{ needs.release_context.outputs.version }}"
+          $production = $version -match '^v[0-9]+\.[0-9]+\.[0-9]+$'
+          $payloadArgs = @{ PayloadDir = (Join-Path $env:RUNNER_TEMP 'chuzi-core-payload'); Offline = $true }
+          $installerArgs = @{ InstallerPath = (Join-Path $env:RUNNER_TEMP 'chuzi-ui\ChuziSetup.exe'); EvidencePath = (Join-Path $env:RUNNER_TEMP 'chuzi-ui\installer-authenticode-signing.json'); Offline = $true }
+          if ($production) { $payloadArgs.Production = $true; $installerArgs.Production = $true }
+          & ./scripts/validate_windows_payload.ps1 @payloadArgs
+          & ./scripts/validate_windows_installer.ps1 @installerArgs
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
@@ -589,6 +607,7 @@ jobs:
           path: |
             ${{ runner.temp }}/chuzi-ui/*.exe
             ${{ runner.temp }}/chuzi-ui/*.sha256
+            ${{ runner.temp }}/chuzi-ui/*authenticode*.json
           if-no-files-found: error
           retention-days: 7
 
@@ -650,6 +669,9 @@ jobs:
     permissions:
       contents: read
       actions: write
+    env:
+      CHUZI_AUTHENTICODE_THUMBPRINTS: ${{ secrets.CHUZI_AUTHENTICODE_THUMBPRINTS }}
+      CHUZI_AUTHENTICODE_TIMESTAMP_URL: ${{ vars.CHUZI_AUTHENTICODE_TIMESTAMP_URL }}
     strategy:
       fail-fast: false
       matrix:

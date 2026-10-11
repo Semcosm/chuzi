@@ -38,10 +38,16 @@ RestartApplications=no
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
-; Core is launched by the signed-in user, while the installer runs elevated.
-; Create the shared data root with write access before the first launch.
-Name: "{commonappdata}\chuzi"; Permissions: users-modify
-Name: "{commonappdata}\chuzi\data"; Permissions: users-modify
+; Runtime and control files are read/execute for operators. The service owns
+; mutable state; no Users-modify grant is applied to the whole ProgramData tree.
+Name: "{commonappdata}\chuzi"; Permissions: users-readexec
+Name: "{commonappdata}\chuzi\data"; Permissions: users-readexec
+Name: "{commonappdata}\chuzi\data\.chuzi"; Permissions: users-modify
+Name: "{commonappdata}\chuzi\data\db"; Permissions: users-readexec
+Name: "{commonappdata}\chuzi\data\profiles"; Permissions: users-readexec
+Name: "{commonappdata}\chuzi\data\runtime"; Permissions: users-readexec
+Name: "{commonappdata}\chuzi\data\journal"; Permissions: users-readexec
+Name: "{commonappdata}\chuzi\data\secrets"; Permissions: users-readexec
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -58,6 +64,7 @@ Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonap
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File ""{app}\CorePayload\windows-service-management.ps1"" -Operation Uninstall -RuntimeRoot ""{app}\CorePayload"" -DataRoot ""{commonappdata}\chuzi\data"" -InstallRoot ""{app}"""; Flags: runhidden waituntilterminated skipifdoesntexist; Check: InstalledProductionManagementScript; RunOnceId: RemoveChuziServices
 Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonappdata}\chuzi\data"" -source-root ""{app}\CorePayload"" -manifest ""{app}\CorePayload\release-manifest.json"" -command core-stop"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: StopChuziCore
 
 [UninstallDelete]
@@ -69,6 +76,93 @@ var
   UninstallContext: Boolean;
   KeepUserDataValue: Boolean;
   KeepUserDataPrompted: Boolean;
+  CleanupReady: Boolean;
+
+function ProductionPayloadReady(): Boolean;
+var
+  PolicyText: String;
+begin
+  Result := False;
+  if not LoadStringFromFile(ExpandConstant('{app}\CorePayload\authenticode-policy.json'), PolicyText) then
+    Exit;
+  PolicyText := LowerCase(PolicyText);
+  Result := ((Pos('"production_release_allowed": true', PolicyText) > 0) or
+    (Pos('"production_release_allowed":true', PolicyText) > 0)) and
+    ((Pos('"artifact_kind": "payload"', PolicyText) > 0) or
+    (Pos('"artifact_kind":"payload"', PolicyText) > 0)) and
+    (Pos('"status": "production-signed"', PolicyText) > 0);
+end;
+
+function RunServiceManagementAt(ScriptPath: String; Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
+var
+  Parameters: String;
+  ResultCode: Integer;
+begin
+  if not FileExists(ScriptPath) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "' +
+    ScriptPath + '" -Operation ' + Operation + ' -RuntimeRoot "' + RuntimeRoot +
+    '" -DataRoot "' + DataRoot + '" -InstallRoot "' + InstallRoot + '"';
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+function RunServiceManagement(Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
+begin
+  Result := RunServiceManagementAt(
+    ExpandConstant('{app}\CorePayload\windows-service-management.ps1'),
+    Operation, RuntimeRoot, DataRoot, InstallRoot);
+end;
+
+function InstalledProductionManagementScript(): Boolean;
+begin
+  Result := ProductionPayloadReady() and
+    FileExists(ExpandConstant('{app}\CorePayload\windows-service-management.ps1'));
+end;
+
+function ValidateInstalledPayload(PayloadRoot: String; DataRoot: String; Production: Boolean): Boolean;
+var
+  ScriptPath: String;
+  Parameters: String;
+  ResultCode: Integer;
+begin
+  ScriptPath := AddBackslash(PayloadRoot) + 'validate_windows_payload.ps1';
+  if not FileExists(ScriptPath) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "' +
+    ScriptPath + '" -PayloadDir "' + PayloadRoot + '" -Offline';
+  if Production then
+    Parameters := Parameters + ' -Production -DataRoot "' + DataRoot + '"';
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+end;
+
+function RollbackUpgrade(): Boolean;
+var
+  PreviousManagement: String;
+begin
+  if not FileExists(ExpandConstant('{commonappdata}\chuzi\data\.chuzi\installer-backups\upgrade-state.json')) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  Result := RunServiceManagement('Rollback', ExpandConstant('{app}\CorePayload'),
+    ExpandConstant('{commonappdata}\chuzi\data'), ExpandConstant('{app}'));
+  if not Result then
+  begin
+    { The new payload may have failed signature validation. Use the copy of
+      the previously signed management entrypoint saved with the rollback. }
+    PreviousManagement := ExpandConstant('{commonappdata}\chuzi\data\.chuzi\rollback-management.ps1');
+    Result := RunServiceManagementAt(PreviousManagement, 'Rollback',
+      ExpandConstant('{app}\CorePayload'), ExpandConstant('{commonappdata}\chuzi\data'), ExpandConstant('{app}'));
+  end;
+end;
 
 function KeepUserData(): Boolean;
 begin
@@ -86,13 +180,36 @@ function ShouldDeleteUserData(): Boolean;
 begin
   { Inno may evaluate uninstall-delete checks while building the install
     transaction. Never prompt or delete user data outside uninstall mode. }
-  Result := UninstallContext and not KeepUserData();
+  Result := UninstallContext and CleanupReady and not KeepUserData();
 end;
 
 function InitializeUninstall(): Boolean;
 begin
   UninstallContext := True;
+  CleanupReady := True;
   KeepUserData();
+  if ProductionPayloadReady() and FileExists(ExpandConstant('{app}\CorePayload\windows-service-management.ps1')) then
+  begin
+    CleanupReady := RunServiceManagement('UninstallPrepare', ExpandConstant('{app}\CorePayload'),
+      ExpandConstant('{commonappdata}\chuzi\data'), ExpandConstant('{app}'));
+    if not CleanupReady then
+    begin
+      MsgBox('无法停止 Chuzi 服务，卸载已停止。请等待会话排空后重试。', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+    if not KeepUserData() then
+    begin
+      CleanupReady := RunServiceManagement('ConfirmDataOwnership', ExpandConstant('{app}\CorePayload'),
+        ExpandConstant('{commonappdata}\chuzi\data'), ExpandConstant('{app}'));
+      if not CleanupReady then
+      begin
+        MsgBox('无法确认 Chuzi 数据目录归属，卸载已停止。请由管理员检查数据目录后重试。', mbError, MB_OK);
+        Result := False;
+        Exit;
+      end;
+    end;
+  end;
   Result := True;
 end;
 
@@ -100,6 +217,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ExistingLauncher: String;
   ExistingManifest: String;
+  ExistingManagement: String;
   DataRoot: String;
   Parameters: String;
   ResultCode: Integer;
@@ -108,7 +226,23 @@ begin
   Result := '';
   ExistingLauncher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
   ExistingManifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
+  ExistingManagement := ExpandConstant('{app}\CorePayload\windows-service-management.ps1');
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
+  { Drain any existing managed installation before replacement, including
+    packages whose metadata predates the current production policy. }
+  if FileExists(ExistingManagement) then
+  begin
+    if not RunServiceManagement('UpgradePrepare', ExpandConstant('{app}\CorePayload'), DataRoot, ExpandConstant('{app}')) then
+    begin
+      Result := '无法停止 Chuzi 服务；请先排空会话后重试。';
+      Exit;
+    end;
+    if not RunServiceManagement('Backup', ExpandConstant('{app}\CorePayload'), DataRoot, ExpandConstant('{app}')) then
+    begin
+      Result := '无法创建升级回滚点；安装已停止。';
+      Exit;
+    end;
+  end;
   if (not FileExists(ExistingLauncher)) or (not FileExists(ExistingManifest)) then
     Exit;
   Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
@@ -125,14 +259,18 @@ var
   DataRoot: String;
   Parameters: String;
   ResultCode: Integer;
+  RuntimeRoot: String;
 begin
   if CurStep <> ssPostInstall then
     Exit;
   Launcher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
   Manifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
+  RuntimeRoot := ExpandConstant('{app}\CorePayload');
   if (not FileExists(Launcher)) or (not FileExists(Manifest)) then
   begin
+    if not RollbackUpgrade() then
+      MsgBox('安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
     MsgBox('安装包缺少 Core 文件，无法完成安装。请重新下载最新安装包。', mbError, MB_OK);
     Abort;
   end;
@@ -146,10 +284,40 @@ begin
   end;
   Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
     '" -manifest "' + Manifest + '" -command component-install -item service';
-  if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+  { The data tree is service-owned and read-only to Users; install the
+    manifest-declared component with the elevated installer token. }
+  if (not Exec(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
      (ResultCode <> 0) then
   begin
+    if not RollbackUpgrade() then
+      MsgBox('Core 文件安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
     MsgBox('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError, MB_OK);
     Abort;
+  end;
+  if not ValidateInstalledPayload(RuntimeRoot, '', ProductionPayloadReady()) then
+  begin
+    if not RollbackUpgrade() then
+      MsgBox('安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
+    MsgBox('已安装的 Core 文件未通过签名和完整性检查，安装已停止。', mbError, MB_OK);
+    Abort;
+  end;
+  if ProductionPayloadReady() then
+  begin
+    if not RunServiceManagement('Install', RuntimeRoot, DataRoot, ExpandConstant('{app}')) then
+    begin
+      if not RollbackUpgrade() then
+        MsgBox('服务注册失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
+      MsgBox('生产签名包缺少可用的服务或 Session Broker，安装已停止。', mbError, MB_OK);
+      Abort;
+    end;
+    if not ValidateInstalledPayload(RuntimeRoot, DataRoot, True) then
+    begin
+      if not RollbackUpgrade() then
+        MsgBox('安装健康检查失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
+      MsgBox('生产服务配置未通过完整性检查，安装已停止。', mbError, MB_OK);
+      Abort;
+    end;
+    if not RunServiceManagement('CleanupBackup', RuntimeRoot, DataRoot, ExpandConstant('{app}')) then
+      MsgBox('安装已完成，但升级回滚点清理失败；请使用 Repair 完成清理。', mbInformation, MB_OK);
   end;
 end;
