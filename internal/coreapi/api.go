@@ -415,11 +415,26 @@ type JobPoolAPI interface {
 // StartSlotSessionRequest asks the service to establish the session for one
 // existing logical slot. Exactly one of PoolID and SlotID is accepted.
 type StartSlotSessionRequest struct {
-	PoolID           string `json:"pool_id,omitempty"`
-	SlotID           string `json:"slot_id,omitempty"`
-	Actor            string `json:"actor"`
-	IdempotencyKey   string `json:"idempotency_key"`
-	ExpectedRevision uint64 `json:"expected_revision,omitempty"`
+	PoolID           string    `json:"pool_id,omitempty"`
+	SlotID           string    `json:"slot_id,omitempty"`
+	Actor            string    `json:"actor"`
+	IdempotencyKey   string    `json:"idempotency_key"`
+	ExpectedRevision uint64    `json:"expected_revision,omitempty"`
+	Attempt          int       `json:"attempt,omitempty"`
+	Deadline         time.Time `json:"deadline,omitempty"`
+	RetryBudget      int       `json:"retry_budget,omitempty"`
+}
+
+// SlotSessionActionRequest controls an existing operation. Runtime identity
+// is resolved by Core and is never accepted from the caller.
+type SlotSessionActionRequest struct {
+	OperationID      string    `json:"operation_id"`
+	Actor            string    `json:"actor"`
+	IdempotencyKey   string    `json:"idempotency_key"`
+	ExpectedRevision uint64    `json:"expected_revision,omitempty"`
+	Generation       uint64    `json:"generation,omitempty"`
+	Attempt          int       `json:"attempt,omitempty"`
+	Deadline         time.Time `json:"deadline,omitempty"`
 }
 
 type SlotSessionStatus struct {
@@ -440,11 +455,19 @@ type SlotSessionOperation struct {
 	Ordinal               int               `json:"ordinal"`
 	State                 string            `json:"state"`
 	Actor                 string            `json:"actor,omitempty"`
+	ExpectedRevision      uint64            `json:"expected_revision,omitempty"`
 	RequestedAt           time.Time         `json:"requested_at"`
 	UpdatedAt             time.Time         `json:"updated_at"`
 	CompletedAt           time.Time         `json:"completed_at,omitempty"`
 	FailureCode           string            `json:"failure_code,omitempty"`
 	EnvironmentGeneration uint64            `json:"environment_generation"`
+	Generation            uint64            `json:"generation,omitempty"`
+	Phase                 string            `json:"phase,omitempty"`
+	Attempt               int               `json:"attempt"`
+	Revision              uint64            `json:"revision,omitempty"`
+	DesiredState          string            `json:"desired_state,omitempty"`
+	Deadline              time.Time         `json:"deadline,omitempty"`
+	RetryBudget           int               `json:"retry_budget,omitempty"`
 	Status                SlotSessionStatus `json:"status"`
 	Idempotent            bool              `json:"idempotent,omitempty"`
 }
@@ -452,6 +475,16 @@ type SlotSessionOperation struct {
 type SlotSessionAPI interface {
 	StartSlotSession(context.Context, StartSlotSessionRequest) (SlotSessionOperation, error)
 	GetSlotSessionOperation(context.Context, string) (SlotSessionOperation, error)
+}
+
+// SlotSessionLifecycleAPI is additive to SlotSessionAPI. Clients can
+// feature-detect cancellation, stop, and retry support without breaking
+// older embedded Core implementations.
+type SlotSessionLifecycleAPI interface {
+	SlotSessionAPI
+	CancelSlotSession(context.Context, SlotSessionActionRequest) (SlotSessionOperation, error)
+	StopSlotSession(context.Context, SlotSessionActionRequest) (SlotSessionOperation, error)
+	RetrySlotSession(context.Context, SlotSessionActionRequest) (SlotSessionOperation, error)
 }
 
 type Environment struct {
