@@ -1,25 +1,29 @@
 # CR-0111: define the Windows slot session runtime contract
 
 Base: main
-Head or Range: 54ae3a2299eb55dc18d05463f6063f48bf406513
+Head or Range: 8476eb6e83a3d3d09f0ae9405712b620246f36f3
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): define slot session runtime contract
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 9d8de9352a2a14429a6b1039bd91f26683a94ff1
-Head OID: 54ae3a2299eb55dc18d05463f6063f48bf406513
+Base OID: b129ed5abbfa9dfba7ca0432f59a149bcf1787ce
+Head OID: 8476eb6e83a3d3d09f0ae9405712b620246f36f3
 Integrated Result: pending
 
 ## Summary
 
 Implementation is recorded in signed commits
-87ccda2a10bd1a26d9cf219bd36b740ce9f1b980 and
-01af5bb6704fd7ee5d508c9710b4b95709c57749 and
-54ae3a2299eb55dc18d05463f6063f48bf406513 on
-feat/windows-slot-session-ui. It adds the platform-neutral
+71d3e0bbfdc4875fdb68eb97e28df89fe438edc4,
+6c2ad5d4e29142ab224e31e337b11148b46b61ff, and
+8476eb6e83a3d3d09f0ae9405712b620246f36f3 on the isolated integration
+branch. The CR recording commits are
+b2b3cc08d5a84f86dee619349acd7a16cc4049cb,
+c898bca4e5766b1977e8cd8d731a6cf7d8e9ec99, and
+b3c4a3879efff6e4ce3d20db22daff08bc755a85
+(rewritten from the source branch). It adds the platform-neutral
 `internal/sessionruntime` contract and pure tests, the redacted Windows SYSTEM
 WTS probe at `cmd/session-login-probe`, the controlled PowerShell login/re-login
 harness at `scripts/probes/windows-session-login-probe.ps1`, and the A-K design
@@ -91,7 +95,7 @@ Windows runner before production readiness can be claimed.
 
 Stop any opt-in probe and wait for its owned sessions and cleanup to finish.
 Revert signed implementation commits through
-54ae3a2299eb55dc18d05463f6063f48bf406513 while preserving existing bbolt
+8476eb6e83a3d3d09f0ae9405712b620246f36f3 while preserving existing bbolt
 state, Profiles, account credentials, and ownership records. Do not manually
 delete a user, Profile, Credential Manager entry, certificate, or session whose
 ownership cannot be verified; quarantine it for explicit operator recovery.
