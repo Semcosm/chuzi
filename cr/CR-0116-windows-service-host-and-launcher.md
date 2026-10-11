@@ -1,16 +1,16 @@
 # CR-0116: Windows service host, launcher lifecycle, and IPC boundary
 
 Base: main
-Head or Range: b279985f0ce428e0404b485c4ee5813c77401693
+Head or Range: a873dba425d5faa097b62212a614e1e28494019c
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows service host, launcher lifecycle, and authenticated IPC boundary
-Revision: 11
+Revision: 12
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 1fd231a1e67739e9cceb50dd953cd1c2598c9a63
-Head OID: b279985f0ce428e0404b485c4ee5813c77401693
+Base OID: 2090b121ff4f9d3f86199b2866880b78ce592081
+Head OID: a873dba425d5faa097b62212a614e1e28494019c
 Integrated Result: pending
 
 ## Summary
@@ -29,7 +29,7 @@ Production Windows Core must run as the registered `ChuziCore` LocalSystem servi
 - Unit coverage includes trusted runtime derivation, helper mismatch/staleness, required preflight facts, caller policy, bounded IPC contracts, shutdown ordering, and scheduler admission closure.
 - Native transport contract tests use an explicit unverified test dial for the non-installed helper process, and identity round-trip coverage skips only when the hosted runner has no interactive Windows session; production server-image and caller checks remain unchanged.
 - Windows Core and test clients request pipe impersonation explicitly so the server can derive the authenticated caller token; anonymous pipe clients remain rejected by the production identity boundary.
-- Windows CI Core lifecycle smoke tests now install and run against the fixed `%ProgramData%\chuzi\data` root required by the launcher boundary; temporary runner paths remain used only for signed payload staging.
+- Windows CI Core lifecycle smoke tests now keep the signed payload or installed `CorePayload` as the runtime root while putting `data_dir` and logs under the fixed `%ProgramData%\chuzi\data` root; temporary runner paths remain used only for payload staging.
 - Windows service entrypoint validation now requires the derived ChuziCore service SID, SYSTEM session 0, required privileges, signed runtime, and the exact %ProgramData%\\chuzi\\data\\core-config.json path. Launcher install-root input is checked against its signed executable and mapped to the fixed machine data root. Host preflight rejects unsupported Windows editions, enforces the documented service set and 32-session ceiling, verifies an active RDP listener and machine certificate chain, and reports redacted facts for OS, WTS, SCM, RDP/NLA/certificate, LSA logon rights, effective data access, runtime signature, and helper readiness.
 - The Windows transport now derives caller SID/session/executable from the pipe handle, validates PID/token identity in both directions, and wires the authorizer into the service endpoint. The fixed session-broker client also validates the live broker PID and exact installed broker image before accepting a response, closing pipe-squatting/reply-spoofing paths.
 - The slot-agent pipe now uses a fixed LocalSystem DACL and authenticates the real service caller from the impersonated pipe token, client PID/token/session, and exact service image before JSON decoding. Agent clients validate the live server PID and exact chuzi-user-agent.exe image; service identity is handed off from the running service executable and no longer selected through caller-controlled SID environment variables. Deterministic authorization tests cover SID, session, authentication, path, and same-name cross-install failures.
