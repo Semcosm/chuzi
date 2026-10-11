@@ -343,6 +343,10 @@ function Install-ChuziServices {
         Set-ChuziAcl (Join-Path $data $child) $true
     }
     Set-ChuziAcl $runtime $false
+    $validator = Join-Path $runtime "validate_windows_payload.ps1"
+    if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw "service_payload_validator_missing" }
+    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File $validator -PayloadDir $runtime -Production -DataRoot $data -Offline | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
     $binPath = '"' + $core + '" -service -config "' + $config + '"'
     & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
