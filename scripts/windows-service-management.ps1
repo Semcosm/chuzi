@@ -300,8 +300,8 @@ function Install-ChuziServices {
         if ($unexpected.Count -gt 0) { throw "resource_ownership_unknown" }
         foreach ($child in $topLevelAllowed) {
             $childPath = Join-Path $data $child
-            if (Test-Path -LiteralPath $childPath -PathType Container -and
-                @(Get-ChildItem -LiteralPath $childPath -Force -Recurse -ErrorAction Stop).Count -gt 0) {
+            if ((Test-Path -LiteralPath $childPath -PathType Container) -and
+                (@(Get-ChildItem -LiteralPath $childPath -Force -Recurse -ErrorAction Stop).Count -gt 0)) {
                 throw "resource_ownership_unknown"
             }
         }
