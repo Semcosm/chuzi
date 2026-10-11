@@ -130,3 +130,45 @@ func TestLoopbackAllocatorReclaimsExpiredReservationBeforeClaim(t *testing.T) {
 		t.Fatal("expired reservation was not replaced atomically")
 	}
 }
+
+func TestLoopbackAllocatorConcurrentSlotsDoNotShareTarget(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	journal := newTargetJournalFake()
+	allocator, err := NewLoopbackAllocator(journal, LoopbackAllocatorOptions{
+		Now:       func() time.Time { return now },
+		Addresses: []string{"127.0.0.2", "127.0.0.3"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identities := []Identity{validIdentity(), validIdentity()}
+	identities[1].SlotID = "slot-002"
+	results := make(chan LoopbackTarget, len(identities))
+	errs := make(chan error, len(identities))
+	var wait sync.WaitGroup
+	for _, identity := range identities {
+		wait.Add(1)
+		go func(identity Identity) {
+			defer wait.Done()
+			target, allocateErr := allocator.Allocate(context.Background(), identity)
+			if allocateErr != nil {
+				errs <- allocateErr
+				return
+			}
+			results <- target
+		}(identity)
+	}
+	wait.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
+	var endpoints []string
+	for target := range results {
+		endpoints = append(endpoints, target.Endpoint())
+	}
+	if len(endpoints) != 2 || endpoints[0] == endpoints[1] {
+		t.Fatalf("concurrent target assignment collided: %v", endpoints)
+	}
+}
