@@ -79,6 +79,21 @@ func (e *Error) Unwrap() error {
 	return e.cause
 }
 
+// Retryable exposes the stable retry policy without exposing a provider
+// error. Ownership and identity failures remain non-retryable until an
+// explicit recovery operation changes the durable fence.
+func (e *Error) Retryable() bool {
+	if e == nil {
+		return false
+	}
+	switch e.Code {
+	case CodeSessionUnavailable, CodeDeadline, CodeStaleReadiness, CodeConflict:
+		return true
+	default:
+		return false
+	}
+}
+
 func NewError(code Code, message string) *Error { return &Error{Code: code, Message: message} }
 
 func CodeOf(err error) Code {
@@ -116,6 +131,8 @@ func CodeOf(err error) Code {
 		return CodeAlreadyStarted
 	case errors.Is(err, ErrCleanup):
 		return CodeCleanup
+	case errors.Is(err, ErrSecretInvalid):
+		return CodeInvalidArgument
 	default:
 		return CodeSessionUnavailable
 	}

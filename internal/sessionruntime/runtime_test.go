@@ -38,9 +38,17 @@ func (f runtimeFakes) deps() RuntimeDependencies {
 type fakeHost struct {
 	facts HostFacts
 	err   error
+	check func(context.Context) error
 }
 
-func (f *fakeHost) Check(context.Context) (HostFacts, error) { return f.facts, f.err }
+func (f *fakeHost) Check(ctx context.Context) (HostFacts, error) {
+	if f.check != nil {
+		if err := f.check(ctx); err != nil {
+			return HostFacts{}, err
+		}
+	}
+	return f.facts, f.err
+}
 
 type fakeProfiles struct {
 	ensure, remove int
@@ -370,5 +378,73 @@ func TestRuntimeStopFailureLeavesUnknownOwnership(t *testing.T) {
 	}
 	if fakes.journal.record.Phase != JournalUnknown {
 		t.Fatalf("stop failure phase=%s", fakes.journal.record.Phase)
+	}
+}
+
+type ambiguousGoneSessions struct {
+	active Session
+	stops  int
+}
+
+func (s *ambiguousGoneSessions) Start(context.Context, Identity) (Session, error) {
+	return s.active, nil
+}
+func (s *ambiguousGoneSessions) Stop(context.Context, Identity, Session) error {
+	s.stops++
+	s.active = Session{}
+	return nil
+}
+func (s *ambiguousGoneSessions) Find(context.Context, string) (Session, error) {
+	return s.active, nil
+}
+
+func TestRuntimeDoesNotMarkUnknownWTSStateStopped(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	fakes := newRuntimeFakes(now)
+	lease, err := NewSecretLease("ChuziJob0001", []uint16{'s', 'e', 'c', 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakes.accounts.lease = lease
+	ambiguous := &ambiguousGoneSessions{active: fakes.sessions.active}
+	fakes.sessions = nil
+	deps := fakes.deps()
+	deps.Sessions = ambiguous
+	runtime, err := NewRuntime(deps, RuntimeOptions{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Start(context.Background(), validIdentity(), StartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	_, err = runtime.Stop(context.Background(), validIdentity())
+	if CodeOf(err) != CodeCleanup {
+		t.Fatalf("ambiguous WTS state code=%v err=%v", CodeOf(err), err)
+	}
+	if deps.Journal.(*fakeJournal).record.Phase != JournalUnknown {
+		t.Fatalf("ambiguous WTS state phase=%s", deps.Journal.(*fakeJournal).record.Phase)
+	}
+}
+
+func TestRuntimeBoundsOperationWhenCallerOmitsDeadline(t *testing.T) {
+	now := time.Unix(100, 0).UTC()
+	fakes := newRuntimeFakes(now)
+	fakes.host.check = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	runtime, err := NewRuntime(fakes.deps(), RuntimeOptions{
+		Now:              func() time.Time { return now },
+		OperationTimeout: 10 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runtime.Start(context.Background(), validIdentity(), StartOptions{})
+	if CodeOf(err) != CodeDeadline {
+		t.Fatalf("operation timeout code=%v err=%v", CodeOf(err), err)
+	}
+	if fakes.journal.begin != 0 {
+		t.Fatal("timed out host check wrote ownership intent")
 	}
 }

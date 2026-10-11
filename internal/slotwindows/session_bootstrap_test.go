@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
+
+	"github.com/Semcosm/chuzi/internal/sessionruntime"
 )
 
 func TestManagedIdentityValidationRejectsUntrustedValues(t *testing.T) {
@@ -68,4 +71,29 @@ func TestSessionLoginAdapterPasswordBufferIsClearedAfterCall(t *testing.T) {
 	if len(adapter.received) == 0 || adapter.received[0] != 0 || adapter.received[1] != 0 || adapter.received[2] != 0 || adapter.received[3] != 0 {
 		t.Fatal("adapter credential buffer was not cleared")
 	}
+}
+
+func TestSessionRuntimeLoginAdapterKeepsCredentialInsideBoundary(t *testing.T) {
+	var adapter recordingLoginAdapter
+	now := time.Unix(100, 0).UTC()
+	bridge, err := NewSessionRuntimeLoginAdapter(&adapter, func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := sessionruntime.Identity{PoolID: "pool-001", SlotID: "slot-001", Ordinal: 1, Generation: 3, SID: "S-1-5-21-1", Owner: "owner-1"}
+	lease, err := sessionruntime.NewSecretLease("derived-user", []uint16{'s', 'e', 'c', 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := bridge.Login(context.Background(), identity, lease)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ID != 44 || result.SID != identity.SID || result.State != "active" || !result.ObservedAt.Equal(now) {
+		t.Fatalf("unexpected login result: %#v", result)
+	}
+	if adapter.received[0] != 0 || adapter.received[1] != 0 || adapter.received[2] != 0 || adapter.received[3] != 0 {
+		t.Fatal("bridge retained a non-zero password buffer")
+	}
+	lease.Wipe()
 }
