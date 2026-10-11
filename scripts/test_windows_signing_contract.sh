@@ -147,6 +147,17 @@ except ValueError:
     pass
 else:
     raise AssertionError("validator accepted tampered Authenticode evidence")
+wrong_order = dict(bundle_evidence)
+wrong_order["signing_order"] = list(reversed(bundle_evidence["signing_order"]))
+wrong_order_members = dict(bundle_members)
+wrong_order_members["authenticode-signing.json"] = json.dumps(wrong_order).encode()
+write_bundle(root / "wrong-order.zip", wrong_order_members)
+try:
+    validator.validate_windows_signing(root / "wrong-order.zip", "zip", {}, "stable")
+except ValueError:
+    pass
+else:
+    raise AssertionError("validator accepted an invalid signing order")
 wrong_signer = dict(bundle_evidence)
 wrong_signer["files"] = [dict(item) for item in bundle_evidence["files"]]
 wrong_signer["files"][0]["thumbprint"] = "B" * 40

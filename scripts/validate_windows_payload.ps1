@@ -55,6 +55,13 @@ $evidence = Get-Content -Raw -LiteralPath $EvidencePath | ConvertFrom-Json
 if ($policy.format -ne "chuzi-authenticode-policy/v1") { throw "authenticode_policy_invalid" }
 if ($evidence.format -ne "chuzi-authenticode-evidence/v1") { throw "authenticode_evidence_invalid" }
 if ([string]::IsNullOrWhiteSpace([string]$policy.publisher_subject_prefix)) { throw "authenticode_publisher_missing" }
+$expectedSigningOrder = @('authenticode', 'release-manifest', 'archive', 'release-index', 'attestation')
+if ((@($policy.signing_order) -join ',') -ne ($expectedSigningOrder -join ',') -or
+    (@($evidence.signing_order) -join ',') -ne ($expectedSigningOrder -join ',')) {
+    throw "authenticode_signing_order_invalid"
+}
+$evidenceTimestampRequired = if ($null -eq $evidence.timestamp) { $false } else { [bool]$evidence.timestamp.required }
+if ($evidenceTimestampRequired -ne [bool]$policy.required_timestamp) { throw "authenticode_timestamp_policy_mismatch" }
 
 $required = if ($Production) { @($policy.production_required_files) } else { @($policy.required_files) }
 if ($required.Count -eq 0) { throw "authenticode_required_files_missing" }

@@ -32,6 +32,7 @@ The existing Windows package copied executable and script files without a produc
 - Production signing configuration names are `CHUZI_AUTHENTICODE_THUMBPRINTS` and `CHUZI_AUTHENTICODE_TIMESTAMP_URL`; no values are recorded here. The production signer is unavailable in this Linux checkout, so stable release assembly fails closed until the Windows certificate store and timestamp endpoint are configured.
 
 - The Inno installer derives stable production mode from its semver build constant and routes stable install and uninstall through the real payload validator; metadata substring matching cannot downgrade a malformed stable payload to unsigned-development behavior.
+- Install-time payload and installer validators require the exact Authenticode, manifest, archive, index, and attestation order and reject mismatched timestamp policy metadata.
 
 ## Risk
 

@@ -21,6 +21,13 @@ $policy = Get-Content -Raw -LiteralPath $PolicyPath | ConvertFrom-Json
 $evidence = Get-Content -Raw -LiteralPath $EvidencePath | ConvertFrom-Json
 if ($policy.format -ne "chuzi-authenticode-policy/v1" -or $evidence.format -ne "chuzi-authenticode-evidence/v1") { throw "installer_signing_metadata_invalid" }
 if ([string]$evidence.publisher_subject_prefix -ne [string]$policy.publisher_subject_prefix) { throw "installer_signing_metadata_mismatch" }
+$expectedSigningOrder = @('authenticode', 'release-manifest', 'archive', 'release-index', 'attestation')
+if ((@($policy.signing_order) -join ',') -ne ($expectedSigningOrder -join ',') -or
+    (@($evidence.signing_order) -join ',') -ne ($expectedSigningOrder -join ',')) {
+    throw "installer_signing_order_invalid"
+}
+$evidenceTimestampRequired = if ($null -eq $evidence.timestamp) { $false } else { [bool]$evidence.timestamp.required }
+if ($evidenceTimestampRequired -ne [bool]$policy.required_timestamp) { throw "installer_timestamp_policy_mismatch" }
 $allowlist = @($evidence.allowed_thumbprints | ForEach-Object { ([string]$_).Replace(" ", "").ToUpperInvariant() })
 $policyAllowlist = @($policy.allowed_thumbprints | ForEach-Object { ([string]$_).Replace(" ", "").ToUpperInvariant() })
 if ((@($allowlist | Sort-Object -Unique) -join ',') -ne (@($policyAllowlist | Sort-Object -Unique) -join ',')) { throw "installer_signing_metadata_mismatch" }

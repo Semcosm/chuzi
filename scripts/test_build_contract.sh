@@ -151,6 +151,8 @@ grep -Fq 'authenticode-policy.json' "$repo_root/scripts/generate_release_manifes
 grep -Fq 'production_required_files' "$repo_root/scripts/generate_release_manifest.py" || fail "release manifest misses production signer gate"
 grep -Fq 'production_required_files' "$repo_root/scripts/sign_windows_payload.ps1" || fail "Windows signer misses production file set"
 grep -Fq 'completeProductionSet' "$repo_root/scripts/sign_windows_payload.ps1" || fail "Windows signer does not scope production evidence"
+grep -Fq 'authenticode_signing_order_invalid' "$repo_root/scripts/validate_windows_payload.ps1" || fail "Windows payload validator misses signing order"
+grep -Fq 'installer_signing_order_invalid' "$repo_root/scripts/validate_windows_installer.ps1" || fail "Windows installer validator misses signing order"
 grep -Fq 'chuzi-session-broker.exe' "$repo_root/packaging/windows/authenticode-policy.json" || fail "Windows policy misses production Session Broker"
 grep -Fq 'allowed_thumbprints' "$repo_root/scripts/validate_windows_installer.ps1" || fail "installer validator misses publisher binding"
 grep -Fq 'ExecutionPolicy AllSigned -File' "$repo_root/packaging/windows/Chuzi.iss" || fail "installer does not invoke PowerShell scripts explicitly"
