@@ -1,24 +1,27 @@
 # CR-0110: bootstrap a signed Windows test environment and enforce pool readiness
 
 Base: main
-Head or Range: b721549da56eeaa2e92401dc05f8a5a40ad0b5c3
+Head or Range: b633623d222db8ddbe8ca497e56feaadd7bf9f77
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(environment): bootstrap signed Windows test packages and enforce pool readiness
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 9d8de9352a2a14429a6b1039bd91f26683a94ff1
-Head OID: b721549da56eeaa2e92401dc05f8a5a40ad0b5c3
+Base OID: 62451c5fa74b7d4b61c47a7e075f8f268446ca0f
+Head OID: b633623d222db8ddbe8ca497e56feaadd7bf9f77
 Integrated Result: pending
 
 ## Summary
 
 Implementation is recorded in signed commit
-b721549da56eeaa2e92401dc05f8a5a40ad0b5c3 on feat/windows-slot-session-ui.
+b633623d222db8ddbe8ca497e56feaadd7bf9f77 on the isolated integration branch;
+the CR recording commit is 4b79c0dfaa3da6df3ad6733bdd732b7f08f9e0f1
+(rewritten from the source branch).
 CR-0109 remains the record for the existing mode controls and slot-session UI.
-Integration into main remains pending.
+Integration into main remains pending; the source implementation commit was
+rebased by preserving its signed change and commit message.
 
 Expose the signed environment manager while Core runs in logical mode. Reserve
 the Windows-only opaque catalog key chuzi-windows-test-v1 for
