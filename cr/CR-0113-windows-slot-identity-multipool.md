@@ -1,17 +1,17 @@
 # CR-0113: isolate Windows slot identities across pools
 
 Base: main
-Head or Range: 4197e69ca469efd8b30abf77f1b361ae2d892c50
+Head or Range: b1d169312818e8a49a30297d0d51a14b2ea45e67
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(windows): isolate slot identities across pools
-Revision: 3
-Status: pending
-Decision: pending
+Revision: 4
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: 4197e69ca469efd8b30abf77f1b361ae2d892c50
-Head OID: 4197e69ca469efd8b30abf77f1b361ae2d892c50
-Integrated Result: pending
+Base OID: b1d169312818e8a49a30297d0d51a14b2ea45e67
+Head OID: b1d169312818e8a49a30297d0d51a14b2ea45e67
+Integrated Result: main@b1d169312818e8a49a30297d0d51a14b2ea45e67
 
 ## Summary
 
