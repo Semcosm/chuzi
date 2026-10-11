@@ -1,16 +1,16 @@
 # CR-0112: remove Windows smoke RDP password command-line exposure
 
 Base: main
-Head or Range: f965079ccbdf03e8ec37c43942ba740366bbc007
+Head or Range: 571bff05f6a2309ac4afde2ce39f96fd251a68e7
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(smoke): keep RDP passwords out of argv
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 9d8de9352a2a14429a6b1039bd91f26683a94ff1
-Head OID: f965079ccbdf03e8ec37c43942ba740366bbc007
+Base OID: 1e34a5be91ec12afe0b1466e4f1c885949fc528a
+Head OID: 571bff05f6a2309ac4afde2ce39f96fd251a68e7
 Integrated Result: pending
 
 ## Summary
@@ -33,7 +33,7 @@ Credential Manager boundary.
 
 ## Test Evidence
 
-Signed implementation commit f965079 changes only
+Signed implementation commit 571bff05f6a2309ac4afde2ce39f96fd251a68e7 changes only
 scripts/test_windows_job_pool_smoke.ps1, docs/job-user-pool.md, and
 docs/operations.md. The script's -ValidateOnly path now performs a disposable
 Credential Manager write/read username match, controlled restore of an existing
