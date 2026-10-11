@@ -168,6 +168,9 @@ type Slot struct {
 	Trusted               bool      `json:"trusted"`
 	RequireTrusted        bool      `json:"require_trusted"`
 	AgentHandle           string    `json:"agent_handle,omitempty"`
+	SessionDesiredState   string    `json:"session_desired_state,omitempty"`
+	SessionOperationID    string    `json:"session_operation_id,omitempty"`
+	SessionRevision       uint64    `json:"session_revision,omitempty"`
 	Status                Status    `json:"status"`
 	HealthAt              time.Time `json:"health_at,omitempty"`
 	FailureCount          int       `json:"failure_count"`
@@ -176,7 +179,10 @@ type Slot struct {
 }
 
 func (s Slot) Validate() error {
-	if !validID(s.SlotID) || !validID(s.PoolID) || s.Ordinal < 1 || s.EnvironmentID == "" || !s.Status.Valid() || s.CreatedAt.IsZero() || s.UpdatedAt.IsZero() || s.UpdatedAt.Before(s.CreatedAt) || s.FailureCount < 0 || len(s.EnvironmentID) > 256 || len(s.EnvironmentVersion) > 128 || len(s.ManifestDigest) > 256 || len(s.Signer) > 256 || len(s.AgentHandle) > 256 || strings.ContainsAny(s.EnvironmentID, "\r\n\t") || strings.ContainsAny(s.EnvironmentVersion, "\r\n\t") || strings.ContainsAny(s.ManifestDigest, "\r\n\t") || strings.ContainsAny(s.Signer+s.AgentHandle, "\r\n\t") {
+	if !validID(s.SlotID) || !validID(s.PoolID) || s.Ordinal < 1 || s.EnvironmentID == "" || !s.Status.Valid() || s.CreatedAt.IsZero() || s.UpdatedAt.IsZero() || s.UpdatedAt.Before(s.CreatedAt) || s.FailureCount < 0 || len(s.EnvironmentID) > 256 || len(s.EnvironmentVersion) > 128 || len(s.ManifestDigest) > 256 || len(s.Signer) > 256 || len(s.AgentHandle) > 256 || len(s.SessionOperationID) > 256 || strings.ContainsAny(s.EnvironmentID, "\r\n\t") || strings.ContainsAny(s.EnvironmentVersion, "\r\n\t") || strings.ContainsAny(s.ManifestDigest, "\r\n\t") || strings.ContainsAny(s.Signer+s.AgentHandle+s.SessionOperationID, "\r\n\t") {
+		return ErrInvalidSlot
+	}
+	if s.SessionDesiredState != "" && s.SessionDesiredState != "running" && s.SessionDesiredState != "stopped" {
 		return ErrInvalidSlot
 	}
 	// Retiring can represent a logical slot that never reached provisioning;

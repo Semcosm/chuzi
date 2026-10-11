@@ -426,6 +426,26 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		item, err := api.StartSlotSession(ctx, params)
 		return SlotSessionOperationResult{Operation: item}, err
+	case methodCancelSlotSession, methodStopSlotSession, methodRetrySlotSession:
+		api, ok := s.api.(coreapi.SlotSessionLifecycleAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "slot session lifecycle is unavailable")
+		}
+		var params coreapi.SlotSessionActionRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		var item coreapi.SlotSessionOperation
+		var err error
+		switch envelopeMethod := method; envelopeMethod {
+		case methodCancelSlotSession:
+			item, err = api.CancelSlotSession(ctx, params)
+		case methodStopSlotSession:
+			item, err = api.StopSlotSession(ctx, params)
+		default:
+			item, err = api.RetrySlotSession(ctx, params)
+		}
+		return SlotSessionOperationResult{Operation: item}, err
 	case methodGetSlotSessionOperation:
 		api, ok := s.api.(coreapi.SlotSessionAPI)
 		if !ok {
