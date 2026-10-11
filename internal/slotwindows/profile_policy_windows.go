@@ -4,6 +4,8 @@ package slotwindows
 
 import (
 	"context"
+	"crypto/sha1"
+	"crypto/x509"
 	"path/filepath"
 	"strings"
 	"time"
@@ -235,6 +237,10 @@ func clearUTF16(value []uint16) {
 }
 
 func verifySignedSessionShell(path string) error {
+	policy, err := LoadAuthenticodePolicy(filepath.Join(filepath.Dir(path), "authenticode-policy.json"))
+	if err != nil || len(policy.AllowedThumbprints) == 0 {
+		return ErrProfilePolicySignature
+	}
 	filePath, err := windows.UTF16PtrFromString(path)
 	if err != nil {
 		return ErrProfilePolicyPath
@@ -243,10 +249,14 @@ func verifySignedSessionShell(path string) error {
 	data := &windows.WinTrustData{
 		Size:                            uint32(unsafe.Sizeof(windows.WinTrustData{})),
 		UIChoice:                        windows.WTD_UI_NONE,
-		RevocationChecks:                windows.WTD_REVOKE_NONE,
+		RevocationChecks:                windows.WTD_REVOKE_WHOLECHAIN,
 		UnionChoice:                     windows.WTD_CHOICE_FILE,
 		StateAction:                     windows.WTD_STATEACTION_VERIFY,
 		FileOrCatalogOrBlobOrSgnrOrCert: unsafe.Pointer(fileInfo),
+		// Offline operation uses the cached chain and embedded timestamp. The
+		// lifetime flag permits a valid timestamped signature after certificate
+		// expiry; the signing gate performs online revocation before publishing.
+		ProvFlags: windows.WTD_CACHE_ONLY_URL_RETRIEVAL | windows.WTD_LIFETIME_SIGNING_FLAG,
 	}
 	verifyErr := windows.WinVerifyTrustEx(windows.InvalidHWND, &windows.WINTRUST_ACTION_GENERIC_VERIFY_V2, data)
 	data.StateAction = windows.WTD_STATEACTION_CLOSE
@@ -254,5 +264,83 @@ func verifySignedSessionShell(path string) error {
 	if verifyErr != nil || closeErr != nil {
 		return ErrProfilePolicySignature
 	}
+	certificates, err := embeddedSignerCertificates(path)
+	if err != nil {
+		return ErrProfilePolicySignature
+	}
+	var signer *x509.Certificate
+	for _, certificate := range certificates {
+		// The embedded store also carries issuer certificates. Only a leaf
+		// signing certificate may satisfy the publisher binding; accepting a
+		// matching CA in the chain would not bind the signed file to Chuzi.
+		if certificate.IsCA {
+			continue
+		}
+		thumbprint := sha1.Sum(certificate.Raw)
+		if policy.Allows(fmtThumbprint(thumbprint[:]), certificate.Subject.String()) {
+			if signer != nil {
+				return ErrProfilePolicySignature
+			}
+			signer = certificate
+		}
+	}
+	if signer == nil {
+		return ErrProfilePolicySignature
+	}
 	return nil
+}
+
+func fmtThumbprint(value []byte) string {
+	const hex = "0123456789ABCDEF"
+	result := make([]byte, len(value)*2)
+	for index, item := range value {
+		result[index*2] = hex[item>>4]
+		result[index*2+1] = hex[item&0x0f]
+	}
+	return string(result)
+}
+
+// embeddedSignerCertificates returns the certificates carried by the PE
+// Authenticode PKCS#7 envelope. WinVerifyTrust establishes chain validity;
+// this second check binds the leaf to the installation publisher allowlist.
+func embeddedSignerCertificates(path string) ([]*x509.Certificate, error) {
+	filePath, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return nil, err
+	}
+	var store windows.Handle
+	err = windows.CryptQueryObject(
+		windows.CERT_QUERY_OBJECT_FILE,
+		unsafe.Pointer(filePath),
+		windows.CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
+		windows.CERT_QUERY_FORMAT_FLAG_BINARY,
+		0, nil, nil, nil, &store, nil, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer windows.CertCloseStore(store, 0)
+	var previous *windows.CertContext
+	var certificates []*x509.Certificate
+	for {
+		certificate, enumErr := windows.CertEnumCertificatesInStore(store, previous)
+		if certificate == nil {
+			if enumErr != nil && enumErr != windows.ERROR_NO_MORE_FILES {
+				return nil, enumErr
+			}
+			break
+		}
+		previous = certificate
+		if certificate.EncodedCert == nil || certificate.Length == 0 {
+			continue
+		}
+		parsed, parseErr := x509.ParseCertificate(unsafe.Slice(certificate.EncodedCert, certificate.Length))
+		if parseErr != nil {
+			continue
+		}
+		certificates = append(certificates, parsed)
+	}
+	if len(certificates) == 0 {
+		return nil, ErrProfilePolicySignature
+	}
+	return certificates, nil
 }
