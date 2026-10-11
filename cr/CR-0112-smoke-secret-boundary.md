@@ -1,16 +1,16 @@
 # CR-0112: remove Windows smoke RDP password command-line exposure
 
 Base: main
-Head or Range: 571bff05f6a2309ac4afde2ce39f96fd251a68e7
+Head or Range: 8253caf9b0907cd9531b531dad27bff0806dc64e
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: fix(smoke): keep RDP passwords out of argv
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 1e34a5be91ec12afe0b1466e4f1c885949fc528a
-Head OID: 571bff05f6a2309ac4afde2ce39f96fd251a68e7
+Base OID: 8253caf9b0907cd9531b531dad27bff0806dc64e
+Head OID: 8253caf9b0907cd9531b531dad27bff0806dc64e
 Integrated Result: pending
 
 ## Summary
