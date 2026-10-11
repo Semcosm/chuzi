@@ -39,6 +39,9 @@ $env:GOARCH = $goarch
 $ldflags = "-s -w -X github.com/Semcosm/chuzi/cmd/service.version=$Version"
 & go build -trimpath "-ldflags=$ldflags" -o (Join-Path $stageDir $binary) ./cmd/service
 if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+$brokerLdflags = "-s -w -X main.version=$Version"
+& go build -trimpath "-ldflags=$brokerLdflags" -o (Join-Path $stageDir "chuzi-session-broker.exe") ./cmd/session-broker
+if ($LASTEXITCODE -ne 0) { throw "session broker build failed" }
 $launcherLdflags = "-s -w -X main.version=$Version"
 & go build -trimpath "-ldflags=$launcherLdflags" -o (Join-Path $stageDir "chuzi-launcher.exe") ./cmd/launcher
 if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }
@@ -59,6 +62,7 @@ if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath 
 }
 Copy-Item -Force $nodePath (Join-Path $stageDir "node.exe")
 Copy-Item -Force (Join-Path $repoRoot "scripts/session-shell.ps1") (Join-Path $stageDir "session-shell.ps1")
+Copy-Item -Force (Join-Path $repoRoot "scripts/windows-service-management.ps1") (Join-Path $stageDir "windows-service-management.ps1")
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
 $adapterManifest = Join-Path $targetDir "genshin-cloudgame-adapter-manifest.json"
 & python (Join-Path $repoRoot "scripts/build_adapter_package.py") `

@@ -4,42 +4,89 @@ package launcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
+
+	"github.com/Semcosm/chuzi/internal/servicehost"
 )
 
-func serviceProcessMatches(pid int, expected string) bool {
-	if pid <= 0 {
-		return false
+type scmServiceController struct{ inner servicehost.Controller }
+
+func newSCMServiceController(runtimeRoot, dataRoot, servicePath, configPath string) (ServiceController, error) {
+	runtime, err := servicehost.NewTrustedRuntime(runtimeRoot)
+	if err != nil || normalizeWindowsPath(servicePath) != normalizeWindowsPath(runtime.Core) {
+		return nil, ErrInvalidPath
 	}
-	command := fmt.Sprintf("$p = Get-Process -Id %d -ErrorAction Stop; if ($null -eq $p.Path) { exit 1 }; Write-Output $p.Path", pid)
-	output, err := exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", command).Output()
+	inner, err := servicehost.NewControllerWithDataRoot(runtime, dataRoot, configPath)
 	if err != nil {
-		return false
+		return nil, err
 	}
-	return normalizeWindowsPath(strings.TrimSpace(string(output))) == normalizeWindowsPath(expected)
+	return &scmServiceController{inner: inner}, nil
+}
+
+func (c *scmServiceController) Start(ctx context.Context) (ServiceState, error) {
+	status, err := c.inner.Start(ctx)
+	return mapSCMState(status), mapSCMError(err)
+}
+func (c *scmServiceController) Stop(ctx context.Context) error { return mapSCMError(c.inner.Stop(ctx)) }
+func (c *scmServiceController) Status(ctx context.Context) (ServiceState, error) {
+	status, err := c.inner.Status(ctx)
+	return mapSCMState(status), mapSCMError(err)
+}
+func mapSCMState(status servicehost.Status) ServiceState {
+	state := ServiceStopped
+	switch status.State {
+	case servicehost.StateRunning:
+		state = ServiceRunning
+	case servicehost.StateStartPending:
+		state = ServiceStartPending
+	case servicehost.StateStopPending:
+		state = ServiceStopPending
+	}
+	return ServiceState{Status: state, PID: status.PID}
+}
+func mapSCMError(err error) error {
+	if errors.Is(err, servicehost.ErrNotInstalled) {
+		return ErrServiceNotInstalled
+	}
+	return err
+}
+func (m *CoreManager) serviceController() (ServiceController, error) {
+	m.controllerMu.Lock()
+	defer m.controllerMu.Unlock()
+	if m.controller != nil {
+		return m.controller, nil
+	}
+	runtimeRoot := m.RuntimeRoot
+	if runtimeRoot == "" {
+		runtimeRoot = m.Root
+	}
+	controller, err := newSCMServiceController(runtimeRoot, m.Root, m.ServicePath, m.ConfigPath)
+	if err != nil {
+		return nil, err
+	}
+	m.controller = controller
+	return controller, nil
+}
+
+func serviceProcessMatches(pid int, expected string) bool {
+	_ = pid
+	_ = expected
+	return false
 }
 
 func stopServiceProcess(ctx context.Context, pid int) error {
-	command := exec.CommandContext(ctx, "taskkill.exe", "/PID", strconv.Itoa(pid), "/T", "/F")
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("stop core: %w", err)
-	}
-	return nil
+	_ = ctx
+	_ = pid
+	return fmt.Errorf("stop core is refused without SCM ownership")
 }
 
 func stopOrphanedService(ctx context.Context, executable string) error {
-	if strings.TrimSpace(executable) == "" {
-		return fmt.Errorf("stop core: missing executable")
-	}
-	command := exec.CommandContext(ctx, "taskkill.exe", "/F", "/IM", executable, "/T")
-	if err := command.Run(); err != nil {
-		return fmt.Errorf("stop orphaned core: %w", err)
-	}
-	return nil
+	_ = ctx
+	_ = executable
+	return fmt.Errorf("stop orphaned core is refused without SCM ownership")
 }
 
 func normalizeWindowsPath(value string) string {

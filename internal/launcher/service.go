@@ -13,9 +13,13 @@ import (
 )
 
 const (
-	ServiceRunning ServiceStatus = "running"
-	ServiceStopped ServiceStatus = "stopped"
+	ServiceRunning      ServiceStatus = "running"
+	ServiceStopped      ServiceStatus = "stopped"
+	ServiceStartPending ServiceStatus = "start_pending"
+	ServiceStopPending  ServiceStatus = "stop_pending"
 )
+
+var ErrServiceNotInstalled = errors.New("service_not_installed")
 
 type ServiceStatus string
 

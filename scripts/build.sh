@@ -46,6 +46,10 @@ CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
 
 if [ "$target" = "windows-amd64" ]; then
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
+    -trimpath -ldflags "-s -w -X main.version=$version" \
+    -o "$stage_dir/chuzi-session-broker.exe" \
+    "$repo_root/cmd/session-broker"
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
     -trimpath \
     -o "$stage_dir/chuzi-browser-launcher.exe" \
     "$repo_root/cmd/browser-launcher"
@@ -66,6 +70,7 @@ if [ "$target" = "windows-amd64" ]; then
   fi
   cp "$node_runtime" "$stage_dir/node.exe"
   cp "$repo_root/scripts/session-shell.ps1" "$stage_dir/session-shell.ps1"
+  cp "$repo_root/scripts/windows-service-management.ps1" "$stage_dir/windows-service-management.ps1"
 fi
 adapter_extension=tar.gz
 if [ "$target" = "windows-amd64" ]; then

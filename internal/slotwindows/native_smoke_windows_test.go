@@ -289,7 +289,7 @@ func TestWindowsJobPoolNativeSmoke(t *testing.T) {
 	if err != nil || pipe == "" || token == "" {
 		t.Fatal("native agent endpoint was not available")
 	}
-	client, err := slotagent.Dial(ctx, pipe)
+	client, err := slotagent.DialWithExecutable(ctx, pipe, agentPath)
 	if err != nil {
 		t.Fatal("native agent pipe connection failed")
 	}

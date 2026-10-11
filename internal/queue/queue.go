@@ -20,6 +20,7 @@ import (
 var (
 	ErrInvalidConfig     = errors.New("queue: invalid configuration")
 	ErrRunnerUnavailable = errors.New("queue: runner is unavailable")
+	ErrSchedulerStopped  = errors.New("queue: scheduler is stopped")
 )
 
 // Clock and IDGenerator are injected so scheduling can be replayed in tests.
@@ -174,10 +175,11 @@ func (s *Scheduler) revokeAccountLease(leaseID string) error {
 // Scheduler claims and processes at most one request per RunOnce call. A
 // caller can invoke it from a worker loop or use it in deterministic tests.
 type Scheduler struct {
-	mu     sync.Mutex
-	store  StorePort
-	runner Runner
-	config Config
+	mu       sync.Mutex
+	store    StorePort
+	runner   Runner
+	config   Config
+	stopping bool
 }
 
 // New validates scheduler dependencies and returns a ready scheduler.
@@ -212,6 +214,9 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stopping {
+		return Outcome{}, ErrSchedulerStopped
+	}
 	if err := ctx.Err(); err != nil {
 		return Outcome{}, err
 	}
@@ -492,6 +497,35 @@ func (s *Scheduler) RunOnce(ctx context.Context) (Outcome, error) {
 		s.record(finishedAt, "run", "failed", claim.Request.RequestID, string(runnerResult.Failure), duration)
 	}
 	return outcome, err
+}
+
+// Shutdown prevents new claims and waits for the currently serialized pass to
+// finish. The service owns cancellation of the runner context; this method
+// only closes the scheduler admission boundary.
+func (s *Scheduler) Shutdown(ctx context.Context) error {
+	if s == nil || ctx == nil {
+		return ErrInvalidConfig
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// RunOnce serializes the durable claim/finish pass under the same mutex.
+	// Poll TryLock so a non-cooperative runner cannot make shutdown exceed its
+	// caller-provided deadline while the service is trying to close admission.
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if s.mu.TryLock() {
+			s.stopping = true
+			s.mu.Unlock()
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+		}
+	}
 }
 
 func (s *Scheduler) recoverExpiredSlotLeases(now time.Time) error {

@@ -23,6 +23,7 @@ Copy-Item -Force (Join-Path $GoDir "chuzi.exe") (Join-Path $stageDir "chuzi.exe"
 Copy-Item -Force (Join-Path $GoDir "chuzi-launcher.exe") (Join-Path $stageDir "chuzi-launcher.exe")
 Copy-Item -Force (Join-Path $GoDir "chuzi-browser-launcher.exe") (Join-Path $stageDir "chuzi-browser-launcher.exe")
 Copy-Item -Force (Join-Path $GoDir "chuzi-user-agent.exe") (Join-Path $stageDir "chuzi-user-agent.exe")
+Copy-Item -Force (Join-Path $GoDir "chuzi-session-broker.exe") (Join-Path $stageDir "chuzi-session-broker.exe")
 $nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction Stop
 $nodePath = $nodeCommand.Source
 if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath -PathType Leaf)) {
@@ -30,6 +31,7 @@ if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath 
 }
 Copy-Item -Force $nodePath (Join-Path $stageDir "node.exe")
 Copy-Item -Force (Join-Path $repoRoot "scripts/session-shell.ps1") (Join-Path $stageDir "session-shell.ps1")
+Copy-Item -Force (Join-Path $repoRoot "scripts/windows-service-management.ps1") (Join-Path $stageDir "windows-service-management.ps1")
 tar -xzf $WorkerArchive -C (Join-Path $stageDir "browser-worker")
 if ($LASTEXITCODE -ne 0) { throw "browser worker archive extraction failed" }
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
