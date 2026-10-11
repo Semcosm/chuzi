@@ -66,6 +66,20 @@ func TestStartSlotSessionExplicitDeadlineIsPartOfIdempotencyPayload(t *testing.T
 	}
 }
 
+func TestStartSlotSessionSelectorIsPartOfIdempotencyPayload(t *testing.T) {
+	database, _ := openTestStore(t)
+	pool := testPoolConfig(1)
+	if err := database.ReconcileJobPool(pool, storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: pool.PoolID, Actor: "ui", IdempotencyKey: "selector-key", RequestedAt: storeTestTime}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.StartSlotSession(SlotSessionMutation{SlotID: pool.PoolID + "-001", Actor: "ui", IdempotencyKey: "selector-key", RequestedAt: storeTestTime}); !errors.Is(err, ErrSlotSessionIdempotencyConflict) {
+		t.Fatalf("selector conflict=%v", err)
+	}
+}
+
 func TestStartSlotSessionRejectsInvalidTargetAndStaleRevision(t *testing.T) {
 	database, _ := openTestStore(t)
 	pool := testPoolConfig(1)

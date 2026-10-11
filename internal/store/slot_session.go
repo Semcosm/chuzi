@@ -101,6 +101,8 @@ type SlotSessionOperation struct {
 	ActionDeadline          time.Time                 `json:"action_deadline,omitempty"`
 	StartIdempotencyKey     string                    `json:"start_idempotency_key,omitempty"`
 	StartDeadlineExplicit   bool                      `json:"start_deadline_explicit,omitempty"`
+	StartRequestedPoolID    string                    `json:"start_requested_pool_id,omitempty"`
+	StartRequestedSlotID    string                    `json:"start_requested_slot_id,omitempty"`
 }
 
 type SlotSessionAction struct {
@@ -251,7 +253,8 @@ func (s *Store) StartSlotSession(m SlotSessionMutation) (SlotSessionOperation, b
 			if err := decode(ops.Get(raw), &result); err != nil {
 				return ErrCorruptData
 			}
-			if (m.PoolID != "" && result.PoolID != m.PoolID) || (m.SlotID != "" && result.SlotID != m.SlotID) || result.Actor != m.Actor || result.ExpectedRevision != m.ExpectedRevision || result.Attempt != normalizedSlotSessionAttempt(m.Attempt) || result.RetryBudget != m.RetryBudget || result.StartDeadlineExplicit != deadlineExplicit || (result.StartDeadlineExplicit && result.Deadline != m.Deadline) || (result.StartIdempotencyKey != "" && result.StartIdempotencyKey != m.IdempotencyKey) {
+			selectorConflict := result.StartIdempotencyKey != "" && (result.StartRequestedPoolID != m.PoolID || result.StartRequestedSlotID != m.SlotID)
+			if selectorConflict || (m.PoolID != "" && result.PoolID != m.PoolID) || (m.SlotID != "" && result.SlotID != m.SlotID) || result.Actor != m.Actor || result.ExpectedRevision != m.ExpectedRevision || result.Attempt != normalizedSlotSessionAttempt(m.Attempt) || result.RetryBudget != m.RetryBudget || result.StartDeadlineExplicit != deadlineExplicit || (result.StartDeadlineExplicit && result.Deadline != m.Deadline) || (result.StartIdempotencyKey != "" && result.StartIdempotencyKey != m.IdempotencyKey) {
 				return ErrSlotSessionIdempotencyConflict
 			}
 			idempotent = true
@@ -319,7 +322,7 @@ func (s *Store) StartSlotSession(m SlotSessionMutation) (SlotSessionOperation, b
 		if attempt == 0 {
 			attempt = 1
 		}
-		result = SlotSessionOperation{OperationID: slotSessionOperationID(m, selected.SlotID, tx), PoolID: selected.PoolID, SlotID: selected.SlotID, Ordinal: selected.Ordinal, State: state, Actor: m.Actor, ExpectedRevision: m.ExpectedRevision, RequestedAt: m.RequestedAt, UpdatedAt: m.RequestedAt, CompletedAt: completedAt, SessionState: string(selected.Status), AgentReady: selected.Status == slot.Ready, EnvironmentGeneration: selected.EnvironmentGeneration, Phase: phase, Attempt: attempt, Revision: selected.SessionRevision + 1, DesiredState: "running", Deadline: m.Deadline, RetryBudget: m.RetryBudget, StartIdempotencyKey: m.IdempotencyKey, StartDeadlineExplicit: deadlineExplicit}
+		result = SlotSessionOperation{OperationID: slotSessionOperationID(m, selected.SlotID, tx), PoolID: selected.PoolID, SlotID: selected.SlotID, Ordinal: selected.Ordinal, State: state, Actor: m.Actor, ExpectedRevision: m.ExpectedRevision, RequestedAt: m.RequestedAt, UpdatedAt: m.RequestedAt, CompletedAt: completedAt, SessionState: string(selected.Status), AgentReady: selected.Status == slot.Ready, EnvironmentGeneration: selected.EnvironmentGeneration, Phase: phase, Attempt: attempt, Revision: selected.SessionRevision + 1, DesiredState: "running", Deadline: m.Deadline, RetryBudget: m.RetryBudget, StartIdempotencyKey: m.IdempotencyKey, StartDeadlineExplicit: deadlineExplicit, StartRequestedPoolID: m.PoolID, StartRequestedSlotID: m.SlotID}
 		selected.SessionDesiredState = "running"
 		selected.SessionOperationID = result.OperationID
 		selected.SessionRevision = result.Revision
