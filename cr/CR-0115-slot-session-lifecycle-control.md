@@ -1,16 +1,16 @@
 # CR-0115: Durable Slot Session Lifecycle Control
 
 Base: main
-Head or Range: a6c17bd60ff6af2a9cc37d1ca4fe63708b0700e3
+Head or Range: f8fd77d1f6917c5675151ee78c457876a0f97653
 Integration Strategy: rebase-ff
-Review Evidence: a6c17bd60ff6af2a9cc37d1ca4fe63708b0700e3; go test ./...; go vet ./...; repository validators
+Review Evidence: trailers
 Title: Durable slot session lifecycle control
 Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 18746c8aec2686e1ad27c53c858c829f89dacfa6
-Head OID: a6c17bd60ff6af2a9cc37d1ca4fe63708b0700e3
+Base OID: 155d83d176346376dff4b323f2a7ffc37d34c45c
+Head OID: f8fd77d1f6917c5675151ee78c457876a0f97653
 Integrated Result: pending
 
 ## Summary
