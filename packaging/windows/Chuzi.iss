@@ -64,7 +64,7 @@ Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonap
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File ""{app}\CorePayload\windows-service-management.ps1"" -Operation Uninstall -RuntimeRoot ""{app}\CorePayload"" -DataRoot ""{commonappdata}\chuzi\data"" -InstallRoot ""{app}"""; Flags: runhidden waituntilterminated skipifdoesntexist; Check: InstalledProductionManagementScript; RunOnceId: RemoveChuziServices
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File ""{app}\CorePayload\windows-service-management.ps1"" -Operation Uninstall -RuntimeRoot ""{app}\CorePayload"" -DataRoot ""{commonappdata}\chuzi\data"" -InstallRoot ""{app}"""; Flags: runhidden waituntilterminated skipifdoesntexist; Check: InstalledManagementScript; RunOnceId: RemoveChuziServices
 Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonappdata}\chuzi\data"" -source-root ""{app}\CorePayload"" -manifest ""{app}\CorePayload\release-manifest.json"" -command core-stop"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: StopChuziCore
 
 [UninstallDelete]
@@ -78,19 +78,19 @@ var
   KeepUserDataPrompted: Boolean;
   CleanupReady: Boolean;
 
-function ProductionPayloadReady(): Boolean;
+function ProductionPayloadRequired(): Boolean;
 var
-  PolicyText: String;
+  Version: String;
 begin
+  { Release build scripts accept only v<major>.<minor>.<patch>. Treat any
+    v-prefixed installer as production so malformed stable metadata fails
+    closed in the real payload validator instead of falling back to the
+    unsigned-development path. }
+  Version := '{#AppVersion}';
   Result := False;
-  if not LoadStringFromFile(ExpandConstant('{app}\CorePayload\authenticode-policy.json'), PolicyText) then
+  if Length(Version) <= 1 then
     Exit;
-  PolicyText := LowerCase(PolicyText);
-  Result := ((Pos('"production_release_allowed": true', PolicyText) > 0) or
-    (Pos('"production_release_allowed":true', PolicyText) > 0)) and
-    ((Pos('"artifact_kind": "payload"', PolicyText) > 0) or
-    (Pos('"artifact_kind":"payload"', PolicyText) > 0)) and
-    (Pos('"status": "production-signed"', PolicyText) > 0);
+  Result := Version[1] = 'v';
 end;
 
 function RunServiceManagementAt(ScriptPath: String; Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
@@ -117,10 +117,9 @@ begin
     Operation, RuntimeRoot, DataRoot, InstallRoot);
 end;
 
-function InstalledProductionManagementScript(): Boolean;
+function InstalledManagementScript(): Boolean;
 begin
-  Result := ProductionPayloadReady() and
-    FileExists(ExpandConstant('{app}\CorePayload\windows-service-management.ps1'));
+  Result := FileExists(ExpandConstant('{app}\CorePayload\windows-service-management.ps1'));
 end;
 
 function ValidateInstalledPayload(PayloadRoot: String; DataRoot: String; Production: Boolean): Boolean;
@@ -188,8 +187,15 @@ begin
   UninstallContext := True;
   CleanupReady := True;
   KeepUserData();
-  if ProductionPayloadReady() and FileExists(ExpandConstant('{app}\CorePayload\windows-service-management.ps1')) then
+  if InstalledManagementScript() then
   begin
+    if ProductionPayloadRequired() and
+       not ValidateInstalledPayload(ExpandConstant('{app}\CorePayload'), '', True) then
+    begin
+      MsgBox('已安装的 Core 文件未通过生产签名检查，卸载已停止。请由管理员检查安装目录后重试。', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
     CleanupReady := RunServiceManagement('UninstallPrepare', ExpandConstant('{app}\CorePayload'),
       ExpandConstant('{commonappdata}\chuzi\data'), ExpandConstant('{app}'));
     if not CleanupReady then
@@ -294,14 +300,14 @@ begin
     MsgBox('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError, MB_OK);
     Abort;
   end;
-  if not ValidateInstalledPayload(RuntimeRoot, '', ProductionPayloadReady()) then
+  if not ValidateInstalledPayload(RuntimeRoot, '', ProductionPayloadRequired()) then
   begin
     if not RollbackUpgrade() then
       MsgBox('安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
     MsgBox('已安装的 Core 文件未通过签名和完整性检查，安装已停止。', mbError, MB_OK);
     Abort;
   end;
-  if ProductionPayloadReady() then
+  if ProductionPayloadRequired() then
   begin
     if not RunServiceManagement('Install', RuntimeRoot, DataRoot, ExpandConstant('{app}')) then
     begin
