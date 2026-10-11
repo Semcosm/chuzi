@@ -40,6 +40,7 @@ CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   "$repo_root/cmd/launcher"
 
 if [ "$target" = "windows-amd64" ]; then
+  CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=$version" -o "$output_dir/chuzi-session-broker.exe" "$repo_root/cmd/session-broker"
   CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build \
     -trimpath \
     -o "$output_dir/chuzi-browser-launcher.exe" \

@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -67,11 +68,21 @@ func TestWindowsNamedPipeRoundTrip(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	client, err := Connect(ctx, path, Config{})
+	conn, err := dialPipeUnverified(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClient(conn, Config{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
+	if err := validatePipeServerIdentity(conn, ""); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("test-user pipe server identity error = %v, want unauthorized", err)
+	}
+	if _, err := client.Hello(ctx); err != nil {
+		t.Fatal(err)
+	}
 	request, idempotent, err := client.SubmitRequest(ctx, coreapi.SubmitRequest{RequestID: "req-1", AccountID: "account-1", IdempotencyKey: "key"})
 	if err != nil || idempotent || request.RequestID != "req-1" {
 		t.Fatalf("submit = %#v, idempotent=%v, err=%v", request, idempotent, err)

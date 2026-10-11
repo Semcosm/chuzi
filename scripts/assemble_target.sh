@@ -30,11 +30,12 @@ cp "$go_dir/$launcher_binary" "$stage_dir/$launcher_binary"
 if [ "$target" = "windows-amd64" ]; then
   cp "$go_dir/$browser_launcher_binary" "$stage_dir/$browser_launcher_binary"
   cp "$go_dir/chuzi-user-agent.exe" "$stage_dir/chuzi-user-agent.exe"
+  cp "$go_dir/chuzi-session-broker.exe" "$stage_dir/chuzi-session-broker.exe"
 fi
 # Artifact archives do not reliably preserve Unix executable bits.
 chmod 0755 "$stage_dir/$service_binary" "$stage_dir/$launcher_binary"
 if [ "$target" = "windows-amd64" ]; then
-  chmod 0755 "$stage_dir/$browser_launcher_binary" "$stage_dir/chuzi-user-agent.exe"
+  chmod 0755 "$stage_dir/$browser_launcher_binary" "$stage_dir/chuzi-user-agent.exe" "$stage_dir/chuzi-session-broker.exe"
 fi
 tar -xzf "$worker_archive" -C "$stage_dir/browser-worker"
 if [ "$target" = "windows-amd64" ]; then
@@ -45,6 +46,7 @@ if [ "$target" = "windows-amd64" ]; then
   fi
   cp "$node_runtime" "$stage_dir/node.exe"
   cp "$repo_root/scripts/session-shell.ps1" "$stage_dir/session-shell.ps1"
+  cp "$repo_root/scripts/windows-service-management.ps1" "$stage_dir/windows-service-management.ps1"
 fi
 adapter_extension=tar.gz
 if [ "$target" = "windows-amd64" ]; then

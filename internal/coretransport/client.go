@@ -4,9 +4,12 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/Semcosm/chuzi/internal/coreapi"
 )
@@ -23,10 +26,12 @@ type Client struct {
 	closeOnce     sync.Once
 }
 
+const clientWriteTimeout = 2 * time.Second
+
 // Connect dials the service endpoint and completes the protocol handshake.
 // The returned Client is ready for Core API calls.
 func Connect(ctx context.Context, path string, config Config) (*Client, error) {
-	conn, err := Dial(ctx, path)
+	conn, err := DialWithConfig(ctx, path, config)
 	if err != nil {
 		return nil, err
 	}
@@ -136,10 +141,11 @@ func (c *Client) Call(ctx context.Context, method string, params any, result any
 		delete(c.pending, id)
 		c.pendingMu.Unlock()
 	}()
-	c.writeMu.Lock()
-	_, writeErr := c.conn.Write(raw)
-	c.writeMu.Unlock()
+	writeErr := c.writeContext(ctx, raw)
 	if writeErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return classifyContext(ctx)
+		}
 		return ErrClientClosed
 	}
 	select {
@@ -177,10 +183,40 @@ func (c *Client) sendCancel(id string) error {
 		return err
 	}
 	raw = append(raw, '\n')
+	ctx, cancel := context.WithTimeout(context.Background(), clientWriteTimeout)
+	defer cancel()
+	return c.writeContext(ctx, raw)
+}
+
+// writeContext bounds writes as well as reads. A peer that stops consuming
+// replies must not hold a launcher goroutine forever, and cancellation must
+// wake a blocked named-pipe write. The write mutex also serializes deadline
+// changes with multiplexed requests.
+func (c *Client) writeContext(ctx context.Context, payload []byte) error {
+	if err := classifyContext(ctx); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(clientWriteTimeout)
+	if requested, ok := ctx.Deadline(); ok && requested.Before(deadline) {
+		deadline = requested
+	}
 	c.writeMu.Lock()
 	defer c.writeMu.Unlock()
-	_, err = c.conn.Write(raw)
-	return err
+	if err := c.conn.SetWriteDeadline(deadline); err != nil && !errors.Is(err, net.ErrClosed) {
+		return err
+	}
+	clearDeadline := func() { _ = c.conn.SetWriteDeadline(time.Time{}) }
+	defer clearDeadline()
+	stop := context.AfterFunc(ctx, func() { _ = c.conn.SetWriteDeadline(time.Now()) })
+	defer stop()
+	written, err := c.conn.Write(payload)
+	if err != nil {
+		return err
+	}
+	if written != len(payload) {
+		return io.ErrShortWrite
+	}
+	return nil
 }
 
 func (c *Client) Hello(ctx context.Context) (HelloResult, error) {

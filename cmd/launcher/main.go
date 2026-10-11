@@ -21,6 +21,18 @@ import (
 
 var version = "dev"
 
+func resolveLauncherInstallRoot(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if runtime.GOOS == "windows" && (value == "" || filepath.Clean(value) == ".") {
+		executable, err := os.Executable()
+		if err != nil {
+			return "", err
+		}
+		value = filepath.Dir(executable)
+	}
+	return filepath.Abs(value)
+}
+
 func main() {
 	manifestPath := flag.String("manifest", "release-manifest.json", "release manifest path")
 	installRoot := flag.String("root", ".", "installation root to inspect")
@@ -101,7 +113,7 @@ func main() {
 	}
 
 	if *verify || *command == "verify" {
-		root, err := filepath.Abs(*installRoot)
+		root, err := resolveLauncherInstallRoot(*installRoot)
 		if err != nil {
 			fatal(err)
 		}
@@ -117,7 +129,7 @@ func main() {
 		}
 		return
 	}
-	root, err := filepath.Abs(*installRoot)
+	root, err := resolveLauncherInstallRoot(*installRoot)
 	if err != nil {
 		fatal(err)
 	}

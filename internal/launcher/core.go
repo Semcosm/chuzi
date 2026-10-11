@@ -5,17 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/coretransport"
+	"github.com/Semcosm/chuzi/internal/servicehost"
 )
 
 var (
@@ -27,29 +28,83 @@ var (
 )
 
 type CoreStatus struct {
-	ConfiguredPoolMode string   `json:"configured_pool_mode"`
-	Installed          bool     `json:"installed"`
-	Ready              bool     `json:"ready"`
-	Running            bool     `json:"running"`
-	PID                int      `json:"pid,omitempty"`
-	Status             string   `json:"status"`
-	Protocol           string   `json:"protocol,omitempty"`
-	Methods            []string `json:"methods,omitempty"`
-	MissingMethods     []string `json:"missing_methods,omitempty"`
-	CapabilityStatus   string   `json:"capability_status,omitempty"`
+	ConfiguredPoolMode    string             `json:"configured_pool_mode"`
+	Installed             bool               `json:"installed"`
+	Ready                 bool               `json:"ready"`
+	Running               bool               `json:"running"`
+	PID                   int                `json:"pid,omitempty"`
+	Status                string             `json:"status"`
+	Protocol              string             `json:"protocol,omitempty"`
+	Methods               []string           `json:"methods,omitempty"`
+	MissingMethods        []string           `json:"missing_methods,omitempty"`
+	CapabilityStatus      string             `json:"capability_status,omitempty"`
+	Health                servicehost.Health `json:"health"`
+	HostRunning           bool               `json:"host_running"`
+	CoreHandshake         bool               `json:"core_handshake"`
+	LoginAdapterAvailable bool               `json:"login_adapter_available"`
+	HelperAvailable       bool               `json:"helper_available"`
+	RuntimeReady          bool               `json:"runtime_ready"`
+	Forced                bool               `json:"forced"`
 }
 
 // CoreManager is the launcher-owned boundary for Core lifecycle and IPC.
 // Callers do not need to know the endpoint format or service process details.
 type CoreManager struct {
-	Root        string
-	ServicePath string
-	ConfigPath  string
-	PIDPath     string
-	StartWait   time.Duration
+	Root         string
+	RuntimeRoot  string
+	ServicePath  string
+	ConfigPath   string
+	PIDPath      string
+	StartWait    time.Duration
+	controllerMu sync.Mutex
+	controller   ServiceController
 }
 
 func NewCoreManager(root string) (*CoreManager, error) {
+	runtimeRoot := ""
+	if runtime.GOOS == "windows" {
+		executable, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("%w: resolve installed runtime", ErrInvalidPath)
+		}
+		runtimeRoot = filepath.Dir(executable)
+		// The launcher root is the signed installation directory. Mutable
+		// service data is always the machine-scoped root; accepting an arbitrary
+		// caller directory here would let a UI redirect the SYSTEM service.
+		rawRoot := strings.TrimSpace(root)
+		if rawRoot == "" || filepath.Clean(rawRoot) != rawRoot || !filepath.IsAbs(rawRoot) {
+			return nil, fmt.Errorf("%w: Windows install root must be absolute and clean", ErrInvalidPath)
+		}
+		installRoot := filepath.Clean(rawRoot)
+		if !strings.EqualFold(installRoot, filepath.Clean(runtimeRoot)) {
+			// A fixed data root is accepted for service-facing callers that do not
+			// have an install-root argument, while all other roots must match the
+			// executable's trusted installation directory.
+			dataRoot, dataErr := servicehost.FixedDataRoot()
+			if dataErr != nil || !strings.EqualFold(installRoot, filepath.Clean(dataRoot)) {
+				return nil, fmt.Errorf("%w: Windows root is not the installed runtime or fixed data root", ErrInvalidPath)
+			}
+		}
+		dataRoot, err := servicehost.FixedDataRoot()
+		if err != nil {
+			return nil, err
+		}
+		return NewCoreManagerWithRuntime(dataRoot, runtimeRoot)
+	}
+	return NewCoreManagerWithRuntime(root, runtimeRoot)
+}
+
+// NewCoreManagerWithRuntime keeps mutable service data separate from the
+// signed installation runtime. Windows callers normally use NewCoreManager,
+// which derives the runtime from the installed launcher executable.
+func NewCoreManagerWithRuntime(root, runtimeRoot string) (*CoreManager, error) {
+	rawRoot := strings.TrimSpace(root)
+	if rawRoot == "" {
+		return nil, fmt.Errorf("%w: core root is required", ErrInvalidPath)
+	}
+	if runtime.GOOS == "windows" && (filepath.Clean(rawRoot) != rawRoot || !filepath.IsAbs(rawRoot)) {
+		return nil, fmt.Errorf("%w: Windows core root must be absolute and clean", ErrInvalidPath)
+	}
 	root, err := filepath.Abs(root)
 	if err != nil {
 		return nil, err
@@ -58,13 +113,35 @@ func NewCoreManager(root string) (*CoreManager, error) {
 	if root == "." || !filepath.IsAbs(root) {
 		return nil, fmt.Errorf("%w: core root must be absolute", ErrInvalidPath)
 	}
-	service := "chuzi"
 	if runtime.GOOS == "windows" {
-		service += ".exe"
+		if err := servicehost.ValidateFixedDataRoot(root); err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(runtimeRoot) == "" {
+			executable, executableErr := os.Executable()
+			if executableErr != nil {
+				return nil, fmt.Errorf("%w: resolve installed runtime", ErrInvalidPath)
+			}
+			runtimeRoot = filepath.Dir(executable)
+		}
+		rawRuntimeRoot := strings.TrimSpace(runtimeRoot)
+		if filepath.Clean(rawRuntimeRoot) != rawRuntimeRoot || !filepath.IsAbs(rawRuntimeRoot) {
+			return nil, fmt.Errorf("%w: runtime root must be absolute and clean", ErrInvalidPath)
+		}
+		runtimeRoot, err = filepath.Abs(rawRuntimeRoot)
+		if err != nil || filepath.Clean(runtimeRoot) != runtimeRoot {
+			return nil, fmt.Errorf("%w: runtime root must be absolute and clean", ErrInvalidPath)
+		}
+		trusted, trustErr := servicehost.NewTrustedRuntime(runtimeRoot)
+		if trustErr != nil {
+			return nil, trustErr
+		}
+		return &CoreManager{Root: root, RuntimeRoot: trusted.Root, ServicePath: trusted.Core, ConfigPath: filepath.Join(root, "core-config.json"), PIDPath: filepath.Join(root, ".core.pid"), StartWait: 5 * time.Second}, nil
 	}
 	return &CoreManager{
 		Root:        root,
-		ServicePath: filepath.Join(root, service),
+		RuntimeRoot: root,
+		ServicePath: filepath.Join(root, "chuzi"),
 		ConfigPath:  filepath.Join(root, "core-config.json"),
 		PIDPath:     filepath.Join(root, ".core.pid"),
 		StartWait:   5 * time.Second,
@@ -79,11 +156,29 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 		return CoreStatus{}, err
 	}
 	installed := fileExists(m.ServicePath)
-	pid := m.readPID()
+	controller, controllerErr := m.serviceController()
+	serviceState := ServiceState{Status: ServiceStopped}
+	if controllerErr == nil {
+		serviceState, controllerErr = controller.Status(ctx)
+	}
+	pid := serviceState.PID
+	if pid <= 0 {
+		pid = m.readPID()
+	}
 	endpointReady := m.ready(ctx)
-	ready := endpointReady
-	running := endpointReady
-	if !running && pid > 0 {
+	// Windows readiness is SCM-backed. A reachable pipe is not sufficient when
+	// the service is missing or incompatible, because a manually started or
+	// same-name process must never become the production host by accident.
+	running := serviceState.Status == ServiceRunning || serviceState.Status == ServiceStartPending || serviceState.Status == ServiceStopPending
+	if runtime.GOOS != "windows" {
+		running = running || endpointReady
+	}
+	hostAccepted := runtime.GOOS != "windows" || (controllerErr == nil && running)
+	ready := endpointReady && hostAccepted
+	// Unix launchers are short-lived callers, so their in-memory process
+	// controller does not survive into a later core-status/core-stop
+	// invocation. Retain the PID-file ownership check for that boundary.
+	if runtime.GOOS != "windows" && !running && pid > 0 {
 		running = serviceProcessMatches(pid, m.ServicePath)
 	}
 	status := "stopped"
@@ -96,14 +191,22 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 	} else {
 		status = "not_installed"
 	}
-	result := CoreStatus{Installed: installed, Ready: ready, Running: running, PID: pid, Status: status}
-	result.ConfiguredPoolMode = "logical"
+	configuredPoolMode := "logical"
 	if cfg, err := m.loadConfig(); err == nil {
 		if cfg.WindowsJobPool.Enabled {
-			result.ConfiguredPoolMode = "windows"
+			configuredPoolMode = "windows"
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
-		result.ConfiguredPoolMode = "unknown"
+		configuredPoolMode = "unknown"
+	}
+	health := servicehost.Health{HostRunning: running, RuntimeReady: installed && strings.TrimSpace(m.RuntimeRoot) != "", ObservedAt: time.Now().UTC()}
+	result := CoreStatus{Installed: installed, Ready: ready, Running: running, PID: pid, Status: status, ConfiguredPoolMode: configuredPoolMode, Health: health, HostRunning: health.HostRunning, RuntimeReady: health.RuntimeReady}
+	if controllerErr != nil && !errors.Is(controllerErr, ErrServiceNotInstalled) {
+		result.CapabilityStatus = "host_unavailable"
+		if errors.Is(controllerErr, servicehost.ErrIncompatibleService) {
+			result.CapabilityStatus = "incompatible"
+			result.Status = "incompatible"
+		}
 	}
 	if endpointReady {
 		capabilities, err := m.capabilities(ctx)
@@ -114,6 +217,12 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 			result.Methods = capabilities.Methods
 			result.CapabilityStatus = "supported"
 			result.MissingMethods = missingMethods(capabilities.Methods, coretransport.SupportedMethods())
+			health.CoreHandshake = true
+			health.LoginAdapterAvailable = configuredPoolMode == "logical" || containsMethod(capabilities.Methods, coretransport.MethodStartSlotSession)
+			// Logical mode has no interactive helper requirement. Windows job
+			// mode remains false until the Core/session host reports an
+			// authenticated helper registration through its health surface.
+			health.HelperAvailable = configuredPoolMode == "logical"
 			if len(result.MissingMethods) > 0 {
 				result.CapabilityStatus = "incompatible"
 				result.Ready = false
@@ -121,7 +230,23 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 			}
 		}
 	}
+	result.Health = health
+	result.HostRunning = health.HostRunning
+	result.CoreHandshake = health.CoreHandshake
+	result.LoginAdapterAvailable = health.LoginAdapterAvailable
+	result.HelperAvailable = health.HelperAvailable
+	result.RuntimeReady = health.RuntimeReady
+	result.Forced = health.Forced
 	return result, nil
+}
+
+func containsMethod(methods []string, want string) bool {
+	for _, method := range methods {
+		if method == want {
+			return true
+		}
+	}
+	return false
 }
 
 type coreCapabilities struct {
@@ -130,7 +255,7 @@ type coreCapabilities struct {
 }
 
 func (m *CoreManager) capabilities(ctx context.Context) (coreCapabilities, error) {
-	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{})
+	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
 	if err != nil {
 		return coreCapabilities{}, err
 	}
@@ -164,9 +289,6 @@ func (m *CoreManager) Start(ctx context.Context) (CoreStatus, error) {
 		return status, nil
 	}
 	if status, _ := m.Status(ctx); status.Running {
-		if status.PID <= 0 {
-			return status, ErrCoreCapabilityMismatch
-		}
 		if err := m.Stop(ctx); err != nil {
 			return status, err
 		}
@@ -174,28 +296,25 @@ func (m *CoreManager) Start(ctx context.Context) (CoreStatus, error) {
 	if !fileExists(m.ServicePath) {
 		return CoreStatus{}, fmt.Errorf("%w: core service is not installed", ErrNotFound)
 	}
-	if pid := m.readPID(); pid > 0 && serviceProcessMatches(pid, m.ServicePath) {
-		status, _ := m.Status(ctx)
-		return status, ErrCoreUnavailable
-	}
 	if err := m.writeConfig(); err != nil {
 		return CoreStatus{}, err
 	}
-	command := exec.Command(m.ServicePath, "-config", m.ConfigPath)
-	command.Dir = m.Root
-	command.Env = append(os.Environ(), "CHUZI_DATA_DIR="+m.Root)
-	command.Stdin = nil
-	command.Stdout = io.Discard
-	command.Stderr = io.Discard
-	if err := command.Start(); err != nil {
-		return CoreStatus{}, fmt.Errorf("start core: %w", err)
+	controller, err := m.serviceController()
+	if err != nil {
+		return CoreStatus{}, err
 	}
-	if err := os.WriteFile(m.PIDPath, []byte(strconv.Itoa(command.Process.Pid)+"\n"), 0o600); err != nil {
-		_ = command.Process.Kill()
-		return CoreStatus{}, fmt.Errorf("write core pid: %w", err)
+	started, err := controller.Start(ctx)
+	if err != nil {
+		if errors.Is(err, ErrServiceNotInstalled) {
+			return CoreStatus{}, fmt.Errorf("%w: core service is not registered with the host", ErrNotFound)
+		}
+		return CoreStatus{}, fmt.Errorf("start core host: %w", err)
+	}
+	if started.PID > 0 {
+		_ = os.WriteFile(m.PIDPath, []byte(strconv.Itoa(started.PID)+"\n"), 0o600)
 	}
 	if err := m.waitReady(ctx); err != nil {
-		_ = stopServiceProcess(context.Background(), command.Process.Pid)
+		_ = controller.Stop(context.Background())
 		_ = os.Remove(m.PIDPath)
 		return CoreStatus{}, err
 	}
@@ -210,27 +329,42 @@ func (m *CoreManager) Stop(ctx context.Context) error {
 	if err := contextErr(ctx); err != nil {
 		return err
 	}
-	pid := m.readPID()
-	if pid <= 0 {
-		if !m.ready(ctx) {
-			return nil
-		}
-		if err := stopOrphanedService(ctx, filepath.Base(m.ServicePath)); err != nil {
+	if runtime.GOOS != "windows" {
+		pid := m.readPID()
+		if pid <= 0 {
+			if !m.ready(ctx) {
+				return nil
+			}
 			return ErrCoreProcessUnavailable
+		}
+		if !serviceProcessMatches(pid, m.ServicePath) {
+			_ = os.Remove(m.PIDPath)
+			if !m.ready(ctx) {
+				return nil
+			}
+			return ErrCoreProcessUnavailable
+		}
+		if err := stopServiceProcess(ctx, pid); err != nil {
+			return err
 		}
 		return m.waitStopped(ctx)
 	}
-	if !serviceProcessMatches(pid, m.ServicePath) {
-		_ = os.Remove(m.PIDPath)
-		if m.ready(ctx) {
-			if err := stopOrphanedService(ctx, filepath.Base(m.ServicePath)); err != nil {
-				return ErrCoreProcessUnavailable
-			}
-			return m.waitStopped(ctx)
-		}
-		return nil
+	controller, err := m.serviceController()
+	if err != nil {
+		return err
 	}
-	if err := stopServiceProcess(ctx, pid); err != nil {
+	state, statusErr := controller.Status(ctx)
+	if statusErr != nil && !errors.Is(statusErr, ErrServiceNotInstalled) {
+		return statusErr
+	}
+	if state.Status != ServiceRunning && state.Status != ServiceStartPending && state.Status != ServiceStopPending {
+		if !m.ready(ctx) {
+			_ = os.Remove(m.PIDPath)
+			return nil
+		}
+		return ErrCoreProcessUnavailable
+	}
+	if err := controller.Stop(ctx); err != nil {
 		return err
 	}
 	return m.waitStopped(ctx)
@@ -264,7 +398,7 @@ func (m *CoreManager) Call(ctx context.Context, method string, params json.RawMe
 	if !json.Valid(params) {
 		return nil, fmt.Errorf("%w: invalid core parameters", ErrInvalidPath)
 	}
-	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{})
+	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
 	if err != nil {
 		return nil, ErrCoreUnavailable
 	}
@@ -280,7 +414,7 @@ func (m *CoreManager) Call(ctx context.Context, method string, params json.RawMe
 }
 
 func (m *CoreManager) ready(ctx context.Context) bool {
-	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{})
+	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
 	if err != nil {
 		return false
 	}
@@ -381,7 +515,7 @@ func (m *CoreManager) SavePoolMode(ctx context.Context, mode, poolID string, rev
 		return nil, err
 	}
 	command := exec.CommandContext(ctx, m.ServicePath, "-config", m.ConfigPath, "-configure-pool-mode", mode, "-pool-id", poolID, "-expected-revision", strconv.FormatUint(revision, 10))
-	command.Dir = m.Root
+	command.Dir = m.RuntimeRoot
 	var stderr strings.Builder
 	command.Stderr = &stderr
 	output, err := command.Output()

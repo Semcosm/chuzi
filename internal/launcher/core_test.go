@@ -1,3 +1,5 @@
+//go:build !windows
+
 package launcher
 
 import (
@@ -31,6 +33,19 @@ func TestCoreManagerRejectsInvalidProxyPayloadBeforeDialing(t *testing.T) {
 	_, err := manager.Call(context.Background(), "get_account", json.RawMessage(`{"account_id":`))
 	if !errors.Is(err, ErrInvalidPath) {
 		t.Fatalf("Call() error = %v, want ErrInvalidPath", err)
+	}
+}
+
+func TestServiceProcessMatchRequiresExactExecutablePath(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if serviceProcessMatches(os.Getpid(), executable) == false {
+		t.Fatal("current test process did not match its resolved executable")
+	}
+	if serviceProcessMatches(os.Getpid(), filepath.Join(t.TempDir(), filepath.Base(executable))) {
+		t.Fatal("same-name executable from another path matched")
 	}
 }
 
