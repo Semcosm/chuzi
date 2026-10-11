@@ -354,13 +354,14 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $payload = Join-Path $env:RUNNER_TEMP 'chuzi-core-payload'
-          $root = Join-Path ${env:ProgramData} 'chuzi\data'
-          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $runtimeRoot = $payload
+          $dataRoot = Join-Path ${env:ProgramData} 'chuzi\data'
+          if (Test-Path $dataRoot) { Remove-Item -Recurse -Force $dataRoot }
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           $launcher = Join-Path $payload 'chuzi-launcher.exe'
           $manifest = Join-Path $payload 'release-manifest.json'
           $installOutput = & $launcher `
-            -root $root `
+            -root $runtimeRoot `
             -source-root $payload `
             -manifest $manifest `
             -command component-install `
@@ -369,21 +370,21 @@ jobs:
             $installOutput | Out-String | Write-Error
             throw "Core component installation failed with exit code $LASTEXITCODE"
           }
-          $service = Join-Path $root 'chuzi.exe'
+          $service = Join-Path $runtimeRoot 'chuzi.exe'
           if (-not (Test-Path $service)) { throw "Core service was not installed: $service" }
-          $configPath = Join-Path $root 'core-ci-config.json'
+          $configPath = Join-Path $dataRoot 'core-ci-config.json'
           @{
-            data_dir = $root
+            data_dir = $dataRoot
             health = @{ listen = '127.0.0.1:18080' }
-            observability = @{ log_path = (Join-Path $root 'core-ci.log') }
+            observability = @{ log_path = (Join-Path $dataRoot 'core-ci.log') }
           } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 $configPath
-          $process = Start-Process -FilePath $service -ArgumentList @('-config', $configPath) -WorkingDirectory $root -PassThru
+          $process = Start-Process -FilePath $service -ArgumentList @('-config', $configPath) -WorkingDirectory $runtimeRoot -PassThru
           $healthy = $false
           try {
             for ($attempt = 0; $attempt -lt 40; $attempt++) {
               $process.Refresh()
               if ($process.HasExited) {
-                $log = Join-Path $root 'core-ci.log'
+                $log = Join-Path $dataRoot 'core-ci.log'
                 if (Test-Path $log) { Get-Content $log -Tail 80 }
                 throw "Core exited during lifecycle smoke test with code $($process.ExitCode)"
               }
@@ -394,7 +395,7 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $healthy) { throw 'Core did not become healthy during lifecycle smoke test' }
-            $helloJson = & $launcher -root $root -source-root $payload -manifest $manifest -command core-call -core-method hello -core-params-json '{"version":"chuzi.core/v1"}'
+            $helloJson = & $launcher -root $runtimeRoot -source-root $payload -manifest $manifest -command core-call -core-method hello -core-params-json '{"version":"chuzi.core/v1"}'
             if ($LASTEXITCODE -ne 0) {
               $helloJson | Out-String | Write-Error
               throw 'Core hello capability probe failed'
@@ -547,25 +548,26 @@ jobs:
           if (-not (Test-Path (Join-Path $installedPayload 'chuzi-launcher.exe'))) {
             throw "Installed Slint package does not contain CorePayload launcher: $installedPayload"
           }
-          $root = Join-Path ${env:ProgramData} 'chuzi\data'
-          if (Test-Path $root) { Remove-Item -Recurse -Force $root }
-          New-Item -ItemType Directory -Force -Path $root | Out-Null
+          $runtimeRoot = $installedPayload
+          $dataRoot = Join-Path ${env:ProgramData} 'chuzi\data'
+          if (Test-Path $dataRoot) { Remove-Item -Recurse -Force $dataRoot }
+          New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           $launcher = Join-Path $installedPayload 'chuzi-launcher.exe'
           $manifest = Join-Path $installedPayload 'release-manifest.json'
-          $installOutput = & $launcher -root $root -source-root $installedPayload -manifest $manifest -command component-install -item service 2>&1
+          $installOutput = & $launcher -root $runtimeRoot -source-root $installedPayload -manifest $manifest -command component-install -item service 2>&1
           if ($LASTEXITCODE -ne 0) {
             $installOutput | Out-String | Write-Error
             throw "Installed Core payload installation failed with exit code $LASTEXITCODE"
           }
-          $service = Join-Path $root 'chuzi.exe'
+          $service = Join-Path $runtimeRoot 'chuzi.exe'
           if (-not (Test-Path $service)) { throw "Installed Core service is missing: $service" }
-          $configPath = Join-Path $root 'core-installed-config.json'
+          $configPath = Join-Path $dataRoot 'core-installed-config.json'
           @{
-            data_dir = $root
+            data_dir = $dataRoot
             health = @{ listen = '127.0.0.1:18081' }
-            observability = @{ log_path = (Join-Path $root 'core-installed.log') }
+            observability = @{ log_path = (Join-Path $dataRoot 'core-installed.log') }
           } | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 $configPath
-          $process = Start-Process -FilePath $service -ArgumentList @('-config', $configPath) -WorkingDirectory $root -PassThru
+          $process = Start-Process -FilePath $service -ArgumentList @('-config', $configPath) -WorkingDirectory $runtimeRoot -PassThru
           try {
             $healthy = $false
             for ($attempt = 0; $attempt -lt 40; $attempt++) {
