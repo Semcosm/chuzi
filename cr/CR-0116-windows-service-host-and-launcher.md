@@ -1,16 +1,16 @@
 # CR-0116: Windows service host, launcher lifecycle, and IPC boundary
 
 Base: main
-Head or Range: eeb8876f83d5b552e7ccdc99a692ddf023d839c5
+Head or Range: 51515a06bbe07da3a023486d757305fca1f83d45
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows service host, launcher lifecycle, and authenticated IPC boundary
-Revision: 9
+Revision: 10
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 06ac33bb3fafac66df9a88f2b2cab5eec94ecfcf
-Head OID: eeb8876f83d5b552e7ccdc99a692ddf023d839c5
+Head OID: 51515a06bbe07da3a023486d757305fca1f83d45
 Integrated Result: pending
 
 ## Summary
