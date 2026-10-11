@@ -5,12 +5,12 @@ Head or Range: b633623d222db8ddbe8ca497e56feaadd7bf9f77
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(environment): bootstrap signed Windows test packages and enforce pool readiness
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 62451c5fa74b7d4b61c47a7e075f8f268446ca0f
-Head OID: b633623d222db8ddbe8ca497e56feaadd7bf9f77
+Head OID: e4cd3d6782c086a0e3357e21f08e96f4955721e2
 Integrated Result: pending
 
 ## Summary
