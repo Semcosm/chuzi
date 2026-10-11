@@ -1,7 +1,7 @@
 # CR-0110: bootstrap a signed Windows test environment and enforce pool readiness
 
 Base: main
-Head or Range: d9797cd723f26e066b205dc78a099289bbe16568
+Head or Range: 83894e19a31a4693c2c0054c8981e6d673f38985
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(environment): bootstrap signed Windows test packages and enforce pool readiness
@@ -9,8 +9,8 @@ Revision: 5
 Status: integrated
 Decision: accepted
 Policy Version: v0.3
-Base OID: d9797cd723f26e066b205dc78a099289bbe16568
-Head OID: d9797cd723f26e066b205dc78a099289bbe16568
+Base OID: 83894e19a31a4693c2c0054c8981e6d673f38985
+Head OID: 83894e19a31a4693c2c0054c8981e6d673f38985
 Integrated Result: main@83894e19a31a4693c2c0054c8981e6d673f38985
 
 ## Summary
