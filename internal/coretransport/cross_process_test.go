@@ -133,8 +133,18 @@ func TestCrossProcessTransportContract(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	client, err := Connect(context.Background(), endpoint, Config{})
+	// The helper is a test process rather than the installed SYSTEM-owned Core
+	// executable, so use the unverified test dialer before exercising Connect's
+	// protocol handshake and client calls.
+	conn, err = dialTestEndpoint(context.Background(), endpoint)
 	if err != nil {
+		t.Fatal(err)
+	}
+	client, err := NewClient(conn, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Hello(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
