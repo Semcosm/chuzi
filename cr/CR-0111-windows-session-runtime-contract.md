@@ -1,17 +1,17 @@
 # CR-0111: define the Windows slot session runtime contract
 
 Base: main
-Head or Range: ad4983f67dd6515c3d4c7088f9600e0090e72b8d
+Head or Range: 5818a2b5896def77554682235b985b668e07dd45
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): define slot session runtime contract
-Revision: 5
-Status: pending
-Decision: pending
+Revision: 6
+Status: integrated
+Decision: accepted
 Policy Version: v0.3
-Base OID: ad4983f67dd6515c3d4c7088f9600e0090e72b8d
-Head OID: ad4983f67dd6515c3d4c7088f9600e0090e72b8d
-Integrated Result: pending
+Base OID: 5818a2b5896def77554682235b985b668e07dd45
+Head OID: 5818a2b5896def77554682235b985b668e07dd45
+Integrated Result: main@5818a2b5896def77554682235b985b668e07dd45
 
 ## Summary
 
