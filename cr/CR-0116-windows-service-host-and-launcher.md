@@ -1,16 +1,16 @@
 # CR-0116: Windows service host, launcher lifecycle, and IPC boundary
 
 Base: main
-Head or Range: cba107de37227331cc3ca1100e2a4c69b4f2d179
+Head or Range: 2113c299d16404ffe6a39806fa5a073b2c3dd760
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows service host, launcher lifecycle, and authenticated IPC boundary
-Revision: 7
+Revision: 8
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 96deadfde94bef8414a71c9a7e0d3c3c241cdd84
-Head OID: cba107de37227331cc3ca1100e2a4c69b4f2d179
+Head OID: 2113c299d16404ffe6a39806fa5a073b2c3dd760
 Integrated Result: pending
 
 ## Summary
@@ -28,6 +28,7 @@ Production Windows Core must run as the registered `ChuziCore` LocalSystem servi
 - The repository build, signing, policy, supply-chain, action-pinning, and shape validators pass; Windows packaging now requires the broker executable rather than treating it as optional.
 - Unit coverage includes trusted runtime derivation, helper mismatch/staleness, required preflight facts, caller policy, bounded IPC contracts, shutdown ordering, and scheduler admission closure.
 - Native transport contract tests use an explicit unverified test dial for the non-installed helper process, and identity round-trip coverage skips only when the hosted runner has no interactive Windows session; production server-image and caller checks remain unchanged.
+- Windows Core and test clients request pipe impersonation explicitly so the server can derive the authenticated caller token; anonymous pipe clients remain rejected by the production identity boundary.
 - Windows service entrypoint validation now requires the derived ChuziCore service SID, SYSTEM session 0, required privileges, signed runtime, and the exact %ProgramData%\\chuzi\\data\\core-config.json path. Launcher install-root input is checked against its signed executable and mapped to the fixed machine data root. Host preflight rejects unsupported Windows editions, enforces the documented service set and 32-session ceiling, verifies an active RDP listener and machine certificate chain, and reports redacted facts for OS, WTS, SCM, RDP/NLA/certificate, LSA logon rights, effective data access, runtime signature, and helper readiness.
 - The Windows transport now derives caller SID/session/executable from the pipe handle, validates PID/token identity in both directions, and wires the authorizer into the service endpoint. The fixed session-broker client also validates the live broker PID and exact installed broker image before accepting a response, closing pipe-squatting/reply-spoofing paths.
 - The slot-agent pipe now uses a fixed LocalSystem DACL and authenticates the real service caller from the impersonated pipe token, client PID/token/session, and exact service image before JSON decoding. Agent clients validate the live server PID and exact chuzi-user-agent.exe image; service identity is handed off from the running service executable and no longer selected through caller-controlled SID environment variables. Deterministic authorization tests cover SID, session, authentication, path, and same-name cross-install failures.
