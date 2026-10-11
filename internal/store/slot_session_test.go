@@ -32,6 +32,9 @@ func TestStartSlotSessionIsIdempotentAndProjectsSlotFacts(t *testing.T) {
 	if err != nil || current.State != SlotSessionReady || !current.AgentReady || current.SessionState != string(slot.Ready) {
 		t.Fatalf("current=%#v err=%v", current, err)
 	}
+	if _, _, err := database.StartSlotSession(SlotSessionMutation{SlotID: first.SlotID, Actor: "ui", IdempotencyKey: "different-key", RequestedAt: storeTestTime.Add(4)}); !errors.Is(err, ErrSlotSessionActionConflict) {
+		t.Fatalf("duplicate active operation err=%v", err)
+	}
 }
 
 func TestStartSlotSessionRejectsIdempotencyPayloadConflict(t *testing.T) {
@@ -96,5 +99,100 @@ func TestReconcileSlotSessionOperationProjectsQuarantineAndMissingOperation(t *t
 	}
 	if _, err := database.GetSlotSessionOperation("slotop-missing"); !errors.Is(err, ErrSlotSessionOperationNotFound) {
 		t.Fatalf("missing operation err=%v", err)
+	}
+}
+
+func TestStartSlotSessionSkipsQuarantinedAndRetiringSlots(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(2), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkSlotReady("pool-test-001", testEnvironmentSummary(1), storeTestTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QuarantineSlot("pool-test-001", storeTestTime.Add(time.Second), "test"); err != nil {
+		t.Fatal(err)
+	}
+	operation, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "select-2", RequestedAt: storeTestTime.Add(2 * time.Second)})
+	if err != nil || operation.SlotID != "pool-test-002" {
+		t.Fatalf("operation=%#v err=%v", operation, err)
+	}
+}
+
+func TestSlotSessionClaimRecoveryAndLateCompletionFence(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	op, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "claim", RequestedAt: storeTestTime, RetryBudget: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := database.ClaimSlotSessionOperation(op.OperationID, "controller-a", storeTestTime, time.Minute)
+	if err != nil || claimed.State != SlotSessionProvisioning {
+		t.Fatalf("claimed=%#v err=%v", claimed, err)
+	}
+	if _, err := database.ClaimSlotSessionOperation(op.OperationID, "controller-b", storeTestTime.Add(time.Second), time.Minute); !errors.Is(err, ErrSlotSessionClaim) {
+		t.Fatalf("live claim err=%v", err)
+	}
+	recovered, err := database.ClaimSlotSessionOperation(op.OperationID, "controller-b", storeTestTime.Add(2*time.Minute), time.Minute)
+	if err != nil || recovered.ClaimOwner != "controller-b" {
+		t.Fatalf("recovered=%#v err=%v", recovered, err)
+	}
+	if _, err := database.CompleteSlotSessionOperation(op.OperationID, "controller-a", 0, SlotSessionReady, SlotSessionPhaseWorker, "", storeTestTime.Add(2*time.Minute+time.Second)); !errors.Is(err, ErrSlotSessionClaim) {
+		t.Fatalf("late completion err=%v", err)
+	}
+	completed, err := database.CompleteSlotSessionOperation(op.OperationID, "controller-b", 0, SlotSessionFailed, SlotSessionPhaseAgent, "agent_unavailable", storeTestTime.Add(2*time.Minute+time.Second))
+	if err != nil || completed.State != SlotSessionFailed || completed.ClaimOwner != "" {
+		t.Fatalf("completed=%#v err=%v", completed, err)
+	}
+	retry, idempotent, err := database.RetrySlotSession(SlotSessionAction{OperationID: op.OperationID, Actor: "ui", IdempotencyKey: "retry", At: storeTestTime.Add(3 * time.Minute)})
+	if err != nil || idempotent || retry.OperationID == op.OperationID || retry.Attempt != 2 {
+		t.Fatalf("retry=%#v idempotent=%v err=%v", retry, idempotent, err)
+	}
+	repeat, idempotent, err := database.RetrySlotSession(SlotSessionAction{OperationID: op.OperationID, Actor: "ui", IdempotencyKey: "retry", At: storeTestTime.Add(4 * time.Minute)})
+	if err != nil || !idempotent || repeat.OperationID != retry.OperationID {
+		t.Fatalf("repeat=%#v idempotent=%v err=%v", repeat, idempotent, err)
+	}
+}
+
+func TestStopReadySlotSessionChangesDesiredIntent(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.MarkSlotReady("pool-test-001", testEnvironmentSummary(1), storeTestTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	op, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "ready", RequestedAt: storeTestTime.Add(2 * time.Second)})
+	if err != nil || op.State != SlotSessionReady {
+		t.Fatalf("start=%#v err=%v", op, err)
+	}
+	stopping, _, err := database.StopSlotSession(SlotSessionAction{OperationID: op.OperationID, Actor: "ui", IdempotencyKey: "stop", At: storeTestTime.Add(3 * time.Second)})
+	if err != nil || stopping.State != SlotSessionStopping || stopping.DesiredState != "stopped" {
+		t.Fatalf("stop=%#v err=%v", stopping, err)
+	}
+	current, err := database.GetSlot(op.SlotID)
+	if err != nil || current.SessionDesiredState != "stopped" {
+		t.Fatalf("slot=%#v err=%v", current, err)
+	}
+}
+
+func TestSlotSessionTransitionTableRejectsTerminalRevival(t *testing.T) {
+	for _, tc := range []struct {
+		from SlotSessionOperationState
+		to   SlotSessionOperationState
+		ok   bool
+	}{
+		{SlotSessionRequested, SlotSessionProvisioning, true},
+		{SlotSessionProvisioning, SlotSessionReady, true},
+		{SlotSessionReady, SlotSessionStopping, true},
+		{SlotSessionCancelling, SlotSessionCancelled, true},
+		{SlotSessionReady, SlotSessionRequested, false},
+		{SlotSessionStopped, SlotSessionProvisioning, false},
+	} {
+		if got := SlotSessionTransitionAllowed(tc.from, tc.to); got != tc.ok {
+			t.Fatalf("transition %s -> %s = %v, want %v", tc.from, tc.to, got, tc.ok)
+		}
 	}
 }

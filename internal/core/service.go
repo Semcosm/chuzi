@@ -102,6 +102,12 @@ type SlotSessionControlPort interface {
 	GetSlotSessionOperation(string) (store.SlotSessionOperation, error)
 }
 
+type SlotSessionLifecycleControlPort interface {
+	CancelSlotSession(store.SlotSessionAction) (store.SlotSessionOperation, bool, error)
+	StopSlotSession(store.SlotSessionAction) (store.SlotSessionOperation, bool, error)
+	RetrySlotSession(store.SlotSessionAction) (store.SlotSessionOperation, bool, error)
+}
+
 type EnvironmentControlPort interface {
 	ListEnvironmentRecords() ([]environment.Record, error)
 	ApplyEnvironmentOperation(store.EnvironmentMutation) (store.EnvironmentOperationRecord, bool, error)
@@ -122,40 +128,43 @@ type EnvironmentExecutor interface {
 }
 
 type Dependencies struct {
-	ExecutionMode       string
-	Requests            RequestPort
-	Store               StoreReader
-	Views               BrowserViewPort
-	RDP                 RDPCapabilityPort
-	Diagnostics         DiagnosticsPort
-	JobPools            JobPoolStatusPort
-	JobPoolControl      JobPoolControlPort
-	SlotSessions        SlotSessionControlPort
-	Environments        EnvironmentControlPort
-	EnvironmentExecutor EnvironmentExecutor
-	JobPoolID           string
-	MaxConcurrency      int
-	Clock               func() time.Time
+	ExecutionMode        string
+	Requests             RequestPort
+	Store                StoreReader
+	Views                BrowserViewPort
+	RDP                  RDPCapabilityPort
+	Diagnostics          DiagnosticsPort
+	JobPools             JobPoolStatusPort
+	JobPoolControl       JobPoolControlPort
+	SlotSessions         SlotSessionControlPort
+	SlotSessionLifecycle SlotSessionLifecycleControlPort
+	Environments         EnvironmentControlPort
+	EnvironmentExecutor  EnvironmentExecutor
+	JobPoolID            string
+	MaxConcurrency       int
+	Clock                func() time.Time
 }
 
 type Service struct {
-	executionMode       string
-	requests            RequestPort
-	store               StoreReader
-	views               BrowserViewPort
-	rdp                 RDPCapabilityPort
-	diagnostics         DiagnosticsPort
-	jobPools            JobPoolStatusPort
-	jobPoolControl      JobPoolControlPort
-	slotSessions        SlotSessionControlPort
-	environments        EnvironmentControlPort
-	environmentExecutor EnvironmentExecutor
-	jobPoolID           string
-	maxConcurrency      int
-	clock               func() time.Time
+	executionMode        string
+	requests             RequestPort
+	store                StoreReader
+	views                BrowserViewPort
+	rdp                  RDPCapabilityPort
+	diagnostics          DiagnosticsPort
+	jobPools             JobPoolStatusPort
+	jobPoolControl       JobPoolControlPort
+	slotSessions         SlotSessionControlPort
+	slotSessionLifecycle SlotSessionLifecycleControlPort
+	environments         EnvironmentControlPort
+	environmentExecutor  EnvironmentExecutor
+	jobPoolID            string
+	maxConcurrency       int
+	clock                func() time.Time
 }
 
 var _ coreapi.API = (*Service)(nil)
+var _ coreapi.SlotSessionLifecycleAPI = (*Service)(nil)
 var _ coreapi.DiagnosticSnapshotAPI = (*Service)(nil)
 var _ coreapi.JobPoolAPI = (*Service)(nil)
 var _ coreapi.EnvironmentAPI = (*Service)(nil)
@@ -172,7 +181,11 @@ func New(dependencies Dependencies) (*Service, error) {
 	if mode != "logical" && mode != "windows" {
 		mode = "unknown"
 	}
-	return &Service{executionMode: mode, requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, slotSessions: dependencies.SlotSessions, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+	lifecycle := dependencies.SlotSessionLifecycle
+	if lifecycle == nil {
+		lifecycle, _ = dependencies.SlotSessions.(SlotSessionLifecycleControlPort)
+	}
+	return &Service{executionMode: mode, requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, slotSessions: dependencies.SlotSessions, slotSessionLifecycle: lifecycle, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
 }
 
 func (s *Service) StartSlotSession(ctx context.Context, input coreapi.StartSlotSessionRequest) (coreapi.SlotSessionOperation, error) {
@@ -185,7 +198,10 @@ func (s *Service) StartSlotSession(ctx context.Context, input coreapi.StartSlotS
 	if s.slotSessions == nil || (strings.TrimSpace(input.PoolID) == "") == (strings.TrimSpace(input.SlotID) == "") || !validToken(input.Actor) || !validToken(input.IdempotencyKey) || (input.PoolID != "" && !validToken(input.PoolID)) || (input.SlotID != "" && !validToken(input.SlotID)) {
 		return coreapi.SlotSessionOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
 	}
-	value, idempotent, err := s.slotSessions.StartSlotSession(store.SlotSessionMutation{PoolID: input.PoolID, SlotID: input.SlotID, Actor: input.Actor, IdempotencyKey: input.IdempotencyKey, ExpectedRevision: input.ExpectedRevision, RequestedAt: s.clock().UTC()})
+	if input.Attempt < 0 || input.RetryBudget < 0 || (!input.Deadline.IsZero() && !input.Deadline.After(s.clock())) {
+		return coreapi.SlotSessionOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	value, idempotent, err := s.slotSessions.StartSlotSession(store.SlotSessionMutation{PoolID: input.PoolID, SlotID: input.SlotID, Actor: input.Actor, IdempotencyKey: input.IdempotencyKey, ExpectedRevision: input.ExpectedRevision, RequestedAt: s.clock().UTC(), Attempt: input.Attempt, Deadline: input.Deadline, RetryBudget: input.RetryBudget})
 	if err != nil {
 		return coreapi.SlotSessionOperation{}, classify(err)
 	}
@@ -207,6 +223,41 @@ func (s *Service) GetSlotSessionOperation(ctx context.Context, operationID strin
 		return coreapi.SlotSessionOperation{}, classify(err)
 	}
 	return s.projectSlotSessionOperation(value, false), nil
+}
+
+func (s *Service) slotSessionAction(ctx context.Context, input coreapi.SlotSessionActionRequest, action func(SlotSessionLifecycleControlPort, store.SlotSessionAction) (store.SlotSessionOperation, bool, error)) (coreapi.SlotSessionOperation, error) {
+	if err := s.ready(); err != nil {
+		return coreapi.SlotSessionOperation{}, err
+	}
+	if err := checkContext(ctx); err != nil {
+		return coreapi.SlotSessionOperation{}, err
+	}
+	if s.slotSessionLifecycle == nil || !validToken(input.OperationID) || !validToken(input.Actor) || !validToken(input.IdempotencyKey) || input.Attempt < 0 || (!input.Deadline.IsZero() && !input.Deadline.After(s.clock())) {
+		return coreapi.SlotSessionOperation{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	value, idempotent, err := action(s.slotSessionLifecycle, store.SlotSessionAction{OperationID: input.OperationID, Actor: input.Actor, IdempotencyKey: input.IdempotencyKey, ExpectedRevision: input.ExpectedRevision, Generation: input.Generation, Attempt: input.Attempt, Deadline: input.Deadline, At: s.clock().UTC()})
+	if err != nil {
+		return coreapi.SlotSessionOperation{}, classify(err)
+	}
+	return s.projectSlotSessionOperation(value, idempotent), nil
+}
+
+func (s *Service) CancelSlotSession(ctx context.Context, input coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	return s.slotSessionAction(ctx, input, func(port SlotSessionLifecycleControlPort, action store.SlotSessionAction) (store.SlotSessionOperation, bool, error) {
+		return port.CancelSlotSession(action)
+	})
+}
+
+func (s *Service) StopSlotSession(ctx context.Context, input coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	return s.slotSessionAction(ctx, input, func(port SlotSessionLifecycleControlPort, action store.SlotSessionAction) (store.SlotSessionOperation, bool, error) {
+		return port.StopSlotSession(action)
+	})
+}
+
+func (s *Service) RetrySlotSession(ctx context.Context, input coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	return s.slotSessionAction(ctx, input, func(port SlotSessionLifecycleControlPort, action store.SlotSessionAction) (store.SlotSessionOperation, bool, error) {
+		return port.RetrySlotSession(action)
+	})
 }
 
 func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.JobPoolStatus, error) {
@@ -1183,7 +1234,7 @@ func (s *Service) projectSlotSessionOperation(value store.SlotSessionOperation, 
 
 func projectSlotSessionOperation(value store.SlotSessionOperation, idempotent bool) coreapi.SlotSessionOperation {
 	status := coreapi.SlotSessionStatus{PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, Status: value.SessionState, EnvironmentGeneration: value.EnvironmentGeneration, SessionState: value.SessionState, AgentReady: value.AgentReady}
-	return coreapi.SlotSessionOperation{OperationID: value.OperationID, PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, Status: status, Idempotent: idempotent}
+	return coreapi.SlotSessionOperation{OperationID: value.OperationID, PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ExpectedRevision: value.ExpectedRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, Generation: value.EnvironmentGeneration, Phase: string(value.Phase), Attempt: value.Attempt, Revision: value.Revision, DesiredState: value.DesiredState, Deadline: value.Deadline, RetryBudget: value.RetryBudget, Status: status, Idempotent: idempotent}
 }
 
 func projectEnvironment(value environment.Record) coreapi.Environment {
@@ -1274,7 +1325,7 @@ func classify(err error) error {
 		code = coreapi.CodeNotFound
 	case errors.Is(err, store.ErrAccountExists), errors.Is(err, store.ErrRequestExists),
 		errors.Is(err, store.ErrRequestConflict), errors.Is(err, store.ErrIdempotencyConflict),
-		errors.Is(err, store.ErrJobPoolStaleRevision), errors.Is(err, store.ErrJobPoolConflict), errors.Is(err, store.ErrJobPoolIdempotencyConflict), errors.Is(err, store.ErrSlotSessionRevision), errors.Is(err, store.ErrSlotSessionIdempotencyConflict),
+		errors.Is(err, store.ErrJobPoolStaleRevision), errors.Is(err, store.ErrJobPoolConflict), errors.Is(err, store.ErrJobPoolIdempotencyConflict), errors.Is(err, store.ErrSlotSessionRevision), errors.Is(err, store.ErrSlotSessionIdempotencyConflict), errors.Is(err, store.ErrSlotSessionActionConflict), errors.Is(err, store.ErrSlotSessionClaim), errors.Is(err, store.ErrSlotSessionLateResult),
 		errors.Is(err, store.ErrEnvironmentIdempotencyConflict), errors.Is(err, store.ErrEnvironmentStaleRevision),
 		errors.Is(err, store.ErrRequestStateMismatch), errors.Is(err, store.ErrAccountBusy),
 		errors.Is(err, account.ErrEventConflict), errors.Is(err, account.ErrStaleEvent),

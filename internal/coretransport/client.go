@@ -338,6 +338,24 @@ func (c *Client) StartSlotSession(ctx context.Context, input coreapi.StartSlotSe
 	return result.Operation, err
 }
 
+func (c *Client) CancelSlotSession(ctx context.Context, input coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	var result SlotSessionOperationResult
+	err := c.Call(ctx, methodCancelSlotSession, input, &result)
+	return result.Operation, err
+}
+
+func (c *Client) StopSlotSession(ctx context.Context, input coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	var result SlotSessionOperationResult
+	err := c.Call(ctx, methodStopSlotSession, input, &result)
+	return result.Operation, err
+}
+
+func (c *Client) RetrySlotSession(ctx context.Context, input coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	var result SlotSessionOperationResult
+	err := c.Call(ctx, methodRetrySlotSession, input, &result)
+	return result.Operation, err
+}
+
 func (c *Client) GetSlotSessionOperation(ctx context.Context, operationID string) (coreapi.SlotSessionOperation, error) {
 	var result SlotSessionOperationResult
 	err := c.Call(ctx, methodGetSlotSessionOperation, struct {
