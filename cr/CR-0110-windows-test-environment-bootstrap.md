@@ -1,23 +1,24 @@
 # CR-0110: bootstrap a signed Windows test environment and enforce pool readiness
 
 Base: main
-Head or Range: b633623d222db8ddbe8ca497e56feaadd7bf9f77
+Head or Range: 0c59ad3269c379096965f432166b245f9bd76bf6
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(environment): bootstrap signed Windows test packages and enforce pool readiness
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 62451c5fa74b7d4b61c47a7e075f8f268446ca0f
-Head OID: b633623d222db8ddbe8ca497e56feaadd7bf9f77
+Base OID: 0c59ad3269c379096965f432166b245f9bd76bf6
+Head OID: 0c59ad3269c379096965f432166b245f9bd76bf6
 Integrated Result: pending
 
 ## Summary
 
-Implementation is recorded in signed commit
-b633623d222db8ddbe8ca497e56feaadd7bf9f77 on the isolated integration branch;
-the CR recording commit is 4b79c0dfaa3da6df3ad6733bdd732b7f08f9e0f1
+Implementation was rebased from source commit
+b633623d222db8ddbe8ca497e56feaadd7bf9f77 to signed commit
+e4cd3d6782c086a0e3357e21f08e96f4955721e2 and integrated into main before this
+metadata bind. The CR recording commit was 4b79c0dfaa3da6df3ad6733bdd732b7f08f9e0f1
 (rewritten from the source branch).
 CR-0109 remains the record for the existing mode controls and slot-session UI.
 Integration into main remains pending; the source implementation commit was
