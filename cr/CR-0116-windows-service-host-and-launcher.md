@@ -1,6 +1,6 @@
 # CR-0116: Windows service host, launcher lifecycle, and IPC boundary
 
-Base: main@4b4d4cb4ee93c79e8abe0ed00abfa6acb516a7fe
+Base: main
 Head or Range: c29336196a24930d1d270054b04fcb765427b247
 Integration Strategy: rebase-ff
 Review Evidence: trailers
