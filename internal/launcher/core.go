@@ -255,7 +255,7 @@ type coreCapabilities struct {
 }
 
 func (m *CoreManager) capabilities(ctx context.Context) (coreCapabilities, error) {
-	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
+	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
 	if err != nil {
 		return coreCapabilities{}, err
 	}
@@ -398,7 +398,7 @@ func (m *CoreManager) Call(ctx context.Context, method string, params json.RawMe
 	if !json.Valid(params) {
 		return nil, fmt.Errorf("%w: invalid core parameters", ErrInvalidPath)
 	}
-	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
+	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
 	if err != nil {
 		return nil, ErrCoreUnavailable
 	}
@@ -414,7 +414,7 @@ func (m *CoreManager) Call(ctx context.Context, method string, params json.RawMe
 }
 
 func (m *CoreManager) ready(ctx context.Context) bool {
-	client, err := coretransport.Connect(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
+	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
 	if err != nil {
 		return false
 	}
