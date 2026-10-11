@@ -45,7 +45,7 @@ The first request on a connection must be:
 The result contains the negotiated version and supported method names:
 
 ```json
-{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report","get_diagnostic_snapshot","get_job_pool_status","list_job_pools","get_job_pool","apply_job_pool","scale_job_pool","drain_job_pool","resume_job_pool","delete_job_pool","get_job_pool_operation","start_slot_session","get_slot_session_operation","list_environments","environment_operation","get_environment_operation"]}
+{"version":"chuzi.core/v1","methods":["hello","cancel","submit_request","get_request","list_requests","get_account","cancel_request","get_result","list_events","list_notifications","get_browser_view","issue_rdp_capability","submit_diagnostic_report","get_diagnostic_snapshot","get_job_pool_status","list_job_pools","get_job_pool","apply_job_pool","scale_job_pool","drain_job_pool","resume_job_pool","delete_job_pool","get_job_pool_operation","start_slot_session","cancel_slot_session","stop_slot_session","retry_slot_session","get_slot_session_operation","list_environments","environment_operation","get_environment_operation"]}
 ```
 
 An unsupported protocol or version is reported as `unavailable`. Calls before
@@ -76,6 +76,7 @@ successful negotiation are rejected as `invalid_argument`.
 | `delete_job_pool` | `coreapi.JobPoolDeleteRequest` | `{operation}` |
 | `get_job_pool_operation` | `{operation_id}` | `{operation}` |
 | `start_slot_session` | `coreapi.StartSlotSessionRequest` | `{operation}` |
+| `cancel_slot_session` / `stop_slot_session` / `retry_slot_session` | `coreapi.SlotSessionActionRequest` | `{operation}` |
 | `get_slot_session_operation` | `{operation_id}` | `{operation}` |
 | `list_environments` | `{}` | `{environments}` |
 | `environment_operation` | `coreapi.EnvironmentOperationRequest` | `{operation}` |
@@ -87,10 +88,15 @@ slot ID), actor, idempotency key, and optional current configuration revision;
 when only a pool ID is supplied Core chooses the first available slot. The
 response is a redacted operation projection containing the operation ID, pool
 and slot identity, ordinal, state, failure classification, environment
-generation, and nested status/session-state/agent-readiness facts. A retry with
+generation, phase, attempt/deadline/retry-budget, and nested status/session-state/
+agent-readiness facts. A retry with
 the same idempotency key returns the original operation and marks it
 idempotent; `get_slot_session_operation` remains queryable while the operation
-moves through `requested`, `provisioning`, `ready`, or `failed`.
+moves through `requested`, `provisioning`, `stopping`, `cancelling`, `retrying`,
+`ready`, `stopped`, `failed`, or `cancelled`. Cancel and Stop persist a stopped
+desired intent and remain non-terminal until cleanup is observed; a transport
+timeout never claims that the durable operation was cancelled. Retry always uses
+a new idempotency key and operation/attempt while retaining the prior history.
 This is an execution slot session, not a business account request session.
 Neither method writes or exposes a Windows username, SID, Profile path, RDP
 endpoint, or credential material.
@@ -102,8 +108,9 @@ Operation `state` and top-level generation remain historical operation facts;
 nested status and generation come from the current slot record at query time.
 A missing slot or failed read returns unavailable status and false Agent ready.
 Windows Agent ready requires a ready/leased current slot, native environment
-handle, nonzero generation, and recorded health. These are the latest reconcile
-facts; refreshing the projection does not itself perform a WTS/Agent probe.
+handle, nonzero generation, a non-stopped desired intent, and recorded health
+within the freshness window. These are the latest reconcile facts; refreshing
+the projection does not itself perform a WTS/Agent probe.
 
 `delete_job_pool` is asynchronous and safe by construction. It changes the
 pool target to zero and drains new work first; the pool configuration is
