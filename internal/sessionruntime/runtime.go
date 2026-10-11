@@ -467,6 +467,9 @@ func (r *Runtime) cleanup(parent context.Context, identity Identity, record Owne
 		record.UpdatedAt = r.now()
 		if err := r.deps.Journal.MarkStopped(ctx, record); err != nil {
 			report.Failure = CodeCleanup
+			record.Phase = JournalUnknown
+			record.UpdatedAt = r.now()
+			_ = r.deps.Journal.Checkpoint(ctx, record)
 			return report
 		}
 	}
