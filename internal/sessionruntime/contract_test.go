@@ -29,6 +29,15 @@ func TestIdentityAndSessionFence(t *testing.T) {
 	}
 }
 
+func TestStableErrorRetryPolicy(t *testing.T) {
+	if !NewError(CodeSessionUnavailable, "redacted").Retryable() || !NewError(CodeDeadline, "redacted").Retryable() {
+		t.Fatal("transient session errors were not retryable")
+	}
+	if NewError(CodeOwnershipUnknown, "redacted").Retryable() || NewError(CodeSessionChanged, "redacted").Retryable() {
+		t.Fatal("ownership or identity errors were incorrectly retryable")
+	}
+}
+
 func TestSecretLeaseNeverSerializesSecret(t *testing.T) {
 	lease, err := NewSecretLease("ChuziJob0001", []uint16{'s', 'e', 'c', 0})
 	if err != nil {

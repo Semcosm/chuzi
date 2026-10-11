@@ -35,7 +35,11 @@ type RuntimeOptions struct {
 	Now            func() time.Time
 	Freshness      time.Duration
 	CleanupTimeout time.Duration
-	ProfilePolicy  string
+	// OperationTimeout bounds one start/stop call even when a transport
+	// caller forgot to attach a deadline. Provider implementations must
+	// honor the context so a timed-out login cannot continue unbounded.
+	OperationTimeout time.Duration
+	ProfilePolicy    string
 }
 
 // StartOptions selects an explicitly requested account recovery. Recovery
@@ -84,6 +88,9 @@ func NewRuntime(deps RuntimeDependencies, opts RuntimeOptions) (*Runtime, error)
 	if opts.CleanupTimeout <= 0 {
 		opts.CleanupTimeout = 10 * time.Second
 	}
+	if opts.OperationTimeout <= 0 {
+		opts.OperationTimeout = 5 * time.Minute
+	}
 	if strings.TrimSpace(opts.ProfilePolicy) == "" {
 		opts.ProfilePolicy = defaultProfilePolicy
 	}
@@ -96,9 +103,12 @@ func NewRuntime(deps RuntimeDependencies, opts RuntimeOptions) (*Runtime, error)
 // match before any later phase runs.
 func (r *Runtime) Start(ctx context.Context, identity Identity, options StartOptions) (RunResult, error) {
 	var result RunResult
-	if ctx == nil {
-		return result, classified(CodeInvalidArgument, "nil context", ErrInvalidArgument)
+	operationCtx, cancel, err := r.operationContext(ctx)
+	if err != nil {
+		return result, err
 	}
+	defer cancel()
+	ctx = operationCtx
 	if err := identity.Validate(); err != nil {
 		return result, classified(CodeInvalidArgument, "invalid identity", err)
 	}
@@ -201,11 +211,17 @@ func (r *Runtime) Start(ctx context.Context, identity Identity, options StartOpt
 	if err != nil {
 		return cleanup(err)
 	}
+	if err := contextFailure(ctx); err != nil {
+		return cleanup(err)
+	}
 	record.SessionID = verified.ID
 	record.Phase = JournalCommitted
 	record.UpdatedAt = r.now()
 	if err := r.deps.Journal.Commit(ctx, record); err != nil {
 		return cleanup(callFailure(ctx, CodeOwnershipUnknown, "session ownership commit unavailable", err))
+	}
+	if err := contextFailure(ctx); err != nil {
+		return cleanup(err)
 	}
 	result.Status.Session = verified
 	wtsCheck := r.check(LayerWTS, ReadinessReady, identity, verified.ObservedAt)
@@ -213,6 +229,9 @@ func (r *Runtime) Start(ctx context.Context, identity Identity, options StartOpt
 	result.Status.Checks = append(result.Status.Checks, wtsCheck)
 
 	result.Status.Phase = PhaseDesktop
+	if err := contextFailure(ctx); err != nil {
+		return cleanup(err)
+	}
 	desktop, err = r.deps.Desktop.Ensure(ctx, identity, verified)
 	if err != nil {
 		return cleanup(callFailure(ctx, CodeSessionUnavailable, "desktop unavailable", err))
@@ -234,6 +253,9 @@ func (r *Runtime) Start(ctx context.Context, identity Identity, options StartOpt
 	result.Status.Checks = append(result.Status.Checks, r.check(LayerShell, ReadinessReady, identity, desktop.ReadyAt))
 
 	result.Status.Phase = PhaseAgent
+	if err := contextFailure(ctx); err != nil {
+		return cleanup(err)
+	}
 	if err := r.deps.Agent.Start(ctx, identity, verified, desktop); err != nil {
 		return cleanup(callFailure(ctx, CodeSessionUnavailable, "agent unavailable", err))
 	}
@@ -290,9 +312,12 @@ func (r *Runtime) Start(ctx context.Context, identity Identity, options StartOpt
 // exact SID no longer has an active session.
 func (r *Runtime) Stop(ctx context.Context, identity Identity) (RunResult, error) {
 	var result RunResult
-	if ctx == nil {
-		return result, classified(CodeInvalidArgument, "nil context", ErrInvalidArgument)
+	operationCtx, cancel, err := r.operationContext(ctx)
+	if err != nil {
+		return result, err
 	}
+	defer cancel()
+	ctx = operationCtx
 	if err := identity.Validate(); err != nil {
 		return result, classified(CodeInvalidArgument, "invalid identity", err)
 	}
@@ -323,6 +348,9 @@ func (r *Runtime) Stop(ctx context.Context, identity Identity) (RunResult, error
 	}
 	if record.Phase == JournalUnknown {
 		return result, classified(CodeOwnershipUnknown, "slot ownership requires repair", ErrOwnershipUnknown)
+	}
+	if err := contextFailure(ctx); err != nil {
+		return result, err
 	}
 	current, findErr := r.deps.Sessions.Find(ctx, identity.SID)
 	if findErr == nil && current.ID != 0 && current.ID != record.SessionID {
@@ -430,14 +458,17 @@ func (r *Runtime) cleanup(parent context.Context, identity Identity, record Owne
 			if err := r.deps.Sessions.Stop(ctx, identity, current); err != nil {
 				failed = true
 			}
+		} else if findErr == nil && !sessionGone(current) {
+			// A zero-ID, non-terminal observation is not proof of logoff.
+			failed = true
 		} else if findErr != nil && !sessionGone(current) {
 			failed = true
 		}
 		current, findErr = r.deps.Sessions.Find(ctx, identity.SID)
-		if findErr == nil && current.ID != 0 || (findErr != nil && !sessionGone(current)) {
+		if !sessionGone(current) {
 			failed = true
 		}
-	} else if current, findErr := r.deps.Sessions.Find(ctx, identity.SID); findErr == nil && current.ID != 0 || (findErr != nil && !sessionGone(current)) {
+	} else if current, _ := r.deps.Sessions.Find(ctx, identity.SID); !sessionGone(current) {
 		// A late login without a recorded candidate cannot be adopted or
 		// stopped safely. Leave ownership unknown for explicit repair.
 		failed = true
@@ -507,6 +538,17 @@ func (r *Runtime) now() time.Time {
 	return r.opts.Now().UTC()
 }
 
+func (r *Runtime) operationContext(parent context.Context) (context.Context, context.CancelFunc, error) {
+	if parent == nil {
+		return nil, func() {}, classified(CodeInvalidArgument, "nil context", ErrInvalidArgument)
+	}
+	if err := contextFailure(parent); err != nil {
+		return nil, func() {}, err
+	}
+	operation, cancel := context.WithTimeout(parent, r.opts.OperationTimeout)
+	return operation, cancel, nil
+}
+
 func (r *Runtime) check(layer ReadinessLayer, state ReadinessState, identity Identity, observed time.Time) ReadinessCheck {
 	if observed.IsZero() {
 		observed = r.now()
@@ -525,6 +567,9 @@ func validateHostFacts(facts HostFacts, ordinal int, now time.Time, freshness ti
 }
 
 func sessionGone(session Session) bool {
+	// A zero ID without an explicit terminal state is an unknown WTS fact.
+	// Treating it as gone could mark ownership stopped while a late login is
+	// still becoming active.
 	return session.ID == 0 && (session.State == "logged_off" || session.State == "stopped")
 }
 
