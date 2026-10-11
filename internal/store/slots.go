@@ -337,6 +337,10 @@ func (s *Store) MarkSlotReady(slotID string, summary slot.EnvironmentSummary, no
 		if value.Status == slot.Retiring || value.Status == slot.Deleted || value.Status == slot.Quarantined {
 			return slot.ErrInvalidStatus
 		}
+		if value.SessionDesiredState == "stopped" {
+			// A late readiness fact must not revive an explicitly stopped slot.
+			return slot.ErrInvalidStatus
+		}
 		if value.Status == slot.Leased || value.Status == slot.Draining {
 			return slot.ErrLeaseHeld
 		}
@@ -453,7 +457,9 @@ func (s *Store) AcquireSlotLease(now time.Time, poolID string, requirement slot.
 				}
 				if current.Status == slot.Leased || current.Status == slot.Draining {
 					status := slot.Ready
-					if current.Ordinal > config.DesiredSlots {
+					if current.SessionDesiredState == "stopped" {
+						status = slot.Stopped
+					} else if current.Ordinal > config.DesiredSlots {
 						status = slot.Retiring
 					}
 					current.Status, current.UpdatedAt = status, now.UTC()
@@ -606,7 +612,9 @@ func (s *Store) ReleaseSlotLease(slotID, leaseID, owner string) error {
 			if err := getJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), value.PoolID, &config, slot.ErrPoolNotFound); err != nil {
 				return err
 			}
-			if value.Ordinal > config.DesiredSlots {
+			if value.SessionDesiredState == "stopped" {
+				status = slot.Stopped
+			} else if value.Ordinal > config.DesiredSlots {
 				status = slot.Retiring
 			} else if !slotMatchesPoolTarget(value, config) {
 				// A drained lease may still carry the previous generation. Keep it
@@ -728,7 +736,9 @@ func (s *Store) RecoverExpiredSlotLeases(now time.Time) error {
 					return err
 				}
 				status := slot.Ready
-				if value.Ordinal > config.DesiredSlots {
+				if value.SessionDesiredState == "stopped" {
+					status = slot.Stopped
+				} else if value.Ordinal > config.DesiredSlots {
 					status = slot.Retiring
 				} else if !slotMatchesPoolTarget(value, config) {
 					status = slot.Provisioning
@@ -803,7 +813,9 @@ func (s *Store) SlotPoolStatus(poolID string, now time.Time) (slot.StatusCounts,
 	for _, value := range items {
 		switch value.Status {
 		case slot.Ready:
-			if environmentReady && slotMatchesPoolTarget(value, config) && value.Trusted {
+			if value.SessionDesiredState == "stopped" {
+				result.Stopped++
+			} else if environmentReady && slotMatchesPoolTarget(value, config) && value.Trusted {
 				result.Ready++
 			} else {
 				result.Provisioning++
@@ -820,6 +832,8 @@ func (s *Store) SlotPoolStatus(poolID string, now time.Time) (slot.StatusCounts,
 			result.Retiring++
 		case slot.Unprovisioned:
 			result.Unprovisioned++
+		case slot.Stopped:
+			result.Stopped++
 		}
 	}
 	return result, nil

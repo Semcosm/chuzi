@@ -309,6 +309,7 @@ type JobPoolStatus struct {
 	Provisioning              int       `json:"provisioning"`
 	Retiring                  int       `json:"retiring"`
 	Unprovisioned             int       `json:"unprovisioned"`
+	Stopped                   int       `json:"stopped"`
 	EffectiveCapacity         int       `json:"effective_capacity"`
 	MaxConcurrency            int       `json:"max_concurrency,omitempty"`
 	DesiredState              string    `json:"desired_state"`
@@ -438,14 +439,16 @@ type SlotSessionActionRequest struct {
 }
 
 type SlotSessionStatus struct {
-	ExecutionMode         string `json:"execution_mode"`
-	PoolID                string `json:"pool_id"`
-	SlotID                string `json:"slot_id"`
-	Ordinal               int    `json:"ordinal"`
-	Status                string `json:"status"`
-	EnvironmentGeneration uint64 `json:"environment_generation"`
-	SessionState          string `json:"session_state"`
-	AgentReady            bool   `json:"agent_ready"`
+	ExecutionMode         string    `json:"execution_mode"`
+	PoolID                string    `json:"pool_id"`
+	SlotID                string    `json:"slot_id"`
+	Ordinal               int       `json:"ordinal"`
+	Status                string    `json:"status"`
+	EnvironmentGeneration uint64    `json:"environment_generation"`
+	SessionState          string    `json:"session_state"`
+	AgentReady            bool      `json:"agent_ready"`
+	ObservedAt            time.Time `json:"observed_at,omitempty"`
+	FreshUntil            time.Time `json:"fresh_until,omitempty"`
 }
 
 type SlotSessionOperation struct {
@@ -468,6 +471,7 @@ type SlotSessionOperation struct {
 	DesiredState          string            `json:"desired_state,omitempty"`
 	Deadline              time.Time         `json:"deadline,omitempty"`
 	RetryBudget           int               `json:"retry_budget,omitempty"`
+	NextAttemptAt         time.Time         `json:"next_attempt_at,omitempty"`
 	Status                SlotSessionStatus `json:"status"`
 	Idempotent            bool              `json:"idempotent,omitempty"`
 }

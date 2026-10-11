@@ -35,12 +35,13 @@ const (
 	Quarantined   Status = "quarantined"
 	Draining      Status = "draining"
 	Retiring      Status = "retiring"
+	Stopped       Status = "stopped"
 	Deleted       Status = "deleted"
 )
 
 func (s Status) Valid() bool {
 	switch s {
-	case Unprovisioned, Provisioning, Ready, Leased, Quarantined, Draining, Retiring, Deleted:
+	case Unprovisioned, Provisioning, Ready, Leased, Quarantined, Draining, Retiring, Stopped, Deleted:
 		return true
 	default:
 		return false
@@ -187,7 +188,7 @@ func (s Slot) Validate() error {
 	}
 	// Retiring can represent a logical slot that never reached provisioning;
 	// it therefore may still have no environment generation.
-	if s.EnvironmentGeneration == 0 && s.Status != Unprovisioned && s.Status != Provisioning && s.Status != Retiring && s.Status != Deleted {
+	if s.EnvironmentGeneration == 0 && s.Status != Unprovisioned && s.Status != Provisioning && s.Status != Stopped && s.Status != Retiring && s.Status != Deleted {
 		return fmt.Errorf("%w: active slot has no environment generation", ErrInvalidSlot)
 	}
 	_, err := normalizeCapabilities(s.Capabilities)
@@ -196,7 +197,7 @@ func (s Slot) Validate() error {
 
 func (s Slot) Matches(requirement EnvironmentRequirement) bool {
 	r, err := requirement.Normalize()
-	if err != nil || s.Status != Ready || s.EnvironmentID != r.EnvironmentID {
+	if err != nil || s.Status != Ready || s.SessionDesiredState == "stopped" || s.EnvironmentID != r.EnvironmentID {
 		return false
 	}
 	if r.Version != "" && s.EnvironmentVersion != r.Version {
@@ -327,6 +328,7 @@ type StatusCounts struct {
 	Provisioning       int    `json:"provisioning"`
 	Retiring           int    `json:"retiring"`
 	Unprovisioned      int    `json:"unprovisioned"`
+	Stopped            int    `json:"stopped"`
 }
 
 func SortSlots(slots []Slot) {
