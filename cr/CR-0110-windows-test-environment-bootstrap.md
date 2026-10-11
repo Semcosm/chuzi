@@ -22,6 +22,7 @@ metadata bind. The CR recording commit was 4b79c0dfaa3da6df3ad6733bdd732b7f08f9e
 (rewritten from the source branch).
 The integrated main bind is d9797cd723f26e066b205dc78a099289bbe16568;
 closure remains pending until this review-evidence commit is integrated.
+The native Windows acceptance items remain pending/not_run.
 CR-0109 remains the record for the existing mode controls and slot-session UI.
 Integration into main remains pending; the source implementation commit was
 rebased by preserving its signed change and commit message.
