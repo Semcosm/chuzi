@@ -275,6 +275,7 @@ if grep -Fq 'function ProductionPayloadReady' "$repo_root/packaging/windows/Chuz
 fi
 grep -Fq 'not ValidateInstalledPayload(ExpandConstant' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall does not fail closed on invalid production payload"
 grep -Fq 'Check: InstalledManagementScript' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall does not run the fixed management entrypoint"
+grep -Fq '缺少 Chuzi 服务管理入口' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall does not fail closed on a partial install"
 grep -Fq 'UninstallDelete' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses uninstall cleanup"
 grep -Fq 'KeepUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall misses user-data retention option"
 grep -Fq 'Check: ShouldDeleteUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall data cleanup must use a check function"

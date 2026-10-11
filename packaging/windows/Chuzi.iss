@@ -187,7 +187,20 @@ begin
   UninstallContext := True;
   CleanupReady := True;
   KeepUserData();
-  if InstalledManagementScript() then
+  if not InstalledManagementScript() then
+  begin
+    { A partial install may leave service data without its trusted cleanup
+      entrypoint. Never purge that tree while ownership and service state are
+      unknown. }
+    if DirExists(ExpandConstant('{commonappdata}\\chuzi')) then
+    begin
+      CleanupReady := False;
+      MsgBox('缺少 Chuzi 服务管理入口，卸载已停止。请由管理员恢复匹配的安装包后重试。', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end
+  else
   begin
     if ProductionPayloadRequired() and
        not ValidateInstalledPayload(ExpandConstant('{app}\CorePayload'), '', True) then

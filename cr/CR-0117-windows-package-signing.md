@@ -37,6 +37,18 @@ The existing Windows package copied executable and script files without a produc
 
 A production build cannot be published without a valid certificate, configured thumbprint allowlist, timestamp, signed production helper set, and Session Broker executable. Windows-only signature-chain, certificate rotation, service registration, ACL, and installer lifecycle behavior remain pending native verification; Linux only proves metadata, hash, and fail-closed contracts. Test/nightly archives are explicitly `unsigned-development` and are not production-ready.
 
+## Native Handoff
+
+On an authorized Windows runner, build and validate the installable artifact with:
+
+~~~powershell
+./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload" -PrebuiltBinaryPath "$env:RUNNER_TEMP\chuzi-ui-prebuilt\chuzi-native-windows.exe"
+./scripts/validate_windows_payload.ps1 -PayloadDir "$env:RUNNER_TEMP\chuzi-core-payload" -Production -Offline
+./scripts/validate_windows_installer.ps1 -InstallerPath "$env:RUNNER_TEMP\chuzi-ui\ChuziSetup.exe" -EvidencePath "$env:RUNNER_TEMP\chuzi-ui\installer-authenticode-signing.json" -Production -Offline
+~~~
+
+Each command returns 0 only on success and a nonzero code for a missing signer, invalid signature, metadata or hash mismatch, ACL failure, or lifecycle failure. Session-09/10 acceptance evidence should be a redacted chuzi-windows-session-acceptance/v1 JSON record containing artifact_sha256, version, scenario_id, started_utc, ended_utc, result (passed, failed, or not_run), cleanup (passed, failed, or not_run), and pending_prerequisites; not_run is never a pass. This Linux checkout has not produced that native evidence.
+
 ## Rollback
 
 Reject the stable artifact and retain the previous signed release. For an installed machine, run the fixed management script to drain/stop and confirm resources, then preserve or explicitly delete ProgramData data according to the uninstall choice. An interrupted upgrade leaves an owned marker and is recovered by the next `UpgradePrepare` or `UninstallPrepare`; a failed install invokes `Rollback` before returning failure. Restore the previous package only after ownership and active-session cleanup succeeds. Revert the packaging/signing changes through a reviewed UGS change record if source rollback is required.
