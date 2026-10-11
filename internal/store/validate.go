@@ -128,10 +128,59 @@ func validateDB(database *bbolt.DB) error {
 		if err := validateJobPoolControlTx(tx); err != nil {
 			return err
 		}
+		if err := validateSlotSessionControlTx(tx); err != nil {
+			return err
+		}
 		if err := validateEnvironmentOperationsTx(tx); err != nil {
 			return err
 		}
 		return validateEventsTx(tx)
+	})
+}
+
+func validateSlotSessionControlTx(tx *bbolt.Tx) error {
+	operations := tx.Bucket([]byte(migrations.SlotSessionOperationsBucket))
+	slots := tx.Bucket([]byte(migrations.ExecutionSlotsBucket))
+	if err := operations.ForEach(func(key, value []byte) error {
+		if value == nil {
+			return fmt.Errorf("%w: slot session operation bucket contains nested bucket", ErrCorruptData)
+		}
+		var operation SlotSessionOperation
+		if err := decode(value, &operation); err != nil {
+			return err
+		}
+		if string(key) != operation.OperationID || operation.OperationID == "" || operation.PoolID == "" || operation.SlotID == "" || !slotSessionStateValid(operation.State) || operation.Attempt < 1 || operation.RequestedAt.IsZero() || operation.UpdatedAt.IsZero() {
+			return fmt.Errorf("%w: invalid slot session operation", ErrCorruptData)
+		}
+		if !operation.Deadline.IsZero() && !operation.Deadline.After(operation.RequestedAt) {
+			return fmt.Errorf("%w: invalid slot session operation deadline", ErrCorruptData)
+		}
+		if operation.RetryBudget < 0 || (operation.ClaimOwner == "" && !operation.ClaimUntil.IsZero()) || (operation.ClaimOwner != "" && operation.ClaimUntil.IsZero()) {
+			return fmt.Errorf("%w: invalid slot session operation claim", ErrCorruptData)
+		}
+		if operation.DesiredState != "" && operation.DesiredState != "running" && operation.DesiredState != "stopped" {
+			return fmt.Errorf("%w: invalid slot session desired state", ErrCorruptData)
+		}
+		rawSlot := slots.Get([]byte(operation.SlotID))
+		if rawSlot == nil {
+			return fmt.Errorf("%w: slot session operation references missing slot", ErrCorruptData)
+		}
+		var current slot.Slot
+		if err := decode(rawSlot, &current); err != nil {
+			return err
+		}
+		if current.PoolID != operation.PoolID {
+			return fmt.Errorf("%w: slot session operation pool mismatch", ErrCorruptData)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return tx.Bucket([]byte(migrations.SlotSessionIdempotencyBucket)).ForEach(func(key, value []byte) error {
+		if value == nil || len(key) == 0 || len(value) == 0 || operations.Get(value) == nil {
+			return fmt.Errorf("%w: invalid slot session idempotency index", ErrCorruptData)
+		}
+		return nil
 	})
 }
 

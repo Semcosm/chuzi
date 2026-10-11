@@ -28,7 +28,7 @@ Darwin arm64 的构建契约。
 自行创建账号或请求，因此已有的排队请求可在重启后由 Scheduler 按租约状态恢复。
 迁移、事务、恢复和备份契约仍由 `internal/store` 库层及其测试作为事实来源。
 
-## Schema v7
+## Schema v10
 
 迁移在数据库的 `meta/version` 中记录当前版本，并可重复执行。v1 建立
 以下 bbolt bucket：
@@ -132,6 +132,19 @@ v7 增加签名环境包生命周期桶：
 slot lifecycle 将该桶作为环境权威来源，要求 pool 的 environment、版本、能力、
  digest 和 signer 完全匹配；缺少 ready 记录时服务保持 unprovisioned/provisioning/unhealthy，
 不会把仅安装或仅配置的包当作可调度资源。
+
+v8-v9 增加 job-pool/environment operation、幂等和审计桶；v10 增加 slot-session
+operation 与幂等索引。Slot session operation 保存 requested/provisioning/stopping/
+cancelling/retrying/ready/stopped/failed/cancelled 状态、runtime phase、attempt、
+caller deadline、retry budget、revision、desired state 和 expiring controller claim。
+Controller 只能在 Store 事务外执行 Windows/网络副作用，并以 owner、generation 和
+revision fence checkpoint/finish；过期 claim 可回收，旧 generation 的 late result 被拒绝。
+Slot records additionally persist session desired intent and operation revision.
+
+手动 Stop/Cancel 将 slot desired intent 设为 stopped；leased slot 先进入 draining，
+释放或确认 cleanup 后才成为 stopped。stopped 不计入 ready/effective capacity，也不会被
+普通 pool prewarm reconcile 自动拉起；只有显式 Start 才能把它改回 running/provisioning。
+这不会创建替代 slot 来补足 desired_slots，quarantined/deleted slot 仍需独立恢复。
 
 ## 事务边界与幂等
 
