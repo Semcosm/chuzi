@@ -3,7 +3,7 @@
 Base: main
 Head or Range: b5400d25bc64a38be8f4fa906f4fba04f0cf2249
 Integration Strategy: rebase-ff
-Review Evidence: go test ./...; go vet ./...; git diff --check
+Review Evidence: trailers
 Title: Durable slot session lifecycle control
 Revision: 1
 Status: pending
