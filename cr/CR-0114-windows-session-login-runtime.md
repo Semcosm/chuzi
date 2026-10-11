@@ -1,16 +1,16 @@
 # CR-0114: add the Windows session login runtime coordinator
 
 Base: main
-Head or Range: <commit>
+Head or Range: f2989cd
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: feat(windows): add session login runtime coordinator
-Revision: 1
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 18746c8aec2686e1ad27c53c858c829f89dacfa6
-Head OID: <commit>
+Head OID: f2989cd3cce9829a0a4a0ffe57557579e899021d
 Integrated Result: pending
 
 ## Summary
