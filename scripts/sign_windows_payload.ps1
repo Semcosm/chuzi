@@ -34,20 +34,36 @@ if ([string]::IsNullOrWhiteSpace([string]$policy.publisher_subject_prefix)) { th
 
 $production = $RequireProductionSigner.IsPresent -or $Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $env:CHUZI_REQUIRE_AUTHENTICODE -eq "1"
 $configuredThumbprints = @()
-if ($production -and -not [string]::IsNullOrWhiteSpace($env:CHUZI_AUTHENTICODE_THUMBPRINTS)) {
-    $configuredThumbprints = @($env:CHUZI_AUTHENTICODE_THUMBPRINTS -split '[,; ]+' | Where-Object { $_ })
+# Production and test certificates are deliberately separate inputs. A
+# production secret present on a shared CI runner must never cause a nightly
+# or test package to be signed with the production certificate. Non-production
+# signing is optional and may only use the isolated test-store variables.
+$thumbprintValue = if ($production) {
+    [string]$env:CHUZI_AUTHENTICODE_THUMBPRINTS
+} else {
+    [string]$env:CHUZI_TEST_AUTHENTICODE_THUMBPRINTS
+}
+if (-not [string]::IsNullOrWhiteSpace($thumbprintValue)) {
+    $configuredThumbprints = @($thumbprintValue -split '[,; ]+' | Where-Object { $_ })
 }
 if ($production -and $configuredThumbprints.Count -eq 0 -and $null -ne $policy.allowed_thumbprints) {
     $configuredThumbprints = @($policy.allowed_thumbprints | Where-Object { $_ })
 }
 $configuredThumbprints = @($configuredThumbprints | ForEach-Object { ([string]$_).Replace(" ", "").ToUpperInvariant() } | Select-Object -Unique)
 
-$timestampUrl = [string]$env:CHUZI_AUTHENTICODE_TIMESTAMP_URL
+$timestampUrl = if ($production) {
+    [string]$env:CHUZI_AUTHENTICODE_TIMESTAMP_URL
+} else {
+    [string]$env:CHUZI_TEST_AUTHENTICODE_TIMESTAMP_URL
+}
 if ($production -and $configuredThumbprints.Count -eq 0) {
     throw "production_signer_missing"
 }
 if ($production -and [string]::IsNullOrWhiteSpace($timestampUrl)) {
     throw "production_timestamp_missing"
+}
+if ($configuredThumbprints.Count -gt 0 -and [bool]$policy.required_timestamp -and [string]::IsNullOrWhiteSpace($timestampUrl)) {
+    throw "authenticode_timestamp_missing"
 }
 if ($configuredThumbprints.Count -gt 0 -and ($configuredThumbprints | Where-Object { $_ -notmatch '^[0-9A-F]{40}$' })) {
     throw "authenticode_thumbprint_invalid"

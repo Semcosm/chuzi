@@ -476,6 +476,10 @@ Windows payload 和 Inno Setup installer 在生成 release manifest、归档、r
 `chuzi-session-broker.exe`。`scripts/validate_windows_payload.ps1` 和
 `scripts/validate_windows_installer.ps1` 会校验签名、publisher、timestamp、证据
 SHA-256 以及签名后的 hash 顺序。
+生产 signer 变量只对 stable 或显式生产模式生效；test/nightly 构建即使在同一 CI
+runner 上看得到生产 secret，也不会使用它们。隔离测试 signer 若确有需要，只能通过
+`CHUZI_TEST_AUTHENTICODE_THUMBPRINTS` 和 `CHUZI_TEST_AUTHENTICODE_TIMESTAMP_URL`
+注入，并使用可清理的测试 certificate store；它生成的 metadata 永远不允许 production release。
 
 Inno Setup 在复制 Core 资源后、注册生产服务前会再次运行 payload 校验；服务管理脚本只使用固定的 `%ProgramData%\chuzi\data` 配置路径，创建并校验 `core-config.json`，然后设置 SYSTEM 可写、Users 只读的 ACL；Users 只在 `data\.chuzi` launcher 元数据目录拥有写权限。
 
