@@ -463,7 +463,8 @@ scripts/assemble_target.sh <target> <version> <go-dir> <worker-archive> <dist-ro
 Windows runner 使用对应的 `*.ps1` 脚本。`build.sh`/`build.ps1` 保留为本地一体化构建入口，
 并行 CI 使用组件构建和 `assemble_target` 脚本。Windows 目标会把 Node.js `node.exe`
 一并放入安装目录；在 Unix 主机组装 Windows 目标时，必须通过 `CHUZI_NODE_RUNTIME`
-指定同架构的 `node.exe`。构建产物必须包含 Go 服务、Worker 文件
+指定同架构的 `node.exe`，并通过 `CHUZI_PRESENTMON_PATH` 提供 SHA-256 匹配的
+PresentMon 2.6.0 可执行文件。构建产物必须包含 Go 服务、Worker 文件
 和 `build-manifest.json`，并生成 SHA256 校验文件。CI smoke test 只使用
 本地 Worker、内嵌测试页和测试协议，不使用真实云游戏账号或生产凭证。
 

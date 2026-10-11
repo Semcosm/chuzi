@@ -174,6 +174,7 @@ grep -Fq 'data\.chuzi' "$repo_root/packaging/windows/Chuzi.iss" || fail "install
 grep -Fq 'CHUZI_AUTHENTICODE_THUMBPRINTS' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Authenticode signer configuration"
 grep -Fq 'CHUZI_AUTHENTICODE_TIMESTAMP_URL' "$repo_root/.github/workflows/chuzi-build.yml" || fail "workflow misses Authenticode timestamp configuration"
 grep -Fq 'CHUZI_NODE_RUNTIME' "$repo_root/scripts/assemble_target.sh" || fail "Unix target assembly misses Windows Node runtime handoff"
+grep -Fq 'CHUZI_PRESENTMON_PATH' "$repo_root/scripts/assemble_target.sh" || fail "Unix target assembly misses pinned PresentMon handoff"
 grep -Fq 'node.exe' "$repo_root/scripts/generate_release_manifest.py" || fail "Windows release manifest misses packaged Node runtime"
 grep -Fq 'release-manifest.json' "$repo_root/scripts/package.sh" || fail "package.sh misses release manifest sidecar"
 grep -Fq 'release-manifest.json' "$repo_root/scripts/package.ps1" || fail "package.ps1 misses release manifest sidecar"

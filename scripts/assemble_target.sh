@@ -47,6 +47,25 @@ if [ "$target" = "windows-amd64" ]; then
   cp "$repo_root/scripts/session-shell.ps1" "$stage_dir/session-shell.ps1"
   cp "$repo_root/scripts/windows-service-management.ps1" "$stage_dir/windows-service-management.ps1"
   cp "$repo_root/scripts/validate_windows_payload.ps1" "$stage_dir/validate_windows_payload.ps1"
+  presentmon_path="\${CHUZI_PRESENTMON_PATH:-}"
+  if [ -z "$presentmon_path" ] || [ ! -f "$presentmon_path" ]; then
+    echo "windows-amd64 packaging requires CHUZI_PRESENTMON_PATH to point to PresentMon.exe" >&2
+    exit 1
+  fi
+  if command -v sha256sum >/dev/null 2>&1; then
+    presentmon_hash="$(sha256sum "$presentmon_path" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    presentmon_hash="$(shasum -a 256 "$presentmon_path" | awk '{print $1}')"
+  else
+    echo "no SHA256 verifier is available for PresentMon" >&2
+    exit 1
+  fi
+  if [ "$presentmon_hash" != "b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af" ]; then
+    echo "PresentMon SHA256 mismatch" >&2
+    exit 1
+  fi
+  cp "$presentmon_path" "$stage_dir/PresentMon.exe"
+  cp "$repo_root/third_party/licenses/PresentMon-2.6.0-LICENSE.txt" "$stage_dir/PresentMon-LICENSE.txt"
   python3 "$repo_root/scripts/prepare_windows_signing_metadata.py" \
     --stage "$stage_dir" \
     --policy "$repo_root/packaging/windows/authenticode-policy.json" \
