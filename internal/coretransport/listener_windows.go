@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Microsoft/go-winio"
+	"golang.org/x/sys/windows"
 )
 
 const corePipePrefix = "\\\\.\\pipe\\chuzi-core-"
@@ -58,7 +59,12 @@ func DialWithConfig(ctx context.Context, path string, config Config) (net.Conn, 
 	if ctx == nil || !validEndpoint(path) {
 		return nil, ErrInvalidTransport
 	}
-	conn, err := winio.DialPipeContext(ctx, path)
+	conn, err := winio.DialPipeAccessImpLevel(
+		ctx,
+		path,
+		uint32(windows.GENERIC_READ|windows.GENERIC_WRITE),
+		winio.PipeImpLevelImpersonation,
+	)
 	if err != nil {
 		return nil, err
 	}
