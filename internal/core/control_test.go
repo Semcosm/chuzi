@@ -40,6 +40,15 @@ func (p *controlSlotSessions) GetSlotSessionOperation(operationID string) (store
 	p.operationID = operationID
 	return p.operation, p.err
 }
+func (p *controlSlotSessions) CancelSlotSession(store.SlotSessionAction) (store.SlotSessionOperation, bool, error) {
+	return p.operation, p.idempotent, p.err
+}
+func (p *controlSlotSessions) StopSlotSession(store.SlotSessionAction) (store.SlotSessionOperation, bool, error) {
+	return p.operation, p.idempotent, p.err
+}
+func (p *controlSlotSessions) RetrySlotSession(store.SlotSessionAction) (store.SlotSessionOperation, bool, error) {
+	return p.operation, p.idempotent, p.err
+}
 
 func (p controlJobPools) ListJobPoolProjections(time.Time) ([]store.JobPoolProjection, error) {
 	if p.err != nil {
@@ -354,6 +363,25 @@ func TestStartSlotSessionRejectsInvalidSelectors(t *testing.T) {
 	}
 	if port.calls != 0 {
 		t.Fatalf("invalid inputs reached store: %d", port.calls)
+	}
+}
+
+func TestSlotSessionLifecycleActionsUseOperationBoundary(t *testing.T) {
+	port := &controlSlotSessions{operation: store.SlotSessionOperation{OperationID: "slotop-1", PoolID: "pool-1", SlotID: "pool-1-001", State: store.SlotSessionCancelling, Phase: store.SlotSessionPhaseStopping, DesiredState: "stopped", Attempt: 1, Revision: 3}, idempotent: true}
+	service, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, SlotSessions: port, Clock: func() time.Time { return controlTestTime }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := coreapi.SlotSessionActionRequest{OperationID: "slotop-1", Actor: "operator", IdempotencyKey: "cancel-1", ExpectedRevision: 3}
+	operation, err := service.CancelSlotSession(context.Background(), input)
+	if err != nil || !operation.Idempotent || operation.State != string(store.SlotSessionCancelling) || operation.Phase != string(store.SlotSessionPhaseStopping) || operation.DesiredState != "stopped" || operation.Revision != 3 {
+		t.Fatalf("operation=%#v err=%v", operation, err)
+	}
+	if _, err := service.StopSlotSession(context.Background(), input); err != nil {
+		t.Fatalf("stop action: %v", err)
+	}
+	if _, err := service.RetrySlotSession(context.Background(), input); err != nil {
+		t.Fatalf("retry action: %v", err)
 	}
 }
 

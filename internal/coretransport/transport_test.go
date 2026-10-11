@@ -34,6 +34,15 @@ func (a *testAPI) StartSlotSession(context.Context, coreapi.StartSlotSessionRequ
 func (a *testAPI) GetSlotSessionOperation(context.Context, string) (coreapi.SlotSessionOperation, error) {
 	return coreapi.SlotSessionOperation{OperationID: "slotop-1", State: "ready"}, nil
 }
+func (a *testAPI) CancelSlotSession(context.Context, coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	return coreapi.SlotSessionOperation{OperationID: "slotop-1", State: "cancelling", Phase: "stopping", DesiredState: "stopped"}, nil
+}
+func (a *testAPI) StopSlotSession(context.Context, coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	return coreapi.SlotSessionOperation{OperationID: "slotop-1", State: "stopping"}, nil
+}
+func (a *testAPI) RetrySlotSession(context.Context, coreapi.SlotSessionActionRequest) (coreapi.SlotSessionOperation, error) {
+	return coreapi.SlotSessionOperation{OperationID: "slotop-2", State: "retrying", Attempt: 2}, nil
+}
 
 func (a *jobPoolTestAPI) GetJobPoolStatus(context.Context, string) (coreapi.JobPoolStatus, error) {
 	return coreapi.JobPoolStatus{PoolID: "pool-test", Desired: 2, Ready: 1, Leased: 1, EffectiveCapacity: 1}, nil
@@ -273,12 +282,29 @@ func TestUnixContractJobPoolDeleteMethod(t *testing.T) {
 
 func TestUnixContractStartSlotSessionMethods(t *testing.T) {
 	api := &testAPI{started: make(chan struct{}), canceled: make(chan struct{})}
-	path, stop := startTestServer(t, api); defer stop()
-	client, err := Connect(context.Background(), path, Config{}); if err != nil { t.Fatal(err) }; defer client.Close()
+	path, stop := startTestServer(t, api)
+	defer stop()
+	client, err := Connect(context.Background(), path, Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
 	operation, err := client.StartSlotSession(context.Background(), coreapi.StartSlotSessionRequest{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "session-key"})
-	if err != nil || operation.OperationID != "slotop-1" { t.Fatalf("start operation=%#v err=%v", operation, err) }
+	if err != nil || operation.OperationID != "slotop-1" {
+		t.Fatalf("start operation=%#v err=%v", operation, err)
+	}
 	operation, err = client.GetSlotSessionOperation(context.Background(), "slotop-1")
-	if err != nil || operation.State != "ready" { t.Fatalf("get operation=%#v err=%v", operation, err) }
+	if err != nil || operation.State != "ready" {
+		t.Fatalf("get operation=%#v err=%v", operation, err)
+	}
+	cancelled, err := client.CancelSlotSession(context.Background(), coreapi.SlotSessionActionRequest{OperationID: operation.OperationID, Actor: "ui", IdempotencyKey: "cancel-1"})
+	if err != nil || cancelled.State != "cancelling" || cancelled.DesiredState != "stopped" {
+		t.Fatalf("cancelled=%#v err=%v", cancelled, err)
+	}
+	retried, err := client.RetrySlotSession(context.Background(), coreapi.SlotSessionActionRequest{OperationID: operation.OperationID, Actor: "ui", IdempotencyKey: "retry-1"})
+	if err != nil || retried.OperationID != "slotop-2" || retried.Attempt != 2 {
+		t.Fatalf("retried=%#v err=%v", retried, err)
+	}
 }
 
 func TestRejectsUnsupportedVersionAndUnknownMethod(t *testing.T) {

@@ -43,6 +43,9 @@ const (
 	methodDeleteJobPool           = "delete_job_pool"
 	methodGetJobPoolOperation     = "get_job_pool_operation"
 	methodStartSlotSession        = "start_slot_session"
+	methodCancelSlotSession       = "cancel_slot_session"
+	methodStopSlotSession         = "stop_slot_session"
+	methodRetrySlotSession        = "retry_slot_session"
 	methodGetSlotSessionOperation = "get_slot_session_operation"
 	methodListEnvironments        = "list_environments"
 	methodEnvironmentOperation    = "environment_operation"
@@ -74,6 +77,9 @@ const (
 	MethodDeleteJobPool           = methodDeleteJobPool
 	MethodGetJobPoolOperation     = methodGetJobPoolOperation
 	MethodStartSlotSession        = methodStartSlotSession
+	MethodCancelSlotSession       = methodCancelSlotSession
+	MethodStopSlotSession         = methodStopSlotSession
+	MethodRetrySlotSession        = methodRetrySlotSession
 	MethodGetSlotSessionOperation = methodGetSlotSessionOperation
 	MethodListEnvironments        = methodListEnvironments
 	MethodEnvironmentOperation    = methodEnvironmentOperation
@@ -166,7 +172,7 @@ type EnvironmentOperationResult struct {
 
 func methodList() []string {
 	return []string{methodHello, methodCancel, methodSubmitRequest, methodGetRequest, methodListRequests, methodGetAccount,
-		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetDiagnosticSnapshot, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodDeleteJobPool, methodGetJobPoolOperation, methodStartSlotSession, methodGetSlotSessionOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
+		methodCancelRequest, methodGetResult, methodListEvents, methodListNotifications, methodGetBrowserView, methodIssueRDPCapability, methodSubmitDiagnostic, methodGetDiagnosticSnapshot, methodGetJobPoolStatus, methodListJobPools, methodGetJobPool, methodApplyJobPool, methodScaleJobPool, methodDrainJobPool, methodResumeJobPool, methodDeleteJobPool, methodGetJobPoolOperation, methodStartSlotSession, methodCancelSlotSession, methodStopSlotSession, methodRetrySlotSession, methodGetSlotSessionOperation, methodListEnvironments, methodEnvironmentOperation, methodGetEnvironmentOperation}
 }
 
 // SupportedMethods is the compatibility contract a packaged Core must expose
