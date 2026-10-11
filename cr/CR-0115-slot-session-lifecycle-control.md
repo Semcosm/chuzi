@@ -1,16 +1,16 @@
 # CR-0115: Durable Slot Session Lifecycle Control
 
 Base: main
-Head or Range: a6c17bd60ff6af2a9cc37d1ca4fe63708b0700e3
+Head or Range: a9929114f8316a821fa9fcf447694b04da296787
 Integration Strategy: rebase-ff
-Review Evidence: a6c17bd60ff6af2a9cc37d1ca4fe63708b0700e3; go test ./...; go vet ./...; repository validators
+Review Evidence: a9929114f8316a821fa9fcf447694b04da296787; go test ./...; go vet ./...; go test -race ./internal/store ./internal/coretransport; repository validators
 Title: Durable slot session lifecycle control
 Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 18746c8aec2686e1ad27c53c858c829f89dacfa6
-Head OID: a6c17bd60ff6af2a9cc37d1ca4fe63708b0700e3
+Head OID: a9929114f8316a821fa9fcf447694b04da296787
 Integrated Result: pending
 
 ## Summary
@@ -39,9 +39,10 @@ deterministic and keeps runtime facts separate from business account state.
 - `go test ./...`
 - `go vet ./...`
 - `git diff --check`
-- Store tests cover ineligible-slot selection, desired-state Stop, claim
-  recovery, late completion fencing, retry idempotency, and terminal transition
-  rejection.
+- Store tests cover ineligible-slot selection, desired-state Stop and explicit
+  revival, claim recovery, owner/generation checkpoint fencing, late completion
+  fencing, retry idempotency/backoff, same-key payload conflicts, corruption
+  validation, and terminal transition rejection.
 - Core and transport tests cover redacted lifecycle projections and the three
   new wire methods.
 - Native Windows login, service-host, installer, and managed-session acceptance
