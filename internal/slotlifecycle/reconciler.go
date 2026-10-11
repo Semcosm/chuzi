@@ -243,6 +243,16 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		if value.Status == slot.Quarantined {
 			continue
 		}
+		if value.SessionDesiredState == "stopped" || value.Status == slot.Stopped {
+			// Manual Stop is durable intent. Prewarm reconciliation must not
+			// restart or replace the resource until an explicit Start changes it.
+			if leased && value.Status != slot.Draining {
+				if err := r.store.SetSlotStatus(value.SlotID, slot.Draining, r.clock().UTC()); err != nil && first == nil {
+					first = err
+				}
+			}
+			continue
+		}
 		if leased {
 			// An active lease keeps running the old environment until its owner
 			// releases it. Drain it before health checks so no new work can

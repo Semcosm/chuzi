@@ -161,6 +161,7 @@ type Service struct {
 	jobPoolID            string
 	maxConcurrency       int
 	clock                func() time.Time
+	clockProvided        bool
 }
 
 var _ coreapi.API = (*Service)(nil)
@@ -174,6 +175,7 @@ func New(dependencies Dependencies) (*Service, error) {
 		return nil, ErrInvalidService
 	}
 	clock := dependencies.Clock
+	clockProvided := clock != nil
 	if clock == nil {
 		clock = time.Now
 	}
@@ -185,7 +187,7 @@ func New(dependencies Dependencies) (*Service, error) {
 	if lifecycle == nil {
 		lifecycle, _ = dependencies.SlotSessions.(SlotSessionLifecycleControlPort)
 	}
-	return &Service{executionMode: mode, requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, slotSessions: dependencies.SlotSessions, slotSessionLifecycle: lifecycle, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock}, nil
+	return &Service{executionMode: mode, requests: dependencies.Requests, store: dependencies.Store, views: dependencies.Views, rdp: dependencies.RDP, diagnostics: dependencies.Diagnostics, jobPools: dependencies.JobPools, jobPoolControl: dependencies.JobPoolControl, slotSessions: dependencies.SlotSessions, slotSessionLifecycle: lifecycle, environments: dependencies.Environments, environmentExecutor: dependencies.EnvironmentExecutor, jobPoolID: dependencies.JobPoolID, maxConcurrency: dependencies.MaxConcurrency, clock: clock, clockProvided: clockProvided}, nil
 }
 
 func (s *Service) StartSlotSession(ctx context.Context, input coreapi.StartSlotSessionRequest) (coreapi.SlotSessionOperation, error) {
@@ -297,7 +299,7 @@ func (s *Service) GetJobPoolStatus(ctx context.Context, poolID string) (coreapi.
 	if s.maxConcurrency > 0 && effective > s.maxConcurrency {
 		effective = s.maxConcurrency
 	}
-	return coreapi.JobPoolStatus{ExecutionMode: s.executionMode, PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, EffectiveCapacity: effective}, nil
+	return coreapi.JobPoolStatus{ExecutionMode: s.executionMode, PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, Stopped: status.Stopped, EffectiveCapacity: effective}, nil
 }
 
 func (s *Service) ListJobPools(ctx context.Context) ([]coreapi.JobPool, error) {
@@ -1189,7 +1191,7 @@ func projectJobPoolStatus(value store.JobPoolProjection) coreapi.JobPoolStatus {
 	if max > 0 && effective > max {
 		effective = max
 	}
-	return coreapi.JobPoolStatus{PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, EffectiveCapacity: effective, MaxConcurrency: max, DesiredState: value.Config.DesiredState, Enabled: value.Config.Enabled(), EnvironmentReady: value.EnvironmentReady, EnvironmentReadiness: value.EnvironmentReadiness, ReconcileState: string(value.ReconcileState), OperationID: value.OperationID, LastFailureCode: value.LastFailureCode, LastSuccessfulReconcileAt: value.LastSuccessfulReconcileAt, ConfigRevision: value.Config.ConfigRevision}
+	return coreapi.JobPoolStatus{PoolID: status.PoolID, EnvironmentID: status.EnvironmentID, EnvironmentVersion: status.EnvironmentVersion, Desired: status.Desired, Ready: status.Ready, Leased: status.Leased, Quarantined: status.Quarantined, Draining: status.Draining, Provisioning: status.Provisioning, Retiring: status.Retiring, Unprovisioned: status.Unprovisioned, Stopped: status.Stopped, EffectiveCapacity: effective, MaxConcurrency: max, DesiredState: value.Config.DesiredState, Enabled: value.Config.Enabled(), EnvironmentReady: value.EnvironmentReady, EnvironmentReadiness: value.EnvironmentReadiness, ReconcileState: string(value.ReconcileState), OperationID: value.OperationID, LastFailureCode: value.LastFailureCode, LastSuccessfulReconcileAt: value.LastSuccessfulReconcileAt, ConfigRevision: value.Config.ConfigRevision}
 }
 
 func projectJobPool(value store.JobPoolProjection) coreapi.JobPool {
@@ -1228,13 +1230,26 @@ func (s *Service) projectSlotSessionOperation(value store.SlotSessionOperation, 
 	}
 	result.Status.Status, result.Status.SessionState = string(item.Status), string(item.Status)
 	result.Status.EnvironmentGeneration = item.EnvironmentGeneration
-	result.Status.AgentReady = s.executionMode == "windows" && (item.Status == slot.Ready || item.Status == slot.Leased) && item.AgentHandle != "" && item.AgentHandle != "logical" && !item.HealthAt.IsZero() && item.EnvironmentGeneration != 0
+	result.Status.ObservedAt = item.HealthAt
+	if !item.HealthAt.IsZero() {
+		result.Status.FreshUntil = item.HealthAt.Add(store.SlotSessionFreshnessWindow)
+	}
+	result.Status.AgentReady = s.executionMode == "windows" && (item.Status == slot.Ready || item.Status == slot.Leased) && item.SessionDesiredState != "stopped" && item.AgentHandle != "" && item.AgentHandle != "logical" && !item.HealthAt.IsZero() && (!s.clockProvided || s.clock().Before(item.HealthAt.Add(store.SlotSessionFreshnessWindow))) && item.EnvironmentGeneration != 0
 	return result
 }
 
 func projectSlotSessionOperation(value store.SlotSessionOperation, idempotent bool) coreapi.SlotSessionOperation {
 	status := coreapi.SlotSessionStatus{PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, Status: value.SessionState, EnvironmentGeneration: value.EnvironmentGeneration, SessionState: value.SessionState, AgentReady: value.AgentReady}
-	return coreapi.SlotSessionOperation{OperationID: value.OperationID, PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ExpectedRevision: value.ExpectedRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, FailureCode: value.FailureCode, EnvironmentGeneration: value.EnvironmentGeneration, Generation: value.EnvironmentGeneration, Phase: string(value.Phase), Attempt: value.Attempt, Revision: value.Revision, DesiredState: value.DesiredState, Deadline: value.Deadline, RetryBudget: value.RetryBudget, Status: status, Idempotent: idempotent}
+	return coreapi.SlotSessionOperation{OperationID: value.OperationID, PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ExpectedRevision: value.ExpectedRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, FailureCode: stableSlotSessionFailureCode(value.FailureCode), EnvironmentGeneration: value.EnvironmentGeneration, Generation: value.EnvironmentGeneration, Phase: string(value.Phase), Attempt: value.Attempt, Revision: value.Revision, DesiredState: value.DesiredState, Deadline: value.Deadline, RetryBudget: value.RetryBudget, NextAttemptAt: value.NextAttemptAt, Status: status, Idempotent: idempotent}
+}
+
+func stableSlotSessionFailureCode(code string) string {
+	switch code {
+	case "", "agent_unavailable", "cleanup_failed", "configuration_invalid", "credential_required", "deadline_exceeded", "permission_denied", "slot_not_found", "slot_quarantined", "unknown":
+		return code
+	default:
+		return "operation_failed"
+	}
 }
 
 func projectEnvironment(value environment.Record) coreapi.Environment {
@@ -1308,6 +1323,8 @@ func classify(err error) error {
 	case errors.Is(err, context.Canceled):
 		code = coreapi.CodeCancelled
 	case errors.Is(err, context.DeadlineExceeded):
+		code = coreapi.CodeDeadline
+	case errors.Is(err, store.ErrSlotSessionDeadline):
 		code = coreapi.CodeDeadline
 	case errors.Is(err, requestservice.ErrInvalidInput), errors.Is(err, ErrInvalidQuery),
 		errors.Is(err, store.ErrInvalidAccount), errors.Is(err, store.ErrInvalidRequest),

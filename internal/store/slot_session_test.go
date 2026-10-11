@@ -51,6 +51,21 @@ func TestStartSlotSessionRejectsIdempotencyPayloadConflict(t *testing.T) {
 	}
 }
 
+func TestStartSlotSessionExplicitDeadlineIsPartOfIdempotencyPayload(t *testing.T) {
+	database, _ := openTestStore(t)
+	pool := testPoolConfig(1)
+	if err := database.ReconcileJobPool(pool, storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	deadline := storeTestTime.Add(30 * time.Second)
+	if _, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: pool.PoolID, Actor: "ui", IdempotencyKey: "deadline-key", Deadline: deadline, RequestedAt: storeTestTime}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: pool.PoolID, Actor: "ui", IdempotencyKey: "deadline-key", Deadline: deadline.Add(time.Second), RequestedAt: storeTestTime.Add(time.Second)}); !errors.Is(err, ErrSlotSessionIdempotencyConflict) {
+		t.Fatalf("deadline conflict=%v", err)
+	}
+}
+
 func TestStartSlotSessionRejectsInvalidTargetAndStaleRevision(t *testing.T) {
 	database, _ := openTestStore(t)
 	pool := testPoolConfig(1)
@@ -175,6 +190,99 @@ func TestStopReadySlotSessionChangesDesiredIntent(t *testing.T) {
 	current, err := database.GetSlot(op.SlotID)
 	if err != nil || current.SessionDesiredState != "stopped" {
 		t.Fatalf("slot=%#v err=%v", current, err)
+	}
+	status, err := database.SlotPoolStatus("pool-test", storeTestTime.Add(3*time.Second))
+	if err != nil || status.Ready != 0 || status.Stopped != 1 {
+		t.Fatalf("status=%#v err=%v", status, err)
+	}
+	if _, err := database.ClaimSlotSessionOperation(stopping.OperationID, "controller", storeTestTime.Add(3*time.Second), time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CompleteSlotSessionOperation(stopping.OperationID, "controller", 0, SlotSessionStopped, SlotSessionPhaseStopped, "", storeTestTime.Add(3*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	started, _, err := database.StartSlotSession(SlotSessionMutation{SlotID: op.SlotID, Actor: "ui", IdempotencyKey: "revive", RequestedAt: storeTestTime.Add(4 * time.Second)})
+	if err != nil || started.SlotID != op.SlotID {
+		t.Fatalf("revive=%#v err=%v", started, err)
+	}
+	revived, err := database.GetSlot(op.SlotID)
+	if err != nil || revived.Status != slot.Provisioning || revived.SessionDesiredState != "running" {
+		t.Fatalf("revived slot=%#v err=%v", revived, err)
+	}
+}
+
+func TestSlotSessionActionKeyCannotChangeActionPayload(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	op, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "action-payload", RequestedAt: storeTestTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.CancelSlotSession(SlotSessionAction{OperationID: op.OperationID, Actor: "ui", IdempotencyKey: "same-action", At: storeTestTime.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := database.StopSlotSession(SlotSessionAction{OperationID: op.OperationID, Actor: "ui", IdempotencyKey: "same-action", At: storeTestTime.Add(time.Second)}); !errors.Is(err, ErrSlotSessionActionConflict) {
+		t.Fatalf("action kind conflict=%v", err)
+	}
+}
+
+func TestSlotSessionCheckpointFencesOwnerAndGeneration(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	op, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "checkpoint", RequestedAt: storeTestTime})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = database.ClaimSlotSessionOperation(op.OperationID, "controller-a", storeTestTime, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CheckpointSlotSessionOperation(SlotSessionCheckpoint{OperationID: op.OperationID, Owner: "controller-b", Generation: 1, SessionState: "worker", ObservedAt: storeTestTime.Add(time.Second)}); !errors.Is(err, ErrSlotSessionClaim) {
+		t.Fatalf("owner fence=%v", err)
+	}
+	if _, err := database.CheckpointSlotSessionOperation(SlotSessionCheckpoint{OperationID: op.OperationID, Owner: "controller-a", Generation: 1, SessionState: "worker", ObservedAt: storeTestTime.Add(time.Second)}); err != nil {
+		t.Fatalf("initial generation=%v", err)
+	}
+	if _, err := database.CheckpointSlotSessionOperation(SlotSessionCheckpoint{OperationID: op.OperationID, Owner: "controller-a", Generation: 2, SessionState: "worker", ObservedAt: storeTestTime.Add(2 * time.Second)}); !errors.Is(err, ErrSlotSessionLateResult) {
+		t.Fatalf("generation fence=%v", err)
+	}
+	updated, err := database.RecordSlotSessionFacts(op.OperationID, "controller-a", 1, "worker", true, storeTestTime.Add(2*time.Second))
+	if err != nil || updated.SessionState != "worker" || !updated.AgentReady {
+		t.Fatalf("checkpoint=%#v err=%v", updated, err)
+	}
+}
+
+func TestSlotSessionRetryBackoffBlocksEarlyClaim(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	op, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "backoff", RequestedAt: storeTestTime, RetryBudget: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ClaimSlotSessionOperation(op.OperationID, "controller", storeTestTime, time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.CompleteSlotSessionOperation(op.OperationID, "controller", 0, SlotSessionFailed, SlotSessionPhaseAgent, "temporary", storeTestTime.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	retry, _, err := database.RetrySlotSession(SlotSessionAction{OperationID: op.OperationID, Actor: "ui", IdempotencyKey: "backoff-retry", At: storeTestTime.Add(2 * time.Second)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.NextAttemptAt != storeTestTime.Add(3*time.Second) {
+		t.Fatalf("next attempt=%s", retry.NextAttemptAt)
+	}
+	if _, err := database.ClaimSlotSessionOperation(retry.OperationID, "controller", storeTestTime.Add(2*time.Second), time.Minute); !errors.Is(err, ErrSlotSessionClaim) {
+		t.Fatalf("early claim=%v", err)
+	}
+	if _, err := database.ClaimSlotSessionOperation(retry.OperationID, "controller", storeTestTime.Add(3*time.Second), time.Minute); err != nil {
+		t.Fatalf("ready claim=%v", err)
 	}
 }
 

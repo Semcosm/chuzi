@@ -20,9 +20,11 @@ var (
 	ErrSlotSessionActionConflict      = errors.New("store: slot session action conflict")
 	ErrSlotSessionClaim               = errors.New("store: slot session claim unavailable")
 	ErrSlotSessionLateResult          = errors.New("store: stale slot session result")
+	ErrSlotSessionDeadline            = errors.New("store: slot session deadline exceeded")
 )
 
 const DefaultSlotSessionDeadline = 5 * time.Minute
+const SlotSessionFreshnessWindow = time.Minute
 
 type SlotSessionOperationState string
 
@@ -87,11 +89,18 @@ type SlotSessionOperation struct {
 	DesiredState            string                    `json:"desired_state,omitempty"`
 	Deadline                time.Time                 `json:"deadline,omitempty"`
 	RetryBudget             int                       `json:"retry_budget,omitempty"`
+	NextAttemptAt           time.Time                 `json:"next_attempt_at,omitempty"`
 	ClaimOwner              string                    `json:"claim_owner,omitempty"`
 	ClaimUntil              time.Time                 `json:"claim_until,omitempty"`
 	ActionSourceOperationID string                    `json:"action_source_operation_id,omitempty"`
 	ActionActor             string                    `json:"action_actor,omitempty"`
 	ActionKind              string                    `json:"action_kind,omitempty"`
+	ActionExpectedRevision  uint64                    `json:"action_expected_revision,omitempty"`
+	ActionGeneration        uint64                    `json:"action_generation,omitempty"`
+	ActionAttempt           int                       `json:"action_attempt,omitempty"`
+	ActionDeadline          time.Time                 `json:"action_deadline,omitempty"`
+	StartIdempotencyKey     string                    `json:"start_idempotency_key,omitempty"`
+	StartDeadlineExplicit   bool                      `json:"start_deadline_explicit,omitempty"`
 }
 
 type SlotSessionAction struct {
@@ -103,6 +112,39 @@ type SlotSessionAction struct {
 	Attempt          int
 	Deadline         time.Time
 	At               time.Time
+}
+
+// SlotSessionCheckpoint is the controller-facing runtime fact boundary. It
+// carries only redaction-safe phase/readiness facts; platform identity stays
+// in the platform-owned journal.
+type SlotSessionCheckpoint struct {
+	OperationID  string
+	Owner        string
+	Generation   uint64
+	Phase        SlotSessionPhase
+	SessionState string
+	AgentReady   bool
+	ObservedAt   time.Time
+	FreshUntil   time.Time
+}
+
+// SlotSessionController is the narrow Store boundary intended for the
+// service controller. All methods fence by operation owner and generation.
+type SlotSessionController interface {
+	ClaimSlotSessionOperation(string, string, time.Time, time.Duration) (SlotSessionOperation, error)
+	CheckpointSlotSessionOperation(SlotSessionCheckpoint) (SlotSessionOperation, error)
+	CompleteSlotSessionOperation(string, string, uint64, SlotSessionOperationState, SlotSessionPhase, string, time.Time) (SlotSessionOperation, error)
+}
+
+func SlotSessionBackoff(attempt int) time.Duration {
+	if attempt <= 1 {
+		return 0
+	}
+	shift := attempt - 2
+	if shift > 5 {
+		shift = 5
+	}
+	return time.Duration(1<<shift) * time.Second
 }
 
 func (s *SlotSessionMutation) normalize(now time.Time) error {
@@ -137,6 +179,13 @@ func slotSessionStateValid(state SlotSessionOperationState) bool {
 	default:
 		return false
 	}
+}
+
+func normalizedSlotSessionAttempt(attempt int) int {
+	if attempt == 0 {
+		return 1
+	}
+	return attempt
 }
 
 // SlotSessionTransitionAllowed is the deterministic operation state machine
@@ -186,6 +235,7 @@ func slotSessionActionTime(action SlotSessionAction) time.Time {
 }
 
 func (s *Store) StartSlotSession(m SlotSessionMutation) (SlotSessionOperation, bool, error) {
+	deadlineExplicit := !m.Deadline.IsZero()
 	now := m.RequestedAt
 	if now.IsZero() {
 		now = time.Now().UTC()
@@ -201,7 +251,7 @@ func (s *Store) StartSlotSession(m SlotSessionMutation) (SlotSessionOperation, b
 			if err := decode(ops.Get(raw), &result); err != nil {
 				return ErrCorruptData
 			}
-			if (m.PoolID != "" && result.PoolID != m.PoolID) || (m.SlotID != "" && result.SlotID != m.SlotID) || result.Actor != m.Actor || result.ExpectedRevision != m.ExpectedRevision {
+			if (m.PoolID != "" && result.PoolID != m.PoolID) || (m.SlotID != "" && result.SlotID != m.SlotID) || result.Actor != m.Actor || result.ExpectedRevision != m.ExpectedRevision || result.Attempt != normalizedSlotSessionAttempt(m.Attempt) || result.RetryBudget != m.RetryBudget || result.StartDeadlineExplicit != deadlineExplicit || (result.StartDeadlineExplicit && result.Deadline != m.Deadline) || (result.StartIdempotencyKey != "" && result.StartIdempotencyKey != m.IdempotencyKey) {
 				return ErrSlotSessionIdempotencyConflict
 			}
 			idempotent = true
@@ -221,7 +271,7 @@ func (s *Store) StartSlotSession(m SlotSessionMutation) (SlotSessionOperation, b
 				return err
 			}
 			for _, candidate := range values {
-				if candidate.Status == slot.Unprovisioned || candidate.Status == slot.Provisioning || candidate.Status == slot.Ready {
+				if candidate.Status == slot.Unprovisioned || candidate.Status == slot.Provisioning || candidate.Status == slot.Ready || candidate.Status == slot.Stopped {
 					selected = candidate
 					break
 				}
@@ -240,7 +290,7 @@ func (s *Store) StartSlotSession(m SlotSessionMutation) (SlotSessionOperation, b
 		if m.ExpectedRevision != 0 && pool.ConfigRevision != m.ExpectedRevision {
 			return ErrSlotSessionRevision
 		}
-		if selected.Status != slot.Ready && selected.Status != slot.Unprovisioned && selected.Status != slot.Provisioning {
+		if selected.Status != slot.Ready && selected.Status != slot.Unprovisioned && selected.Status != slot.Provisioning && selected.Status != slot.Stopped {
 			return slot.ErrSlotUnavailable
 		}
 		if selected.SessionOperationID != "" {
@@ -261,11 +311,15 @@ func (s *Store) StartSlotSession(m SlotSessionMutation) (SlotSessionOperation, b
 			phase = SlotSessionPhaseWorker
 			completedAt = m.RequestedAt
 		}
+		if selected.Status == slot.Stopped {
+			// An explicit Start is the only path that revives a manually stopped slot.
+			selected.Status = slot.Provisioning
+		}
 		attempt := m.Attempt
 		if attempt == 0 {
 			attempt = 1
 		}
-		result = SlotSessionOperation{OperationID: slotSessionOperationID(m, selected.SlotID, tx), PoolID: selected.PoolID, SlotID: selected.SlotID, Ordinal: selected.Ordinal, State: state, Actor: m.Actor, ExpectedRevision: m.ExpectedRevision, RequestedAt: m.RequestedAt, UpdatedAt: m.RequestedAt, CompletedAt: completedAt, SessionState: string(selected.Status), AgentReady: selected.Status == slot.Ready, EnvironmentGeneration: selected.EnvironmentGeneration, Phase: phase, Attempt: attempt, Revision: selected.SessionRevision + 1, DesiredState: "running", Deadline: m.Deadline, RetryBudget: m.RetryBudget}
+		result = SlotSessionOperation{OperationID: slotSessionOperationID(m, selected.SlotID, tx), PoolID: selected.PoolID, SlotID: selected.SlotID, Ordinal: selected.Ordinal, State: state, Actor: m.Actor, ExpectedRevision: m.ExpectedRevision, RequestedAt: m.RequestedAt, UpdatedAt: m.RequestedAt, CompletedAt: completedAt, SessionState: string(selected.Status), AgentReady: selected.Status == slot.Ready, EnvironmentGeneration: selected.EnvironmentGeneration, Phase: phase, Attempt: attempt, Revision: selected.SessionRevision + 1, DesiredState: "running", Deadline: m.Deadline, RetryBudget: m.RetryBudget, StartIdempotencyKey: m.IdempotencyKey, StartDeadlineExplicit: deadlineExplicit}
 		selected.SessionDesiredState = "running"
 		selected.SessionOperationID = result.OperationID
 		selected.SessionRevision = result.Revision
@@ -289,6 +343,39 @@ func (s *Store) GetSlotSessionOperation(id string) (SlotSessionOperation, error)
 	return result, err
 }
 
+func slotLeaseForOperationTx(tx *bbolt.Tx, slotID string) (slot.Lease, bool, error) {
+	raw := tx.Bucket([]byte(migrations.SlotLeasesBucket)).Get([]byte(slotID))
+	if raw == nil {
+		return slot.Lease{}, false, nil
+	}
+	var lease slot.Lease
+	if err := decode(raw, &lease); err != nil {
+		return slot.Lease{}, false, err
+	}
+	if err := lease.Validate(); err != nil {
+		return slot.Lease{}, false, fmt.Errorf("%w: invalid slot lease", ErrCorruptData)
+	}
+	return lease, true, nil
+}
+
+// applyStoppedIntentTx projects a durable stop intent onto the slot without
+// claiming that cleanup completed while a lease is still present.
+func applyStoppedIntentTx(tx *bbolt.Tx, current *slot.Slot) error {
+	if current == nil || current.Status == slot.Deleted || current.Status == slot.Retiring {
+		return nil
+	}
+	_, leased, err := slotLeaseForOperationTx(tx, current.SlotID)
+	if err != nil {
+		return err
+	}
+	if leased {
+		current.Status = slot.Draining
+	} else {
+		current.Status = slot.Stopped
+	}
+	return nil
+}
+
 func (s *Store) mutateSlotSessionAction(action SlotSessionAction, target SlotSessionOperationState, phase SlotSessionPhase, desired string) (SlotSessionOperation, bool, error) {
 	now := slotSessionActionTime(action)
 	if strings.TrimSpace(action.OperationID) == "" || strings.TrimSpace(action.Actor) == "" || strings.TrimSpace(action.IdempotencyKey) == "" || strings.ContainsAny(action.OperationID+action.Actor+action.IdempotencyKey, "\r\n\t ") || action.Attempt < 0 {
@@ -304,7 +391,7 @@ func (s *Store) mutateSlotSessionAction(action SlotSessionAction, target SlotSes
 			if err := decode(ops.Get(raw), &result); err != nil {
 				return ErrCorruptData
 			}
-			if string(raw) != action.OperationID || (result.ActionActor != "" && result.ActionActor != action.Actor) {
+			if string(raw) != action.OperationID || (result.ActionActor != "" && result.ActionActor != action.Actor) || (result.ActionKind != "" && result.ActionKind != string(target)) || result.ActionExpectedRevision != action.ExpectedRevision || result.ActionGeneration != action.Generation || result.ActionAttempt != action.Attempt || !result.ActionDeadline.Equal(action.Deadline) {
 				return ErrSlotSessionActionConflict
 			}
 			idempotent = true
@@ -335,10 +422,16 @@ func (s *Store) mutateSlotSessionAction(action SlotSessionAction, target SlotSes
 		result.State, result.Phase, result.DesiredState, result.UpdatedAt = target, phase, desired, now
 		result.CompletedAt = time.Time{}
 		result.ActionSourceOperationID, result.ActionActor, result.ActionKind = action.OperationID, action.Actor, string(target)
+		result.ActionExpectedRevision, result.ActionGeneration, result.ActionAttempt, result.ActionDeadline = action.ExpectedRevision, action.Generation, action.Attempt, action.Deadline.UTC()
 		if !result.Deadline.IsZero() && !now.Before(result.Deadline) {
 			result.State, result.FailureCode, result.CompletedAt = SlotSessionFailed, "deadline_exceeded", now
 		}
 		current.SessionDesiredState = desired
+		if desired == "stopped" && (target == SlotSessionStopping || target == SlotSessionCancelling) {
+			if err := applyStoppedIntentTx(tx, &current); err != nil {
+				return err
+			}
+		}
 		current.SessionOperationID = result.OperationID
 		current.SessionRevision = result.Revision
 		current.UpdatedAt = now
@@ -367,6 +460,15 @@ func (s *Store) StopSlotSession(action SlotSessionAction) (SlotSessionOperation,
 // RetrySlotSession creates a new fenced attempt for a failed/cancelled op.
 func (s *Store) RetrySlotSession(action SlotSessionAction) (SlotSessionOperation, bool, error) {
 	now := slotSessionActionTime(action)
+	if action.Attempt < 0 {
+		return SlotSessionOperation{}, false, ErrInvalidRequest
+	}
+	if !action.Deadline.IsZero() {
+		action.Deadline = action.Deadline.UTC()
+		if !action.Deadline.After(now) {
+			return SlotSessionOperation{}, false, ErrSlotSessionDeadline
+		}
+	}
 	var result SlotSessionOperation
 	idempotent := false
 	err := s.update(func(tx *bbolt.Tx) error {
@@ -380,7 +482,7 @@ func (s *Store) RetrySlotSession(action SlotSessionAction) (SlotSessionOperation
 			if err := decode(ops.Get(raw), &result); err != nil {
 				return ErrCorruptData
 			}
-			if result.ActionSourceOperationID != action.OperationID || (result.ActionActor != "" && result.ActionActor != action.Actor) {
+			if result.ActionSourceOperationID != action.OperationID || (result.ActionActor != "" && result.ActionActor != action.Actor) || (result.ActionKind != "" && result.ActionKind != "retry") || result.ActionExpectedRevision != action.ExpectedRevision || result.ActionGeneration != action.Generation || result.ActionAttempt != action.Attempt || !result.ActionDeadline.Equal(action.Deadline) {
 				return ErrSlotSessionActionConflict
 			}
 			idempotent = true
@@ -405,6 +507,9 @@ func (s *Store) RetrySlotSession(action SlotSessionAction) (SlotSessionOperation
 		if previous.RetryBudget == 0 || (previous.RetryBudget > 0 && previous.Attempt >= previous.RetryBudget+1) {
 			return ErrSlotSessionActionConflict
 		}
+		if action.Deadline.IsZero() && !previous.Deadline.IsZero() && !now.Before(previous.Deadline) {
+			return ErrSlotSessionDeadline
+		}
 		var current slot.Slot
 		if err := getJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), previous.SlotID, &current, slot.ErrSlotNotFound); err != nil {
 			return err
@@ -414,15 +519,21 @@ func (s *Store) RetrySlotSession(action SlotSessionAction) (SlotSessionOperation
 		}
 		result = previous
 		result.OperationID = slotSessionOperationID(SlotSessionMutation{PoolID: previous.PoolID, SlotID: previous.SlotID, IdempotencyKey: action.IdempotencyKey, RequestedAt: now}, previous.SlotID, tx)
+		result.StartIdempotencyKey, result.StartDeadlineExplicit = "", false
 		result.State, result.Phase = SlotSessionRetrying, SlotSessionPhaseEnvironment
 		result.Attempt++
 		result.RequestedAt, result.UpdatedAt, result.CompletedAt = now, now, time.Time{}
 		result.FailureCode, result.DesiredState = "", "running"
+		result.NextAttemptAt = now.Add(SlotSessionBackoff(result.Attempt))
+		if current.Status == slot.Stopped {
+			current.Status = slot.Provisioning
+		}
 		if !action.Deadline.IsZero() {
 			result.Deadline = action.Deadline.UTC()
 		}
 		result.ClaimOwner, result.ClaimUntil = "", time.Time{}
 		result.ActionSourceOperationID, result.ActionActor, result.ActionKind = action.OperationID, action.Actor, "retry"
+		result.ActionExpectedRevision, result.ActionGeneration, result.ActionAttempt, result.ActionDeadline = action.ExpectedRevision, action.Generation, action.Attempt, action.Deadline.UTC()
 		current.SessionDesiredState, current.SessionOperationID = "running", result.OperationID
 		current.SessionRevision = previous.Revision + 1
 		current.UpdatedAt = now
@@ -457,6 +568,9 @@ func (s *Store) ClaimSlotSessionOperation(operationID, owner string, at time.Tim
 		if slotSessionTerminal(result.State) {
 			return ErrSlotSessionClaim
 		}
+		if !result.NextAttemptAt.IsZero() && at.Before(result.NextAttemptAt) {
+			return ErrSlotSessionClaim
+		}
 		if result.ClaimOwner != "" && result.ClaimOwner != owner && at.Before(result.ClaimUntil) {
 			return ErrSlotSessionClaim
 		}
@@ -486,6 +600,28 @@ func (s *Store) CompleteSlotSessionOperation(operationID, owner string, generati
 		if result.ClaimOwner != owner || !at.Before(result.ClaimUntil) {
 			return ErrSlotSessionClaim
 		}
+		if !result.Deadline.IsZero() && !at.Before(result.Deadline) {
+			var current slot.Slot
+			if err := getJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), result.SlotID, &current, slot.ErrSlotNotFound); err != nil {
+				return err
+			}
+			result.State, result.Phase, result.FailureCode = SlotSessionFailed, SlotSessionPhaseStopping, "deadline_exceeded"
+			result.DesiredState = "stopped"
+			current.SessionDesiredState = "stopped"
+			if err := applyStoppedIntentTx(tx, &current); err != nil {
+				return err
+			}
+			current.SessionOperationID, current.SessionRevision, current.UpdatedAt = operationID, result.Revision, at
+			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
+				return err
+			}
+			result.CompletedAt, result.UpdatedAt = at, at
+			result.ClaimOwner, result.ClaimUntil = "", time.Time{}
+			if err := putJSON(ops, operationID, result); err != nil {
+				return err
+			}
+			return ErrSlotSessionDeadline
+		}
 		if generation != 0 && result.EnvironmentGeneration != 0 && generation != result.EnvironmentGeneration {
 			return ErrSlotSessionLateResult
 		}
@@ -513,6 +649,11 @@ func (s *Store) CompleteSlotSessionOperation(operationID, owner string, generati
 		} else if state == SlotSessionStopped || state == SlotSessionCancelled || state == SlotSessionFailed {
 			result.DesiredState = "stopped"
 			current.SessionDesiredState = "stopped"
+			if state == SlotSessionStopped || state == SlotSessionCancelled || state == SlotSessionFailed {
+				if err := applyStoppedIntentTx(tx, &current); err != nil {
+					return err
+				}
+			}
 		}
 		current.SessionOperationID, current.SessionRevision, current.UpdatedAt = operationID, result.Revision, at
 		if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
@@ -521,6 +662,61 @@ func (s *Store) CompleteSlotSessionOperation(operationID, owner string, generati
 		return putJSON(ops, operationID, result)
 	})
 	return result, err
+}
+
+// CheckpointSlotSessionOperation stores a bounded runtime fact while retaining
+// the operation's control state. A stale or expired owner cannot overwrite a
+// newer generation.
+func (s *Store) CheckpointSlotSessionOperation(checkpoint SlotSessionCheckpoint) (SlotSessionOperation, error) {
+	if strings.TrimSpace(checkpoint.OperationID) == "" || strings.TrimSpace(checkpoint.Owner) == "" || strings.ContainsAny(checkpoint.OperationID+checkpoint.Owner+checkpoint.SessionState, "\r\n\t ") || checkpoint.ObservedAt.IsZero() {
+		return SlotSessionOperation{}, ErrInvalidRequest
+	}
+	at := checkpoint.ObservedAt.UTC()
+	freshUntil := checkpoint.FreshUntil.UTC()
+	if freshUntil.IsZero() {
+		freshUntil = at.Add(SlotSessionFreshnessWindow)
+	}
+	if !freshUntil.After(at) {
+		return SlotSessionOperation{}, ErrInvalidRequest
+	}
+	var result SlotSessionOperation
+	err := s.update(func(tx *bbolt.Tx) error {
+		ops := tx.Bucket([]byte(migrations.SlotSessionOperationsBucket))
+		if err := getJSON(ops, checkpoint.OperationID, &result, ErrSlotSessionOperationNotFound); err != nil {
+			return err
+		}
+		if result.ClaimOwner != checkpoint.Owner || !at.Before(result.ClaimUntil) {
+			return ErrSlotSessionClaim
+		}
+		if checkpoint.Generation != 0 && result.EnvironmentGeneration != 0 && checkpoint.Generation != result.EnvironmentGeneration {
+			return ErrSlotSessionLateResult
+		}
+		result.Phase, result.SessionState, result.AgentReady, result.UpdatedAt = checkpoint.Phase, checkpoint.SessionState, checkpoint.AgentReady, at
+		if result.EnvironmentGeneration == 0 {
+			result.EnvironmentGeneration = checkpoint.Generation
+		}
+		var current slot.Slot
+		if err := getJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), result.SlotID, &current, slot.ErrSlotNotFound); err != nil {
+			return err
+		}
+		current.HealthAt, current.UpdatedAt = at, at
+		if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
+			return err
+		}
+		return putJSON(ops, result.OperationID, result)
+	})
+	return result, err
+}
+
+// RecordSlotSessionFacts is a convenience spelling for controllers that
+// report a readiness heartbeat without changing the operation phase.
+func (s *Store) RecordSlotSessionFacts(operationID, owner string, generation uint64, sessionState string, agentReady bool, at time.Time) (SlotSessionOperation, error) {
+	return s.CheckpointSlotSessionOperation(SlotSessionCheckpoint{OperationID: operationID, Owner: owner, Generation: generation, SessionState: sessionState, AgentReady: agentReady, ObservedAt: at})
+}
+
+// FinishSlotSessionOperation is the controller-facing completion spelling.
+func (s *Store) FinishSlotSessionOperation(operationID, owner string, generation uint64, state SlotSessionOperationState, phase SlotSessionPhase, failure string, at time.Time) (SlotSessionOperation, error) {
+	return s.CompleteSlotSessionOperation(operationID, owner, generation, state, phase, failure, at)
 }
 
 func (s *Store) ReconcileSlotSessionOperations(at time.Time) error {
@@ -542,6 +738,19 @@ func (s *Store) ReconcileSlotSessionOperations(at time.Time) error {
 				return nil
 			}
 			if !operation.Deadline.IsZero() && !at.Before(operation.Deadline) {
+				var current slot.Slot
+				if err := getJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), operation.SlotID, &current, slot.ErrSlotNotFound); err == nil {
+					current.SessionDesiredState = "stopped"
+					if stopErr := applyStoppedIntentTx(tx, &current); stopErr != nil {
+						return stopErr
+					}
+					current.SessionOperationID, current.SessionRevision, current.UpdatedAt = operation.OperationID, operation.Revision, at
+					if putErr := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); putErr != nil {
+						return putErr
+					}
+				} else if !errors.Is(err, slot.ErrSlotNotFound) {
+					return err
+				}
 				operation.State, operation.FailureCode, operation.CompletedAt = SlotSessionFailed, "deadline_exceeded", at
 				operation.ClaimOwner, operation.ClaimUntil, operation.UpdatedAt = "", time.Time{}, at
 				return putJSON(ops, string(key), operation)
@@ -558,7 +767,7 @@ func (s *Store) ReconcileSlotSessionOperations(at time.Time) error {
 				operation.SessionState, operation.EnvironmentGeneration = string(value.Status), value.EnvironmentGeneration
 				operation.AgentReady = value.Status == slot.Ready
 				if operation.DesiredState == "stopped" || operation.State == SlotSessionStopping || operation.State == SlotSessionCancelling {
-					if value.Status == slot.Unprovisioned || value.Status == slot.Retiring || value.Status == slot.Deleted {
+					if value.Status == slot.Stopped || value.Status == slot.Unprovisioned || value.Status == slot.Retiring || value.Status == slot.Deleted {
 						if operation.State == SlotSessionCancelling {
 							operation.State = SlotSessionCancelled
 						} else {

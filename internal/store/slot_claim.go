@@ -76,7 +76,9 @@ func (s *Store) ClaimNextWithSlot(now time.Time, leaseID, owner string, ttl time
 			if raw == nil {
 				if candidate.Status == slot.Leased || candidate.Status == slot.Draining {
 					status := slot.Ready
-					if candidate.Ordinal > pool.DesiredSlots {
+					if candidate.SessionDesiredState == "stopped" {
+						status = slot.Stopped
+					} else if candidate.Ordinal > pool.DesiredSlots {
 						status = slot.Retiring
 					} else if !slotMatchesPoolTarget(*candidate, pool) {
 						status = slot.Provisioning
@@ -110,7 +112,9 @@ func (s *Store) ClaimNextWithSlot(now time.Time, leaseID, owner string, ttl time
 				}
 				if candidate.Status == slot.Leased || candidate.Status == slot.Draining {
 					status := slot.Ready
-					if candidate.Ordinal > pool.DesiredSlots {
+					if candidate.SessionDesiredState == "stopped" {
+						status = slot.Stopped
+					} else if candidate.Ordinal > pool.DesiredSlots {
 						status = slot.Retiring
 					} else if !slotMatchesPoolTarget(*candidate, pool) {
 						status = slot.Provisioning
