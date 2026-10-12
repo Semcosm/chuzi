@@ -87,7 +87,7 @@ if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $env:CHUZI_REQUIRE_AUTHENTIC
     $signParameters.RequireProductionSigner = $true
 }
 & (Join-Path $repoRoot "scripts/sign_windows_payload.ps1") @signParameters
-if ($LASTEXITCODE -ne 0) { throw "Windows Authenticode signing failed" }
+if (-not $?) { throw "Windows Authenticode signing failed" }
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
 $adapterManifest = Join-Path $targetDir "genshin-cloudgame-adapter-manifest.json"
 & python (Join-Path $repoRoot "scripts/build_adapter_package.py") `

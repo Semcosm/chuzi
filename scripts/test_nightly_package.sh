@@ -41,6 +41,7 @@ for target in linux-amd64 windows-amd64; do
     printf '%s' service >"$stage/chuzi.exe"
     printf '%s' browser-launcher >"$stage/chuzi-browser-launcher.exe"
     printf '%s' user-agent >"$stage/chuzi-user-agent.exe"
+    printf '%s' session-broker >"$stage/chuzi-session-broker.exe"
     printf '%s' node-runtime >"$stage/node.exe"
     printf '%s' session-shell >"$stage/session-shell.ps1"
     printf '%s' service-management >"$stage/windows-service-management.ps1"
@@ -125,7 +126,7 @@ stage, dist, version, target = map(Path, sys.argv[1:])
 groups = {
     "bundle": [path for path in stage.rglob("*") if path.is_file()],
     "launcher": [stage / "chuzi-launcher.exe", stage / "release-manifest.json"],
-    "service": [stage / "chuzi.exe", stage / "chuzi-browser-launcher.exe", stage / "chuzi-user-agent.exe", stage / "node.exe", stage / "session-shell.ps1", stage / "windows-service-management.ps1", stage / "validate_windows_payload.ps1", stage / "authenticode-policy.json", stage / "authenticode-signing.json"],
+    "service": [stage / "chuzi.exe", stage / "chuzi-browser-launcher.exe", stage / "chuzi-user-agent.exe", stage / "chuzi-session-broker.exe", stage / "node.exe", stage / "session-shell.ps1", stage / "windows-service-management.ps1", stage / "validate_windows_payload.ps1", stage / "authenticode-policy.json", stage / "authenticode-signing.json"],
     "browser-worker": [path for path in (stage / "browser-worker").rglob("*") if path.is_file()],
     "presentmon": [stage / "PresentMon.exe", stage / "PresentMon-LICENSE.txt"],
 }

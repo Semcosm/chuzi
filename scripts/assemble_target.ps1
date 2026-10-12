@@ -47,7 +47,7 @@ if ($Version -match '^v[0-9]+\.[0-9]+\.[0-9]+$' -or $env:CHUZI_REQUIRE_AUTHENTIC
     $signParameters.RequireProductionSigner = $true
 }
 & (Join-Path $repoRoot "scripts/sign_windows_payload.ps1") @signParameters
-if ($LASTEXITCODE -ne 0) { throw "Windows Authenticode signing failed" }
+if (-not $?) { throw "Windows Authenticode signing failed" }
 tar -xzf $WorkerArchive -C (Join-Path $stageDir "browser-worker")
 if ($LASTEXITCODE -ne 0) { throw "browser worker archive extraction failed" }
 $adapterArchive = Join-Path $targetDir "chuzi-$Version-$Target-genshin-cloudgame.zip"
