@@ -78,6 +78,11 @@ var
   KeepUserDataPrompted: Boolean;
   CleanupReady: Boolean;
 
+procedure ShowSetupMessage(Text: String; Typ: TMsgBoxType);
+begin
+  SuppressibleMsgBox(Text, Typ, MB_OK, IDOK);
+end;
+
 function ProductionPayloadRequired(): Boolean;
 var
   Version: String;
@@ -96,6 +101,7 @@ end;
 function RunServiceManagementAt(ScriptPath: String; Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
 var
   Parameters: String;
+  ExecutionPolicy: String;
   ResultCode: Integer;
 begin
   if not FileExists(ScriptPath) then
@@ -103,7 +109,10 @@ begin
     Result := False;
     Exit;
   end;
-  Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "' +
+  ExecutionPolicy := 'Bypass';
+  if ProductionPayloadRequired() then
+    ExecutionPolicy := 'AllSigned';
+  Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy ' + ExecutionPolicy + ' -File "' +
     ScriptPath + '" -Operation ' + Operation + ' -RuntimeRoot "' + RuntimeRoot +
     '" -DataRoot "' + DataRoot + '" -InstallRoot "' + InstallRoot + '"';
   Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Parameters,
@@ -126,6 +135,7 @@ function ValidateInstalledPayload(PayloadRoot: String; DataRoot: String; Product
 var
   ScriptPath: String;
   Parameters: String;
+  ExecutionPolicy: String;
   ResultCode: Integer;
 begin
   ScriptPath := AddBackslash(PayloadRoot) + 'validate_windows_payload.ps1';
@@ -134,7 +144,10 @@ begin
     Result := False;
     Exit;
   end;
-  Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File "' +
+  ExecutionPolicy := 'Bypass';
+  if Production then
+    ExecutionPolicy := 'AllSigned';
+  Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy ' + ExecutionPolicy + ' -File "' +
     ScriptPath + '" -PayloadDir "' + PayloadRoot + '" -Offline';
   if Production then
     Parameters := Parameters + ' -Production -DataRoot "' + DataRoot + '"';
@@ -195,7 +208,7 @@ begin
     if DirExists(ExpandConstant('{commonappdata}\\chuzi')) then
     begin
       CleanupReady := False;
-      MsgBox('缺少 Chuzi 服务管理入口，卸载已停止。请由管理员恢复匹配的安装包后重试。', mbError, MB_OK);
+      ShowSetupMessage('缺少 Chuzi 服务管理入口，卸载已停止。请由管理员恢复匹配的安装包后重试。', mbError);
       Result := False;
       Exit;
     end;
@@ -205,7 +218,7 @@ begin
     if ProductionPayloadRequired() and
        not ValidateInstalledPayload(ExpandConstant('{app}\CorePayload'), '', True) then
     begin
-      MsgBox('已安装的 Core 文件未通过生产签名检查，卸载已停止。请由管理员检查安装目录后重试。', mbError, MB_OK);
+      ShowSetupMessage('已安装的 Core 文件未通过生产签名检查，卸载已停止。请由管理员检查安装目录后重试。', mbError);
       Result := False;
       Exit;
     end;
@@ -213,7 +226,7 @@ begin
       ExpandConstant('{commonappdata}\chuzi\data'), ExpandConstant('{app}'));
     if not CleanupReady then
     begin
-      MsgBox('无法停止 Chuzi 服务，卸载已停止。请等待会话排空后重试。', mbError, MB_OK);
+      ShowSetupMessage('无法停止 Chuzi 服务，卸载已停止。请等待会话排空后重试。', mbError);
       Result := False;
       Exit;
     end;
@@ -223,7 +236,7 @@ begin
         ExpandConstant('{commonappdata}\chuzi\data'), ExpandConstant('{app}'));
       if not CleanupReady then
       begin
-        MsgBox('无法确认 Chuzi 数据目录归属，卸载已停止。请由管理员检查数据目录后重试。', mbError, MB_OK);
+        ShowSetupMessage('无法确认 Chuzi 数据目录归属，卸载已停止。请由管理员检查数据目录后重试。', mbError);
         Result := False;
         Exit;
       end;
@@ -289,8 +302,8 @@ begin
   if (not FileExists(Launcher)) or (not FileExists(Manifest)) then
   begin
     if not RollbackUpgrade() then
-      MsgBox('安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
-    MsgBox('安装包缺少 Core 文件，无法完成安装。请重新下载最新安装包。', mbError, MB_OK);
+      ShowSetupMessage('安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError);
+    ShowSetupMessage('安装包缺少 Core 文件，无法完成安装。请重新下载最新安装包。', mbError);
     Abort;
   end;
   Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
@@ -298,7 +311,7 @@ begin
   if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
      (ResultCode <> 0) then
   begin
-    MsgBox('无法停止旧版 Core，安装已停止。请关闭 Chuzi 后重试。', mbError, MB_OK);
+    ShowSetupMessage('无法停止旧版 Core，安装已停止。请关闭 Chuzi 后重试。', mbError);
     Abort;
   end;
   Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
@@ -309,15 +322,15 @@ begin
      (ResultCode <> 0) then
   begin
     if not RollbackUpgrade() then
-      MsgBox('Core 文件安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
-    MsgBox('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError, MB_OK);
+      ShowSetupMessage('Core 文件安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError);
+    ShowSetupMessage('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError);
     Abort;
   end;
   if not ValidateInstalledPayload(RuntimeRoot, '', ProductionPayloadRequired()) then
   begin
     if not RollbackUpgrade() then
-      MsgBox('安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
-    MsgBox('已安装的 Core 文件未通过签名和完整性检查，安装已停止。', mbError, MB_OK);
+      ShowSetupMessage('安装失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError);
+    ShowSetupMessage('已安装的 Core 文件未通过签名和完整性检查，安装已停止。', mbError);
     Abort;
   end;
   if ProductionPayloadRequired() then
@@ -325,18 +338,18 @@ begin
     if not RunServiceManagement('Install', RuntimeRoot, DataRoot, ExpandConstant('{app}')) then
     begin
       if not RollbackUpgrade() then
-        MsgBox('服务注册失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
-      MsgBox('生产签名包缺少可用的服务或 Session Broker，安装已停止。', mbError, MB_OK);
+        ShowSetupMessage('服务注册失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError);
+      ShowSetupMessage('生产签名包缺少可用的服务或 Session Broker，安装已停止。', mbError);
       Abort;
     end;
     if not ValidateInstalledPayload(RuntimeRoot, DataRoot, True) then
     begin
       if not RollbackUpgrade() then
-        MsgBox('安装健康检查失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError, MB_OK);
-      MsgBox('生产服务配置未通过完整性检查，安装已停止。', mbError, MB_OK);
+        ShowSetupMessage('安装健康检查失败且无法恢复上一版本；请保留当前目录并联系管理员。', mbError);
+      ShowSetupMessage('生产服务配置未通过完整性检查，安装已停止。', mbError);
       Abort;
     end;
     if not RunServiceManagement('CleanupBackup', RuntimeRoot, DataRoot, ExpandConstant('{app}')) then
-      MsgBox('安装已完成，但升级回滚点清理失败；请使用 Repair 完成清理。', mbInformation, MB_OK);
+      ShowSetupMessage('安装已完成，但升级回滚点清理失败；请使用 Repair 完成清理。', mbInformation);
   end;
 end;
