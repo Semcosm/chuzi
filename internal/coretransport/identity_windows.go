@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -16,9 +15,7 @@ import (
 )
 
 var (
-	advapi32                        = windows.NewLazySystemDLL("advapi32.dll")
 	kernel32                        = windows.NewLazySystemDLL("kernel32.dll")
-	impersonateNamedPipeClientProc  = advapi32.NewProc("ImpersonateNamedPipeClient")
 	getNamedPipeClientProcessIDProc = kernel32.NewProc("GetNamedPipeClientProcessId")
 	getNamedPipeServerProcessIDProc = kernel32.NewProc("GetNamedPipeServerProcessId")
 )
@@ -30,8 +27,9 @@ var (
 const serviceCallerSID = "S-1-5-80-1936457352-483135088-2315033984-64399253-3431197935"
 
 // WindowsPipeIdentityProvider derives the caller identity from the accepted
-// named-pipe handle. Request actor/owner fields never participate in this
-// decision. The provider intentionally exposes no mutating process controls.
+// named-pipe handle and its kernel-reported client PID. Request actor/owner
+// fields never participate in this decision. The provider intentionally
+// exposes no mutating process controls.
 type WindowsPipeIdentityProvider struct{}
 
 func NewWindowsPipeIdentityProvider() WindowsPipeIdentityProvider {
@@ -56,34 +54,7 @@ func (WindowsPipeIdentityProvider) Identity(ctx context.Context, conn net.Conn) 
 		return CallerIdentity{}, ErrUnauthorized
 	}
 
-	// Windows impersonation is thread-local. Keep the entire token and process
-	// identity read on one OS thread and always revert before returning.
-	runtime.LockOSThread()
-	defer runtime.UnlockOSThread()
 	handle := windows.Handle(pipe.Fd())
-	if err := impersonateNamedPipeClient(handle); err != nil {
-		return CallerIdentity{}, ErrUnauthorized
-	}
-	defer windows.RevertToSelf()
-
-	var token windows.Token
-	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &token); err != nil {
-		return CallerIdentity{}, ErrUnauthorized
-	}
-	defer token.Close()
-	user, err := token.GetTokenUser()
-	if err != nil || user == nil || user.User.Sid == nil {
-		return CallerIdentity{}, ErrUnauthorized
-	}
-	sid := user.User.Sid.String()
-	sessionID, err := tokenUint32(token, windows.TokenSessionId)
-	if err != nil {
-		return CallerIdentity{}, ErrUnauthorized
-	}
-	if sessionID == 0 && sid != "S-1-5-18" {
-		return CallerIdentity{}, ErrUnauthorized
-	}
-
 	pid, err := namedPipeClientProcessID(handle)
 	if err != nil || pid == 0 {
 		return CallerIdentity{}, ErrUnauthorized
@@ -98,14 +69,13 @@ func (WindowsPipeIdentityProvider) Identity(ctx context.Context, conn net.Conn) 
 		return CallerIdentity{}, ErrUnauthorized
 	}
 	defer processToken.Close()
-	processUser, err := processToken.GetTokenUser()
-	if err != nil || processUser == nil || processUser.User.Sid == nil || !processUser.User.Sid.Equals(user.User.Sid) {
-		// This also rejects a PID-reuse race between the pipe query and process
-		// open: the current process token must still match the pipe token.
+	user, err := processToken.GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
 		return CallerIdentity{}, ErrUnauthorized
 	}
-	processSession, err := tokenUint32(processToken, windows.TokenSessionId)
-	if err != nil || processSession != sessionID {
+	sid := user.User.Sid.String()
+	sessionID, err := tokenUint32(processToken, windows.TokenSessionId)
+	if err != nil {
 		return CallerIdentity{}, ErrUnauthorized
 	}
 	executable, err := processImagePath(process)
@@ -118,7 +88,7 @@ func (WindowsPipeIdentityProvider) Identity(ctx context.Context, conn net.Conn) 
 	if sessionID == 0 {
 		systemSID, sidErr := windows.StringToSid("S-1-5-18")
 		serviceSID, serviceErr := windows.StringToSid(serviceCallerSID)
-		if sidErr != nil || serviceErr != nil || user.User.Sid == nil || !user.User.Sid.Equals(systemSID) || !tokenHasEnabledSID(processToken, serviceSID) {
+		if sidErr != nil || serviceErr != nil || !user.User.Sid.Equals(systemSID) || !tokenHasEnabledSID(processToken, serviceSID) {
 			return CallerIdentity{}, ErrUnauthorized
 		}
 		return CallerIdentity{SID: serviceCallerSID, SessionID: 0, Executable: executable, Authenticated: true, Service: true}, nil
@@ -140,17 +110,6 @@ func tokenHasEnabledSID(token windows.Token, expected *windows.SID) bool {
 		}
 	}
 	return false
-}
-
-func impersonateNamedPipeClient(handle windows.Handle) error {
-	r1, _, callErr := impersonateNamedPipeClientProc.Call(uintptr(handle))
-	if r1 == 0 {
-		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
-			return callErr
-		}
-		return windows.ERROR_ACCESS_DENIED
-	}
-	return nil
 }
 
 func namedPipeClientProcessID(handle windows.Handle) (uint32, error) {

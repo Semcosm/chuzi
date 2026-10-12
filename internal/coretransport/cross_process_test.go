@@ -133,7 +133,7 @@ func TestCrossProcessTransportContract(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	client, err := Connect(context.Background(), endpoint, Config{})
+	client, err := connectTestClient(context.Background(), endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}

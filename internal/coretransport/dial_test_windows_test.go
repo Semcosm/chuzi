@@ -16,3 +16,16 @@ func dialTestEndpoint(ctx context.Context, path string) (net.Conn, error) {
 func dialPipeUnverified(ctx context.Context, path string) (net.Conn, error) {
 	return winio.DialPipeContext(ctx, path)
 }
+
+func connectTestClient(ctx context.Context, path string) (*Client, error) {
+	conn, err := dialPipeUnverified(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	client, err := NewClient(conn, Config{})
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return client, nil
+}

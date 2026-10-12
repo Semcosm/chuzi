@@ -9,9 +9,15 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/windows"
 )
 
 func TestWindowsPipeIdentityProviderRoundTrip(t *testing.T) {
+	var sessionID uint32
+	if err := windows.ProcessIdToSessionId(windows.GetCurrentProcessId(), &sessionID); err == nil && sessionID == 0 {
+		t.Skip("interactive caller identity requires a non-zero Windows session")
+	}
 	path := EndpointPath(filepath.Join(t.TempDir(), "identity"))
 	listener, err := Listen(context.Background(), path)
 	if err != nil {
