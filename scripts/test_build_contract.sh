@@ -202,6 +202,8 @@ fi
 grep -Fq 'installer-runtime.log' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses runtime logging"
 grep -Fq 'Get-CimInstance -ClassName Win32_Process' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses process diagnostics"
 grep -Fq 'activeKnown.Count -eq 0' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses process-tree completion"
+grep -Fq 'installDeadline = [DateTime]::UtcNow.AddMinutes(3)' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses bounded installer wait"
+grep -Fq 'Stop-Process -Id ([int]$process.ProcessId)' "$repo_root/.github/workflows/chuzi-build.yml" || fail "Slint installer smoke test misses stuck-process cleanup"
 grep -Eq 'WaitForExit\(60000\)|AddSeconds\(60\)' "$repo_root/.github/workflows/chuzi-build.yml" || fail "installed Slint smoke test misses timeout"
 grep -Fq 'i-slint-backend-testing' "$repo_root/ui/windows/Cargo.toml" || fail "Windows Slint manifest misses testing backend"
 grep -Fq 'slint-lsp' "$repo_root/ui/windows/README.md" || fail "Windows Slint README misses editor diagnostics"
@@ -232,6 +234,10 @@ grep -Fq 'Source: "{#PayloadDir}\*"' "$repo_root/packaging/windows/Chuzi.iss" ||
 grep -Fq 'function PrepareToInstall' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop the retained Core before upgrade"
 grep -Fq 'component-install -item service' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not repair the retained Core payload"
 grep -Fq 'core-stop' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop Core during install/uninstall"
+grep -Fq 'procedure ShowSetupMessage' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer errors are not suppressible in silent mode"
+if rg -n '^[[:space:]]*MsgBox\(' "$repo_root/packaging/windows/Chuzi.iss"; then
+  fail "Windows installer contains a non-suppressible message box"
+fi
 grep -Fq 'UninstallDelete' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses uninstall cleanup"
 grep -Fq 'KeepUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall misses user-data retention option"
 grep -Fq 'Check: ShouldDeleteUserData' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows uninstall data cleanup must use a check function"
