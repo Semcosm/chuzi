@@ -867,6 +867,7 @@ func main() {
 	flag.DurationVar(&options.retryBaseDelay, "retry-base-delay", time.Second, "base transient retry delay")
 	flag.DurationVar(&options.retryMaxDelay, "retry-max-delay", time.Minute, "maximum transient retry delay")
 	selfTest := flag.Bool("self-test", false, "run the Node worker protocol smoke test and exit")
+	serviceMode := flag.Bool("service", false, "run as the registered Windows SCM service")
 	showVersion := flag.Bool("version", false, "print the service version")
 	backup := flag.Bool("backup", false, "create a timestamped database backup and exit")
 	restorePath := flag.String("restore", "", "restore a validated backup under the configured backup directory and exit")
@@ -897,6 +898,13 @@ func main() {
 
 	if *showVersion {
 		fmt.Println(version)
+		return
+	}
+	if *serviceMode {
+		if err := runServiceHost(context.Background(), options); err != nil {
+			fmt.Fprintf(os.Stderr, "chuzi service host: %s\n", cliErrorMessage(err))
+			os.Exit(1)
+		}
 		return
 	}
 

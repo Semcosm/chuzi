@@ -54,7 +54,7 @@ func TestCrossProcessTransportContract(t *testing.T) {
 
 	// A peer with an unknown protocol is rejected before any business method
 	// can run, while the process remains available for a valid client.
-	conn, err := Dial(context.Background(), endpoint)
+	conn, err := dialTestEndpoint(context.Background(), endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestCrossProcessTransportContract(t *testing.T) {
 
 	// Inspect a raw response so the cross-process assertion covers the wire,
 	// not only the Go client's decoded projection.
-	conn, err = Dial(context.Background(), endpoint)
+	conn, err = dialTestEndpoint(context.Background(), endpoint)
 	if err != nil {
 		t.Fatal(err)
 	}

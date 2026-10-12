@@ -12,6 +12,7 @@
     "chuzi-launcher.exe",
     "chuzi-browser-launcher.exe",
     "chuzi-user-agent.exe",
+    "chuzi-session-broker.exe",
     "node.exe",
     "session-shell.ps1",
     "windows-service-management.ps1",

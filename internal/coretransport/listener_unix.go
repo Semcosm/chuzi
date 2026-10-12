@@ -57,6 +57,10 @@ func Listen(ctx context.Context, path string) (net.Listener, error) {
 }
 
 func Dial(ctx context.Context, path string) (net.Conn, error) {
+	return DialWithConfig(ctx, path, Config{})
+}
+
+func DialWithConfig(ctx context.Context, path string, _ Config) (net.Conn, error) {
 	if ctx == nil || !filepath.IsAbs(path) || path == "" {
 		return nil, ErrInvalidTransport
 	}

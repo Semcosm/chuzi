@@ -8,8 +8,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
-	"strings"
 )
+
+func (m *CoreManager) serviceController() (ServiceController, error) {
+	m.controllerMu.Lock()
+	defer m.controllerMu.Unlock()
+	if m.controller != nil {
+		return m.controller, nil
+	}
+	m.controller = &ProcessServiceController{Command: m.ServicePath, Args: []string{"-config", m.ConfigPath}, Dir: m.Root, Env: []string{"CHUZI_DATA_DIR=" + m.Root}}
+	return m.controller, nil
+}
 
 func serviceProcessMatches(pid int, expected string) bool {
 	if pid <= 0 {
@@ -17,15 +26,11 @@ func serviceProcessMatches(pid int, expected string) bool {
 	}
 	processPath, err := filepath.EvalSymlinks("/proc/" + strconv.Itoa(pid) + "/exe")
 	if err != nil {
-		output, psErr := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "comm=").Output()
-		if psErr != nil {
-			return false
-		}
-		return strings.TrimSpace(string(output)) == filepath.Base(expected)
+		return false
 	}
 	expectedPath, err := filepath.EvalSymlinks(expected)
 	if err != nil {
-		expectedPath = filepath.Clean(expected)
+		return false
 	}
 	return filepath.Clean(processPath) == filepath.Clean(expectedPath)
 }

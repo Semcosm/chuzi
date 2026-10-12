@@ -41,7 +41,7 @@ for component in launcher service browser-worker; do
       cp "$stage_dir/$service_binary" "$component_dir/"
       if [ "$target" = "windows-amd64" ]; then
         cp "$stage_dir/chuzi-browser-launcher.exe" "$stage_dir/chuzi-user-agent.exe" "$stage_dir/node.exe" "$stage_dir/session-shell.ps1" "$stage_dir/windows-service-management.ps1" "$stage_dir/validate_windows_payload.ps1" "$stage_dir/authenticode-policy.json" "$stage_dir/authenticode-signing.json" "$component_dir/"
-        if [ -f "$stage_dir/chuzi-session-broker.exe" ]; then cp "$stage_dir/chuzi-session-broker.exe" "$component_dir/"; fi
+        cp "$stage_dir/chuzi-session-broker.exe" "$component_dir/"
       fi
       ;;
     browser-worker) cp -R "$stage_dir/browser-worker" "$component_dir/" ;;

@@ -28,6 +28,7 @@ Copy-Item -Force (Join-Path $GoDir "chuzi.exe") (Join-Path $stageDir "chuzi.exe"
 Copy-Item -Force (Join-Path $GoDir "chuzi-launcher.exe") (Join-Path $stageDir "chuzi-launcher.exe")
 Copy-Item -Force (Join-Path $GoDir "chuzi-browser-launcher.exe") (Join-Path $stageDir "chuzi-browser-launcher.exe")
 Copy-Item -Force (Join-Path $GoDir "chuzi-user-agent.exe") (Join-Path $stageDir "chuzi-user-agent.exe")
+Copy-Item -Force (Join-Path $GoDir "chuzi-session-broker.exe") (Join-Path $stageDir "chuzi-session-broker.exe")
 $nodeCommand = Get-Command node.exe -CommandType Application -ErrorAction Stop
 $nodePath = $nodeCommand.Source
 if ([string]::IsNullOrWhiteSpace($nodePath) -or -not (Test-Path -Path $nodePath -PathType Leaf)) {

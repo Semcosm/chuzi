@@ -20,6 +20,7 @@ policy_path = repo / "packaging/windows/authenticode-policy.json"
 policy = json.loads(policy_path.read_text(encoding="utf-8"))
 assert policy["required_timestamp"] is True
 assert policy["artifact_kind"] == "payload"
+assert "chuzi-session-broker.exe" in policy["required_files"]
 assert "chuzi-session-broker.exe" in policy["production_required_files"]
 assert policy["allowed_thumbprints"] == []
 

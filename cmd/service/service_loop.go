@@ -10,13 +10,14 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/observability"
+	"github.com/Semcosm/chuzi/internal/servicehost"
 	"github.com/Semcosm/chuzi/internal/slot"
 )
 
 // run owns the long-lived service loop. Runtime assembly and maintenance
 // commands live in separate modules so this supervisor only coordinates
 // lifecycle, endpoints, and scheduling.
-func run(ctx context.Context, options serviceOptions) error {
+func run(ctx context.Context, options serviceOptions) (runErr error) {
 	cfg, err := config.Load(options.configPath)
 	if err != nil {
 		return err
@@ -163,12 +164,55 @@ func run(ctx context.Context, options serviceOptions) error {
 		})
 	}
 	defer func() {
-		cancelBackground()
-		background.Wait()
-		if shutdowner, ok := runtime.slotReconciler.(interface{ Shutdown(context.Context) error }); ok {
-			shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = shutdowner.Shutdown(shutdownCtx)
-			shutdownCancel()
+		limit := options.shutdownTimeout
+		if limit <= 0 {
+			limit = 5 * time.Second
+		}
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), limit)
+		defer shutdownCancel()
+		result := servicehost.Shutdown(shutdownCtx, []servicehost.Hook{
+			{Name: "drain_scheduler", Fn: func(hookCtx context.Context) error {
+				if err := runtime.scheduler.Shutdown(hookCtx); err != nil {
+					return err
+				}
+				cancelBackground()
+				done := make(chan struct{})
+				go func() { background.Wait(); close(done) }()
+				select {
+				case <-done:
+					return nil
+				case <-hookCtx.Done():
+					return hookCtx.Err()
+				}
+			}},
+			{Name: "revoke_capabilities", Fn: func(hookCtx context.Context) error {
+				return revokeRuntimeCapabilities(hookCtx, runtime)
+			}},
+			{Name: "stop_worker_agents_sessions", Fn: func(hookCtx context.Context) error {
+				var first error
+				if shutdowner, ok := runtime.slotReconciler.(interface{ Shutdown(context.Context) error }); ok {
+					first = shutdowner.Shutdown(hookCtx)
+				}
+				if runtime.automation != nil {
+					first = errors.Join(first, runtime.automation.Close(hookCtx))
+				}
+				return first
+			}},
+			{Name: "flush_checkpoint", Fn: func(hookCtx context.Context) error {
+				if runtime.diagnostics != nil {
+					if err := runtime.diagnostics.Flush(hookCtx); err != nil {
+						return err
+					}
+				}
+				_, err := runtime.store.OperationalSnapshot(time.Now().UTC())
+				return err
+			}},
+		})
+		if result.Forced && runErr == nil {
+			runErr = servicehost.ErrForcedShutdown
+		}
+		if result.Forced {
+			runtime.record(observability.Event{At: time.Now().UTC(), Component: "service", Operation: "shutdown", Outcome: "forced", ErrorClass: "forced_shutdown"})
 		}
 	}()
 	runtime.refreshMetrics(time.Now().UTC())

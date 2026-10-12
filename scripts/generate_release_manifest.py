@@ -151,6 +151,7 @@ def main() -> int:
         service_files.extend([
             browser_launcher,
             user_agent,
+            "chuzi-session-broker.exe",
             node_runtime,
             "session-shell.ps1",
             "windows-service-management.ps1",
@@ -214,8 +215,6 @@ def main() -> int:
                     raise SystemExit("production Authenticode file evidence is invalid")
                 if sha256(stage / record["path"]).lower() != record_hash.lower():
                     raise SystemExit("production Authenticode evidence hash mismatch")
-        if (stage / "chuzi-session-broker.exe").is_file():
-            service_files.append("chuzi-session-broker.exe")
     groups = {
         "launcher": ([launcher,], True),
         "service": (service_files, False),

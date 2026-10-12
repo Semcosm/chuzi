@@ -56,6 +56,10 @@ func main() {
 	if pipe != "\\\\.\\pipe\\chuzi-slot-"+slotID {
 		fail(fmt.Errorf("user-agent: invalid service configuration"))
 	}
+	serviceExecutable, err := requiredEnv("CHUZI_AGENT_SERVICE_EXECUTABLE")
+	if err != nil || !filepath.IsAbs(serviceExecutable) || filepath.Clean(serviceExecutable) != serviceExecutable {
+		fail(fmt.Errorf("user-agent: invalid service configuration"))
+	}
 	leaseID, err := requiredEnv("CHUZI_AGENT_LEASE_ID")
 	if err != nil {
 		fail(err)
@@ -188,7 +192,7 @@ func main() {
 		fail(err)
 	}
 	setStartupStage("named_pipe")
-	if err := slotagent.ServeNamedPipe(context.Background(), pipe, server); err != nil {
+	if err := slotagent.ServeNamedPipeWithConfig(context.Background(), pipe, server, slotagent.PipeConfig{ExpectedServiceExecutable: serviceExecutable}); err != nil {
 		fail(err)
 	}
 }

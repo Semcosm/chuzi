@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $serviceName = "ChuziCore"
-$brokerServiceName = "ChuziSessionBroker"
+$brokerTaskName = "ChuziSessionBroker"
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 function Resolve-FixedRoot([string]$value, [string]$fallback) {
@@ -50,6 +50,47 @@ $managedComponentNames = @(
 function Invoke-Sc([string[]]$Arguments) {
     & "$env:SystemRoot\System32\sc.exe" @Arguments | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "service_control_failed" }
+}
+
+function Test-BrokerTask {
+    & "$env:SystemRoot\System32\schtasks.exe" /Query /TN $brokerTaskName 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+
+function Register-BrokerTask {
+    # ONLOGON + /IT binds the signed broker to the operator's interactive
+    # token. It is deliberately not an SCM service and never runs in Session 0.
+    $taskCommand = '"' + $broker + '"'
+    & "$env:SystemRoot\System32\schtasks.exe" /Create /TN $brokerTaskName /TR $taskCommand /SC ONLOGON /IT /RL LIMITED /F | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "helper_registration_failed" }
+    & "$env:SystemRoot\System32\schtasks.exe" /Run /TN $brokerTaskName | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "helper_start_failed" }
+}
+
+function Stop-BrokerTask {
+    if (-not (Test-BrokerTask)) { return }
+    & "$env:SystemRoot\System32\schtasks.exe" /End /TN $brokerTaskName 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 128) { throw "helper_stop_failed" }
+}
+
+function Remove-BrokerTask {
+    & "$env:SystemRoot\System32\schtasks.exe" /Delete /TN $brokerTaskName /F 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "helper_delete_failed" }
+}
+
+function Remove-LegacyBrokerService {
+    # Older payloads registered the helper as a LocalSystem demand service.
+    # Remove that incompatible registration before creating the interactive
+    # logon task; a running legacy process is stopped and verified first.
+    $query = & "$env:SystemRoot\System32\sc.exe" query $brokerTaskName 2>$null | Out-String
+    if ($LASTEXITCODE -ne 0) { return }
+    if ($query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
+        & "$env:SystemRoot\System32\sc.exe" stop $brokerTaskName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
+        Wait-Stopped $brokerTaskName
+    }
+    & "$env:SystemRoot\System32\sc.exe" delete $brokerTaskName | Out-Null
+    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
 }
 
 function Wait-Stopped([string]$name) {
@@ -230,8 +271,7 @@ function Backup-Install {
         }
         & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-Null
         $serviceExists = $LASTEXITCODE -eq 0
-        & "$env:SystemRoot\System32\sc.exe" query $brokerServiceName 2>$null | Out-Null
-        $brokerExists = $LASTEXITCODE -eq 0
+        $brokerExists = Test-BrokerTask
         $state = [ordered]@{ format = "chuzi-upgrade-state/v1"; backup_root = $destination; install_root = $install; service_exists = $serviceExists; broker_exists = $brokerExists }
         Write-Utf8NoBom $backupMarker ($state | ConvertTo-Json -Depth 4)
         Set-ChuziAcl $backupMarker $false $false
@@ -270,10 +310,9 @@ function Rollback-Install {
     if ([bool]$state.service_exists -or [bool]$state.broker_exists) {
         Install-ChuziServices
     } else {
-        foreach ($name in @($brokerServiceName, $serviceName)) {
-            & "$env:SystemRoot\System32\sc.exe" delete $name | Out-Null
-            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
-        }
+        Remove-BrokerTask
+        & "$env:SystemRoot\System32\sc.exe" delete $serviceName | Out-Null
+        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
     }
 }
 
@@ -354,27 +393,29 @@ function Install-ChuziServices {
     } else {
         Invoke-Sc @("config", $serviceName, "binPath=", $binPath, "start=", "auto", "obj=", "LocalSystem")
     }
+    # The desktop launcher runs as the logged-in operator rather than as an
+    # administrator. Keep service configuration/deletion restricted to the
+    # installer, while allowing interactive users to query, start, and stop
+    # this fixed service. Without this explicit DACL, the launcher receives
+    # ERROR_ACCESS_DENIED even when the service is healthy and installed.
+    $serviceSDDL = 'D:(A;;CCLCSWRPWPLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)'
+    & (Join-Path (Join-Path $env:SystemRoot "System32") "sc.exe") sdset $serviceName $serviceSDDL | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "service_acl_failed" }
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
     Invoke-Sc @("failure", $serviceName, "reset=", "86400", "actions=", "restart/5000/restart/30000/none/0")
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
-    $brokerPath = '"' + $broker + '"'
-    & "$env:SystemRoot\System32\sc.exe" query $brokerServiceName 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Invoke-Sc @("create", $brokerServiceName, "binPath=", $brokerPath, "start=", "demand", "obj=", "LocalSystem", "DisplayName=", "Chuzi Session Broker")
-    } else {
-        Invoke-Sc @("config", $brokerServiceName, "binPath=", $brokerPath, "start=", "demand", "obj=", "LocalSystem")
-    }
-    Invoke-Sc @("sidtype", $brokerServiceName, "unrestricted")
+    Remove-LegacyBrokerService
+    Register-BrokerTask
 }
 
 function Stop-ChuziServices {
-    foreach ($name in @($brokerServiceName, $serviceName)) {
-        $query = & "$env:SystemRoot\System32\sc.exe" query $name 2>$null | Out-String
-        if ($LASTEXITCODE -eq 0 -and $query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
-            & "$env:SystemRoot\System32\sc.exe" stop $name | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
-            Wait-Stopped $name
-        }
+    Remove-LegacyBrokerService
+    Stop-BrokerTask
+    $query = & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-String
+    if ($LASTEXITCODE -eq 0 -and $query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
+        & "$env:SystemRoot\System32\sc.exe" stop $serviceName | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
+        Wait-Stopped $serviceName
     }
 }
 
@@ -405,10 +446,9 @@ switch ($Operation) {
     "CleanupBackup" { Cleanup-InstallBackup }
     "Uninstall" {
         Stop-AndConfirm
-        foreach ($name in @($brokerServiceName, $serviceName)) {
-            & "$env:SystemRoot\System32\sc.exe" delete $name | Out-Null
-            if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
-        }
+        Remove-BrokerTask
+        & "$env:SystemRoot\System32\sc.exe" delete $serviceName | Out-Null
+        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
     }
     "Install" { Install-ChuziServices }
     "Repair" { Stop-AndConfirm; Install-ChuziServices }

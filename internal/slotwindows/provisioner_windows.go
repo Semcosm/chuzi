@@ -1267,6 +1267,10 @@ func (p *windowsProvisioner) ensureAgent(ctx context.Context, paths Paths, reque
 	if sidErr != nil {
 		return ErrSessionIdentity
 	}
+	serviceExecutable, executableErr := os.Executable()
+	if executableErr != nil || !filepath.IsAbs(serviceExecutable) || filepath.Clean(serviceExecutable) != serviceExecutable {
+		return ErrSessionIdentity
+	}
 	for _, runtimeFile := range []string{p.options.AgentPath, p.options.WorkerCommand, p.options.WorkerScript, p.options.AdapterScript, filepath.Join(filepath.Dir(filepath.Clean(p.options.AgentPath)), SessionShellRelativePath)} {
 		if runtimeFile != "" {
 			if err := verifyRuntimeACL(runtimeFile, sid); err != nil {
@@ -1333,6 +1337,7 @@ func (p *windowsProvisioner) ensureAgent(ctx context.Context, paths Paths, reque
 	environment := map[string]string{
 		"CHUZI_AGENT_SLOT_ID":             request.SlotID,
 		"CHUZI_AGENT_PIPE":                pipe,
+		"CHUZI_AGENT_SERVICE_EXECUTABLE":  serviceExecutable,
 		"CHUZI_AGENT_LEASE_ID":            "provision-" + request.SlotID,
 		"CHUZI_AGENT_TOKEN":               tokenValue,
 		"CHUZI_AGENT_GENERATION":          fmt.Sprintf("%d", request.EnvironmentGeneration),
@@ -1360,8 +1365,6 @@ func (p *windowsProvisioner) ensureAgent(ctx context.Context, paths Paths, reque
 		"CHUZI_AGENT_DESKTOP":             "winsta0\\" + paths.Desktop,
 		"CHUZI_AGENT_BROWSER_MODE":        p.options.BrowserMode,
 		"CHUZI_AGENT_BROWSER_COMMAND":     p.options.BrowserCommand,
-		"CHUZI_AGENT_PIPE_SERVICE_SID":    serviceSID,
-		"CHUZI_AGENT_PIPE_USER_SID":       sid,
 	}
 	// The native smoke runs the agent in a separate interactive session. Keep
 	// its startup failure observable without carrying raw errors or paths into

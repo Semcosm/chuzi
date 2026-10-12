@@ -44,6 +44,9 @@ $env:GOARCH = $goarch
 $ldflags = "-s -w -X github.com/Semcosm/chuzi/cmd/service.version=$Version"
 & go build -trimpath "-ldflags=$ldflags" -o (Join-Path $stageDir $binary) ./cmd/service
 if ($LASTEXITCODE -ne 0) { throw "go build failed" }
+$brokerLdflags = "-s -w -X main.version=$Version"
+& go build -trimpath "-ldflags=$brokerLdflags" -o (Join-Path $stageDir "chuzi-session-broker.exe") ./cmd/session-broker
+if ($LASTEXITCODE -ne 0) { throw "session broker build failed" }
 $launcherLdflags = "-s -w -X main.version=$Version"
 & go build -trimpath "-ldflags=$launcherLdflags" -o (Join-Path $stageDir "chuzi-launcher.exe") ./cmd/launcher
 if ($LASTEXITCODE -ne 0) { throw "launcher build failed" }

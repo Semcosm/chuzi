@@ -27,7 +27,12 @@ func wireEndpointRunners(ctx context.Context, runtime *serviceRuntime, cfg confi
 	if err != nil {
 		return nil, err
 	}
-	server, err := coretransport.NewServer(runtime.coreAPI, listener, coretransport.Config{})
+	authorizer, err := newCoreAuthorizer()
+	if err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
+	server, err := coretransport.NewServer(runtime.coreAPI, listener, coretransport.Config{Authorizer: authorizer})
 	if err != nil {
 		_ = listener.Close()
 		return nil, err

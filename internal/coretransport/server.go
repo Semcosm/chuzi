@@ -8,23 +8,31 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/Semcosm/chuzi/internal/coreapi"
 )
 
 type Config struct {
-	MaxFrameBytes int
+	MaxFrameBytes            int
+	RequestTimeout           time.Duration
+	CloseTimeout             time.Duration
+	Authorizer               ConnectionAuthorizer
+	ExpectedServerExecutable string
 }
 
 type Server struct {
-	api           coreapi.API
-	listener      net.Listener
-	maxFrameBytes int
-	closed        chan struct{}
-	closeOnce     sync.Once
-	mu            sync.Mutex
-	connections   map[net.Conn]struct{}
-	wg            sync.WaitGroup
+	api            coreapi.API
+	listener       net.Listener
+	maxFrameBytes  int
+	requestTimeout time.Duration
+	closeTimeout   time.Duration
+	authorizer     ConnectionAuthorizer
+	closed         chan struct{}
+	closeOnce      sync.Once
+	mu             sync.Mutex
+	connections    map[net.Conn]struct{}
+	wg             sync.WaitGroup
 }
 
 func NewServer(api coreapi.API, listener net.Listener, config Config) (*Server, error) {
@@ -38,7 +46,15 @@ func NewServer(api coreapi.API, listener net.Listener, config Config) (*Server, 
 	if maxFrame < 1024 || maxFrame > 16<<20 {
 		return nil, ErrInvalidTransport
 	}
-	return &Server{api: api, listener: listener, maxFrameBytes: maxFrame, closed: make(chan struct{}), connections: make(map[net.Conn]struct{})}, nil
+	requestTimeout := config.RequestTimeout
+	if requestTimeout <= 0 {
+		requestTimeout = 30 * time.Second
+	}
+	closeTimeout := config.CloseTimeout
+	if closeTimeout <= 0 {
+		closeTimeout = 2 * time.Second
+	}
+	return &Server{api: api, listener: listener, maxFrameBytes: maxFrame, requestTimeout: requestTimeout, closeTimeout: closeTimeout, authorizer: config.Authorizer, closed: make(chan struct{}), connections: make(map[net.Conn]struct{})}, nil
 }
 
 func (s *Server) Serve() error {
@@ -59,14 +75,36 @@ func (s *Server) Serve() error {
 			return err
 		}
 		s.mu.Lock()
+		select {
+		case <-s.closed:
+			s.mu.Unlock()
+			_ = conn.Close()
+			continue
+		default:
+		}
 		s.connections[conn] = struct{}{}
-		s.mu.Unlock()
 		s.wg.Add(1)
-		go func() {
+		s.mu.Unlock()
+		go func(conn net.Conn) {
 			defer s.wg.Done()
+			if s.authorizer != nil {
+				authCtx, cancel := context.WithTimeout(context.Background(), s.requestTimeout)
+				authErr := s.authorizer.Authorize(authCtx, conn)
+				if authErr == nil {
+					authErr = authCtx.Err()
+				}
+				cancel()
+				if authErr != nil {
+					s.mu.Lock()
+					delete(s.connections, conn)
+					s.mu.Unlock()
+					_ = conn.Close()
+					return
+				}
+			}
 			defer func() { s.mu.Lock(); delete(s.connections, conn); s.mu.Unlock(); _ = conn.Close() }()
 			s.serveConnection(conn)
-		}()
+		}(conn)
 	}
 }
 
@@ -75,15 +113,25 @@ func (s *Server) Close() error {
 		return nil
 	}
 	s.closeOnce.Do(func() {
-		close(s.closed)
-		_ = s.listener.Close()
 		s.mu.Lock()
+		close(s.closed)
 		for conn := range s.connections {
 			_ = conn.Close()
 		}
 		s.mu.Unlock()
+		_ = s.listener.Close()
 	})
-	s.wg.Wait()
+	done := make(chan struct{})
+	go func() {
+		s.wg.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(s.closeTimeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
 	return nil
 }
 
@@ -92,7 +140,17 @@ func (s *Server) serveConnection(conn net.Conn) {
 	var requests sync.WaitGroup
 	defer func() {
 		cancelConnection()
-		requests.Wait()
+		done := make(chan struct{})
+		go func() {
+			requests.Wait()
+			close(done)
+		}()
+		timer := time.NewTimer(s.closeTimeout)
+		defer timer.Stop()
+		select {
+		case <-done:
+		case <-timer.C:
+		}
 	}()
 	reader := bufio.NewReaderSize(conn, minInt(s.maxFrameBytes+1, 64<<10))
 	var writeMu sync.Mutex
@@ -100,49 +158,51 @@ func (s *Server) serveConnection(conn net.Conn) {
 	var cancelMu sync.Mutex
 	ready := false
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(s.requestTimeout))
 		line, err := readFrame(reader, s.maxFrameBytes)
 		if err != nil {
 			if err == io.EOF {
 				return
 			}
 			if errors.Is(err, ErrFrameTooLarge) {
-				sendEnvelope(&writeMu, conn, errorResponse("", err), s.maxFrameBytes)
+				sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse("", err), s.maxFrameBytes)
 			} else if len(line) > 0 {
-				sendEnvelope(&writeMu, conn, errorResponse("", ErrInvalidTransport), s.maxFrameBytes)
+				sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse("", ErrInvalidTransport), s.maxFrameBytes)
 			}
 			return
 		}
 		var envelope Envelope
 		if err := json.Unmarshal(line, &envelope); err != nil {
-			sendEnvelope(&writeMu, conn, errorResponse("", ErrInvalidTransport), s.maxFrameBytes)
+			sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse("", ErrInvalidTransport), s.maxFrameBytes)
 			continue
 		}
 		if err := validateEnvelope(envelope); err != nil {
-			sendEnvelope(&writeMu, conn, errorResponse(envelope.ID, err), s.maxFrameBytes)
+			sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse(envelope.ID, err), s.maxFrameBytes)
 			continue
 		}
+		_ = conn.SetReadDeadline(time.Now().Add(s.requestTimeout))
 		if envelope.Protocol != ProtocolVersion {
-			sendEnvelope(&writeMu, conn, errorResponse(envelope.ID, ErrUnsupportedVersion), s.maxFrameBytes)
+			sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse(envelope.ID, ErrUnsupportedVersion), s.maxFrameBytes)
 			continue
 		}
 		if envelope.Method == methodHello {
 			var params HelloParams
 			if err := decodeParams(envelope.Params, &params); err != nil || params.Version != ProtocolVersion {
-				sendEnvelope(&writeMu, conn, errorResponse(envelope.ID, ErrUnsupportedVersion), s.maxFrameBytes)
+				sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse(envelope.ID, ErrUnsupportedVersion), s.maxFrameBytes)
 				continue
 			}
 			ready = true
-			sendEnvelope(&writeMu, conn, response(envelope.ID, HelloResult{Version: ProtocolVersion, Methods: methodList()}), s.maxFrameBytes)
+			sendEnvelopeContext(connectionContext, &writeMu, conn, response(envelope.ID, HelloResult{Version: ProtocolVersion, Methods: methodList()}), s.maxFrameBytes)
 			continue
 		}
 		if !ready {
-			sendEnvelope(&writeMu, conn, errorResponse(envelope.ID, ErrNotReady), s.maxFrameBytes)
+			sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse(envelope.ID, ErrNotReady), s.maxFrameBytes)
 			continue
 		}
 		if envelope.Method == methodCancel {
 			var params CancelParams
 			if err := decodeParams(envelope.Params, &params); err != nil {
-				sendEnvelope(&writeMu, conn, errorResponse(envelope.ID, err), s.maxFrameBytes)
+				sendEnvelopeContext(connectionContext, &writeMu, conn, errorResponse(envelope.ID, err), s.maxFrameBytes)
 				continue
 			}
 			cancelMu.Lock()
@@ -151,10 +211,10 @@ func (s *Server) serveConnection(conn net.Conn) {
 				cancel()
 			}
 			cancelMu.Unlock()
-			sendEnvelope(&writeMu, conn, response(envelope.ID, CancelResult{Cancelled: ok}), s.maxFrameBytes)
+			sendEnvelopeContext(connectionContext, &writeMu, conn, response(envelope.ID, CancelResult{Cancelled: ok}), s.maxFrameBytes)
 			continue
 		}
-		ctx, cancel := context.WithCancel(connectionContext)
+		ctx, cancel := context.WithTimeout(connectionContext, s.requestTimeout)
 		cancelMu.Lock()
 		cancels[envelope.ID] = cancel
 		cancelMu.Unlock()
@@ -165,10 +225,10 @@ func (s *Server) serveConnection(conn net.Conn) {
 			defer func() { cancelMu.Lock(); delete(cancels, envelope.ID); cancelMu.Unlock() }()
 			result, err := s.dispatch(ctx, envelope.Method, envelope.Params)
 			if err != nil {
-				sendEnvelope(&writeMu, conn, errorResponse(envelope.ID, err), s.maxFrameBytes)
+				sendEnvelopeContext(ctx, &writeMu, conn, errorResponse(envelope.ID, err), s.maxFrameBytes)
 				return
 			}
-			sendEnvelope(&writeMu, conn, response(envelope.ID, result), s.maxFrameBytes)
+			sendEnvelopeContext(ctx, &writeMu, conn, response(envelope.ID, result), s.maxFrameBytes)
 		}(envelope, ctx)
 	}
 }
@@ -188,6 +248,10 @@ func readFrame(reader *bufio.Reader, max int) ([]byte, error) {
 }
 
 func sendEnvelope(mu *sync.Mutex, writer io.Writer, envelope Envelope, maxFrameBytes int) {
+	sendEnvelopeContext(context.Background(), mu, writer, envelope, maxFrameBytes)
+}
+
+func sendEnvelopeContext(ctx context.Context, mu *sync.Mutex, writer io.Writer, envelope Envelope, maxFrameBytes int) {
 	raw, err := json.Marshal(envelope)
 	if err != nil {
 		raw, _ = json.Marshal(errorResponse(envelope.ID, ErrInvalidTransport))
@@ -201,6 +265,24 @@ func sendEnvelope(mu *sync.Mutex, writer io.Writer, envelope Envelope, maxFrameB
 	raw = append(raw, '\n')
 	mu.Lock()
 	defer mu.Unlock()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	if requested, ok := ctx.Deadline(); ok && requested.Before(deadline) {
+		deadline = requested
+	}
+	if deadlineWriter, ok := writer.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		_ = deadlineWriter.SetWriteDeadline(deadline)
+		defer func() { _ = deadlineWriter.SetWriteDeadline(time.Time{}) }()
+		stop := context.AfterFunc(ctx, func() { _ = deadlineWriter.SetWriteDeadline(time.Now()) })
+		defer stop()
+	}
+	select {
+	case <-ctx.Done():
+		return
+	default:
+	}
 	_, _ = writer.Write(raw)
 }
 

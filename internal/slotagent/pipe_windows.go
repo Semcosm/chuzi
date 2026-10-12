@@ -8,8 +8,13 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"github.com/Microsoft/go-winio"
 	"github.com/Semcosm/chuzi/internal/protocol"
@@ -49,6 +54,215 @@ func classifyPipeDialError(err error) string {
 	default:
 		return "unknown"
 	}
+}
+
+const agentServiceSID = "S-1-5-18"
+
+const (
+	agentReadTimeout  = 15 * time.Second
+	agentWriteTimeout = 10 * time.Second
+)
+
+// PipeConfig is the service-derived identity handoff for one agent pipe. The
+// service SID is fixed to LocalSystem; only the exact service image path is
+// supplied by the already-authenticated service process.
+type PipeConfig struct {
+	ServiceSID                string
+	ExpectedServiceExecutable string
+}
+
+func (c PipeConfig) validate() error {
+	if c.ServiceSID != "" && c.ServiceSID != agentServiceSID {
+		return ErrInvalidMessage
+	}
+	path := strings.TrimSpace(c.ExpectedServiceExecutable)
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00\r\n") {
+		return ErrInvalidMessage
+	}
+	return nil
+}
+
+func normalizeAgentPath(value string) string {
+	path := strings.TrimSpace(strings.ReplaceAll(value, "/", "\\"))
+	path = strings.TrimPrefix(path, `\\?\`)
+	return strings.ToLower(strings.TrimRight(filepath.Clean(path), `\`))
+}
+
+type agentCallerIdentity struct {
+	SID           string
+	SessionID     uint32
+	Executable    string
+	Authenticated bool
+}
+
+func validateAgentCallerIdentity(identity agentCallerIdentity, config PipeConfig) error {
+	if !identity.Authenticated || identity.SID != agentServiceSID || identity.SessionID != 0 || identity.Executable == "" {
+		return ErrAgentAuth
+	}
+	if !validAgentExecutablePath(identity.Executable, config.ExpectedServiceExecutable) {
+		return ErrAgentAuth
+	}
+	return nil
+}
+
+func validAgentExecutablePath(actual, expected string) bool {
+	if strings.TrimSpace(actual) == "" || strings.TrimSpace(expected) == "" {
+		return false
+	}
+	return filepath.IsAbs(expected) && normalizeAgentPath(actual) == normalizeAgentPath(expected)
+}
+
+func authenticateAgentCaller(ctx context.Context, conn net.Conn, config PipeConfig) error {
+	identity, err := authenticatedAgentCaller(ctx, conn)
+	if err != nil {
+		return ErrAgentAuth
+	}
+	return validateAgentCallerIdentity(identity, config)
+}
+
+var (
+	agentAuthAdvapi32             = windows.NewLazySystemDLL("advapi32.dll")
+	agentAuthKernel32             = windows.NewLazySystemDLL("kernel32.dll")
+	agentAuthImpersonateNamedPipe = agentAuthAdvapi32.NewProc("ImpersonateNamedPipeClient")
+	agentAuthGetClientProcessID   = agentAuthKernel32.NewProc("GetNamedPipeClientProcessId")
+	agentAuthGetServerProcessID   = agentAuthKernel32.NewProc("GetNamedPipeServerProcessId")
+)
+
+type agentPipeHandleConn interface{ Fd() uintptr }
+
+func authenticatedAgentCaller(ctx context.Context, conn net.Conn) (agentCallerIdentity, error) {
+	if ctx == nil || conn == nil {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	select {
+	case <-ctx.Done():
+		return agentCallerIdentity{}, ErrAgentAuth
+	default:
+	}
+	pipe, ok := conn.(agentPipeHandleConn)
+	if !ok || pipe.Fd() == 0 || pipe.Fd() == ^uintptr(0) {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	handle := windows.Handle(pipe.Fd())
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if err := impersonateAgentPipeClient(handle); err != nil {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	defer windows.RevertToSelf()
+	var token windows.Token
+	if err := windows.OpenThreadToken(windows.CurrentThread(), windows.TOKEN_QUERY, true, &token); err != nil {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	defer token.Close()
+	user, err := token.GetTokenUser()
+	if err != nil || user == nil || user.User.Sid == nil {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	sid := user.User.Sid.String()
+	sessionID, err := agentTokenUint32(token, windows.TokenSessionId)
+	if err != nil {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	pid, err := agentNamedPipeProcessID(handle, agentAuthGetClientProcessID)
+	if err != nil || pid == 0 {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	defer windows.CloseHandle(process)
+	var processToken windows.Token
+	if err := windows.OpenProcessToken(process, windows.TOKEN_QUERY, &processToken); err != nil {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	defer processToken.Close()
+	processUser, err := processToken.GetTokenUser()
+	if err != nil || processUser == nil || processUser.User.Sid == nil || !processUser.User.Sid.Equals(user.User.Sid) {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	processSession, err := agentTokenUint32(processToken, windows.TokenSessionId)
+	if err != nil || processSession != sessionID {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	executable, err := agentProcessImagePath(process)
+	if err != nil || strings.TrimSpace(executable) == "" {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	if currentPID, err := agentNamedPipeProcessID(handle, agentAuthGetClientProcessID); err != nil || currentPID != pid {
+		return agentCallerIdentity{}, ErrAgentAuth
+	}
+	return agentCallerIdentity{SID: sid, SessionID: sessionID, Executable: executable, Authenticated: true}, nil
+}
+
+func validateAgentServer(conn net.Conn, expectedExecutable string) error {
+	pipe, ok := conn.(agentPipeHandleConn)
+	if !ok || pipe.Fd() == 0 || pipe.Fd() == ^uintptr(0) {
+		return ErrAgentAuth
+	}
+	handle := windows.Handle(pipe.Fd())
+	pid, err := agentNamedPipeProcessID(handle, agentAuthGetServerProcessID)
+	if err != nil || pid == 0 {
+		return ErrAgentAuth
+	}
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	if err != nil {
+		return ErrAgentAuth
+	}
+	defer windows.CloseHandle(process)
+	executable, err := agentProcessImagePath(process)
+	if err != nil || !validAgentExecutablePath(executable, expectedExecutable) {
+		return ErrAgentAuth
+	}
+	if currentPID, err := agentNamedPipeProcessID(handle, agentAuthGetServerProcessID); err != nil || currentPID != pid {
+		return ErrAgentAuth
+	}
+	return nil
+}
+
+func impersonateAgentPipeClient(handle windows.Handle) error {
+	r1, _, callErr := agentAuthImpersonateNamedPipe.Call(uintptr(handle))
+	if r1 == 0 {
+		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+			return callErr
+		}
+		return windows.ERROR_ACCESS_DENIED
+	}
+	return nil
+}
+
+func agentNamedPipeProcessID(handle windows.Handle, proc *windows.LazyProc) (uint32, error) {
+	var pid uint32
+	r1, _, callErr := proc.Call(uintptr(handle), uintptr(unsafe.Pointer(&pid)))
+	if r1 == 0 {
+		if callErr != nil && !errors.Is(callErr, syscall.Errno(0)) {
+			return 0, callErr
+		}
+		return 0, windows.ERROR_INVALID_HANDLE
+	}
+	return pid, nil
+}
+
+func agentTokenUint32(token windows.Token, class uint32) (uint32, error) {
+	var value uint32
+	var returned uint32
+	if err := windows.GetTokenInformation(token, class, (*byte)(unsafe.Pointer(&value)), uint32(unsafe.Sizeof(value)), &returned); err != nil {
+		return 0, err
+	}
+	if returned < uint32(unsafe.Sizeof(value)) {
+		return 0, windows.ERROR_INVALID_DATA
+	}
+	return value, nil
+}
+
+func agentProcessImagePath(process windows.Handle) (string, error) {
+	buffer := make([]uint16, 32768)
+	size := uint32(len(buffer))
+	if err := windows.QueryFullProcessImageName(process, 0, &buffer[0], &size); err != nil {
+		return "", err
+	}
+	return syscall.UTF16ToString(buffer[:size]), nil
 }
 
 // LeaseState is the service-derived lease fence held by one user agent. The
@@ -321,26 +535,37 @@ func (h *RuntimeHandler) DisconnectJobs(_ context.Context) {
 }
 
 // ServeNamedPipe accepts only bounded JSONL frames on a service-derived pipe.
-// The pipe ACL permits the local service and the owning interactive user.
+// The default handoff binds the caller to the fixed chuzi.exe beside the
+// agent image. Tests or a service wrapper with an explicit trusted image use
+// ServeNamedPipeWithConfig.
 func ServeNamedPipe(ctx context.Context, path string, server *Server) error {
+	executable, err := os.Executable()
+	if err != nil {
+		return ErrInvalidMessage
+	}
+	return ServeNamedPipeWithConfig(ctx, path, server, PipeConfig{
+		ServiceSID:                agentServiceSID,
+		ExpectedServiceExecutable: filepath.Join(filepath.Dir(filepath.Clean(executable)), "chuzi.exe"),
+	})
+}
+
+// ServeNamedPipeWithConfig binds the agent endpoint to a fixed service SID
+// and exact service image. The config is a service-derived handoff, never a
+// request field or an environment-selected trustee list.
+func ServeNamedPipeWithConfig(ctx context.Context, path string, server *Server, config PipeConfig) error {
 	if ctx == nil || server == nil || path != "\\\\.\\pipe\\chuzi-slot-"+server.slotID {
 		return ErrInvalidMessage
 	}
+	if config.ServiceSID == "" {
+		config.ServiceSID = agentServiceSID
+	}
+	if err := config.validate(); err != nil {
+		return err
+	}
+	if _, err := windows.StringToSid(config.ServiceSID); err != nil {
+		return ErrInvalidMessage
+	}
 	descriptor := "D:P(A;;GA;;;SY)(A;;GA;;;OW)"
-	if serviceSID := os.Getenv("CHUZI_AGENT_PIPE_SERVICE_SID"); serviceSID != "" {
-		sid, sidErr := windows.StringToSid(serviceSID)
-		if sidErr != nil {
-			return ErrInvalidMessage
-		}
-		descriptor += "(A;;GA;;;" + sid.String() + ")"
-	}
-	if userSID := os.Getenv("CHUZI_AGENT_PIPE_USER_SID"); userSID != "" {
-		sid, sidErr := windows.StringToSid(userSID)
-		if sidErr != nil {
-			return ErrInvalidMessage
-		}
-		descriptor += "(A;;GA;;;" + sid.String() + ")"
-	}
 	listener, err := winio.ListenPipe(path, &winio.PipeConfig{SecurityDescriptor: descriptor, InputBufferSize: MaxFrameBytes, OutputBufferSize: MaxFrameBytes})
 	if err != nil {
 		return ErrAgentStopped
@@ -363,7 +588,7 @@ func ServeNamedPipe(ctx context.Context, path string, server *Server) error {
 			}
 			continue
 		}
-		go serveConn(serveCtx, conn, server, func() {
+		go serveConn(serveCtx, conn, server, config, func() {
 			stop()
 			_ = listener.Close()
 		})
@@ -376,12 +601,30 @@ type Client struct {
 }
 
 func Dial(ctx context.Context, path string) (*Client, error) {
+	executable, err := os.Executable()
+	if err != nil {
+		return nil, pipeDialError{class: "unauthorized"}
+	}
+	return DialWithExecutable(ctx, path, filepath.Join(filepath.Dir(filepath.Clean(executable)), "chuzi-user-agent.exe"))
+}
+
+// DialWithExecutable is used by native smoke tooling whose disposable agent
+// is outside the service executable directory. Production callers use Dial,
+// which derives the fixed installed image beside chuzi.exe.
+func DialWithExecutable(ctx context.Context, path, expectedExecutable string) (*Client, error) {
 	if ctx == nil || path == "" {
+		return nil, ErrInvalidMessage
+	}
+	if !filepath.IsAbs(expectedExecutable) || filepath.Clean(expectedExecutable) != expectedExecutable || !strings.EqualFold(filepath.Base(expectedExecutable), "chuzi-user-agent.exe") {
 		return nil, ErrInvalidMessage
 	}
 	for {
 		conn, err := winio.DialPipeContext(ctx, path)
 		if err == nil {
+			if err := validateAgentServer(conn, expectedExecutable); err != nil {
+				_ = conn.Close()
+				return nil, pipeDialError{class: "unauthorized"}
+			}
 			return &Client{conn: conn}, nil
 		}
 		class := classifyPipeDialError(err)
@@ -494,8 +737,20 @@ func (c *Client) WorkerCall(ctx context.Context, frame Frame) (Frame, error) {
 	return response, nil
 }
 
-func serveConn(ctx context.Context, conn net.Conn, server *Server, stop func()) {
+func serveConn(ctx context.Context, conn net.Conn, server *Server, config PipeConfig, stop func()) {
 	defer conn.Close()
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close()
+		case <-done:
+		}
+	}()
+	if authenticateAgentCaller(ctx, conn, config) != nil {
+		return
+	}
 	workerHandler, _ := server.handler.(WorkerHandler)
 	workerSeen := false
 	defer func() {
@@ -504,12 +759,13 @@ func serveConn(ctx context.Context, conn net.Conn, server *Server, stop func()) 
 		}
 	}()
 	for {
+		_ = conn.SetReadDeadline(time.Now().Add(agentReadTimeout))
 		frame, err := ReadFrame(conn)
 		if errors.Is(err, io.EOF) || ctx.Err() != nil {
 			return
 		}
 		if err != nil {
-			_ = WriteFrame(conn, Frame{Kind: "response", Response: &Response{OK: false, Failure: "invalid_frame"}})
+			_ = writeAgentFrame(conn, Frame{Kind: "response", Response: &Response{OK: false, Failure: "invalid_frame"}})
 			return
 		}
 		switch frame.Kind {
@@ -524,7 +780,7 @@ func serveConn(ctx context.Context, conn net.Conn, server *Server, stop func()) 
 				}
 				response = Response{CommandID: frame.Request.CommandID, RequestID: frame.Request.RequestID, Owner: frame.Request.Owner, SlotID: frame.Request.SlotID, LeaseID: frame.Request.LeaseID, EnvironmentGeneration: frame.Request.EnvironmentGeneration, OK: false, Failure: failureClass(handleErr)}
 			}
-			if err := WriteFrame(conn, Frame{Kind: "response", Response: &response}); err != nil {
+			if err := writeAgentFrame(conn, Frame{Kind: "response", Response: &response}); err != nil {
 				return
 			}
 			if frame.Request.Command == Shutdown {
@@ -534,7 +790,7 @@ func serveConn(ctx context.Context, conn net.Conn, server *Server, stop func()) 
 		case "worker_request":
 			workerSeen = true
 			if workerHandler == nil {
-				_ = WriteFrame(conn, Frame{Kind: "response", Response: &Response{OK: false, Failure: "unsupported_frame"}})
+				_ = writeAgentFrame(conn, Frame{Kind: "response", Response: &Response{OK: false, Failure: "unsupported_frame"}})
 				return
 			}
 			response, handleErr := server.HandleWorker(ctx, frame)
@@ -543,14 +799,23 @@ func serveConn(ctx context.Context, conn net.Conn, server *Server, stop func()) 
 			} else {
 				response.Kind = "worker_event"
 			}
-			if err := WriteFrame(conn, response); err != nil {
+			if err := writeAgentFrame(conn, response); err != nil {
 				return
 			}
 		default:
-			_ = WriteFrame(conn, Frame{Kind: "response", Response: &Response{OK: false, Failure: "unsupported_frame"}})
+			_ = writeAgentFrame(conn, Frame{Kind: "response", Response: &Response{OK: false, Failure: "unsupported_frame"}})
 			return
 		}
 	}
+}
+
+func writeAgentFrame(conn net.Conn, frame Frame) error {
+	if conn == nil {
+		return ErrAgentStopped
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(agentWriteTimeout))
+	defer func() { _ = conn.SetWriteDeadline(time.Time{}) }()
+	return WriteFrame(conn, frame)
 }
 
 func failureClass(err error) string {
