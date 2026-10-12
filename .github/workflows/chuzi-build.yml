@@ -487,6 +487,7 @@ jobs:
           $knownProcessIds = [System.Collections.Generic.HashSet[int]]::new()
           $knownProcessIds.Add([int]$installProcess.Id) | Out-Null
           Write-Host "Inno Setup root PID: $($installProcess.Id)"
+          $installDeadline = [DateTime]::UtcNow.AddMinutes(3)
 
           while ($true) {
             $installProcess.Refresh()
@@ -505,6 +506,13 @@ jobs:
             Write-SetupSnapshot $activeKnown
             Write-InstallerLogTail
             if ($installProcess.HasExited -and $activeKnown.Count -eq 0) { break }
+            if ([DateTime]::UtcNow -ge $installDeadline) {
+              Write-Host 'Installer process tree did not exit before the 3-minute deadline.'
+              foreach ($process in $activeKnown) {
+                Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
+              }
+              throw 'Installer process tree did not exit before the 3-minute deadline'
+            }
             Start-Sleep -Seconds 5
           }
 

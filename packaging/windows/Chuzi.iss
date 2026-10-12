@@ -70,6 +70,11 @@ var
   KeepUserDataValue: Boolean;
   KeepUserDataPrompted: Boolean;
 
+procedure ShowSetupMessage(Text: String; Typ: TMsgBoxType);
+begin
+  SuppressibleMsgBox(Text, Typ, MB_OK, IDOK);
+end;
+
 function KeepUserData(): Boolean;
 begin
   if UninstallContext and not KeepUserDataPrompted then
@@ -133,7 +138,7 @@ begin
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
   if (not FileExists(Launcher)) or (not FileExists(Manifest)) then
   begin
-    MsgBox('安装包缺少 Core 文件，无法完成安装。请重新下载最新安装包。', mbError, MB_OK);
+    ShowSetupMessage('安装包缺少 Core 文件，无法完成安装。请重新下载最新安装包。', mbError);
     Abort;
   end;
   Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
@@ -141,7 +146,7 @@ begin
   if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
      (ResultCode <> 0) then
   begin
-    MsgBox('无法停止旧版 Core，安装已停止。请关闭 Chuzi 后重试。', mbError, MB_OK);
+    ShowSetupMessage('无法停止旧版 Core，安装已停止。请关闭 Chuzi 后重试。', mbError);
     Abort;
   end;
   Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
@@ -149,7 +154,7 @@ begin
   if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
      (ResultCode <> 0) then
   begin
-    MsgBox('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError, MB_OK);
+    ShowSetupMessage('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError);
     Abort;
   end;
 end;
