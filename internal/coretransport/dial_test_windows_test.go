@@ -27,5 +27,9 @@ func connectTestClient(ctx context.Context, path string) (*Client, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	if _, err := client.Hello(ctx); err != nil {
+		_ = client.Close()
+		return nil, err
+	}
 	return client, nil
 }
