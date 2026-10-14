@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: f4000773e7343b213846ee73d47cc4b00d5f00c8
+Head or Range: 9f878e2f728d74c58c95025a6e79c14f9b40d662
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 5
+Revision: 6
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: f4000773e7343b213846ee73d47cc4b00d5f00c8
+Head OID: 9f878e2f728d74c58c95025a6e79c14f9b40d662
 Integrated Result: pending
 
 ## Summary
@@ -95,6 +95,10 @@ now fails when Inno reports a script exception despite returning exit code zero.
 
 Revision 5 accepts the fixed top-level `chuzi.db` created by the installed Core
 when the service registration resource gate validates the data root.
+
+Revision 6 fixes the remaining first-install registration failure: populated
+signed component directories are accepted, while mutable data directories must
+still be empty before ownership is established.
 
 ## Motivation
 
