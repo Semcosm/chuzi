@@ -522,6 +522,13 @@ jobs:
             throw "Inno Setup failed with exit code $($installProcess.ExitCode)"
           }
           Write-InstallerLogTail
+          if (Test-Path $installerLog) {
+            $setupExceptions = Select-String -LiteralPath $installerLog -Pattern 'raised an exception|service registration failed|安装已停止'
+            if ($setupExceptions) {
+              $setupExceptions | ForEach-Object { Write-Error $_.Line }
+              throw 'Inno Setup reported a script exception despite a zero exit code'
+            }
+          }
           if (Test-Path $installDir) {
             Write-Host "Installed files under ${installDir}:"
             Get-ChildItem -LiteralPath $installDir -Recurse -Force |

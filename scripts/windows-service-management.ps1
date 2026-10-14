@@ -63,6 +63,11 @@ function Register-BrokerTask {
     $taskCommand = '"' + $broker + '"'
     & "$env:SystemRoot\System32\schtasks.exe" /Create /TN $brokerTaskName /TR $taskCommand /SC ONLOGON /IT /RL LIMITED /F | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "helper_registration_failed" }
+    # Hosted Windows build agents run installers in session 0. The task is
+    # still registered there, but it cannot be started until an operator logs
+    # on. An interactive installer session must start it immediately so the
+    # UI can use the broker without requiring a second logon.
+    if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) { return }
     & "$env:SystemRoot\System32\schtasks.exe" /Run /TN $brokerTaskName | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "helper_start_failed" }
 }
@@ -351,9 +356,23 @@ function Install-ChuziServices {
     if (-not (Test-Path -LiteralPath $management -PathType Leaf)) { throw "service_management_missing" }
     New-Item -ItemType Directory -Force -Path $data | Out-Null
     if (-not (Test-Path -LiteralPath $ownershipMarker -PathType Leaf)) {
-        $topLevelAllowed = @(".chuzi", "db", "profiles", "runtime", "journal", "secrets")
+        # Component installation runs before service registration and places
+        # the signed runtime files under the fixed data root. Accept only the
+        # package's known component shape plus the documented runtime data
+        # directories and logs; unexpected entries still fail closed.
+        $topLevelAllowed = @(
+            ".chuzi", "db", "profiles", "runtime", "journal", "secrets",
+            "browser-worker", "diagnostics", "environments",
+            "chuzi.exe", "chuzi-browser-launcher.exe", "chuzi-user-agent.exe",
+            "chuzi-session-broker.exe", "node.exe", "session-shell.ps1",
+            "windows-service-management.ps1", "core-config.json",
+            ".chuzi-ui-settings.json"
+        )
         $unexpected = @(Get-ChildItem -LiteralPath $data -Force -ErrorAction Stop |
-            Where-Object { $topLevelAllowed -notcontains $_.Name })
+            Where-Object {
+                ($topLevelAllowed -notcontains $_.Name) -and
+                ($_.Name -notmatch '^core-service\.log(?:\.\d+)?$')
+            })
         if ($unexpected.Count -gt 0) { throw "resource_ownership_unknown" }
         foreach ($child in $topLevelAllowed) {
             $childPath = Join-Path $data $child

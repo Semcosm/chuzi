@@ -149,34 +149,27 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  ExistingLauncher: String;
-  ExistingManifest: String;
   ExistingManagement: String;
   DataRoot: String;
 begin
   NeedsRestart := False;
   Result := '';
-  ExistingLauncher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
-  ExistingManifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
   ExistingManagement := ExpandConstant('{app}\CorePayload\windows-service-management.ps1');
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
   if FileExists(ExistingManagement) then
   begin
-    if not RunServiceManagement('UpgradePrepare', ExpandConstant('{app}\CorePayload'),
+    { Stop only the currently installed runtime before Inno replaces files.
+      Backup and ownership checks belong to an explicit recovery operation;
+      they must not turn a fresh retry with no registered service into an
+      upgrade failure. The Stop operation is idempotent when no service/task
+      exists. }
+    if not RunServiceManagement('Stop', ExpandConstant('{app}\CorePayload'),
       DataRoot, ExpandConstant('{app}')) then
     begin
-      Result := '无法停止 Chuzi 服务；请先排空会话后重试。';
-      Exit;
-    end;
-    if not RunServiceManagement('Backup', ExpandConstant('{app}\CorePayload'),
-      DataRoot, ExpandConstant('{app}')) then
-    begin
-      Result := '无法创建升级回滚点；安装已停止。';
+      Result := '无法准备安装；请先关闭 Chuzi 后重试。';
       Exit;
     end;
   end;
-  if (not FileExists(ExistingLauncher)) or (not FileExists(ExistingManifest)) then
-    Exit;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
