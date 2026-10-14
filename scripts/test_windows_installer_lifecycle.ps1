@@ -27,6 +27,12 @@ function Assert-Registration {
     if ($task.Principal.LogonType -ne 'Interactive' -or $task.Principal.RunLevel -ne 'Limited') {
         throw 'Installed Broker task must use a limited interactive token'
     }
+    $actions = @($task.Actions)
+    $broker = Join-Path $installRoot 'CorePayload\chuzi-session-broker.exe'
+    if ($actions.Count -ne 1 -or $actions[0].Execute -ne $broker -or
+        -not [string]::IsNullOrEmpty([string]$actions[0].Arguments)) {
+        throw 'Installed Broker task command is invalid'
+    }
 }
 
 function Invoke-Setup([string]$Executable, [string]$LogName) {

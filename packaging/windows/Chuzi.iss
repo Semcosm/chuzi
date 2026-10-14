@@ -69,7 +69,7 @@ var
   UninstallContext: Boolean;
   KeepUserDataValue: Boolean;
   KeepUserDataPrompted: Boolean;
-  CleanupReady: Boolean;
+  ServiceInstallationFailed: Boolean;
 
 procedure ShowSetupMessage(Text: String; Typ: TMsgBoxType);
 begin
@@ -112,6 +112,16 @@ begin
   Result := Result and (ResultCode = 0);
 end;
 
+function GetCustomSetupExitCode(): Integer;
+begin
+  { An ssPostInstall exception alone can still leave Inno's exit code at zero.
+    Preserve the service-registration failure for silent callers and CI. }
+  if ServiceInstallationFailed then
+    Result := 1
+  else
+    Result := 0;
+end;
+
 function KeepUserData(): Boolean;
 begin
   if UninstallContext and not KeepUserDataPrompted then
@@ -134,18 +144,25 @@ end;
 function InitializeUninstall(): Boolean;
 begin
   UninstallContext := True;
-  CleanupReady := True;
+  Result := True;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  { usUninstall is reached after the standard confirmation. Cancelling that
+    confirmation must leave service and task registration intact. Abort here
+    stops uninstall before files are removed if native cleanup fails. }
+  if CurUninstallStep <> usUninstall then
+    Exit;
   KeepUserData();
   if FileExists(ExpandConstant('{app}\CorePayload\windows-service-management.ps1')) then
   begin
-    CleanupReady := RunServiceManagement('UninstallPrepare',
+    if not RunServiceManagement('UninstallPrepare',
       ExpandConstant('{app}\CorePayload'), ExpandConstant('{commonappdata}\chuzi\data'),
-      ExpandConstant('{app}'));
-    if not CleanupReady then
+      ExpandConstant('{app}')) then
     begin
       ShowSetupMessage('无法停止 Chuzi 服务，卸载已停止。请等待会话排空后重试。', mbError);
-      Result := False;
-      Exit;
+      Abort;
     end;
     { Remove the fixed service and task while their management script still
       exists. A subsequent install must not inherit registrations pointing
@@ -155,11 +172,9 @@ begin
       ExpandConstant('{app}')) then
     begin
       ShowSetupMessage('无法移除 Chuzi 服务注册，卸载已停止。请保留安装目录后重试。', mbError);
-      Result := False;
-      Exit;
+      Abort;
     end;
   end;
-  Result := True;
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -198,6 +213,7 @@ var
 begin
   if CurStep <> ssPostInstall then
     Exit;
+  ServiceInstallationFailed := True;
   Launcher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
   Manifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
@@ -220,4 +236,5 @@ begin
     ShowSetupMessage('Chuzi 服务注册失败，安装已停止。请保留安装目录并重试 Repair。', mbError);
     Abort;
   end;
+  ServiceInstallationFailed := False;
 end;

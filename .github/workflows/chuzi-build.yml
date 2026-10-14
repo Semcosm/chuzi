@@ -355,7 +355,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $payload = Join-Path $env:RUNNER_TEMP 'chuzi-core-payload'
           $runtimeRoot = $payload
-          $dataRoot = Join-Path ${env:ProgramData} 'chuzi\data'
+          # Foreground smoke data must not enter the installer's fixed service
+          # root: its CI-only config/log files are not owned installation data.
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'chuzi-core-smoke-data'
           if (Test-Path $dataRoot) { Remove-Item -Recurse -Force $dataRoot }
           New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           $launcher = Join-Path $payload 'chuzi-launcher.exe'
@@ -565,7 +567,8 @@ jobs:
             throw "Installed Slint package does not contain CorePayload launcher: $installedPayload"
           }
           $runtimeRoot = $installedPayload
-          $dataRoot = Join-Path ${env:ProgramData} 'chuzi\data'
+          # Preserve the service data verified by uninstall/reinstall above.
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'chuzi-installed-core-smoke-data'
           if (Test-Path $dataRoot) { Remove-Item -Recurse -Force $dataRoot }
           New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           $launcher = Join-Path $installedPayload 'chuzi-launcher.exe'
