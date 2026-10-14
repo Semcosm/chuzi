@@ -83,21 +83,6 @@ function Remove-BrokerTask {
     if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "helper_delete_failed" }
 }
 
-function Remove-LegacyBrokerService {
-    # Older payloads registered the helper as a LocalSystem demand service.
-    # Remove that incompatible registration before creating the interactive
-    # logon task; a running legacy process is stopped and verified first.
-    $query = & "$env:SystemRoot\System32\sc.exe" query $brokerTaskName 2>$null | Out-String
-    if ($LASTEXITCODE -ne 0) { return }
-    if ($query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
-        & "$env:SystemRoot\System32\sc.exe" stop $brokerTaskName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
-        Wait-Stopped $brokerTaskName
-    }
-    & "$env:SystemRoot\System32\sc.exe" delete $brokerTaskName | Out-Null
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
-}
-
 function Wait-Stopped([string]$name) {
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
         $query = & "$env:SystemRoot\System32\sc.exe" query $name 2>$null | Out-String
@@ -158,7 +143,7 @@ function Test-ResourceDirectory([string]$path) {
     }
     $probe = Join-Path $path (".chuzi-resource-probe-{0}.tmp" -f ([guid]::NewGuid().ToString("N")))
     try {
-        $handle = [IO.File]::OpenNew($probe)
+        $handle = [IO.File]::Open($probe, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         $handle.Dispose()
         Remove-Item -LiteralPath $probe -Force -ErrorAction Stop
     } catch [IO.IOException] {
@@ -462,19 +447,19 @@ function Install-ChuziServices {
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
     Invoke-Sc @("failure", $serviceName, "reset=", "86400", "actions=", "restart/5000/restart/30000/none/0")
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
-    Remove-LegacyBrokerService
     Register-BrokerTask
 }
 
 function Stop-ChuziServices {
-    Remove-LegacyBrokerService
-    Stop-BrokerTask
+    # Core shutdown needs the interactive broker to finish exact-session and
+    # credential cleanup. Keep the broker alive until SCM confirms Core stopped.
     $query = & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-String
     if ($LASTEXITCODE -eq 0 -and $query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
         & "$env:SystemRoot\System32\sc.exe" stop $serviceName | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
         Wait-Stopped $serviceName
     }
+    Stop-BrokerTask
 }
 
 switch ($Operation) {

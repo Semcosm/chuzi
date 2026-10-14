@@ -94,6 +94,7 @@ begin
   ScriptPath := AddBackslash(RuntimeRoot) + 'windows-service-management.ps1';
   if not FileExists(ScriptPath) then
   begin
+    Log('Service management script is missing: ' + ScriptPath);
     Result := False;
     Exit;
   end;
@@ -104,8 +105,11 @@ begin
     ' -File "' + ScriptPath + '" -Operation ' + Operation +
     ' -RuntimeRoot "' + RuntimeRoot + '" -DataRoot "' + DataRoot +
     '" -InstallRoot "' + InstallRoot + '"';
-  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  Log('Service management operation: ' + Operation);
+  Result := ExecAndLogOutput(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    Parameters, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode, nil);
+  Log('Service management exit code: ' + IntToStr(ResultCode));
+  Result := Result and (ResultCode = 0);
 end;
 
 function KeepUserData(): Boolean;
@@ -140,6 +144,17 @@ begin
     if not CleanupReady then
     begin
       ShowSetupMessage('无法停止 Chuzi 服务，卸载已停止。请等待会话排空后重试。', mbError);
+      Result := False;
+      Exit;
+    end;
+    { Remove the fixed service and task while their management script still
+      exists. A subsequent install must not inherit registrations pointing
+      to files that the uninstaller has removed. }
+    if not RunServiceManagement('Uninstall',
+      ExpandConstant('{app}\CorePayload'), ExpandConstant('{commonappdata}\chuzi\data'),
+      ExpandConstant('{app}')) then
+    begin
+      ShowSetupMessage('无法移除 Chuzi 服务注册，卸载已停止。请保留安装目录后重试。', mbError);
       Result := False;
       Exit;
     end;

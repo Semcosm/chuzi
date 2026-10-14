@@ -552,14 +552,9 @@ jobs:
             throw 'Installed Slint smoke test timed out after 60 seconds'
           }
           if ($smoke.ExitCode -ne 0) { throw "Installed Slint smoke test failed with exit code $($smoke.ExitCode)" }
-      - name: Upload Windows installer diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: chuzi-windows-installer-diagnostics
-          path: ${{ runner.temp }}/chuzi-ui/installer-runtime.log
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Smoke test Windows uninstall and reinstall
+        shell: pwsh
+        run: ./scripts/test_windows_installer_lifecycle.ps1 -Installer "$env:RUNNER_TEMP\chuzi-ui\ChuziSetup.exe" -LogRoot "$env:RUNNER_TEMP\chuzi-ui"
       - name: Smoke test Core payload shipped inside installer
         shell: pwsh
         run: |
@@ -609,6 +604,14 @@ jobs:
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
+      - name: Upload Windows installer diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chuzi-windows-installer-diagnostics
+          path: ${{ runner.temp }}/chuzi-ui/*-runtime.log
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload Windows installer EXE
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
