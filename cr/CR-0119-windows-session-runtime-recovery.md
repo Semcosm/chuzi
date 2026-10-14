@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 9d0b602d39dac314ef5f149d10c56a6031eea0cc
+Head or Range: a3e8c89d2f9bda8f1e180ae1f2e8dd0a9637d385
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 3
+Revision: 4
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 9d0b602d39dac314ef5f149d10c56a6031eea0cc
+Head OID: a3e8c89d2f9bda8f1e180ae1f2e8dd0a9637d385
 Integrated Result: pending
 
 ## Summary
@@ -83,6 +83,15 @@ and successful installation registers the LocalSystem Core service and the
 interactive Session Broker task. Empty fixed data directories left by an
 interrupted first install are recoverable, while populated or unexpected data
 still fails closed.
+
+Revision 4 fixes the first-install path exposed by the Windows installer smoke
+log. PrepareToInstall now performs only the idempotent stop before replacing the
+payload; backup and ownership checks remain explicit recovery operations. Service
+registration accepts the signed component files and runtime directories that the
+installer places in the fixed data root before registration. A Session 0 build
+agent registers the interactive Broker task without trying to start it, while an
+interactive operator session starts it immediately. The installer smoke check
+now fails when Inno reports a script exception despite returning exit code zero.
 
 ## Motivation
 
