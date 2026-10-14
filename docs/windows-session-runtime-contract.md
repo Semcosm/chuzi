@@ -13,9 +13,9 @@ installer UI -> launcher/core -> registered login helper -> WTS session
   -> browser worker capability -> cancel/stop/recovery
 ~~~
 
-The source baseline inspected before this contract is commit
-1705e425d1234b355079a3c6bec539dd4b22cf46. The current checkout is
-feat/windows-slot-session-ui with a clean tree before this change. Existing
+The source baseline inspected before this contract was commit
+1705e425d1234b355079a3c6bec539dd4b22cf46 on
+feat/windows-slot-session-ui. Existing
 logical slot operations, fixed broker JSON, provisioner ownership checks, and
 scripts/test_windows_job_pool_smoke.ps1 -LocalRdp are inputs to this contract;
 the LocalRdp result is not installed production acceptance.
@@ -231,10 +231,12 @@ fails closed. Leased slots are never stopped by prewarm reconciliation;
 draining slots accept no new work; quarantined slots require explicit recovery;
 deleted slots cannot be revived.
 
-Current code has durable StartSlotSession and reconcile projection only. The
-new StopSlotSession/CancelSlotSession/RetrySlotSession signatures are the
-selected contract and remain unsupported until their Store operations are
-implemented.
+Session 07 implements durable StartSlotSession, StopSlotSession,
+CancelSlotSession, and RetrySlotSession operations and connects them to the
+independent background controller. Claims, deadlines, bounded retries,
+generation fences, checkpoints, and cleanup-before-terminal recovery have
+deterministic test coverage. Installed Windows acceptance remains pending;
+the operation projection does not prove a live WTS session or current readiness.
 
 ### H. API and errors
 

@@ -241,7 +241,7 @@ repeatable process/store restart tests and do not add production fault switches.
 
 Session 10 retains the existing native acceptance entrypoints:
 `scripts/test_windows_job_pool_smoke.ps1 -LocalRdp` for the controlled diagnostic
-path and `scripts/windows-session-login-probe.ps1` for first login, logout, and
+path and `scripts/probes/windows-session-login-probe.ps1` for first login, logout, and
 re-login. Production acceptance must additionally run the installed fixed
 broker/helper path without the LocalRdp shortcut and prove cold Profile, private
 pipe ACLs and caller identity, Credential Manager cleanup, WTS/SID/session
