@@ -59,6 +59,37 @@ type RuntimeConfig struct {
 
 type processLauncher struct{ config RuntimeConfig }
 
+// Probe validates the independently packaged worker capability without
+// starting a browser process. Health callers use this before a slot becomes
+// ready, so an alive agent cannot mask a missing or unreadable worker.
+func (l *processLauncher) Probe(ctx context.Context) error {
+	if l == nil || ctx == nil {
+		return ErrRuntimeConfig
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := inspectDirectoryNoReparseLeaf(l.config.PackageRoot); err != nil {
+		return ErrRuntimeConfig
+	}
+	if err := inspectDirectoryNoReparseLeaf(l.config.WorkerRuntimeRoot); err != nil {
+		return ErrRuntimeConfig
+	}
+	if err := inspectRegularNoReparseLeaf(l.config.WorkerCommand); err != nil {
+		return ErrRuntimeConfig
+	}
+	if err := inspectRegularNoReparseLeaf(l.config.WorkerScript); err != nil {
+		return ErrRuntimeConfig
+	}
+	if err := inspectWorkerScriptReadable(l.config.WorkerScript); err != nil {
+		return ErrRuntimeConfig
+	}
+	if err := inspectRegularNoReparseLeaf(l.config.AdapterScript); err != nil {
+		return ErrRuntimeConfig
+	}
+	return ctx.Err()
+}
+
 func NewProcessLauncher(config RuntimeConfig) (JobLauncher, error) {
 	if strings.TrimSpace(config.WorkerCommand) == "" || !filepath.IsAbs(config.WorkerCommand) || !strings.EqualFold(filepath.Base(config.WorkerCommand), "node.exe") || !filepath.IsAbs(config.WorkerScript) || (config.AdapterScript != "" && !filepath.IsAbs(config.AdapterScript)) || !managedDesktopPattern.MatchString(config.WindowsDesktop) || !filepath.IsAbs(config.ProfileRoot) || !filepath.IsAbs(config.WorkDir) {
 		return nil, ErrRuntimeConfig

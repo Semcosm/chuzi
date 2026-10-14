@@ -26,6 +26,16 @@ import (
 
 type testFactory struct{}
 
+type blockingSlotSessionController struct {
+	started chan struct{}
+}
+
+func (c *blockingSlotSessionController) ReconcileSlotSessionOperations(ctx context.Context, _ string, _ time.Time) error {
+	close(c.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
+
 func TestWorkerStderrRequiresExplicitDebugOptIn(t *testing.T) {
 	t.Setenv("CHUZI_WORKER_DEBUG", "")
 	if got := workerStderr(); got != io.Discard {
@@ -121,6 +131,60 @@ func TestAssembleRuntimeOpensPersistentStoreAndBuildsBoundaries(t *testing.T) {
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSlowSlotSessionControllerDoesNotBlockSchedulerPass(t *testing.T) {
+	cfg, err := config.New(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC) }
+	runtime, err := assembleRuntimeWithFactory(cfg, testServiceOptions(), now, testFactory{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.store.Close()
+
+	controller := &blockingSlotSessionController{started: make(chan struct{})}
+	controllerCtx, cancelController := context.WithCancel(context.Background())
+	controllerDone := make(chan error, 1)
+	go func() {
+		controllerDone <- runSlotSessionController(controllerCtx, controller, "service-session", time.Hour, nil)
+	}()
+	select {
+	case <-controller.started:
+	case <-time.After(time.Second):
+		cancelController()
+		t.Fatal("slot session controller did not start")
+	}
+
+	schedulerDone := make(chan error, 1)
+	go func() {
+		outcome, runErr := runtime.scheduler.RunOnce(context.Background())
+		if runErr == nil && !outcome.Idle {
+			runErr = errors.New("scheduler pass was not idle")
+		}
+		schedulerDone <- runErr
+	}()
+	select {
+	case runErr := <-schedulerDone:
+		if runErr != nil {
+			t.Fatal(runErr)
+		}
+	case <-time.After(time.Second):
+		cancelController()
+		t.Fatal("scheduler pass blocked behind slow slot session login")
+	}
+
+	cancelController()
+	select {
+	case controllerErr := <-controllerDone:
+		if controllerErr != nil {
+			t.Fatal(controllerErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slot session controller did not stop")
 	}
 }
 

@@ -265,25 +265,21 @@ type logRecord struct {
 	RequestID  string `json:"request_id,omitempty"`
 	Resource   string `json:"resource,omitempty"`
 	ErrorClass string `json:"error_class,omitempty"`
+	Attempt    int    `json:"attempt,omitempty"`
 	DurationMS int64  `json:"duration_ms,omitempty"`
 }
 
 func sanitizeEvent(event Event, fallback time.Time) logRecord {
-	at := event.At
-	if at.IsZero() {
-		at = fallback
-	}
-	if at.IsZero() {
-		at = time.Unix(0, 0).UTC()
-	}
+	event = SanitizeEvent(event, fallback)
 	record := logRecord{
-		At:         at.UTC().Format(time.RFC3339Nano),
-		Component:  safeField(event.Component),
-		Operation:  safeField(event.Operation),
-		Outcome:    safeField(event.Outcome),
-		RequestID:  safeResource(event.RequestID),
-		Resource:   safeResource(event.Resource),
-		ErrorClass: safeField(event.ErrorClass),
+		At:         event.At.Format(time.RFC3339Nano),
+		Component:  event.Component,
+		Operation:  event.Operation,
+		Outcome:    event.Outcome,
+		RequestID:  event.RequestID,
+		Resource:   event.Resource,
+		ErrorClass: event.ErrorClass,
+		Attempt:    event.Attempt,
 	}
 	if event.Duration > 0 {
 		record.DurationMS = event.Duration.Milliseconds()

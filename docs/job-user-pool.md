@@ -113,9 +113,9 @@ Settings → Windows user pool 提供 Enable Windows users 和 Use logical test 
 离线维护持有 Store 独占锁，并重新验证 revision、签名环境及清理条件；不能通过停止
 Core 跳过未完成的清理。launcher 重启保留已有配置。详细命令见 operations.md。
 
-当前发布包尚未包含完整的部署登录适配器。新 UI 入口只保存执行模式，不能替代
-session broker 登录服务及所需 Windows 权限。配置保存不会创建会话；真实环境未满足
-依赖时必须返回不可用或隔离。Windows Agent ready 只来自最近一次 reconcile 的当前
+当前发布包已包含受控本机 RDP 登录适配器和固定 session broker，但新 UI 入口只保存
+执行模式，不能替代 helper 注册及所需 Windows 权限。配置保存不会创建会话；真实环境
+未满足依赖时必须返回不可用或隔离。Windows Agent ready 只来自最近一次 reconcile 的当前
 槽位健康记录，逻辑模式及缺失状态一律不能显示该标记。
 
 ## Windows 阶段 2
@@ -200,7 +200,7 @@ slot 用户只读/执行；provisioner 不会把安装目录写权限授予受�
 阶段 2 的生产验收仍需在 Windows runner 完成原生 smoke：本地用户和密码生命周期、
 ACL/reparse point、Profile、RDP session/desktop、named pipe ACL、
 `CreateProcessAsUser`、Job Object 回收、服务重启/断电恢复和 disposable user 清理。
-当前默认 RDP authorizer 仍为 deny-by-default；通用 `chuzi-environment/v1` manifest、
+交互 RDP capability 的默认 authorizer 仍为 deny-by-default；通用 `chuzi-environment/v1` manifest、
 资源 digest/签名 trust store、插件注入、滚动升级和回滚属于阶段 3。
 
 ## 阶段 4 session bootstrap 边界
@@ -210,9 +210,9 @@ session。`SessionBootstrapper` 是受控注入边界，只接收由 provisioner
 ownership 派生的 slot、ordinal、generation 和 SID；接口不接收密码、用户名、Profile
 路径、RDP endpoint、命令或 executable。provider 建立 session 后，provisioner 仍会重新
 调用 `FindSession(managed SID)`，并校验 session ID 和 active 状态；provider 返回值或
-`CreateProcessAsUser` 不能替代 WTS 校验。生产默认不配置 bootstrapper，继续依赖外部受控
-interactive session，找不到 session 时保持 `session_unavailable`/quarantine 的
-fail-closed 行为。
+`CreateProcessAsUser` 不能替代 WTS 校验。Windows service assembly 在受控配置下接入
+固定 session broker；直接运行未注入 broker 的 provisioner 仍依赖外部受控 interactive
+session，找不到 session 时保持 `session_unavailable`/quarantine 的 fail-closed 行为。
 
 Windows 实验机可在仓库根目录以管理员 PowerShell 执行
 scripts/test_windows_job_pool_smoke.ps1 -LocalRdp，诊断本机 RDP session 和 slot
@@ -275,28 +275,30 @@ session ID。稳定错误码包括 `invalid_version`、`invalid_request`、`unkn
 `ownership_mismatch`、`ownership_unknown`、`stale_generation`、`session_unavailable`、
 `session_changed` 和 `stop_timeout`。
 
-broker 只在内存中保存自己创建的 `(slot_id, ordinal, generation, sid, session_id, owner)`
-记录。重复 start 只在 ownership 和仍为 active 的同一 session 完全匹配时幂等成功；旧 generation、
-错误 owner/SID/session ID 和重复使用未知 ownership 都被拒绝。broker 重启后不会接管现有
-session，也不能停止未知 session。stop 会调用部署适配器并等待 `FindSession(sid)` 不再发现
-该 session；等待受 context 总超时约束，重复 stop 仅对本次 broker 已确认的 tombstone 幂等成功。
+broker 在内存中维护自己创建的 `(slot_id, ordinal, generation, sid, session_id, owner)`
+记录，并在当前已认证 operator SID 派生的受保护临时 state root 中持久化无凭据
+ownership/tombstone journal。重复 start 只在 ownership 和仍为 active 的同一 session 完全匹配时
+幂等成功；旧 generation、错误 owner/SID/session ID 和重复使用未知 ownership 都被拒绝。
+broker 重启后只恢复 journal 中的精确记录，并重新执行 `FindSession`；不能接管未知
+session。stop 会调用部署适配器并等待 `FindSession(sid)` 不再发现 session；等待受 context
+总超时约束，重复 stop 仅对本次 broker 已确认的 tombstone 幂等成功。
 
 pipe listener 必须在解析 JSON 前使用显式 ACL，只允许 chuzi 服务 SID 和部署侧 broker SID，
 拒绝 Everyone、Users、Remote Desktop Users 等宽泛主体。仓库提供固定 pipe listener、
-协议/ACL 验证和 `SessionBroker` ownership 状态机；部署在构造 listener 时注入两个 SID
-和真实 `SessionBrokerAdapter`。listener 不创建或模拟 Windows session，RDP/Winlogon
-authorizer 和 WTS 建立动作仍属于部署适配器。Windows SDK 没有可直接替代真实登录的
+协议/ACL 验证和 `SessionBroker` ownership 状态机；checked-in broker entrypoint 注入
+受控本机 RDP `SessionBrokerAdapter`。listener 不创建或模拟 Windows session，RDP/Winlogon
+authorizer 和 WTS 建立动作仍属于该受控适配器。Windows SDK 没有可直接替代真实登录的
 `WTSLogonUser` API，这不允许改用 `runas`、`CreateProcessAsUser`、`tscon` 或伪造 pipe 响应。
 
 需要一次性密码的部署实现必须使用 `SessionLoginAdapter`：密码只作为短生命周期的内存
 UTF-16 buffer 在同一受 ACL 保护的服务进程内传递，并在调用返回后清零；它不会进入 broker JSON、
 Core、UI、Matrix、日志、诊断、环境变量、临时文件或持久化状态。固定 pipe 客户端不接受
 用户名/密码字段。适配器返回的 session ID 也不能作为事实，provisioner 必须再次执行
-`FindSession(managed SID)` 并确认 SID 和 active 状态。没有真实适配器时稳定返回
+`FindSession(managed SID)` 并确认 SID 和 active 状态。适配器或 helper 不可用时稳定返回
 `session_unavailable`，阶段 4 不得声称 native acceptance 完成。
 固定 pipe 客户端的连接和读写受调用方 deadline 与最长 30 秒限制；取消会中断正在
 等待的 I/O。响应操作必须匹配请求，start 成功要求非零 active session，stop 成功
 要求 stopped 状态；无 broker、超时或无效响应均返回稳定的 `session_unavailable`。fake provider 与协议
 测试可在非 Windows 主机验证 ownership、重复请求和失败分类，但不能证明真实
-Winlogon/WTS 登录、desktop ACL 或 Agent heartbeat。部署方仍须提供受控登录
-适配器、pipe ACL 和所需 Windows 服务权限，再运行原生 smoke 验收。
+Winlogon/WTS 登录、desktop ACL 或 Agent heartbeat。部署方仍须完成 helper 注册、pipe
+ACL 和所需 Windows 服务权限，再运行原生 smoke 验收。

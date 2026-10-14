@@ -55,14 +55,16 @@ type SessionLoginAdapter interface {
 	Stop(context.Context, ManagedIdentity, BootstrapSession) error
 }
 
-// credentialedSessionBootstrapper is an internal extension for a provider
-// owned by the same controlled Windows process. The password is passed only
-// as an in-memory UTF-16 slice for the initial disposable-user bootstrap and
-// is cleared by the provisioner immediately after Start returns. It is never
-// part of the public contract or a Core/API DTO.
-type credentialedSessionBootstrapper interface {
+// CredentialedSessionBootstrapper is the narrow internal-to-service extension
+// for a provider owned by the same controlled Windows process. The password is
+// passed only as an in-memory UTF-16 slice for the initial disposable-user
+// bootstrap and is cleared by the provisioner immediately after Start
+// returns. It is never part of the Core/API DTO or broker JSON.
+type CredentialedSessionBootstrapper interface {
 	StartWithCredential(context.Context, ManagedIdentity, string, []uint16) (BootstrapSession, error)
 }
+
+type credentialedSessionBootstrapper = CredentialedSessionBootstrapper
 
 var ErrSessionBootstrapUnavailable = errors.New("slotwindows: session bootstrap provider unavailable")
 

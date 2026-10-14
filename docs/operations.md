@@ -112,9 +112,12 @@ retiring slot 回收。UI 的 apply 和 Core 的 scale 都保留已有签名绑�
 -expected-revision <revision>`。错误仅返回稳定分类，不输出内部路径或凭据。
 launcher 启动保留已有合法部署配置；损坏或 data_dir 不匹配时拒绝覆盖。
 
-当前安装包不包含完整的 Windows session broker 登录适配器。模式保存成功仅代表
-配置通过离线检查；实际 provision 仍需要部署登录服务和 Windows 服务权限，缺失时
-会 fail closed。Start basic session 的 Windows Agent ready 表示最近一次 reconcile
+Windows 安装包的 session broker 已包含受控本机 RDP 登录适配器，但实际 provision
+仍需要注册交互 helper、Windows 服务权限和固定运行时目录 ACL；缺失时会 fail
+closed。固定 broker 的 ownership journal 与临时 `.rdp` profile 位于当前已认证
+operator SID 派生的受保护临时 state root，不写入只读安装 payload；该目录和
+journal 的创建或原子替换失败时 broker 必须保持 `session_unavailable`。Start basic
+session 的 Windows Agent ready 表示最近一次 reconcile
 记录的健康状态；历史 operation ready 不能替代当前健康状态，也不代表此刻完成
 WTS 探测。test 包构建通过仍不能替代真机生产验收。
 
@@ -236,8 +239,9 @@ Windows job pool 的 readiness 必须按以下分类投影，不能将计数非�
 | `windows_platform_unavailable` | 非 Windows、权限不足或原生 smoke 未通过 | 不启用 OS 用户池 |
 
 RDP capability 仍由 credential boundary 管理，并只向 Core/UI 返回 opaque token。当前默认
-authorizer 是 deny-by-default；在提供受控 RDP broker、Windows API 权限和测试凭证边界之前，
-生产交互式 RDP 必须保持 `rdp_unavailable`。
+authorizer 是 deny-by-default；安装包已提供受控本机 RDP broker，但只有部署完成
+helper 注册、Windows ACL/API 权限并通过原生验收后才能启用生产交互式 RDP。验收之前
+必须保持 `rdp_unavailable`。
 
 ## 扩缩容、升级和恢复
 

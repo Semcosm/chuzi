@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -16,6 +17,7 @@ import (
 const SessionBrokerPipeName = `\\.\pipe\chuzi-session-bootstrap-v1`
 
 const SessionBrokerProtocolVersion = 1
+const sessionBrokerCleanupTimeout = 10 * time.Second
 
 type SessionBrokerOperation string
 
@@ -197,12 +199,12 @@ func isPrincipalSID(sid string) bool {
 }
 
 type SessionBrokerOwnership struct {
-	SlotID     string
-	Ordinal    int
-	Generation uint64
-	SID        string
-	SessionID  uint32
-	Owner      string
+	SlotID     string `json:"slot_id"`
+	Ordinal    int    `json:"ordinal"`
+	Generation uint64 `json:"generation"`
+	SID        string `json:"sid"`
+	SessionID  uint32 `json:"session_id"`
+	Owner      string `json:"owner"`
 }
 
 func (o SessionBrokerOwnership) sameRequest(r SessionBrokerRequest) bool {
@@ -218,17 +220,115 @@ type SessionBrokerAdapter interface {
 	Find(context.Context, string) (BootstrapSession, error)
 }
 
-// SessionBroker holds only ownership it created during this process lifetime.
-// It intentionally cannot adopt an active session after restart.
+// SessionBrokerJournal is a separate, broker-owned persistence boundary. It
+// stores only exact slot/SID/session/generation/owner facts; it never stores
+// credentials, profile paths, endpoints, or provider data. A deployment may
+// leave the journal nil for an explicitly volatile test broker.
+type SessionBrokerJournal interface {
+	Load(context.Context) (SessionBrokerJournalState, error)
+	Save(context.Context, SessionBrokerJournalState) error
+}
+
+type SessionBrokerJournalState struct {
+	Version    int                      `json:"version"`
+	Records    []SessionBrokerOwnership `json:"records,omitempty"`
+	Tombstones []SessionBrokerOwnership `json:"tombstones,omitempty"`
+}
+
+// SessionBroker holds ownership records created by this broker or recovered
+// from its durable journal. Recovery still requires an authoritative adapter
+// Find check before any record is used.
 type SessionBroker struct {
 	mu         sync.Mutex
+	slotMu     sync.Mutex
+	slotLocks  map[string]*sync.Mutex
 	adapter    SessionBrokerAdapter
+	journal    SessionBrokerJournal
 	records    map[string]SessionBrokerOwnership
 	tombstones map[string]SessionBrokerOwnership
 }
 
 func NewSessionBroker(adapter SessionBrokerAdapter) *SessionBroker {
-	return &SessionBroker{adapter: adapter, records: make(map[string]SessionBrokerOwnership), tombstones: make(map[string]SessionBrokerOwnership)}
+	return &SessionBroker{adapter: adapter, slotLocks: make(map[string]*sync.Mutex), records: make(map[string]SessionBrokerOwnership), tombstones: make(map[string]SessionBrokerOwnership)}
+}
+
+func (b *SessionBroker) lockSlot(slotID string) func() {
+	b.slotMu.Lock()
+	if b.slotLocks == nil {
+		b.slotLocks = make(map[string]*sync.Mutex)
+	}
+	lock := b.slotLocks[slotID]
+	if lock == nil {
+		lock = &sync.Mutex{}
+		b.slotLocks[slotID] = lock
+	}
+	b.slotMu.Unlock()
+	lock.Lock()
+	return lock.Unlock
+}
+
+// NewSessionBrokerWithJournal constructs a broker whose ownership survives a
+// process restart. Loading is fail-closed: malformed or unavailable state
+// must prevent the broker from serving requests rather than weakening the
+// ownership fence.
+func NewSessionBrokerWithJournal(adapter SessionBrokerAdapter, journal SessionBrokerJournal) (*SessionBroker, error) {
+	if adapter == nil || journal == nil {
+		return nil, ErrSessionBrokerInvalidRequest
+	}
+	state, err := journal.Load(context.Background())
+	if err != nil {
+		return nil, err
+	}
+	if state.Version != 1 {
+		return nil, ErrSessionBrokerInvalidRequest
+	}
+	broker := &SessionBroker{adapter: adapter, journal: journal, slotLocks: make(map[string]*sync.Mutex), records: make(map[string]SessionBrokerOwnership), tombstones: make(map[string]SessionBrokerOwnership)}
+	for _, record := range state.Records {
+		if err := validateJournalOwnership(record, true); err != nil {
+			return nil, err
+		}
+		if _, exists := broker.records[record.SlotID]; exists {
+			return nil, ErrSessionBrokerInvalidRequest
+		}
+		broker.records[record.SlotID] = record
+	}
+	for _, record := range state.Tombstones {
+		if err := validateJournalOwnership(record, true); err != nil {
+			return nil, err
+		}
+		if _, exists := broker.tombstones[record.SlotID]; exists {
+			return nil, ErrSessionBrokerInvalidRequest
+		}
+		if _, active := broker.records[record.SlotID]; active {
+			return nil, ErrSessionBrokerInvalidRequest
+		}
+		broker.tombstones[record.SlotID] = record
+	}
+	return broker, nil
+}
+
+func validateJournalOwnership(record SessionBrokerOwnership, requireSession bool) error {
+	if record.SessionID == 0 && requireSession {
+		return ErrSessionBrokerInvalidRequest
+	}
+	request := SessionBrokerRequest{Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, SlotID: record.SlotID, Ordinal: record.Ordinal, Generation: record.Generation, SID: record.SID, Owner: record.Owner}
+	return request.validate()
+}
+
+func (b *SessionBroker) persistLocked(ctx context.Context) error {
+	if b.journal == nil {
+		return nil
+	}
+	state := SessionBrokerJournalState{Version: 1, Records: make([]SessionBrokerOwnership, 0, len(b.records)), Tombstones: make([]SessionBrokerOwnership, 0, len(b.tombstones))}
+	for _, record := range b.records {
+		state.Records = append(state.Records, record)
+	}
+	for _, record := range b.tombstones {
+		state.Tombstones = append(state.Tombstones, record)
+	}
+	sort.Slice(state.Records, func(i, j int) bool { return state.Records[i].SlotID < state.Records[j].SlotID })
+	sort.Slice(state.Tombstones, func(i, j int) bool { return state.Tombstones[i].SlotID < state.Tombstones[j].SlotID })
+	return b.journal.Save(ctx, state)
 }
 
 func (b *SessionBroker) Handle(ctx context.Context, request SessionBrokerRequest) SessionBrokerResponse {
@@ -253,9 +353,17 @@ func (b *SessionBroker) Handle(ctx context.Context, request SessionBrokerRequest
 }
 
 func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest, response SessionBrokerResponse) SessionBrokerResponse {
+	if b == nil {
+		response.Code = SessionBrokerSessionUnavailable
+		return response
+	}
+	unlock := b.lockSlot(request.SlotID)
+	defer unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
-	if previous, ok := b.records[request.SlotID]; ok {
+	previous, hasPrevious := b.records[request.SlotID]
+	b.mu.Unlock()
+	if hasPrevious {
 		if previous.Generation > request.Generation {
 			response.Code = SessionBrokerStaleGeneration
 			return response
@@ -268,10 +376,21 @@ func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest,
 		if err == nil && current.ID == previous.SessionID && current.State == "active" {
 			return sessionBrokerOK(response, current.ID, "active")
 		}
-		response.Code = SessionBrokerAlreadyStarted
+		// A durable ownership record whose exact session cannot be proven is
+		// quarantined logically. Reporting AlreadyStarted would strand the
+		// operation and could let a reused SID/session be mistaken for the
+		// recorded runtime. Keep the record for operator/recovery handling.
+		if err == nil && current.ID != 0 {
+			response.Code = SessionBrokerSessionChanged
+		} else {
+			response.Code = SessionBrokerOwnershipUnknown
+		}
 		return response
 	}
-	if previous, ok := b.tombstones[request.SlotID]; ok && request.Generation <= previous.Generation {
+	b.mu.Lock()
+	tombstone, hasTombstone := b.tombstones[request.SlotID]
+	b.mu.Unlock()
+	if hasTombstone && request.Generation <= tombstone.Generation {
 		response.Code = SessionBrokerStaleGeneration
 		return response
 	}
@@ -285,28 +404,71 @@ func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest,
 	if err != nil || started.ID == 0 || started.State != "active" {
 		if started.ID != 0 {
 			ownership.SessionID = started.ID
-			_ = b.adapter.Stop(ctx, ownership)
+			if cleanupErr := b.cleanupStartedSession(ownership); cleanupErr != nil {
+				response.Code = SessionBrokerStopTimeout
+				return response
+			}
 		}
 		response.Code = SessionBrokerSessionUnavailable
+		return response
+	}
+	if ctx.Err() != nil {
+		ownership.SessionID = started.ID
+		if err := b.cleanupStartedSession(ownership); err != nil {
+			response.Code = SessionBrokerStopTimeout
+		} else {
+			response.Code = SessionBrokerSessionUnavailable
+		}
 		return response
 	}
 	current, err := b.adapter.Find(ctx, request.SID)
 	if err != nil || current.ID != started.ID || current.State != "active" {
 		ownership.SessionID = started.ID
-		_ = b.adapter.Stop(ctx, ownership)
+		if cleanupErr := b.cleanupStartedSession(ownership); cleanupErr != nil {
+			response.Code = SessionBrokerStopTimeout
+			return response
+		}
 		response.Code = SessionBrokerSessionChanged
 		return response
 	}
+	if ctx.Err() != nil {
+		ownership.SessionID = started.ID
+		if err := b.cleanupStartedSession(ownership); err != nil {
+			response.Code = SessionBrokerStopTimeout
+		} else {
+			response.Code = SessionBrokerSessionUnavailable
+		}
+		return response
+	}
 	record := SessionBrokerOwnership{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, SessionID: current.ID, Owner: request.Owner}
+	b.mu.Lock()
 	b.records[request.SlotID] = record
+	if err := b.persistLocked(ctx); err != nil {
+		delete(b.records, request.SlotID)
+		b.mu.Unlock()
+		if cleanupErr := b.cleanupStartedSession(record); cleanupErr != nil {
+			response.Code = SessionBrokerStopTimeout
+			return response
+		}
+		response.Code = SessionBrokerSessionUnavailable
+		return response
+	}
+	b.mu.Unlock()
 	return sessionBrokerOK(response, current.ID, "active")
 }
 
 func (b *SessionBroker) stop(ctx context.Context, request SessionBrokerRequest, response SessionBrokerResponse) SessionBrokerResponse {
+	if b == nil {
+		response.Code = SessionBrokerSessionUnavailable
+		return response
+	}
+	unlock := b.lockSlot(request.SlotID)
+	defer unlock()
+
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	record, ok := b.records[request.SlotID]
 	tombstone, wasStopped := b.tombstones[request.SlotID]
+	b.mu.Unlock()
 	if !ok {
 		if wasStopped && tombstone.sameRequest(request) && tombstone.SessionID == request.SessionID {
 			return sessionBrokerOK(response, 0, "stopped")
@@ -326,6 +488,16 @@ func (b *SessionBroker) stop(ctx context.Context, request SessionBrokerRequest, 
 		response.Code = SessionBrokerSessionChanged
 		return response
 	}
+	observed, findErr := b.adapter.Find(ctx, record.SID)
+	if findErr == nil {
+		if observed.ID != record.SessionID || observed.State != "active" {
+			response.Code = SessionBrokerSessionChanged
+			return response
+		}
+	} else if !errors.Is(findErr, ErrSessionUnavailable) {
+		response.Code = SessionBrokerSessionUnavailable
+		return response
+	}
 	if err := b.adapter.Stop(ctx, record); err != nil && !errors.Is(err, ErrSessionUnavailable) {
 		response.Code = SessionBrokerSessionUnavailable
 		return response
@@ -334,10 +506,23 @@ func (b *SessionBroker) stop(ctx context.Context, request SessionBrokerRequest, 
 		response.Code = SessionBrokerStopTimeout
 		return response
 	}
-	if current, present := b.records[request.SlotID]; present && current == record {
+	b.mu.Lock()
+	current, present := b.records[request.SlotID]
+	if present && current == record {
 		delete(b.records, request.SlotID)
 		b.tombstones[request.SlotID] = record
+		if err := b.persistLocked(ctx); err != nil {
+			// Keep the record in memory so a retry can commit the durable
+			// tombstone. The session is already absent, so returning success
+			// here would make a broker restart report unknown ownership.
+			delete(b.tombstones, request.SlotID)
+			b.records[request.SlotID] = record
+			b.mu.Unlock()
+			response.Code = SessionBrokerSessionUnavailable
+			return response
+		}
 	}
+	b.mu.Unlock()
 	return sessionBrokerOK(response, 0, "stopped")
 }
 
@@ -347,7 +532,7 @@ func waitBrokerSessionGone(ctx context.Context, adapter SessionBrokerAdapter, si
 	}
 	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, 10*time.Second)
+		ctx, cancel = context.WithTimeout(ctx, sessionBrokerCleanupTimeout)
 		defer cancel()
 	}
 	for {
@@ -363,6 +548,23 @@ func waitBrokerSessionGone(ctx context.Context, adapter SessionBrokerAdapter, si
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// cleanupStartedSession runs after the caller's context has been cancelled.
+// The cancellation must not prevent the broker from fencing the exact session
+// it just created, and success requires an authoritative absence check.
+func (b *SessionBroker) cleanupStartedSession(ownership SessionBrokerOwnership) error {
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), sessionBrokerCleanupTimeout)
+	defer cancel()
+	stopErr := b.adapter.Stop(cleanupCtx, ownership)
+	waitErr := waitBrokerSessionGone(cleanupCtx, b.adapter, ownership.SID)
+	if waitErr != nil {
+		return waitErr
+	}
+	if stopErr != nil && !errors.Is(stopErr, ErrSessionUnavailable) {
+		return stopErr
+	}
+	return nil
 }
 
 func sessionBrokerOK(response SessionBrokerResponse, sessionID uint32, state string) SessionBrokerResponse {

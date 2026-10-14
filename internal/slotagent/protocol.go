@@ -72,6 +72,7 @@ type Response struct {
 	Failure               string `json:"failure,omitempty"`
 	AgentVersion          string `json:"agent_version,omitempty"`
 	SessionState          string `json:"session_state,omitempty"`
+	WorkerReady           bool   `json:"worker_ready,omitempty"`
 }
 
 func (r Response) Validate() error {

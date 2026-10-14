@@ -79,15 +79,16 @@ type Options struct {
 }
 
 type Paths struct {
-	Root       string
-	Generation string
-	Work       string
-	Temp       string
-	Logs       string
-	Metadata   string
-	Secret     string
-	UserName   string
-	Desktop    string
+	Root           string
+	Generation     string
+	Work           string
+	Temp           string
+	Logs           string
+	Metadata       string
+	CleanupJournal string
+	Secret         string
+	UserName       string
+	Desktop        string
 }
 
 type Provisioner interface {
@@ -158,7 +159,7 @@ func (o Options) DerivePaths(slotID string, ordinal int, generation uint64) (Pat
 	if err != nil {
 		return Paths{}, ErrInvalidOptions
 	}
-	return Paths{Root: root, Generation: gen, Work: filepath.Join(gen, "work"), Temp: filepath.Join(gen, "tmp"), Logs: filepath.Join(gen, "logs"), Metadata: filepath.Join(root, "ownership.json"), Secret: filepath.Join(root, "account.dpapi"), UserName: user, Desktop: desktop}, nil
+	return Paths{Root: root, Generation: gen, Work: filepath.Join(gen, "work"), Temp: filepath.Join(gen, "tmp"), Logs: filepath.Join(gen, "logs"), Metadata: filepath.Join(root, "ownership.json"), CleanupJournal: filepath.Join(filepath.Clean(o.DataDir), "cleanup-journal", slotID+".json"), Secret: filepath.Join(root, "account.dpapi"), UserName: user, Desktop: desktop}, nil
 }
 
 // DeriveUsername returns the only username that the service may use for a

@@ -114,7 +114,11 @@ response, or timeout returns session_unavailable/session_changed and fails
 closed.
 
 Native status: the repository's fixed broker state machine and protocol tests
-pass; the controlled login adapter and helper registration are unverified.
+pass. The installed broker entrypoint now wires the controlled local-RDP
+adapter, the authenticated helper registration, and the credential-free
+ownership journal. A deployment still has to provision the documented ACL and
+run the native login/re-login/stop acceptance; Linux cross-builds do not prove
+those Windows facts.
 
 ### D. Credential ownership
 
@@ -127,10 +131,13 @@ logs, Matrix events, environment variables, command lines, and ownership.json
 never contain username, password, endpoint, Profile path, or certificate
 material.
 
-If a deployment cannot keep login in the same trusted process, it must use an
-OS-authenticated private IPC channel with both endpoint SIDs checked, a
-short-lived request nonce, bounded memory buffers, and zeroization on both
-sides. Adding a password field to broker JSON is forbidden.
+The checked-in split-process path uses the fixed
+'\\.\pipe\chuzi-session-secret-v1' private channel. Its DACL names only the
+installed service and broker SIDs; the caller validator checks the service
+image, the frame is bounded binary data carrying a random handoff nonce and
+slot/generation/SID/owner fence, and both endpoints clear their UTF-16 buffers. The public
+'chuzi-session-bootstrap-v1' JSON remains credential-free. Adding a password
+field to broker JSON is forbidden.
 
 Login proof (the service's SID/WTS/Shell/Agent fact) and Workspace (the UI's
 interactive presentation) are different capabilities. DenyAuthorizer is the
@@ -155,8 +162,9 @@ previous broker process.
 
 ### F. Durable ownership journal and fences
 
-The single service process is the only writer of the durable OwnershipJournal
-and bbolt ownership projection. The OS journal is service-derived at
+The single service process is the only writer of the durable slot
+OwnershipJournal and bbolt ownership projection. The OS slot journal is
+service-derived at
 job-slots/<slot-id>/ownership.json (or the platform's equivalent protected
 store); the path is not a Core input. Journal phases are intent, committed,
 checkpoint, stopped, and unknown. Every OS side effect follows:
@@ -168,13 +176,21 @@ checkpoint, stopped, and unknown. Every OS side effect follows:
 5. mark stopped only after stop and cleanup are confirmed.
 
 The generation and revision fence every broker, Agent, lease, and worker
-operation. Unknown or malformed ownership is fail closed; it is never deleted
-by a generic cleanup pass. A human must inspect and explicitly repair it. The
-broker/helper never opens the bbolt file or writes the journal.
+operation. Unknown or malformed slot ownership is fail closed; it is never
+deleted by a generic cleanup pass. A human must inspect and explicitly repair
+it. The broker/helper never opens bbolt or writes the service slot journal.
+The fixed broker may additionally persist its own credential-free protocol
+ownership/tombstone journal in its authenticated operator state root; that file
+is only a broker restart fence and never replaces the service slot journal.
 
-Native status: the new OwnershipRecord/OwnershipJournal/HostOwner interfaces
-compile and have pure validation coverage; durable implementation and restart
-recovery remain pending.
+Native status: the service slot ownership records and the broker ownership
+journal have durable, atomic implementations with validation and restart
+tests. The broker uses a state root derived from the authenticated operator SID
+under the OS temporary directory for the journal and bounded `.rdp` staging;
+the signed runtime payload remains read/execute-only. State-root or journal
+write failure is fail-closed and leaves the session unavailable. The checked-in
+broker does not claim native login acceptance until the controlled Windows
+deployment has run the helper, RDP, WTS, and cleanup checks.
 
 ### G. Start, Stop, Cancel, Retry, and pool interaction
 
@@ -310,11 +326,11 @@ credential target, user only when its run marker matches, test trust, task,
 profile/runtime root, and sessions. It never prints the password or raw
 username/SID/path.
 
-The harness is not proof that the production broker adapter exists. It is a
-controlled login proof for the chosen identity combination and a regression
-probe for cold Profile, first login, logout, and re-login. Native Agent/browser
-checks remain pending and must still run scripts/test_windows_job_pool_smoke.ps1
-without the LocalRdp handoff shortcut.
+The harness is not proof that the installed broker adapter succeeds on the
+target deployment. It is a controlled login proof for the chosen identity
+combination and a regression probe for cold Profile, first login, logout, and
+re-login. Native Agent/browser checks remain pending and must still run
+scripts/test_windows_job_pool_smoke.ps1 without the LocalRdp handoff shortcut.
 Credential Manager writes refuse an occupied target and cleanup verifies the
 run-owned username before deletion; an ownership change fails closed.
 The private run root grants the disposable SID traversal only, and grants that
@@ -350,7 +366,7 @@ NativePending=true until the remaining native acceptance is complete.
 | existing broker protocol/state tests | passed on Linux | fixed wire, ownership, generation, duplicate/stop rules |
 | test_windows_job_pool_smoke.ps1 -LocalRdp | previously operator-verified | controlled smoke fact only; not production broker proof |
 | windows-session-login-probe.ps1 native run | pending | automatic first login and re-login with cold Profile |
-| broker ACL + production adapter | pending | service/helper identity and fixed-pipe login handoff |
+| broker ACL + production adapter native acceptance | pending | service/helper identity and fixed-pipe login handoff on the target Windows deployment |
 | full Agent/worker native smoke | pending | desktop, Agent heartbeat, browser capability and cleanup |
 
 No item in the pending rows may be represented as production ready.

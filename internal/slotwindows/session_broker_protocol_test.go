@@ -3,6 +3,8 @@ package slotwindows
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -189,6 +191,60 @@ func TestSessionBrokerSerializesConcurrentStarts(t *testing.T) {
 	}
 }
 
+type slowBrokerAdapter struct {
+	*brokerTestAdapter
+	slowSlot string
+	entered  chan struct{}
+	release  chan struct{}
+}
+
+func (a *slowBrokerAdapter) Start(ctx context.Context, ownership SessionBrokerOwnership) (BootstrapSession, error) {
+	if ownership.SlotID == a.slowSlot {
+		select {
+		case a.entered <- struct{}{}:
+		default:
+		}
+		select {
+		case <-a.release:
+		case <-ctx.Done():
+			return BootstrapSession{}, ctx.Err()
+		}
+	}
+	return a.brokerTestAdapter.Start(ctx, ownership)
+}
+
+func TestSessionBrokerDoesNotBlockIndependentSlotsOnSlowLogin(t *testing.T) {
+	first := validBrokerRequest()
+	adapter := &slowBrokerAdapter{brokerTestAdapter: newBrokerTestAdapter(), slowSlot: first.SlotID, entered: make(chan struct{}, 1), release: make(chan struct{})}
+	broker := NewSessionBroker(adapter)
+	firstDone := make(chan SessionBrokerResponse, 1)
+	go func() { firstDone <- broker.Handle(context.Background(), first) }()
+	select {
+	case <-adapter.entered:
+	case <-time.After(time.Second):
+		t.Fatal("slow login did not start")
+	}
+
+	second := first
+	second.SlotID = "slot-002"
+	second.SID = "S-1-5-21-1-2-3-5"
+	secondCtx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	secondResponse := broker.Handle(secondCtx, second)
+	if secondResponse.Code != SessionBrokerOK || secondResponse.SessionID == 0 {
+		t.Fatalf("independent slot was blocked by slow login: %+v", secondResponse)
+	}
+	close(adapter.release)
+	select {
+	case response := <-firstDone:
+		if response.Code != SessionBrokerOK || response.SessionID == 0 {
+			t.Fatalf("slow slot failed after release: %+v", response)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slow slot did not complete after release")
+	}
+}
+
 func TestSessionBrokerRestartCannotAdoptUnknownSession(t *testing.T) {
 	adapter := newBrokerTestAdapter()
 	request := validBrokerRequest()
@@ -205,6 +261,119 @@ func TestSessionBrokerRestartCannotAdoptUnknownSession(t *testing.T) {
 	stop.Operation, stop.SessionID = SessionBrokerStop, started.SessionID
 	if response := second.Handle(context.Background(), stop); response.Code != SessionBrokerOwnershipUnknown {
 		t.Fatalf("restart stopped unknown session: %+v", response)
+	}
+}
+
+type memorySessionBrokerJournal struct {
+	mu    sync.Mutex
+	state SessionBrokerJournalState
+}
+
+func (j *memorySessionBrokerJournal) Load(context.Context) (SessionBrokerJournalState, error) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.state, nil
+}
+
+func (j *memorySessionBrokerJournal) Save(_ context.Context, state SessionBrokerJournalState) error {
+	j.mu.Lock()
+	j.state = state
+	j.mu.Unlock()
+	return nil
+}
+
+func TestSessionBrokerJournalRecoversOwnedSessionAfterRestart(t *testing.T) {
+	adapter := newBrokerTestAdapter()
+	journal := &memorySessionBrokerJournal{state: SessionBrokerJournalState{Version: 1}}
+	first, err := NewSessionBrokerWithJournal(adapter, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validBrokerRequest()
+	started := first.Handle(context.Background(), request)
+	if started.Code != SessionBrokerOK {
+		t.Fatalf("start failed: %+v", started)
+	}
+	second, err := NewSessionBrokerWithJournal(adapter, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate := second.Handle(context.Background(), request)
+	if duplicate.Code != SessionBrokerOK || duplicate.SessionID != started.SessionID || adapter.starts != 1 {
+		t.Fatalf("journal recovery was not idempotent: %+v starts=%d", duplicate, adapter.starts)
+	}
+	stop := request
+	stop.Operation, stop.SessionID = SessionBrokerStop, started.SessionID
+	if response := second.Handle(context.Background(), stop); response.Code != SessionBrokerOK {
+		t.Fatalf("recovered stop failed: %+v", response)
+	}
+	third, err := NewSessionBrokerWithJournal(adapter, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := third.Handle(context.Background(), stop); response.Code != SessionBrokerOK {
+		t.Fatalf("durable tombstone was not idempotent: %+v", response)
+	}
+}
+
+func TestSessionBrokerJournalRejectsSessionIDReuse(t *testing.T) {
+	adapter := newBrokerTestAdapter()
+	journal := &memorySessionBrokerJournal{state: SessionBrokerJournalState{Version: 1}}
+	first, err := NewSessionBrokerWithJournal(adapter, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validBrokerRequest()
+	started := first.Handle(context.Background(), request)
+	if started.Code != SessionBrokerOK {
+		t.Fatalf("start failed: %+v", started)
+	}
+	adapter.mu.Lock()
+	adapter.active[request.SID] = BootstrapSession{ID: started.SessionID + 1, State: "active"}
+	adapter.mu.Unlock()
+	second, err := NewSessionBrokerWithJournal(adapter, journal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := second.Handle(context.Background(), request); response.Code != SessionBrokerSessionChanged {
+		t.Fatalf("session reuse was adopted: %+v", response)
+	}
+	stop := request
+	stop.Operation, stop.SessionID = SessionBrokerStop, started.SessionID
+	if response := second.Handle(context.Background(), stop); response.Code != SessionBrokerSessionChanged {
+		t.Fatalf("session reuse was stopped: %+v", response)
+	}
+}
+
+func TestFileSessionBrokerJournalIsAtomicAndCredentialFree(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ownership.json")
+	journal, err := NewFileSessionBrokerJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := SessionBrokerJournalState{Version: 1, Records: []SessionBrokerOwnership{{SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-1-2-3-4", SessionID: 44, Owner: "owner-1"}}}
+	if err := journal.Save(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil || strings.Contains(string(raw), "password") || strings.Contains(string(raw), "secret") {
+		t.Fatalf("journal read failed or contained a secret: err=%v data=%s", err, raw)
+	}
+	loaded, err := journal.Load(context.Background())
+	if err != nil || len(loaded.Records) != 1 || loaded.Records[0].SessionID != 44 {
+		t.Fatalf("journal load=%+v err=%v", loaded, err)
+	}
+	if err := os.WriteFile(path, []byte("{\"version\":1,\"records\":[],\"unexpected\":true}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := journal.Load(context.Background()); !errors.Is(err, ErrSessionBrokerUnknownOwnership) {
+		t.Fatalf("unknown journal field err=%v", err)
+	}
+	if err := os.WriteFile(path, []byte("{\"records\":[]}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewSessionBrokerWithJournal(newBrokerTestAdapter(), journal); !errors.Is(err, ErrSessionBrokerUnknownOwnership) {
+		t.Fatalf("missing journal version err=%v", err)
 	}
 }
 
@@ -249,6 +418,7 @@ func TestSessionBrokerStartProviderTimeoutIsStable(t *testing.T) {
 type changingSessionAdapter struct {
 	finds int
 	stops int
+	gone  bool
 }
 
 func (a *changingSessionAdapter) Start(context.Context, SessionBrokerOwnership) (BootstrapSession, error) {
@@ -257,11 +427,15 @@ func (a *changingSessionAdapter) Start(context.Context, SessionBrokerOwnership) 
 
 func (a *changingSessionAdapter) Stop(context.Context, SessionBrokerOwnership) error {
 	a.stops++
+	a.gone = true
 	return nil
 }
 
 func (a *changingSessionAdapter) Find(context.Context, string) (BootstrapSession, error) {
 	a.finds++
+	if a.gone {
+		return BootstrapSession{}, ErrSessionUnavailable
+	}
 	if a.finds == 1 {
 		return BootstrapSession{}, ErrSessionUnavailable
 	}

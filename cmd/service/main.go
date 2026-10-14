@@ -700,6 +700,11 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 		rdp: rdpBridge,
 	}
 	runtime.slotReconciler = slotReconciler
+	if recorder, ok := slotReconciler.(interface {
+		SetEventRecorder(func(observability.Event))
+	}); ok {
+		recorder.SetEventRecorder(runtime.record)
+	}
 	if slotReconciler != nil {
 		runtime.slotHealth = newSlotLifecycleHealth()
 	}
