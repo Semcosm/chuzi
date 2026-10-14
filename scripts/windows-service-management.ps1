@@ -366,7 +366,7 @@ function Install-ChuziServices {
             "chuzi.exe", "chuzi-browser-launcher.exe", "chuzi-user-agent.exe",
             "chuzi-session-broker.exe", "node.exe", "session-shell.ps1",
             "windows-service-management.ps1", "core-config.json",
-            ".chuzi-ui-settings.json"
+            ".chuzi-ui-settings.json", "chuzi.db"
         )
         $unexpected = @(Get-ChildItem -LiteralPath $data -Force -ErrorAction Stop |
             Where-Object {
