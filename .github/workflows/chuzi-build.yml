@@ -403,6 +403,7 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $healthy) { throw 'Core did not become healthy during lifecycle smoke test' }
+            $env:CHUZI_CORETRANSPORT_NATIVE_TEST_DATA_ROOT = $dataRoot
             $helloJson = & $launcher -root $runtimeRoot -source-root $payload -manifest $manifest -command core-call -core-method hello -core-params-json '{"version":"chuzi.core/v1"}'
             if ($LASTEXITCODE -ne 0) {
               $helloJson | Out-String | Write-Error
@@ -425,6 +426,7 @@ jobs:
               throw "Core payload is missing required capabilities: $($missingMethods -join ', ')"
             }
           } finally {
+            Remove-Item Env:CHUZI_CORETRANSPORT_NATIVE_TEST_DATA_ROOT -ErrorAction SilentlyContinue
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
