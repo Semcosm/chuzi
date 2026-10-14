@@ -29,6 +29,8 @@ var (
 // lease. TargetID resolves through the installation-owned address list; an
 // arbitrary host or RDP profile never enters a request or journal record.
 type TargetReservation struct {
+	SID        string    `json:"sid"`
+	Ordinal    int       `json:"ordinal"`
 	Version    int       `json:"version"`
 	TargetID   string    `json:"target_id"`
 	PoolID     string    `json:"pool_id"`
@@ -74,19 +76,22 @@ type LoopbackAllocatorOptions struct {
 	TargetIDs []string
 	Addresses []string
 	Port      uint16
+	// RetainUntilRelease prevents time-based reuse while native side effects may exist.
+	RetainUntilRelease bool
 }
 
 // LoopbackAllocator assigns only installation-configured loopback aliases.
 // The default address set is 127.0.0.2 through 127.0.0.254; callers cannot
 // supply an arbitrary endpoint through the slot identity request.
 type LoopbackAllocator struct {
-	journal TargetJournal
-	now     func() time.Time
-	lease   time.Duration
-	port    uint16
-	targets []loopbackTarget
-	known   map[string]struct{}
-	mu      sync.Mutex
+	journal            TargetJournal
+	now                func() time.Time
+	lease              time.Duration
+	retainUntilRelease bool
+	port               uint16
+	targets            []loopbackTarget
+	known              map[string]struct{}
+	mu                 sync.Mutex
 }
 
 type loopbackTarget struct {
@@ -149,7 +154,7 @@ func NewLoopbackAllocator(journal TargetJournal, options LoopbackAllocatorOption
 	for _, target := range targets {
 		known[target.id] = struct{}{}
 	}
-	return &LoopbackAllocator{journal: journal, now: now, lease: lease, port: port, targets: targets, known: known}, nil
+	return &LoopbackAllocator{journal: journal, now: now, lease: lease, port: port, retainUntilRelease: options.RetainUntilRelease, targets: targets, known: known}, nil
 }
 
 // Allocate claims the lowest available alias. Ownership is checked against
@@ -182,7 +187,7 @@ func (a *LoopbackAllocator) Allocate(ctx context.Context, identity Identity) (Lo
 		if _, ok := a.known[reservation.TargetID]; !ok {
 			return LoopbackTarget{}, ErrTargetUnavailable
 		}
-		if !now.Before(reservation.ExpiresAt) {
+		if !a.retainUntilRelease && !now.Before(reservation.ExpiresAt) {
 			// Reclaim only the exact observed journal record. A compare
 			// failure is not permission to delete a newer allocation.
 			if err := a.journal.Release(ctx, reservation); err != nil {
@@ -200,7 +205,7 @@ func (a *LoopbackAllocator) Allocate(ctx context.Context, identity Identity) (Lo
 		if err != nil {
 			return LoopbackTarget{}, ErrTargetUnavailable
 		}
-		reservation := TargetReservation{Version: targetReservationVersion, TargetID: target.id, PoolID: identity.PoolID, SlotID: identity.SlotID, Generation: identity.Generation, Owner: identity.Owner, LeaseID: leaseID, ExpiresAt: now.Add(a.lease), UpdatedAt: now}
+		reservation := TargetReservation{SID: identity.SID, Ordinal: identity.Ordinal, Version: targetReservationVersion, TargetID: target.id, PoolID: identity.PoolID, SlotID: identity.SlotID, Generation: identity.Generation, Owner: identity.Owner, LeaseID: leaseID, ExpiresAt: now.Add(a.lease), UpdatedAt: now}
 		if err := a.journal.Claim(ctx, reservation); err != nil {
 			if errors.Is(err, ErrTargetCollision) {
 				used[target.id] = struct{}{}
@@ -242,7 +247,7 @@ func (a *LoopbackAllocator) ReclaimExpired(ctx context.Context, now time.Time) e
 		if _, ok := a.known[reservation.TargetID]; !ok {
 			return ErrTargetUnavailable
 		}
-		if !now.Before(reservation.ExpiresAt) {
+		if !a.retainUntilRelease && !now.Before(reservation.ExpiresAt) {
 			if err := a.journal.Release(ctx, reservation); err != nil {
 				return ErrTargetOwnership
 			}
@@ -257,4 +262,17 @@ func randomLeaseID() (string, error) {
 		return "", err
 	}
 	return "lease-" + hex.EncodeToString(raw[:]), nil
+}
+
+// Restore resolves an exact durable reservation using only installation aliases.
+func (a *LoopbackAllocator) Restore(reservation TargetReservation) (LoopbackTarget, error) {
+	if a == nil || reservation.Validate() != nil {
+		return LoopbackTarget{}, ErrTargetOwnership
+	}
+	for _, target := range a.targets {
+		if target.id == reservation.TargetID {
+			return LoopbackTarget{reservation: reservation, address: target.address, port: a.port}, nil
+		}
+	}
+	return LoopbackTarget{}, ErrTargetOwnership
 }

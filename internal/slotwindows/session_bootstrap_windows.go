@@ -36,7 +36,7 @@ func NewRunnerSessionBootstrapper() SessionBootstrapper {
 
 func (b runnerSessionBootstrapper) Start(ctx context.Context, identity ManagedIdentity) (BootstrapSession, error) {
 	return callRunnerSessionProviderWithExecutable(ctx, SessionBrokerRequest{
-		Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner,
+		Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner,
 	}, b.expectedServerExecutable)
 }
 
@@ -47,7 +47,7 @@ func (b runnerSessionBootstrapper) StartWithCredential(ctx context.Context, iden
 	if ctx == nil || identity.validate() != nil || username == "" || len(password) == 0 || b.expectedServerExecutable == "" {
 		return BootstrapSession{}, ErrSessionUnavailable
 	}
-	secret := SessionBrokerSecret{SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner, Username: username, Password: append([]uint16(nil), password...)}
+	secret := SessionBrokerSecret{PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner, Username: username, Password: append([]uint16(nil), password...)}
 	defer clear(secret.Password)
 	if _, err := rand.Read(secret.Nonce[:]); err != nil {
 		return BootstrapSession{}, ErrSessionUnavailable
@@ -69,7 +69,7 @@ func (b runnerSessionBootstrapper) Stop(ctx context.Context, identity ManagedIde
 		return nil
 	}
 	_, err := callRunnerSessionProviderWithExecutable(ctx, SessionBrokerRequest{
-		Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStop, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner, SessionID: session.ID,
+		Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStop, PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner, SessionID: session.ID,
 	}, b.expectedServerExecutable)
 	return err
 }
@@ -102,5 +102,5 @@ func callRunnerSessionProviderWithExecutable(ctx context.Context, request Sessio
 	if expectedExecutable == "" || coretransport.ValidateWindowsPipeExecutable(conn, expectedExecutable) != nil {
 		return BootstrapSession{}, ErrSessionUnavailable
 	}
-	return exchangeSessionBroker(callCtx, conn, request)
+	return exchangeSessionBrokerWithWTS(callCtx, conn, request, serviceBrokerWTS)
 }

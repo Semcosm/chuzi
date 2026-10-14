@@ -15,7 +15,7 @@ import (
 const SessionBrokerSecretPipeName = "\\\\.\\pipe\\chuzi-session-secret-v1"
 
 const (
-	sessionBrokerSecretVersion  = 1
+	sessionBrokerSecretVersion  = 2
 	sessionBrokerSecretMaxFrame = 16 * 1024
 	sessionBrokerSecretTTL      = 30 * time.Second
 )
@@ -31,6 +31,7 @@ var (
 // SessionBrokerSecret is confined to the private handoff. Password is a
 // temporary UTF-16 buffer and is wiped by Put/Take callers on every path.
 type SessionBrokerSecret struct {
+	PoolID     string
 	SlotID     string
 	Ordinal    int
 	Generation uint64
@@ -42,14 +43,14 @@ type SessionBrokerSecret struct {
 }
 
 func (s SessionBrokerSecret) validate() error {
-	if !slotIDPattern.MatchString(s.SlotID) || s.Ordinal < 1 || s.Ordinal > 256 || s.Generation == 0 || !managedSIDPattern.MatchString(s.SID) || !ownerPattern.MatchString(s.Owner) || s.Username == "" || len(s.Username) > 128 || strings.ContainsAny(s.Username, "\r\n\x00") || len(s.Password) == 0 || len(s.Password) > 1024 {
+	if !slotIDPattern.MatchString(s.PoolID) || !slotIDPattern.MatchString(s.SlotID) || s.Ordinal < 1 || s.Ordinal > 256 || s.Generation == 0 || !managedSIDPattern.MatchString(s.SID) || !ownerPattern.MatchString(s.Owner) || s.Username == "" || len(s.Username) > 128 || strings.ContainsAny(s.Username, "\r\n\x00") || len(s.Password) == 0 || len(s.Password) > 1024 {
 		return ErrSessionBrokerSecretInvalid
 	}
 	return nil
 }
 
 func (s SessionBrokerSecret) ownership() SessionBrokerOwnership {
-	return SessionBrokerOwnership{SlotID: s.SlotID, Ordinal: s.Ordinal, Generation: s.Generation, SID: s.SID, Owner: s.Owner}
+	return SessionBrokerOwnership{PoolID: s.PoolID, SlotID: s.SlotID, Ordinal: s.Ordinal, Generation: s.Generation, SID: s.SID, Owner: s.Owner}
 }
 
 // SessionBrokerSecretStore is process-memory only. Entries expire quickly and
@@ -100,7 +101,7 @@ func (s *SessionBrokerSecretStore) Take(ownership SessionBrokerOwnership) (Sessi
 	if !ok {
 		return SessionBrokerSecret{}, ErrSessionBrokerSecretMissing
 	}
-	if !entry.secret.ownership().sameRequest(SessionBrokerRequest{SlotID: ownership.SlotID, Ordinal: ownership.Ordinal, Generation: ownership.Generation, SID: ownership.SID, Owner: ownership.Owner}) {
+	if !entry.secret.ownership().sameRequest(SessionBrokerRequest{PoolID: ownership.PoolID, SlotID: ownership.SlotID, Ordinal: ownership.Ordinal, Generation: ownership.Generation, SID: ownership.SID, Owner: ownership.Owner}) {
 		return SessionBrokerSecret{}, ErrSessionBrokerSecretInvalid
 	}
 	delete(s.entries, ownership.SlotID)
@@ -134,7 +135,7 @@ func (s *SessionBrokerSecretStore) DropOwnership(ownership SessionBrokerOwnershi
 	if !ok {
 		return nil
 	}
-	if !entry.secret.ownership().sameRequest(SessionBrokerRequest{SlotID: ownership.SlotID, Ordinal: ownership.Ordinal, Generation: ownership.Generation, SID: ownership.SID, Owner: ownership.Owner}) || entry.secret.Nonce != nonce {
+	if !entry.secret.ownership().sameRequest(SessionBrokerRequest{PoolID: ownership.PoolID, SlotID: ownership.SlotID, Ordinal: ownership.Ordinal, Generation: ownership.Generation, SID: ownership.SID, Owner: ownership.Owner}) || entry.secret.Nonce != nonce {
 		return ErrSessionBrokerSecretInvalid
 	}
 	clear(entry.secret.Password)
@@ -182,7 +183,7 @@ func encodeSessionBrokerSecret(secret SessionBrokerSecret) ([]byte, error) {
 	binary.LittleEndian.PutUint64(generation[:], secret.Generation)
 	frame = append(frame, generation[:]...)
 	frame = append(frame, secret.Nonce[:]...)
-	for _, value := range []string{secret.SlotID, secret.SID, secret.Owner, secret.Username} {
+	for _, value := range []string{secret.PoolID, secret.SlotID, secret.SID, secret.Owner, secret.Username} {
 		if err := putString(&frame, value); err != nil {
 			return nil, err
 		}
@@ -243,6 +244,10 @@ func decodeSessionBrokerSecret(frame []byte) (SessionBrokerSecret, error) {
 		offset += int(length)
 		return value, nil
 	}
+	poolID, err := readString()
+	if err != nil {
+		return SessionBrokerSecret{}, err
+	}
 	slotID, err := readString()
 	if err != nil {
 		return SessionBrokerSecret{}, err
@@ -267,7 +272,7 @@ func decodeSessionBrokerSecret(frame []byte) (SessionBrokerSecret, error) {
 	for i := range password {
 		password[i] = binary.LittleEndian.Uint16(frame[offset+i*2:])
 	}
-	secret := SessionBrokerSecret{SlotID: slotID, Ordinal: int(ordinal), Generation: generation, SID: sid, Owner: owner, Username: username, Password: password, Nonce: nonce}
+	secret := SessionBrokerSecret{PoolID: poolID, SlotID: slotID, Ordinal: int(ordinal), Generation: generation, SID: sid, Owner: owner, Username: username, Password: password, Nonce: nonce}
 	if err := secret.validate(); err != nil {
 		clear(password)
 		return SessionBrokerSecret{}, err
@@ -276,6 +281,7 @@ func decodeSessionBrokerSecret(frame []byte) (SessionBrokerSecret, error) {
 }
 
 type sessionBrokerSecretDrop struct {
+	PoolID     string
 	SlotID     string
 	Ordinal    int
 	Generation uint64
@@ -285,7 +291,7 @@ type sessionBrokerSecretDrop struct {
 }
 
 func (d sessionBrokerSecretDrop) ownership() SessionBrokerOwnership {
-	return SessionBrokerOwnership{SlotID: d.SlotID, Ordinal: d.Ordinal, Generation: d.Generation, SID: d.SID, Owner: d.Owner}
+	return SessionBrokerOwnership{PoolID: d.PoolID, SlotID: d.SlotID, Ordinal: d.Ordinal, Generation: d.Generation, SID: d.SID, Owner: d.Owner}
 }
 
 func (d sessionBrokerSecretDrop) validate() error {
@@ -311,7 +317,7 @@ func encodeSessionBrokerSecretDrop(drop sessionBrokerSecretDrop) ([]byte, error)
 	binary.LittleEndian.PutUint64(generation[:], drop.Generation)
 	frame = append(frame, generation[:]...)
 	frame = append(frame, drop.Nonce[:]...)
-	for _, value := range []string{drop.SlotID, drop.SID, drop.Owner} {
+	for _, value := range []string{drop.PoolID, drop.SlotID, drop.SID, drop.Owner} {
 		if len(value) > 0xffff {
 			return nil, ErrSessionBrokerSecretInvalid
 		}
@@ -361,6 +367,10 @@ func decodeSessionBrokerSecretDrop(frame []byte) (sessionBrokerSecretDrop, error
 		offset += int(length)
 		return value, nil
 	}
+	poolID, err := readString()
+	if err != nil {
+		return sessionBrokerSecretDrop{}, err
+	}
 	slotID, err := readString()
 	if err != nil {
 		return sessionBrokerSecretDrop{}, err
@@ -373,7 +383,7 @@ func decodeSessionBrokerSecretDrop(frame []byte) (sessionBrokerSecretDrop, error
 	if err != nil || offset != len(frame) {
 		return sessionBrokerSecretDrop{}, ErrSessionBrokerSecretInvalid
 	}
-	drop := sessionBrokerSecretDrop{SlotID: slotID, Ordinal: int(ordinal), Generation: generation, SID: sid, Owner: owner, Nonce: nonce}
+	drop := sessionBrokerSecretDrop{PoolID: poolID, SlotID: slotID, Ordinal: int(ordinal), Generation: generation, SID: sid, Owner: owner, Nonce: nonce}
 	if err := drop.validate(); err != nil {
 		return sessionBrokerSecretDrop{}, err
 	}

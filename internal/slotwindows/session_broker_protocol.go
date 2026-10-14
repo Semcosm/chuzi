@@ -16,7 +16,7 @@ import (
 // option, request field, or environment override for the broker endpoint.
 const SessionBrokerPipeName = `\\.\pipe\chuzi-session-bootstrap-v1`
 
-const SessionBrokerProtocolVersion = 1
+const SessionBrokerProtocolVersion = 2
 const sessionBrokerCleanupTimeout = 10 * time.Second
 
 type SessionBrokerOperation string
@@ -66,6 +66,7 @@ var (
 type SessionBrokerRequest struct {
 	Version    int                    `json:"version"`
 	Operation  SessionBrokerOperation `json:"operation"`
+	PoolID     string                 `json:"pool_id"`
 	SlotID     string                 `json:"slot_id"`
 	Ordinal    int                    `json:"ordinal"`
 	Generation uint64                 `json:"generation"`
@@ -88,7 +89,7 @@ func (r SessionBrokerRequest) validate() error {
 		return ErrSessionBrokerInvalidVersion
 	case r.Operation != SessionBrokerStart && r.Operation != SessionBrokerStop:
 		return ErrSessionBrokerUnknownOperation
-	case !slotIDPattern.MatchString(r.SlotID) || r.Ordinal < 1 || r.Ordinal > 256 || r.Generation == 0 || !managedSIDPattern.MatchString(r.SID) || !ownerPattern.MatchString(r.Owner):
+	case !slotIDPattern.MatchString(r.PoolID) || !slotIDPattern.MatchString(r.SlotID) || r.Ordinal < 1 || r.Ordinal > 256 || r.Generation == 0 || !managedSIDPattern.MatchString(r.SID) || !ownerPattern.MatchString(r.Owner):
 		return ErrSessionBrokerInvalidRequest
 	case r.Operation == SessionBrokerStart && r.SessionID != 0:
 		return ErrSessionBrokerInvalidRequest
@@ -199,6 +200,7 @@ func isPrincipalSID(sid string) bool {
 }
 
 type SessionBrokerOwnership struct {
+	PoolID     string `json:"pool_id"`
 	SlotID     string `json:"slot_id"`
 	Ordinal    int    `json:"ordinal"`
 	Generation uint64 `json:"generation"`
@@ -208,7 +210,7 @@ type SessionBrokerOwnership struct {
 }
 
 func (o SessionBrokerOwnership) sameRequest(r SessionBrokerRequest) bool {
-	return o.SlotID == r.SlotID && o.Ordinal == r.Ordinal && o.Generation == r.Generation && o.SID == r.SID && o.Owner == r.Owner
+	return o.PoolID == r.PoolID && o.SlotID == r.SlotID && o.Ordinal == r.Ordinal && o.Generation == r.Generation && o.SID == r.SID && o.Owner == r.Owner
 }
 
 // SessionBrokerAdapter is the deployment side of the protocol. Start and
@@ -279,7 +281,7 @@ func NewSessionBrokerWithJournal(adapter SessionBrokerAdapter, journal SessionBr
 	if err != nil {
 		return nil, err
 	}
-	if state.Version != 1 {
+	if state.Version != sessionBrokerJournalVersion {
 		return nil, ErrSessionBrokerInvalidRequest
 	}
 	broker := &SessionBroker{adapter: adapter, journal: journal, slotLocks: make(map[string]*sync.Mutex), records: make(map[string]SessionBrokerOwnership), tombstones: make(map[string]SessionBrokerOwnership)}
@@ -311,7 +313,7 @@ func validateJournalOwnership(record SessionBrokerOwnership, requireSession bool
 	if record.SessionID == 0 && requireSession {
 		return ErrSessionBrokerInvalidRequest
 	}
-	request := SessionBrokerRequest{Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, SlotID: record.SlotID, Ordinal: record.Ordinal, Generation: record.Generation, SID: record.SID, Owner: record.Owner}
+	request := SessionBrokerRequest{Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, PoolID: record.PoolID, SlotID: record.SlotID, Ordinal: record.Ordinal, Generation: record.Generation, SID: record.SID, Owner: record.Owner}
 	return request.validate()
 }
 
@@ -319,7 +321,7 @@ func (b *SessionBroker) persistLocked(ctx context.Context) error {
 	if b.journal == nil {
 		return nil
 	}
-	state := SessionBrokerJournalState{Version: 1, Records: make([]SessionBrokerOwnership, 0, len(b.records)), Tombstones: make([]SessionBrokerOwnership, 0, len(b.tombstones))}
+	state := SessionBrokerJournalState{Version: sessionBrokerJournalVersion, Records: make([]SessionBrokerOwnership, 0, len(b.records)), Tombstones: make([]SessionBrokerOwnership, 0, len(b.tombstones))}
 	for _, record := range b.records {
 		state.Records = append(state.Records, record)
 	}
@@ -395,16 +397,16 @@ func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest,
 		return response
 	}
 
-	if current, err := b.adapter.Find(ctx, request.SID); current.ID != 0 || (err == nil && current.State != "") {
+	if current, err := b.adapter.Find(ctx, request.SID); !sessionConfirmedAbsent(current, err) {
 		response.Code = SessionBrokerOwnershipUnknown
 		return response
 	}
-	ownership := SessionBrokerOwnership{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, Owner: request.Owner}
+	ownership := SessionBrokerOwnership{PoolID: request.PoolID, SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, Owner: request.Owner}
 	started, err := b.adapter.Start(ctx, ownership)
 	if err != nil || started.ID == 0 || started.State != "active" {
 		if started.ID != 0 {
 			ownership.SessionID = started.ID
-			if cleanupErr := b.cleanupStartedSession(ownership); cleanupErr != nil {
+			if cleanupErr := b.cleanupStartedSession(ctx, ownership); cleanupErr != nil {
 				response.Code = SessionBrokerStopTimeout
 				return response
 			}
@@ -414,7 +416,7 @@ func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest,
 	}
 	if ctx.Err() != nil {
 		ownership.SessionID = started.ID
-		if err := b.cleanupStartedSession(ownership); err != nil {
+		if err := b.cleanupStartedSession(ctx, ownership); err != nil {
 			response.Code = SessionBrokerStopTimeout
 		} else {
 			response.Code = SessionBrokerSessionUnavailable
@@ -424,7 +426,7 @@ func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest,
 	current, err := b.adapter.Find(ctx, request.SID)
 	if err != nil || current.ID != started.ID || current.State != "active" {
 		ownership.SessionID = started.ID
-		if cleanupErr := b.cleanupStartedSession(ownership); cleanupErr != nil {
+		if cleanupErr := b.cleanupStartedSession(ctx, ownership); cleanupErr != nil {
 			response.Code = SessionBrokerStopTimeout
 			return response
 		}
@@ -433,20 +435,24 @@ func (b *SessionBroker) start(ctx context.Context, request SessionBrokerRequest,
 	}
 	if ctx.Err() != nil {
 		ownership.SessionID = started.ID
-		if err := b.cleanupStartedSession(ownership); err != nil {
+		if err := b.cleanupStartedSession(ctx, ownership); err != nil {
 			response.Code = SessionBrokerStopTimeout
 		} else {
 			response.Code = SessionBrokerSessionUnavailable
 		}
 		return response
 	}
-	record := SessionBrokerOwnership{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, SessionID: current.ID, Owner: request.Owner}
+	record := SessionBrokerOwnership{PoolID: request.PoolID, SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.Generation, SID: request.SID, SessionID: current.ID, Owner: request.Owner}
 	b.mu.Lock()
 	b.records[request.SlotID] = record
+	delete(b.tombstones, request.SlotID)
 	if err := b.persistLocked(ctx); err != nil {
 		delete(b.records, request.SlotID)
+		if hasTombstone {
+			b.tombstones[request.SlotID] = tombstone
+		}
 		b.mu.Unlock()
-		if cleanupErr := b.cleanupStartedSession(record); cleanupErr != nil {
+		if cleanupErr := b.cleanupStartedSession(ctx, record); cleanupErr != nil {
 			response.Code = SessionBrokerStopTimeout
 			return response
 		}
@@ -489,16 +495,16 @@ func (b *SessionBroker) stop(ctx context.Context, request SessionBrokerRequest, 
 		return response
 	}
 	observed, findErr := b.adapter.Find(ctx, record.SID)
-	if findErr == nil {
-		if observed.ID != record.SessionID || observed.State != "active" {
+	if findErr == nil || errors.Is(findErr, ErrSessionDisconnected) {
+		if observed.ID != record.SessionID || (observed.State != "active" && observed.State != "disconnected") {
 			response.Code = SessionBrokerSessionChanged
 			return response
 		}
-	} else if !errors.Is(findErr, ErrSessionUnavailable) {
+	} else if !sessionConfirmedAbsent(observed, findErr) {
 		response.Code = SessionBrokerSessionUnavailable
 		return response
 	}
-	if err := b.adapter.Stop(ctx, record); err != nil && !errors.Is(err, ErrSessionUnavailable) {
+	if err := b.adapter.Stop(ctx, record); err != nil {
 		response.Code = SessionBrokerSessionUnavailable
 		return response
 	}
@@ -536,8 +542,12 @@ func waitBrokerSessionGone(ctx context.Context, adapter SessionBrokerAdapter, si
 		defer cancel()
 	}
 	for {
-		if _, err := adapter.Find(ctx, sid); errors.Is(err, ErrSessionUnavailable) {
+		current, err := adapter.Find(ctx, sid)
+		if sessionConfirmedAbsent(current, err) {
 			return nil
+		}
+		if err != nil && !errors.Is(err, ErrSessionDisconnected) {
+			return err
 		}
 		if err := ctx.Err(); err != nil {
 			return err
@@ -553,18 +563,26 @@ func waitBrokerSessionGone(ctx context.Context, adapter SessionBrokerAdapter, si
 // cleanupStartedSession runs after the caller's context has been cancelled.
 // The cancellation must not prevent the broker from fencing the exact session
 // it just created, and success requires an authoritative absence check.
-func (b *SessionBroker) cleanupStartedSession(ownership SessionBrokerOwnership) error {
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), sessionBrokerCleanupTimeout)
+func (b *SessionBroker) cleanupStartedSession(ctx context.Context, ownership SessionBrokerOwnership) error {
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sessionBrokerCleanupTimeout)
 	defer cancel()
 	stopErr := b.adapter.Stop(cleanupCtx, ownership)
-	waitErr := waitBrokerSessionGone(cleanupCtx, b.adapter, ownership.SID)
-	if waitErr != nil {
-		return waitErr
+	if stopErr == nil {
+		stopErr = waitBrokerSessionGone(cleanupCtx, b.adapter, ownership.SID)
 	}
-	if stopErr != nil && !errors.Is(stopErr, ErrSessionUnavailable) {
-		return stopErr
+	if stopErr != nil {
+		// An unsuccessful compensation must retain its exact session fence so a
+		// later Stop can retry after restart rather than reporting unknown ownership.
+		b.mu.Lock()
+		b.records[ownership.SlotID] = ownership
+		delete(b.tombstones, ownership.SlotID)
+		persistErr := b.persistLocked(context.WithoutCancel(cleanupCtx))
+		b.mu.Unlock()
+		if persistErr != nil {
+			return persistErr
+		}
 	}
-	return nil
+	return stopErr
 }
 
 func sessionBrokerOK(response SessionBrokerResponse, sessionID uint32, state string) SessionBrokerResponse {
@@ -591,4 +609,8 @@ func sessionBrokerCode(err error) SessionBrokerCode {
 	default:
 		return SessionBrokerInvalidRequest
 	}
+}
+
+func sessionConfirmedAbsent(session BootstrapSession, err error) bool {
+	return errors.Is(err, ErrSessionUnavailable) && session.ID == 0 && session.State == "logged_off"
 }

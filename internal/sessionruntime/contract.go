@@ -15,7 +15,7 @@ import (
 
 const (
 	APIVersion              = "chuzi.session/v1"
-	BrokerProtocolVersion   = 1
+	BrokerProtocolVersion   = 2
 	BrokerPipeName          = "\\\\.\\pipe\\chuzi-session-bootstrap-v1"
 	OwnershipJournalVersion = 1
 )

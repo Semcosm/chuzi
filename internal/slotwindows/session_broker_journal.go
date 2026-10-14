@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 )
 
-const sessionBrokerJournalVersion = 1
+const sessionBrokerJournalVersion = 2
 const sessionBrokerJournalMaxBytes = 256 * 1024
 
 // FileSessionBrokerJournal is the deployment journal used by the broker

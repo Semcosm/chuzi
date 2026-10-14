@@ -123,7 +123,7 @@ func (b *brokerHelperBootstrapper) StartWithCredential(ctx context.Context, iden
 	if err := b.ensure(ctx); err != nil {
 		return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
 	}
-	secret := slotwindows.SessionBrokerSecret{SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner, Username: username, Password: append([]uint16(nil), password...)}
+	secret := slotwindows.SessionBrokerSecret{PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner, Username: username, Password: append([]uint16(nil), password...)}
 	defer clear(secret.Password)
 	if _, err := rand.Read(secret.Nonce[:]); err != nil {
 		return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
@@ -134,7 +134,7 @@ func (b *brokerHelperBootstrapper) StartWithCredential(ctx context.Context, iden
 	started, err := b.inner.Start(ctx, identity)
 	if err != nil {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = slotwindows.DropSessionBrokerSecret(cleanupCtx, slotwindows.SessionBrokerOwnership{SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner}, secret.Nonce, b.runtime.Broker)
+		_ = slotwindows.DropSessionBrokerSecret(cleanupCtx, slotwindows.SessionBrokerOwnership{PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner}, secret.Nonce, b.runtime.Broker)
 		cancel()
 	}
 	return started, err

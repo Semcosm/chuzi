@@ -8,7 +8,7 @@ import (
 )
 
 func TestSessionBrokerSecretRoundTripStaysBinaryAndWipesCopies(t *testing.T) {
-	secret := SessionBrokerSecret{SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s', 'e', 'c', 'r', 'e', 't'}}
+	secret := SessionBrokerSecret{PoolID: "pool-a", SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s', 'e', 'c', 'r', 'e', 't'}}
 	frame, err := encodeSessionBrokerSecret(secret)
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestSessionBrokerSecretRoundTripStaysBinaryAndWipesCopies(t *testing.T) {
 
 func TestSessionBrokerSecretStoreFencesOwnershipAndConsumesOnce(t *testing.T) {
 	store := NewSessionBrokerSecretStore()
-	secret := SessionBrokerSecret{SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s', 'e', 'c', 'r', 'e', 't'}}
+	secret := SessionBrokerSecret{PoolID: "pool-a", SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s', 'e', 'c', 'r', 'e', 't'}}
 	if err := store.Put(secret); err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +55,7 @@ func TestSessionBrokerSecretStoreFencesOwnershipAndConsumesOnce(t *testing.T) {
 }
 
 func TestSessionBrokerSecretRejectsMalformedFrames(t *testing.T) {
-	secret := SessionBrokerSecret{SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s'}}
+	secret := SessionBrokerSecret{PoolID: "pool-a", SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s'}}
 	frame, err := encodeSessionBrokerSecret(secret)
 	if err != nil {
 		t.Fatal(err)
@@ -67,8 +67,8 @@ func TestSessionBrokerSecretRejectsMalformedFrames(t *testing.T) {
 }
 
 func TestSessionBrokerSecretDropUsesExactOwnership(t *testing.T) {
-	secret := SessionBrokerSecret{SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s', 'e', 'c', 'r', 'e', 't'}, Nonce: [16]byte{1}}
-	frame, err := encodeSessionBrokerSecretDrop(sessionBrokerSecretDrop{SlotID: secret.SlotID, Ordinal: secret.Ordinal, Generation: secret.Generation, SID: secret.SID, Owner: secret.Owner, Nonce: secret.Nonce})
+	secret := SessionBrokerSecret{PoolID: "pool-a", SlotID: "slot-001", Ordinal: 1, Generation: 7, SID: "S-1-5-21-100", Owner: "service-owner", Username: "chuzi-slot-001", Password: []uint16{'s', 'e', 'c', 'r', 'e', 't'}, Nonce: [16]byte{1}}
+	frame, err := encodeSessionBrokerSecretDrop(sessionBrokerSecretDrop{PoolID: "pool-a", SlotID: secret.SlotID, Ordinal: secret.Ordinal, Generation: secret.Generation, SID: secret.SID, Owner: secret.Owner, Nonce: secret.Nonce})
 	if err != nil {
 		t.Fatal(err)
 	}

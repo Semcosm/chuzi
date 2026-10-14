@@ -52,6 +52,20 @@ func runSessionBroker() error {
 	if err := slotwindows.ProtectSessionBrokerStateRoot(stateRoot, brokerSID); err != nil {
 		return servicehost.ErrHostUnavailable
 	}
+	// A no-share handle serializes all broker writers for this operator root.
+	lockPath, err := windows.UTF16PtrFromString(filepath.Join(stateRoot, "broker.lock"))
+	if err != nil {
+		return servicehost.ErrHostUnavailable
+	}
+	lock, err := windows.CreateFile(lockPath, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return servicehost.ErrHostUnavailable
+	}
+	defer windows.CloseHandle(lock)
+	var lockInfo windows.ByHandleFileInformation
+	if windows.GetFileInformationByHandle(lock, &lockInfo) != nil || lockInfo.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return servicehost.ErrHostUnavailable
+	}
 	journal, err := slotwindows.NewFileSessionBrokerJournal(filepath.Join(stateRoot, "session-broker-ownership.json"))
 	if err != nil {
 		return err

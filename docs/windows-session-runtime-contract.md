@@ -60,8 +60,9 @@ The service is the sole owner of durable Core state, account lifecycle,
 Profile policy, WTS verification, desktop, Agent, worker, stop, and cleanup.
 The Launcher/UI is a caller and receives only redacted DTOs. The login helper
 owns the interactive user action and short-lived login handoff; it does not own
-Store or Profile data. The fixed broker listener owns only broker protocol
-validation and delegates to the service's registered login adapter. The
+Store or Profile data. The fixed broker listener validates protocol and owns
+the controlled RDP adapter; WTS token queries and logoff execute in the service
+through the authenticated request connection. The
 managed slot user owns its interactive shell/desktop process but has no access
 to bbolt, credentials, other Profiles, the install tree beyond read/execute,
 or the broker pipe.
@@ -71,9 +72,9 @@ Expected process identities and rights:
 | Process | Identity | Rights and accessible objects |
 | --- | --- | --- |
 | Launcher/UI | logged-in operator | launcher lock and Core DTOs only; no Store, pipe, Profile, or secret |
-| Core/service | LocalSystem or dedicated service SID with WTS/TCB rights | one bbolt writer, fixed broker listener, service runtime, slot roots, credential boundary |
+| Core/service | LocalSystem with SeTcbPrivilege, registered service SID | one bbolt writer, authoritative WTS query/logoff, service runtime, slot roots, credential boundary |
 | Login helper | registered operator SID/session | interactive RDP request and helper registration only; no database writer |
-| Broker listener | broker SID, ACL plus service SID | fixed pipe protocol; no secret or arbitrary command |
+| Broker listener | authenticated interactive operator SID | fixed public/secret pipes, one-shot private secret, Credential Manager and mstsc, owned target journal; no arbitrary command |
 | Managed shell/Agent | disposable non-admin local SID | its SID Profile, derived desktop, Agent pipe, assigned Job Object; no Core DB |
 | Browser worker | managed slot SID | worker capability and granted account Profile only; no password or host control |
 
@@ -107,7 +108,11 @@ old session ready.
 The adapter creates or reuses only the service-derived disposable slot user,
 then the service re-queries WTS by SID and requires the expected active session
 ID. A provider response is not a fact. The fixed broker request carries only
-version, operation, slot, ordinal, generation, SID, owner, and stop session ID.
+version 2, operation, pool, slot, ordinal, generation, SID, owner, and stop
+session ID. The broker runs as the authenticated interactive operator and does
+not call `WTSQueryUserToken`; the LocalSystem service handles WTS queries and
+logoff through the authenticated callback. WTS query errors are errors, never
+evidence that a session is absent.
 Start success requires nonzero active session; stop success requires state
 = stopped. Unknown ownership, changed SID/session, missing broker, invalid
 response, or timeout returns session_unavailable/session_changed and fails
@@ -135,7 +140,7 @@ The checked-in split-process path uses the fixed
 '\\.\pipe\chuzi-session-secret-v1' private channel. Its DACL names only the
 installed service and broker SIDs; the caller validator checks the service
 image, the frame is bounded binary data carrying a random handoff nonce and
-slot/generation/SID/owner fence, and both endpoints clear their UTF-16 buffers. The public
+pool/slot/ordinal/generation/SID/owner fence, and both endpoints clear their UTF-16 buffers. The public
 'chuzi-session-bootstrap-v1' JSON remains credential-free. Adding a password
 field to broker JSON is forbidden.
 
@@ -179,9 +184,18 @@ The generation and revision fence every broker, Agent, lease, and worker
 operation. Unknown or malformed slot ownership is fail closed; it is never
 deleted by a generic cleanup pass. A human must inspect and explicitly repair
 it. The broker/helper never opens bbolt or writes the service slot journal.
+Broker ownership and secret frames use protocol version 2 and include `pool_id`
+in the identity fence. A persistent loopback target allocator includes the pool
+in its reservation key, so ordinal `1` from two pools cannot collide; journal
+read/write or ownership failures retain the reservation for recovery.
 The fixed broker may additionally persist its own credential-free protocol
 ownership/tombstone journal in its authenticated operator state root; that file
-is only a broker restart fence and never replaces the service slot journal.
+is only a broker restart fence and never replaces the service slot journal. The
+broker ownership journal is version 2 and the target journal is version 1. Older
+records without a pool fence are rejected; upgrade must Stop before replacing
+the binaries, and incompatible records require explicit operator repair. A new
+generation removes an old tombstone only with its committed ownership record.
+Failed commit or compensation preserves the recovery fence.
 
 Native status: the service slot ownership records and the broker ownership
 journal have durable, atomic implementations with validation and restart
@@ -261,9 +275,13 @@ readiness.
 
 ### J. Shutdown, crash, rollback, upgrade, uninstall
 
-Graceful shutdown stops boot-only/prewarm sessions first, fences leased work,
-stops workers and Agent Job Objects, stops the owned WTS session through the
-broker, waits for Find(SID) to disappear, and only then marks ownership stopped.
+Graceful shutdown fences leased work, revokes capabilities and Profile access,
+stops workers and Agent Job Objects, then stops the exact owned WTS session
+through the broker/service callback. It drains boot-only and journal-discovered
+sessions before closing the helper. It waits for authoritative WTS absence and
+broker credential/target cleanup before marking ownership stopped. Query,
+Credential Manager deletion, or journal errors retain ownership for retry;
+absence alone does not prove credential cleanup.
 A host crash leaves the journal and database; the next owner performs
 fail-closed inspection and never deletes an object it cannot match by owner,
 SID, slot, and generation. Partial rollback leaves the old signed environment
@@ -315,7 +333,7 @@ shell command, or worker entrypoint.
 The independent harness is scripts/probes/windows-session-login-probe.ps1 and
 the native SYSTEM probe is cmd/session-login-probe. It performs host preflight,
 creates a random disposable non-admin user, initializes its Profile through
-CreateProcessWithLogonW(LOGON_WITH_PROFILE), applies the fixed signed
+CreateProcessWithLogonW(LOGON_WITH_PROFILE) in the operator harness, applies the fixed signed
 PowerShell shell, stores a short-lived RDP credential in Credential Manager,
 and starts mstsc with a run-scoped loopback profile. The profile keeps NLA and
 standard certificate/security checks. It waits for an active WTS session and
@@ -326,7 +344,8 @@ credential target, user only when its run marker matches, test trust, task,
 profile/runtime root, and sessions. It never prints the password or raw
 username/SID/path.
 
-The harness is not proof that the installed broker adapter succeeds on the
+The production LocalSystem cold-Profile path uses `userenv!CreateProfile` and
+never calls `CreateProcessWithLogonW`. The harness is not proof that the installed broker adapter succeeds on the
 target deployment. It is a controlled login proof for the chosen identity
 combination and a regression probe for cold Profile, first login, logout, and
 re-login. Native Agent/browser checks remain pending and must still run

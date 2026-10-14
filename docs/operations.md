@@ -121,6 +121,25 @@ session 的 Windows Agent ready 表示最近一次 reconcile
 记录的健康状态；历史 operation ready 不能替代当前健康状态，也不代表此刻完成
 WTS 探测。test 包构建通过仍不能替代真机生产验收。
 
+生产 broker 使用 interactive operator 身份，负责 Credential Manager、受控 `mstsc`
+及自身 journal；LocalSystem 服务负责 `CreateProfile`、WTS token 查询和精确 session 注销。
+WTS callback 使用服务认证的原始连接，不接受新的 SID 或任意注销目标。生产 target
+由持久化跨池 allocator 分配；不同池 ordinal=1 必须得到不同地址。
+
+升级前先用旧版本完成所有 session Stop，再通过服务 shutdown 路径停止 Agent、session
+和 helper，保留 bbolt、Profile、slot ownership、cleanup journal 和 broker state root。
+broker JSON、secret frame 和 broker ownership journal 升为 v2，固定 pipe 名称仍保留 v1 后缀；
+service slot ownership journal 继续使用其独立版本。
+旧 broker journal 缺少 pool fence 时拒绝自动迁移，必须保留记录并进行明确的操作者修复。
+清理顺序为 capability revoke、Profile access revoke、Agent/worker stop、精确 session Stop、
+WTS absence 及 broker credential/target cleanup 确认；任一步失败都保留 ownership，
+不能将查询失败或凭据删除失败视为 stopped。
+
+Session 07 交接前必须用该提交的 Windows 安装包验证：全新用户/冷 Profile、生产
+broker 登录、Stop/重新 Start、登录中 Cancel、服务重启恢复、shutdown 和两个池 ordinal=1
+并行。`-LocalRdp` 只验证 operator harness，不能替代这条生产服务链路；普通 Actions
+构建和 Windows 测试编译也不能替代真实 WTS、RDP、Credential Manager、ACL 与 Agent 验收。
+
 安装后的 Windows 主机可用只读 PowerShell 检查分别确认各层状态：
 
 ```powershell

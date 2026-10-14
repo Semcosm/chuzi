@@ -8,6 +8,7 @@ import (
 var (
 	// These classifications are shared by the protocol/state-machine tests and
 	// the Windows WTS implementation.  Callers must not expose provider text.
+	ErrSessionQuery        = errors.New("slotwindows: session query failed")
 	ErrSessionUnavailable  = errors.New("slotwindows: session unavailable")
 	ErrSessionDisconnected = errors.New("slotwindows: session disconnected")
 	ErrSessionChanged      = errors.New("slotwindows: session changed")
@@ -19,6 +20,7 @@ var (
 // profile path, or command text. The provisioner derives every field from the
 // validated slot request and its ownership record.
 type ManagedIdentity struct {
+	PoolID     string
 	SlotID     string
 	Ordinal    int
 	Generation uint64
@@ -81,7 +83,7 @@ func startManagedSession(ctx context.Context, provider SessionBootstrapper, iden
 }
 
 func (i ManagedIdentity) validate() error {
-	if !slotIDPattern.MatchString(i.SlotID) || i.Ordinal < 1 || i.Ordinal > 256 || i.Generation == 0 || !managedSIDPattern.MatchString(i.SID) || !ownerPattern.MatchString(i.Owner) {
+	if !slotIDPattern.MatchString(i.PoolID) || !slotIDPattern.MatchString(i.SlotID) || i.Ordinal < 1 || i.Ordinal > 256 || i.Generation == 0 || !managedSIDPattern.MatchString(i.SID) || !ownerPattern.MatchString(i.Owner) {
 		return ErrInvalidOptions
 	}
 	return nil

@@ -705,11 +705,8 @@ func (p *windowsProvisioner) stopSession(ctx context.Context, request slot.Provi
 	}
 	if record.SessionID != 0 && record.Phase != "stopped" {
 		current, findErr := FindSession(record.SID)
-		if findErr == nil && current.ID != record.SessionID {
-			return ErrSessionChanged
-		}
-		if findErr != nil && current.State == "disconnected" {
-			return ErrSessionDisconnected
+		if err := validateSessionCleanupObservation(record.SessionID, BootstrapSession{ID: current.ID, State: current.State}, findErr); err != nil {
+			return err
 		}
 	}
 	if record.Phase == "stopped" {
@@ -1164,10 +1161,7 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 func (p *windowsProvisioner) ensureManagedProfile(ctx context.Context, username string, managed managedUserCredentials) error {
 	profilePath, profileErr := profilePathForSID(managed.SID)
 	if profileErr != nil || validateProfileHivePath(profilePath) != nil {
-		if len(managed.password) == 0 {
-			return ErrProfileBootstrap
-		}
-		if err := bootstrapProfileWithLogon(ctx, username, managed.password); err != nil {
+		if err := bootstrapManagedProfile(ctx, managed.SID, username); err != nil {
 			return err
 		}
 	}
@@ -1786,7 +1780,7 @@ func (p *windowsProvisioner) summary(request slot.ProvisionRequest, sid string) 
 }
 
 func (p *windowsProvisioner) managedIdentity(request slot.ProvisionRequest, sid string) (ManagedIdentity, error) {
-	identity := ManagedIdentity{SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.EnvironmentGeneration, SID: sid, Owner: request.Owner}
+	identity := ManagedIdentity{PoolID: request.PoolID, SlotID: request.SlotID, Ordinal: request.Ordinal, Generation: request.EnvironmentGeneration, SID: sid, Owner: request.Owner}
 	if err := identity.validate(); err != nil {
 		return ManagedIdentity{}, err
 	}
@@ -1824,28 +1818,7 @@ func validateCleanupSessionFence(record ownershipRecord) error {
 		return nil
 	}
 	current, err := FindSession(record.SID)
-	if record.SessionID == 0 {
-		if err == nil || errors.Is(err, ErrSessionDisconnected) {
-			return ErrOwnership
-		}
-		if errors.Is(err, ErrSessionUnavailable) && current.State == "logged_off" {
-			return nil
-		}
-		return ErrOwnership
-	}
-	if err == nil {
-		if current.ID != record.SessionID {
-			return ErrSessionChanged
-		}
-		return nil
-	}
-	if errors.Is(err, ErrSessionDisconnected) {
-		return ErrSessionDisconnected
-	}
-	if errors.Is(err, ErrSessionUnavailable) && current.State == "logged_off" {
-		return nil
-	}
-	return ErrSessionUnavailable
+	return validateSessionCleanupObservation(record.SessionID, BootstrapSession{ID: current.ID, State: current.State}, err)
 }
 
 // ensureSessionBootstrap invokes only the optional, deployment-owned session
@@ -1867,13 +1840,17 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 	if err != nil {
 		return ErrOwnership
 	}
-	if current, findErr := FindSession(managed.SID); findErr == nil && current.State == "active" {
+	current, findErr := FindSession(managed.SID)
+	if findErr == nil && current.State == "active" {
 		if journalAuthorizesActiveSession(record, current, managed.SID) {
 			return nil
 		}
 		// An active same-SID session without an exact journaled session ID is
 		// ambiguous after restart or SID reuse. Never adopt or log it off.
 		return ErrOwnership
+	}
+	if !sessionConfirmedAbsent(BootstrapSession{ID: current.ID, State: current.State}, findErr) {
+		return classifySessionBootstrapError(findErr)
 	}
 	provider := p.options.SessionBootstrapper
 	loginAdapter := p.options.SessionLoginAdapter
@@ -1917,7 +1894,7 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 		}
 		return retryableProvisionFailure{cause: ErrSessionUnavailable}
 	}
-	current, findErr := FindSession(managed.SID)
+	current, findErr = FindSession(managed.SID)
 	if findErr != nil {
 		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
 			return ErrCleanup
@@ -2018,16 +1995,8 @@ func (p *windowsProvisioner) stopSessionForRecord(ctx context.Context, request s
 		return err
 	}
 	current, findErr := FindSession(record.SID)
-	if findErr != nil {
-		if errors.Is(findErr, ErrSessionUnavailable) && current.State == "logged_off" {
-			// The durable session fence is already absent. No provider call is
-			// needed to prove cleanup after a restart.
-			return nil
-		}
-		return findErr
-	}
-	if current.ID != record.SessionID || current.State != "active" {
-		return ErrSessionChanged
+	if err := validateSessionCleanupObservation(record.SessionID, BootstrapSession{ID: current.ID, State: current.State}, findErr); err != nil {
+		return err
 	}
 	if p.options.SessionBootstrapper == nil && p.options.SessionLoginAdapter == nil {
 		// The local-RDP smoke deliberately adopts an operator-created session
@@ -2088,9 +2057,12 @@ func waitForSessionGone(ctx context.Context, sid string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		_, err := FindSession(sid)
-		if errors.Is(err, ErrSessionUnavailable) {
+		current, err := FindSession(sid)
+		if sessionConfirmedAbsent(BootstrapSession{ID: current.ID, State: current.State}, err) {
 			return nil
+		}
+		if err != nil && !errors.Is(err, ErrSessionDisconnected) {
+			return err
 		}
 		select {
 		case <-ctx.Done():

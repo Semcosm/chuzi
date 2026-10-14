@@ -178,7 +178,7 @@ func DropSessionBrokerSecret(ctx context.Context, ownership SessionBrokerOwnersh
 	if ctx == nil || validateJournalOwnership(ownership, false) != nil || expectedExecutable == "" {
 		return ErrSessionBrokerSecretInvalid
 	}
-	frame, err := encodeSessionBrokerSecretDrop(sessionBrokerSecretDrop{SlotID: ownership.SlotID, Ordinal: ownership.Ordinal, Generation: ownership.Generation, SID: ownership.SID, Owner: ownership.Owner, Nonce: nonce})
+	frame, err := encodeSessionBrokerSecretDrop(sessionBrokerSecretDrop{PoolID: ownership.PoolID, SlotID: ownership.SlotID, Ordinal: ownership.Ordinal, Generation: ownership.Generation, SID: ownership.SID, Owner: ownership.Owner, Nonce: nonce})
 	if err != nil {
 		return err
 	}

@@ -20,8 +20,8 @@ pool/slot/environment 元数据，返回受控的 agent handle 和健康事实�
 
 ## 用户 Profile policy 和 Winlogon Shell
 
-每个受管用户的 Profile 由服务按 SID 派生。首次 Profile 初始化固定使用
-`CreateProcessWithLogonW(LOGON_WITH_PROFILE)`，随后 policy boundary 只操作目标用户的
+每个受管用户的 Profile 由服务按 SID 派生。首次 Profile 初始化固定使用服务可调用的
+`userenv!CreateProfile`，随后 policy boundary 只操作目标用户的
 HKCU/hive，并幂等设置唯一的 Winlogon `Shell` 值：
 
 ```text
@@ -266,8 +266,8 @@ ownership marker 不匹配的 root 或未知目录永远不会删除。失败会
 ### 固定 session broker 协议
 
 部署侧 broker 只能监听编译期固定的
-`\\.\pipe\chuzi-session-bootstrap-v1`。JSONL 协议版本为 `1`，操作只有 `start`
-和 `stop`。请求字段是 `version`、`operation`、`slot_id`、`ordinal`、`generation`、
+`\\.\pipe\chuzi-session-bootstrap-v1`。JSONL 协议版本为 `2`，操作只有 `start`
+和 `stop`。请求字段是 `version`、`operation`、`pool_id`、`slot_id`、`ordinal`、`generation`、
 `sid`、`owner`，`stop` 另外必须带非零 `session_id`；响应字段是 `version`、`operation`、
 `code`、`session_id` 和 `state`。协议解码拒绝未知字段、未知操作、错误版本、空 slot、
 非法 SID/ordinal、零 generation、缺失 owner、start 携带 session ID 和 stop 缺失
@@ -275,27 +275,38 @@ session ID。稳定错误码包括 `invalid_version`、`invalid_request`、`unkn
 `ownership_mismatch`、`ownership_unknown`、`stale_generation`、`session_unavailable`、
 `session_changed` 和 `stop_timeout`。
 
-broker 在内存中维护自己创建的 `(slot_id, ordinal, generation, sid, session_id, owner)`
+broker 在内存中维护自己创建的 `(pool_id, slot_id, ordinal, generation, sid, session_id, owner)`
 记录，并在当前已认证 operator SID 派生的受保护临时 state root 中持久化无凭据
-ownership/tombstone journal。重复 start 只在 ownership 和仍为 active 的同一 session 完全匹配时
+version 2 ownership/tombstone journal。缺少 `pool_id` 的旧记录不能自动接管；升级前必须
+完成旧版本 Stop，保留旧 journal 并由操作者处理不兼容记录。重复 start 只在 ownership 和仍为 active 的同一 session 完全匹配时
 幂等成功；旧 generation、错误 owner/SID/session ID 和重复使用未知 ownership 都被拒绝。
 broker 重启后只恢复 journal 中的精确记录，并重新执行 `FindSession`；不能接管未知
-session。stop 会调用部署适配器并等待 `FindSession(sid)` 不再发现 session；等待受 context
-总超时约束，重复 stop 仅对本次 broker 已确认的 tombstone 幂等成功。
+session。stop 会调用部署适配器并等待服务确认 `FindSession(sid)` 不再发现 session，同时
+删除 owned Credential Manager 项并释放 target reservation；等待受 context 总超时约束。
+查询失败、凭据删除失败或 journal 失败都不能提交 stopped tombstone，ownership 保留供重试。
+重复 stop 仅对 broker 已确认的精确 tombstone 幂等成功；新 generation Start 成功提交时清除旧 tombstone。
 
 pipe listener 必须在解析 JSON 前使用显式 ACL，只允许 chuzi 服务 SID 和部署侧 broker SID，
 拒绝 Everyone、Users、Remote Desktop Users 等宽泛主体。仓库提供固定 pipe listener、
 协议/ACL 验证和 `SessionBroker` ownership 状态机；checked-in broker entrypoint 注入
 受控本机 RDP `SessionBrokerAdapter`。listener 不创建或模拟 Windows session，RDP/Winlogon
-authorizer 和 WTS 建立动作仍属于该受控适配器。Windows SDK 没有可直接替代真实登录的
+authorizer 和真实登录动作仍属于该受控适配器。broker 运行在已认证 interactive operator
+下，通过同一服务认证连接请求 WTS 查询/注销，服务将 callback 绑定到原始请求的 SID 和
+精确 session fence。`WTSQueryUserToken` 仅在 LocalSystem + `SeTcbPrivilege` 服务执行，
+权限或查询错误不会当作 session absence。Windows SDK 没有可直接替代真实登录的
 `WTSLogonUser` API，这不允许改用 `runas`、`CreateProcessAsUser`、`tscon` 或伪造 pipe 响应。
 
 需要一次性密码的部署实现必须使用 `SessionLoginAdapter`：密码只作为短生命周期的内存
-UTF-16 buffer 在同一受 ACL 保护的服务进程内传递，并在调用返回后清零；它不会进入 broker JSON、
+UTF-16 buffer 在进程内传递，或通过固定私有 pipe 的 nonce/ownership-fenced binary v2 frame
+跨服务/broker 传递，双方在调用返回后清零；它不会进入 broker JSON、
 Core、UI、Matrix、日志、诊断、环境变量、临时文件或持久化状态。固定 pipe 客户端不接受
 用户名/密码字段。适配器返回的 session ID 也不能作为事实，provisioner 必须再次执行
 `FindSession(managed SID)` 并确认 SID 和 active 状态。适配器或 helper 不可用时稳定返回
 `session_unavailable`，阶段 4 不得声称 native acceptance 完成。
+生产 broker 的 RDP target 由持久化 LoopbackAllocator 分配，identity 包含 `pool_id`；
+不同 pool 的相同 ordinal 不会共享 `127.0.1.2`。target journal 损坏、ownership 不匹配或
+分配提交失败都会 fail closed，并保留资源供恢复。
+
 固定 pipe 客户端的连接和读写受调用方 deadline 与最长 30 秒限制；取消会中断正在
 等待的 I/O。响应操作必须匹配请求，start 成功要求非零 active session，stop 成功
 要求 stopped 状态；无 broker、超时或无效响应均返回稳定的 `session_unavailable`。fake provider 与协议

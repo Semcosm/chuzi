@@ -5,7 +5,7 @@ Head or Range: 05b3cab227166fc363fc51be8f4a63711bcf20fa
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -54,6 +54,28 @@ Stop retains the managed identity, Profile, and ownership tree for a later
 Start. Retire is the destructive lifecycle and deletes only exactly owned
 resources through the cleanup journal.
 
+Revision 2 closes four deployment blockers found during review. The interactive
+broker no longer calls `WTSQueryUserToken`; the LocalSystem service, with the
+documented TCB privilege, performs WTS query/logoff through an authenticated
+callback bound to the original SID and exact session fence. Query errors are
+classified as errors and never as session absence. A cold Profile is created by
+`userenv!CreateProfile`, which is valid for the service identity;
+`CreateProcessWithLogonW(LOGON_WITH_PROFILE)` remains only in the operator probe
+harness.
+
+Broker protocol, secret frames, and the broker ownership journal are version 2 and include
+`pool_id`. A persistent LoopbackAllocator target journal prevents ordinal 1 in
+two pools from sharing an RDP target. Missing pool identity in an old record is
+rejected rather than adopted. Start/Stop recovery removes an old tombstone only
+after a new generation commits ownership. Credential Manager deletion, WTS
+query, target journal, or tombstone commit failures retain ownership for retry;
+they cannot produce a stopped tombstone. Cleanup runs capability revoke,
+Profile revoke, Agent/worker stop, exact session stop, WTS absence, and broker
+credential/target cleanup before committing stopped.
+
+CR-0119 belongs to Session 07. Session 08 UI work must receive the next unused
+CR number when it begins, after fetching main; it must not reuse CR-0119.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -85,22 +107,22 @@ The operation phase enum and corresponding recovery behavior are:
 | --- | --- |
 | `environment` | Resolve the durable pool and signed runtime. Retry only failures explicitly classified retryable; a disabled, draining, or missing pool fails closed. |
 | `host_preflight` | Retain the phase for host-gate reporting. Native host validation remains inside the provisioner boundary and cannot be replaced by a provider success result. |
-| `profile` | The native journal binds slot, ordinal, pool, owner, generation, username, and SID before Profile policy continues. Existing ownership is revalidated; unknown or partial ownership is quarantined. |
+| `profile` | The native journal binds slot, ordinal, pool, owner, generation, username, and SID before service-compatible CreateProfile and Profile policy continue. Existing ownership is revalidated; unknown or partial ownership is quarantined. |
 | `login` | The helper and broker use a bounded context. The public JSON stays credential-free; the one-shot private secret uses the exact ownership plus nonce fence. |
 | `wts` | The provisioner independently queries WTS and atomically records the exact active session ID. SID-only discovery never authorizes adoption or cleanup. |
 | `desktop` | The fixed managed desktop and signed shell policy remain service-derived. A restart proceeds only from the exact journaled session. |
 | `shell` | Winlogon uses the fixed signed PowerShell shell command from the managed Profile. Context failure enters the same fenced cleanup path. |
 | `agent` | Agent startup and shutdown are bound to slot, owner, generation, SID, and session. Process-local state is insufficient after restart. |
 | `worker` | Provision is followed by an independent Inspect gate. Agent and worker readiness remain false until both provisioned and inspected summaries pass. |
-| `stopping` | Revoke capabilities, stop the Agent, stop the exact session, revoke Profile access, and verify WTS absence. A cleanup failure remains non-terminal and retryable and quarantines an unleased slot. |
+| `stopping` | Revoke capabilities, revoke Profile access, stop the Agent/worker, stop the exact session, verify WTS absence and broker credential/target cleanup. A cleanup failure remains non-terminal and retryable and quarantines an unleased slot. |
 | `stopped` | The native session and access grant are absent. The identity, Profile, and ownership tree remain for Start; terminal operation state is committed only after this proof. |
 
 The native slot ownership phases actually written by this implementation are
 `intent`, `profile`, `wts`, `agent`, `worker`, `stopping`, and `stopped`.
 `desktop`, `shell`, and `unknown` remain valid journal vocabulary for the wider
 runtime contract. Cleanup substeps are written after every destructive boundary,
-including `begin`, `capabilities_revoked`, `agent_stopped`, `session_stopped`,
-`profile_revoked`, `wts_verified`, `control_plane_revoked`, `profile_deleted`,
+including `begin`, `capabilities_revoked`, `profile_revoked`, `agent_stopped`,
+`session_stopped`, `wts_verified`, `control_plane_revoked`, `profile_deleted`,
 `root_deleted`, and `user_deleted`.
 
 ### Crash Windows
@@ -167,8 +189,9 @@ shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
 
-The following checks passed for implementation commit
-`05b3cab227166fc363fc51be8f4a63711bcf20fa` on the Linux development host:
+The following checks passed on the Linux development host for the original
+implementation and Revision 2 working tree; final rebased implementation OIDs
+are recorded above:
 
 - `go test -count=1 ./...`
 - `go test -count=1 -race ./...`
@@ -195,7 +218,12 @@ shutdown, and shutdown behavior when a lease fence fails. Broker tests cover
 credential-free JSON, narrow ACL declarations, per-slot concurrency, restart
 recovery, unknown-session rejection, session-ID reuse, bounded stop, atomic
 credential-free journal replacement, malformed private frames, one-shot secret
-consumption, exact nonce/ownership drop, and password-buffer clearing.
+consumption, exact nonce/ownership drop, and password-buffer clearing. Revision 2
+adds cross-pool ordinal-1 target isolation, persistent reservation recovery,
+service-mediated WTS callbacks with cancellation, query-vs-absence
+classification, cleanup failure without tombstone, new-generation tombstone
+replacement, failed ownership commit with failed compensation recovery, and
+ordered cleanup with legacy checkpoint recovery.
 
 The Windows test binaries compiled successfully. No native Windows test binary,
 session broker, Credential Manager call, `mstsc` login, WTS transition, Profile
@@ -256,7 +284,12 @@ operator repair; they must not be discarded to make the old binary start.
 
 ## Breaking Change
 
-There is no Core wire-format, database-version, or configuration-key break. On
+There is no Core wire-format, database-version, or configuration-key break. The
+private broker JSON, secret frame, and ownership journal move to version 2 with
+a required pool fence. The fixed pipe names keep their v1 suffix. Broker v1
+records without `pool_id` fail closed; deployments must complete old-version
+Stop, preserve the old journals, and explicitly repair incompatible state
+before enabling the new payload. Automatic adoption or deletion is forbidden. On
 Windows with the job-user pool enabled, existing Start, Stop, Cancel, and Retry
 operations now drive the assembled native runtime and shutdown drains owned
 sessions. Deployments therefore need the documented fixed helper registration,

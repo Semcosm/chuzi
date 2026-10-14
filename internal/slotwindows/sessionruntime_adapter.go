@@ -80,7 +80,7 @@ func managedIdentityFromRuntime(identity sessionruntime.Identity) (ManagedIdenti
 	if err := identity.Validate(); err != nil {
 		return ManagedIdentity{}, ErrInvalidOptions
 	}
-	managed := ManagedIdentity{SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner}
+	managed := ManagedIdentity{PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner}
 	if err := managed.validate(); err != nil {
 		return ManagedIdentity{}, err
 	}
