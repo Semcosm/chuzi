@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 9f878e2f728d74c58c95025a6e79c14f9b40d662
+Head or Range: 09bd9d7312a158f719ca3f19142d2519bca28c4c
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 6
+Revision: 7
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 9f878e2f728d74c58c95025a6e79c14f9b40d662
+Head OID: 09bd9d7312a158f719ca3f19142d2519bca28c4c
 Integrated Result: pending
 
 ## Summary
@@ -99,6 +99,11 @@ when the service registration resource gate validates the data root.
 Revision 6 fixes the remaining first-install registration failure: populated
 signed component directories are accepted, while mutable data directories must
 still be empty before ownership is established.
+
+Revision 7 fixes the nightly installer registration path. Authenticode payload
+validation is now required only for formal stable versions matching `vX.Y.Z`;
+nightly and test artifacts use the unsigned validation path and no longer fail
+service registration because the production validator is absent.
 
 ## Motivation
 

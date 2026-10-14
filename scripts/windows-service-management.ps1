@@ -429,7 +429,10 @@ function Install-ChuziServices {
         try {
             $build = Get-Content -Raw -LiteralPath $buildManifest | ConvertFrom-Json
             $version = [string]$build.version
-            $productionPayload = $version -notlike "test-*" -and $version -notlike "dev*"
+            # Only formal semver release payloads carry the production
+            # Authenticode gate. Nightly and test artifacts are unsigned
+            # validation builds and must use the non-production path.
+            $productionPayload = $version -match '^v[0-9]+\.[0-9]+\.[0-9]+$'
         } catch {
             throw "service_build_manifest_invalid"
         }
