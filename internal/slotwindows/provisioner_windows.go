@@ -504,7 +504,44 @@ func (p *windowsProvisioner) Shutdown(ctx context.Context) error {
 	}
 	p.mu.Unlock()
 	var cleanupErr error
+	// A restart can lose boots and agents while the ownership record remains
+	// durable. Discover those records first so Profile revocation precedes all
+	// Agent/session shutdown through the same Stop fence used by explicit Stop.
+	ownedRecords, discoverErr := p.discoverOwnedRuntimeRecords()
+	if discoverErr != nil {
+		cleanupErr = errors.Join(cleanupErr, discoverErr)
+	}
+	handled := make(map[string]struct{}, len(ownedRecords))
+	for _, owned := range ownedRecords {
+		if ctx.Err() != nil {
+			cleanupErr = errors.Join(cleanupErr, ErrCleanup)
+			break
+		}
+		switch owned.record.Phase {
+		case "intent", "profile", "wts", "desktop", "shell", "agent", "worker", "stopping":
+		default:
+			continue
+		}
+		request := p.requestForOwnedRecord(owned.record)
+		if request.PoolID == "" || request.Owner == "" || request.EnvironmentGeneration == 0 {
+			cleanupErr = errors.Join(cleanupErr, ErrOwnership)
+			continue
+		}
+		handled[owned.record.SlotID] = struct{}{}
+		if err := p.stopSession(ctx, request); err != nil {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+	// In-memory resources without a durable ownership record cannot safely
+	// revoke a Profile grant. Fence their capability and process/session as a
+	// best-effort fallback, but report ownership failure so recovery retries
+	// rather than treating ambiguous cleanup as complete.
 	for slotID, agent := range agents {
+		if _, ok := handled[slotID]; ok {
+			delete(bootSlots, slotID)
+			continue
+		}
+		cleanupErr = errors.Join(cleanupErr, ErrOwnership)
 		if ctx.Err() != nil {
 			cleanupErr = errors.Join(cleanupErr, ErrCleanup)
 			break
@@ -525,39 +562,20 @@ func (p *windowsProvisioner) Shutdown(ctx context.Context) error {
 	// A crash or shutdown during login can leave a boot-only WTS session with
 	// no Agent entry. It still belongs to the provisioner and must be fenced.
 	for slotID := range bootSlots {
+		if _, ok := handled[slotID]; ok {
+			continue
+		}
+		cleanupErr = errors.Join(cleanupErr, ErrOwnership)
 		if ctx.Err() != nil {
 			cleanupErr = errors.Join(cleanupErr, ErrCleanup)
 			break
+		}
+		if p.options.CapabilityRevoker != nil {
+			if err := p.options.CapabilityRevoker.RevokeSlot(ctx, slotID); err != nil {
+				cleanupErr = errors.Join(cleanupErr, ErrCleanup)
+			}
 		}
 		if err := p.stopSessionBootstrap(ctx, slotID); err != nil {
-			cleanupErr = errors.Join(cleanupErr, err)
-		}
-	}
-	// A restart can lose boots and agents while the ownership record remains
-	// durable. Discover those records from the service-owned slot roots and
-	// apply the same exact session fence used by explicit Stop. Unknown or
-	// malformed records are never adopted or deleted; shutdown reports a
-	// cleanup failure so the next recovery pass can quarantine them.
-	ownedRecords, discoverErr := p.discoverOwnedRuntimeRecords()
-	if discoverErr != nil {
-		cleanupErr = errors.Join(cleanupErr, discoverErr)
-	}
-	for _, owned := range ownedRecords {
-		if ctx.Err() != nil {
-			cleanupErr = errors.Join(cleanupErr, ErrCleanup)
-			break
-		}
-		switch owned.record.Phase {
-		case "wts", "desktop", "shell", "agent", "worker", "stopping":
-		default:
-			continue
-		}
-		request := p.requestForOwnedRecord(owned.record)
-		if request.PoolID == "" || request.Owner == "" || request.EnvironmentGeneration == 0 {
-			cleanupErr = errors.Join(cleanupErr, ErrOwnership)
-			continue
-		}
-		if err := p.stopSession(ctx, request); err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
 		}
 	}
@@ -694,49 +712,73 @@ func (p *windowsProvisioner) stopSession(ctx context.Context, request slot.Provi
 			return ErrSessionDisconnected
 		}
 	}
-	if err := checkpointOwnership(paths, request, record.SID, "stopping", record.SessionID); err != nil {
-		return err
+	if record.Phase == "stopped" {
+		return nil
 	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "begin"); err != nil {
-		return err
-	}
-	// Revoke capabilities before stopping processes so no new browser work can
-	// race the drain. The revoke is idempotent and remains bounded by ctx.
-	if p.options.CapabilityRevoker != nil {
-		if err := p.options.CapabilityRevoker.RevokeSlot(ctx, request.SlotID); err != nil {
-			return ErrCleanup
+	if record.Phase != "stopping" {
+		if err := checkpointOwnership(paths, request, record.SID, "stopping", record.SessionID); err != nil {
+			return err
 		}
-	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "capabilities_revoked"); err != nil {
-		return err
-	}
-	p.mu.Lock()
-	agent, present := p.agents[request.SlotID]
-	p.mu.Unlock()
-	if present {
-		if agent.process == nil || agent.sid != record.SID || agent.generation != request.EnvironmentGeneration || agent.session != record.SessionID || agent.owner != request.Owner {
-			return ErrCleanupAgent
+		if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "begin"); err != nil {
+			return err
 		}
-		if err := p.shutdownAgent(ctx, agent, request); err != nil {
-			return ErrCleanupAgent
+		record.Phase, record.CleanupStep = "stopping", "begin"
+	} else if record.CleanupStep == "" {
+		if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "begin"); err != nil {
+			return err
 		}
-		if err := p.terminateAgentWithRetry(ctx, request.SlotID, agent); err != nil {
-			return ErrCleanupAgent
-		}
+		record.CleanupStep = "begin"
 	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "agent_stopped"); err != nil {
-		return err
-	}
-	if err := p.stopSessionForRecord(ctx, request, record); err != nil {
-		return ErrCleanupSession
-	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "session_stopped"); err != nil {
-		return err
-	}
-	if err := p.revokeRecordedProfile(paths, record.SID); err != nil {
-		return ErrCleanup
-	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", 0, "profile_revoked"); err != nil {
+	// Each callback checkpoints before returning. The exact session ID remains
+	// durable through Profile and Agent cleanup and is cleared only after the
+	// exact WTS session stop succeeds.
+	currentSessionID := record.SessionID
+	if err := runOrderedCleanup(record.CleanupStep, cleanupOrderCallbacks{
+		revokeCapabilities: func() error {
+			if p.options.CapabilityRevoker != nil {
+				if err := p.options.CapabilityRevoker.RevokeSlot(ctx, request.SlotID); err != nil {
+					return ErrCleanup
+				}
+			}
+			return checkpointOwnershipStep(paths, request, record.SID, "stopping", currentSessionID, "capabilities_revoked")
+		},
+		revokeProfile: func() error {
+			if err := p.revokeRecordedProfile(paths, record.SID); err != nil {
+				return ErrCleanup
+			}
+			return checkpointOwnershipStep(paths, request, record.SID, "stopping", currentSessionID, "profile_revoked")
+		},
+		stopAgent: func() error {
+			p.mu.Lock()
+			agent, present := p.agents[request.SlotID]
+			p.mu.Unlock()
+			if present {
+				if agent.process == nil || agent.sid != record.SID || agent.generation != request.EnvironmentGeneration || agent.session != currentSessionID || agent.owner != request.Owner {
+					return ErrCleanupAgent
+				}
+				if err := p.shutdownAgent(ctx, agent, request); err != nil {
+					return ErrCleanupAgent
+				}
+				if err := p.terminateAgentWithRetry(ctx, request.SlotID, agent); err != nil {
+					return ErrCleanupAgent
+				}
+			}
+			return checkpointOwnershipStep(paths, request, record.SID, "stopping", currentSessionID, "agent_stopped")
+		},
+		stopSession: func() error {
+			if currentSessionID != 0 {
+				sessionRecord := record
+				sessionRecord.SessionID = currentSessionID
+				if err := p.stopSessionForRecord(ctx, request, sessionRecord); err != nil {
+					return ErrCleanupSession
+				}
+			} else if err := verifyNoManagedSessions(record.SID); err != nil {
+				return ErrCleanupSession
+			}
+			currentSessionID = 0
+			return checkpointOwnershipStep(paths, request, record.SID, "stopping", 0, "session_stopped")
+		},
+	}); err != nil {
 		return err
 	}
 	// stopSessionForRecord already used the exact journaled session fence and
@@ -1333,14 +1375,6 @@ func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionR
 	}
 	unlock := p.lockSlot(request.SlotID)
 	defer unlock()
-	if p.options.CapabilityRevoker != nil {
-		// Capability revocation is the deletion fence. If it cannot be
-		// confirmed, preserve the managed identity and its profile ACLs for a
-		// later retry rather than deleting the owner while access may remain.
-		if err := p.options.CapabilityRevoker.RevokeSlot(ctx, request.SlotID); err != nil {
-			return retireFail("capability_revoke", ErrCleanup)
-		}
-	}
 	paths, err := p.resolvePaths(request)
 	if err != nil {
 		// A crash after root deletion leaves only the external cleanup journal.
@@ -1396,65 +1430,96 @@ func (p *windowsProvisioner) Retire(ctx context.Context, request slot.ProvisionR
 	if err := validateOwnedTreeShape(paths.Root); err != nil {
 		return retireFail("owned_tree_shape", ErrCleanup)
 	}
-	if err := checkpointOwnership(paths, request, record.SID, "stopping", record.SessionID); err != nil {
-		return retireFail("ownership_checkpoint", ErrCleanup)
-	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "begin"); err != nil {
-		return retireFail("cleanup_checkpoint", ErrCleanup)
+	if record.Phase != "stopping" {
+		if err := checkpointOwnership(paths, request, record.SID, "stopping", record.SessionID); err != nil {
+			return retireFail("ownership_checkpoint", ErrCleanup)
+		}
+		if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "begin"); err != nil {
+			return retireFail("cleanup_checkpoint", ErrCleanup)
+		}
+		record.Phase, record.CleanupStep = "stopping", "begin"
+	} else if record.CleanupStep == "" {
+		if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "begin"); err != nil {
+			return retireFail("cleanup_checkpoint", ErrCleanup)
+		}
+		record.CleanupStep = "begin"
 	}
 	journalRecord := record
-	journalRecord.Phase, journalRecord.CleanupStep = "stopping", "begin"
-	journalRecord.Revision++
-	journalRecord.UpdatedAt = time.Now().UTC()
 	if err := writeCleanupJournal(paths.CleanupJournal, journalRecord); err != nil {
 		return retireFail("cleanup_journal", ErrCleanup)
 	}
-	var agentCleanupErr error
-	p.mu.Lock()
-	if agent, ok := p.agents[request.SlotID]; ok {
-		if agent.process == nil {
-			agentCleanupErr = ErrCleanup
-		} else {
-			shutdownErr := p.shutdownAgent(ctx, agent, request)
-			terminateErr := agent.process.Terminate()
-			closeErr := agent.process.Close()
-			if shutdownErr != nil || terminateErr != nil || closeErr != nil {
-				agentCleanupErr = ErrCleanup
-			} else {
-				delete(p.agents, request.SlotID)
+	currentSessionID := record.SessionID
+	if err := runOrderedCleanup(record.CleanupStep, cleanupOrderCallbacks{
+		revokeCapabilities: func() error {
+			if p.options.CapabilityRevoker != nil {
+				if err := p.options.CapabilityRevoker.RevokeSlot(ctx, request.SlotID); err != nil {
+					return retireFail("capability_revoke", ErrCleanup)
+				}
 			}
-		}
-	}
-	p.mu.Unlock()
-	if agentCleanupErr != nil {
-		return retireFail("agent", agentCleanupErr)
-	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", record.SessionID, "agent_stopped"); err != nil {
-		return retireFail("agent_checkpoint", ErrCleanup)
-	}
-	if _, err := advanceCleanupJournal(paths.CleanupJournal, journalRecord, "agent_stopped"); err != nil {
-		return retireFail("agent_journal", ErrCleanup)
-	}
-	// Use the durable session fence so retirement can recover after a service
-	// restart. The process-local bootstrap map remains an optimization inside
-	// stopSessionForRecord; it cannot authorize cleanup by itself.
-	if err := p.stopSessionForRecord(ctx, request, record); err != nil {
-		return retireFail("session", err)
-	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", 0, "session_stopped"); err != nil {
-		return retireFail("session_checkpoint", ErrCleanup)
-	}
-	if _, err := advanceCleanupJournal(paths.CleanupJournal, journalRecord, "session_stopped"); err != nil {
-		return retireFail("session_journal", ErrCleanup)
-	}
-	if err := p.revokeRecordedProfile(paths, record.SID); err != nil {
-		return retireFail("profile_acl", ErrCleanup)
-	}
-	if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", 0, "profile_revoked"); err != nil {
-		return retireFail("profile_checkpoint", ErrCleanup)
-	}
-	if _, err := advanceCleanupJournal(paths.CleanupJournal, journalRecord, "profile_revoked"); err != nil {
-		return retireFail("profile_journal", ErrCleanup)
+			if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", currentSessionID, "capabilities_revoked"); err != nil {
+				return retireFail("capability_checkpoint", ErrCleanup)
+			}
+			if _, err := advanceCleanupJournal(paths.CleanupJournal, journalRecord, "capabilities_revoked"); err != nil {
+				return retireFail("capability_journal", ErrCleanup)
+			}
+			return nil
+		},
+		revokeProfile: func() error {
+			if err := p.revokeRecordedProfile(paths, record.SID); err != nil {
+				return retireFail("profile_acl", ErrCleanup)
+			}
+			if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", currentSessionID, "profile_revoked"); err != nil {
+				return retireFail("profile_checkpoint", ErrCleanup)
+			}
+			if _, err := advanceCleanupJournal(paths.CleanupJournal, journalRecord, "profile_revoked"); err != nil {
+				return retireFail("profile_journal", ErrCleanup)
+			}
+			return nil
+		},
+		stopAgent: func() error {
+			p.mu.Lock()
+			agent, ok := p.agents[request.SlotID]
+			p.mu.Unlock()
+			if ok {
+				if agent.process == nil || agent.sid != record.SID || agent.generation != request.EnvironmentGeneration || agent.session != currentSessionID || agent.owner != request.Owner {
+					return retireFail("agent", ErrCleanup)
+				}
+				if err := p.shutdownAgent(ctx, agent, request); err != nil {
+					return retireFail("agent", ErrCleanup)
+				}
+				if err := p.terminateAgentWithRetry(ctx, request.SlotID, agent); err != nil {
+					return retireFail("agent", ErrCleanup)
+				}
+			}
+			if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", currentSessionID, "agent_stopped"); err != nil {
+				return retireFail("agent_checkpoint", ErrCleanup)
+			}
+			if _, err := advanceCleanupJournal(paths.CleanupJournal, journalRecord, "agent_stopped"); err != nil {
+				return retireFail("agent_journal", ErrCleanup)
+			}
+			return nil
+		},
+		stopSession: func() error {
+			if currentSessionID != 0 {
+				sessionRecord := record
+				sessionRecord.SessionID = currentSessionID
+				if err := p.stopSessionForRecord(ctx, request, sessionRecord); err != nil {
+					return retireFail("session", err)
+				}
+			} else if err := verifyNoManagedSessions(record.SID); err != nil {
+				return retireFail("session", ErrCleanup)
+			}
+			currentSessionID = 0
+			if err := checkpointOwnershipStep(paths, request, record.SID, "stopping", 0, "session_stopped"); err != nil {
+				return retireFail("session_checkpoint", ErrCleanup)
+			}
+			if _, err := advanceCleanupJournal(paths.CleanupJournal, journalRecord, "session_stopped"); err != nil {
+				return retireFail("session_journal", ErrCleanup)
+			}
+			return nil
+		},
+	}); err != nil {
+		return err
 	}
 	dataDir := filepath.Dir(filepath.Dir(paths.Root))
 	if err := revokeControlPlaneFiles(dataDir, record.SID); err != nil {

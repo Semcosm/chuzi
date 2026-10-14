@@ -125,6 +125,47 @@ type blockedPoolProvisioner struct {
 	startedOnce sync.Once
 }
 
+type cancellationProvisioner struct {
+	*dynamicPoolProvisioner
+	started            chan struct{}
+	release            chan struct{}
+	startedOnce        sync.Once
+	ignoreCancellation bool
+	cleanupStarted     chan struct{}
+	cleanupRelease     chan struct{}
+	cleanupOnce        sync.Once
+}
+
+func (p *cancellationProvisioner) Provision(ctx context.Context, request slot.ProvisionRequest) (slot.ProvisionResult, error) {
+	p.startedOnce.Do(func() { close(p.started) })
+	if p.ignoreCancellation {
+		<-p.release
+		return p.dynamicPoolProvisioner.Provision(context.Background(), request)
+	}
+	select {
+	case <-p.release:
+		return p.dynamicPoolProvisioner.Provision(ctx, request)
+	case <-ctx.Done():
+		return slot.ProvisionResult{}, ctx.Err()
+	}
+}
+
+func (p *cancellationProvisioner) StopSession(ctx context.Context, request slot.ProvisionRequest) error {
+	if err := p.dynamicPoolProvisioner.StopSession(ctx, request); err != nil {
+		return err
+	}
+	if p.cleanupStarted == nil {
+		return nil
+	}
+	p.cleanupOnce.Do(func() { close(p.cleanupStarted) })
+	select {
+	case <-p.cleanupRelease:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (p *blockedPoolProvisioner) Provision(ctx context.Context, request slot.ProvisionRequest) (slot.ProvisionResult, error) {
 	if request.PoolID == p.blockedPool {
 		p.startedOnce.Do(func() { close(p.started) })
@@ -296,6 +337,106 @@ func TestSlotSessionNonRetryableReadinessFailureCleansRuntime(t *testing.T) {
 	defer base.mu.Unlock()
 	if base.stopCalls != 1 {
 		t.Fatalf("readiness failure cleanup calls = %d", base.stopCalls)
+	}
+}
+
+func TestSlotSessionCancelInterruptsProvisionAndCommitsCancelledAfterCleanup(t *testing.T) {
+	database, pool, operation, now := prepareSessionRuntimeTest(t, "cancel")
+	defer database.Close()
+	provisioner := &cancellationProvisioner{
+		dynamicPoolProvisioner: &dynamicPoolProvisioner{calls: make(map[string]int)},
+		started:                make(chan struct{}), release: make(chan struct{}),
+		cleanupStarted: make(chan struct{}), cleanupRelease: make(chan struct{}),
+	}
+	reconciler := newSessionRuntimeTestReconciler(database, provisioner, pool, now)
+	result := make(chan error, 1)
+	go func() { result <- reconciler.ReconcileSlotSessionOperations(context.Background(), "service", now) }()
+	select {
+	case <-provisioner.started:
+	case <-time.After(time.Second):
+		t.Fatal("Provision did not start")
+	}
+	if _, _, err := database.CancelSlotSession(store.SlotSessionAction{OperationID: operation.OperationID, Actor: "ui", IdempotencyKey: "cancel", At: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-provisioner.cleanupStarted:
+	case <-time.After(time.Second):
+		t.Fatal("cleanup did not start after cancellation")
+	}
+	select {
+	case reconcileErr := <-result:
+		t.Fatalf("cancel reconcile returned before cleanup completed: %v", reconcileErr)
+	default:
+	}
+	cleanupPending, err := database.GetSlotSessionOperation(operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cleanupPending.State != store.SlotSessionCancelling || cleanupPending.Phase != store.SlotSessionPhaseStopping || !cleanupPending.CompletedAt.IsZero() {
+		t.Fatalf("operation became terminal before cleanup completed: %#v", cleanupPending)
+	}
+	close(provisioner.cleanupRelease)
+	select {
+	case reconcileErr := <-result:
+		if reconcileErr != nil {
+			t.Fatalf("cancel reconcile = %v", reconcileErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancellation did not finish")
+	}
+	completed, err := database.GetSlotSessionOperation(operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != store.SlotSessionCancelled || completed.Phase != store.SlotSessionPhaseStopped {
+		t.Fatalf("cancelled operation = %#v", completed)
+	}
+	provisioner.mu.Lock()
+	defer provisioner.mu.Unlock()
+	if provisioner.stopCalls != 1 {
+		t.Fatalf("cleanup calls = %d, want 1", provisioner.stopCalls)
+	}
+}
+
+func TestSlotSessionLateProvisionResultCannotPublishReadiness(t *testing.T) {
+	database, pool, operation, now := prepareSessionRuntimeTest(t, "late")
+	defer database.Close()
+	provisioner := &cancellationProvisioner{
+		dynamicPoolProvisioner: &dynamicPoolProvisioner{calls: make(map[string]int)},
+		started:                make(chan struct{}), release: make(chan struct{}), ignoreCancellation: true,
+	}
+	reconciler := newSessionRuntimeTestReconciler(database, provisioner, pool, now)
+	result := make(chan error, 1)
+	go func() { result <- reconciler.ReconcileSlotSessionOperations(context.Background(), "service", now) }()
+	select {
+	case <-provisioner.started:
+	case <-time.After(time.Second):
+		t.Fatal("Provision did not start")
+	}
+	if _, _, err := database.CancelSlotSession(store.SlotSessionAction{OperationID: operation.OperationID, Actor: "ui", IdempotencyKey: "cancel-late", At: now.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	close(provisioner.release)
+	select {
+	case reconcileErr := <-result:
+		if reconcileErr != nil {
+			t.Fatalf("late completion reconcile = %v", reconcileErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("late completion did not finish")
+	}
+	completed, err := database.GetSlotSessionOperation(operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.State != store.SlotSessionCancelled || completed.AgentReady || completed.WorkerReady || completed.Phase != store.SlotSessionPhaseStopped {
+		t.Fatalf("late completion operation = %#v", completed)
+	}
+	provisioner.mu.Lock()
+	defer provisioner.mu.Unlock()
+	if provisioner.stopCalls != 1 {
+		t.Fatalf("late completion cleanup calls = %d, want 1", provisioner.stopCalls)
 	}
 }
 
@@ -539,4 +680,37 @@ func markShutdownSlotReady(t *testing.T, database *store.Store, pool slot.PoolCo
 	}, now); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func prepareSessionRuntimeTest(t *testing.T, key string) (*store.Store, slot.PoolConfig, store.SlotSessionOperation, time.Time) {
+	t.Helper()
+	cfg, err := config.New(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, time.October, 10, 5, 0, 0, 0, time.UTC)
+	digest := strings.Repeat("e", 64)
+	pool := slot.PoolConfig{PoolID: "pool-runtime-" + key, EnvironmentID: "env/runtime-" + key, EnvironmentVersion: "1.0.0", DesiredSlots: 1, Capabilities: []string{"desktop"}, ManifestDigest: digest, Signer: "test-signer", RequireTrusted: true}
+	if err := database.PutEnvironmentRecord(environment.Record{EnvironmentID: pool.EnvironmentID, Version: pool.EnvironmentVersion, Capabilities: pool.Capabilities, ManifestDigest: digest, Signer: pool.Signer, Installed: true, Verified: true, Trusted: true, Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: now}); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.ReconcileJobPool(pool, now); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	operation, _, err := database.StartSlotSession(store.SlotSessionMutation{PoolID: pool.PoolID, Actor: "test", IdempotencyKey: key, RequestedAt: now})
+	if err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	return database, pool, operation, now
+}
+
+func newSessionRuntimeTestReconciler(database *store.Store, provisioner slotlifecycle.Provisioner, pool slot.PoolConfig, now time.Time) *windowsAllPoolReconciler {
+	return &windowsAllPoolReconciler{database: database, provisioner: provisioner, now: func() time.Time { return now }, provisionTimeout: time.Second, cleanupTimeout: time.Second, owner: "service", items: make(map[string]*slotlifecycle.Reconciler), provisioners: make(map[string]slotlifecycle.Provisioner)}
 }
