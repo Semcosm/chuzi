@@ -419,7 +419,9 @@ function Install-ChuziServices {
             # validation builds and must use the non-production path.
             $productionPayload = $version -match '^v[0-9]+\.[0-9]+\.[0-9]+$'
         } catch {
-            throw "service_build_manifest_invalid"
+            # Build metadata contains only public package identity. Preserve
+            # the parser/IO failure so setup does not hide the actual cause.
+            throw ("service_build_manifest_invalid: {0}: {1}" -f $_.FullyQualifiedErrorId, $_.Exception.Message)
         }
     }
     if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {

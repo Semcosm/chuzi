@@ -5,7 +5,7 @@ Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 10
+Revision: 11
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -144,6 +144,14 @@ root and authenticated service transport. Local launcher/transport tests,
 Windows tagged test compilation, build-contract checks, and repository
 validators pass. Installed lifecycle and production session acceptance remain
 pending.
+
+Revision 11 retains the underlying build-manifest read/parse error in the
+installer log and uploads the public source and installed build metadata on
+failure. Actions run 38577339010 passed foreground Core smoke but failed
+service registration with only `service_build_manifest_invalid`; its Windows
+package was not uploaded and the log did not retain the underlying exception.
+No resource or signing gate is relaxed. The diagnostic native run and installed
+lifecycle acceptance remain pending.
 
 ## Motivation
 

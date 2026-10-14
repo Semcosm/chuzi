@@ -609,12 +609,28 @@ jobs:
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
+      - name: Collect Windows installer manifest diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $diagnostics = Join-Path $env:RUNNER_TEMP 'chuzi-ui/diagnostics'
+          New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
+          $sourceManifest = Join-Path $env:RUNNER_TEMP 'chuzi-ui/payload/CorePayload/build-manifest.json'
+          if (Test-Path -LiteralPath $sourceManifest -PathType Leaf) {
+            Copy-Item -LiteralPath $sourceManifest -Destination (Join-Path $diagnostics 'source-build-manifest.json')
+          }
+          $installedManifest = Join-Path ${env:ProgramFiles} 'Chuzi/CorePayload/build-manifest.json'
+          if (Test-Path -LiteralPath $installedManifest -PathType Leaf) {
+            Copy-Item -LiteralPath $installedManifest -Destination (Join-Path $diagnostics 'installed-build-manifest.json')
+          }
       - name: Upload Windows installer diagnostics
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: chuzi-windows-installer-diagnostics
-          path: ${{ runner.temp }}/chuzi-ui/*-runtime.log
+          path: |
+            ${{ runner.temp }}/chuzi-ui/*-runtime.log
+            ${{ runner.temp }}/chuzi-ui/diagnostics/*.json
           if-no-files-found: ignore
           retention-days: 7
       - name: Upload Windows installer EXE
