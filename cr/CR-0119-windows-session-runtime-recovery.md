@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 09bd9d7312a158f719ca3f19142d2519bca28c4c
+Head or Range: 21f3c9bb7d255d50ed708f5dcef42d1b84411985
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 7
+Revision: 8
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 09bd9d7312a158f719ca3f19142d2519bca28c4c
+Head OID: 21f3c9bb7d255d50ed708f5dcef42d1b84411985
 Integrated Result: pending
 
 ## Summary
@@ -96,14 +96,29 @@ now fails when Inno reports a script exception despite returning exit code zero.
 Revision 5 accepts the fixed top-level `chuzi.db` created by the installed Core
 when the service registration resource gate validates the data root.
 
-Revision 6 fixes the remaining first-install registration failure: populated
+Revision 6 adjusts the first-install resource gate: populated
 signed component directories are accepted, while mutable data directories must
 still be empty before ownership is established.
 
-Revision 7 fixes the nightly installer registration path. Authenticode payload
+Revision 7 aligns the nightly installer validation path. Authenticode payload
 validation is now required only for formal stable versions matching `vX.Y.Z`;
 nightly and test artifacts use the unsigned validation path and no longer fail
-service registration because the production validator is absent.
+service registration because the production validator is absent. This is not
+evidence for the cause of the preceding test-channel registration failure:
+test versions were already exempt, and that failed run did not capture the
+PowerShell error output.
+
+Revision 8 records service-management stdout/stderr and exit codes in the Inno
+log, so a registration failure can be diagnosed without guessing from the
+generic dialog. Uninstall removes the fixed Core service and Broker task before
+deleting their management payload, while retaining data by default. Core is
+stopped before the Broker so service shutdown can finish session and credential
+cleanup. Resource-directory probes use File.Open with CreateNew instead of the
+nonexistent File.OpenNew API. Historical Broker-service conversion is removed;
+there are no released versions to migrate. A hosted Windows test now verifies
+the LocalSystem service command, limited interactive task, uninstall resource
+removal, preserved ownership/configuration, and reinstall registration. Its
+native Actions result remains pending.
 
 ## Motivation
 
