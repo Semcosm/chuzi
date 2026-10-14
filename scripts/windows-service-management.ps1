@@ -374,7 +374,10 @@ function Install-ChuziServices {
                 ($_.Name -notmatch '^core-service\.log(?:\.\d+)?$')
             })
         if ($unexpected.Count -gt 0) { throw "resource_ownership_unknown" }
-        foreach ($child in $topLevelAllowed) {
+        # Mutable service data directories must still be empty before their
+        # ownership marker is created. Installed component directories such as
+        # browser-worker and environments are expected to contain signed files.
+        foreach ($child in @('db', 'profiles', 'runtime', 'journal', 'secrets')) {
             $childPath = Join-Path $data $child
             if ((Test-Path -LiteralPath $childPath -PathType Container) -and
                 (@(Get-ChildItem -LiteralPath $childPath -Force -Recurse -ErrorAction Stop).Count -gt 0)) {

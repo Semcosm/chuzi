@@ -235,6 +235,8 @@ grep -Fq 'function PrepareToInstall' "$repo_root/packaging/windows/Chuzi.iss" ||
 grep -Fq "RunServiceManagement('Stop'" "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not use the idempotent stop operation before replacing the payload"
 grep -Fq 'component-install -item service' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not repair the retained Core payload"
 grep -Fq 'core-stop' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop Core during install/uninstall"
+grep -Fq "foreach (\$child in @('db', 'profiles', 'runtime', 'journal', 'secrets'))" "$repo_root/scripts/windows-service-management.ps1" || fail "Windows service registration does not distinguish empty mutable data directories"
+grep -Fq 'Installed component directories such as' "$repo_root/scripts/windows-service-management.ps1" || fail "Windows service registration does not document populated component directories"
 grep -Fq 'procedure ShowSetupMessage' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer errors are not suppressible in silent mode"
 if rg -n '^[[:space:]]*MsgBox\(' "$repo_root/packaging/windows/Chuzi.iss"; then
   fail "Windows installer contains a non-suppressible message box"
