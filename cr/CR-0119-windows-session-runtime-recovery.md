@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 21f3c9bb7d255d50ed708f5dcef42d1b84411985
+Head or Range: fad5ab1cd9ae2fadf3789f46ef204b3342d57a64
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 8
+Revision: 9
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 21f3c9bb7d255d50ed708f5dcef42d1b84411985
+Head OID: fad5ab1cd9ae2fadf3789f46ef204b3342d57a64
 Integrated Result: pending
 
 ## Summary
@@ -119,6 +119,20 @@ there are no released versions to migrate. A hosted Windows test now verifies
 the LocalSystem service command, limited interactive task, uninstall resource
 removal, preserved ownership/configuration, and reinstall registration. Its
 native Actions result remains pending.
+
+Revision 9 isolates the foreground Core smoke data from the installer's fixed
+service data root. Actions run 38568670636 captured
+`resource_ownership_unknown` at the first-install top-level resource check:
+the preceding foreground test had placed CI-only configuration and log files
+in that root. Both foreground tests now use independent runner temporary
+directories, including the post-install smoke so it preserves the service data
+checked by uninstall/reinstall. The production ownership gate is unchanged.
+The same log confirmed that Inno returned zero after the service-management
+process returned one; the installer now preserves post-install failure in its
+custom exit code. Uninstall cleanup starts only after confirmation, so Cancel
+leaves registrations intact. Lifecycle assertions also check the Broker task's
+exact executable and absence of arguments. Local build-contract and repository
+validators pass; a new exact-commit native installer run remains pending.
 
 ## Motivation
 
@@ -269,11 +283,16 @@ classification, cleanup failure without tombstone, new-generation tombstone
 replacement, failed ownership commit with failed compensation recovery, and
 ordered cleanup with legacy checkpoint recovery.
 
-The Windows test binaries compiled successfully. No native Windows test binary,
-session broker, Credential Manager call, `mstsc` login, WTS transition, Profile
-operation, Agent process, Job Object, ACL, service shutdown, or restart scenario
-was executed for this CR. Compile-only Windows evidence is not native
-acceptance.
+The Windows runtime test binaries compiled successfully. Hosted Windows Actions
+run 38568670636 passed Core named-pipe tests, foreground Core lifecycle smoke,
+job-pool preflight, Slint layout checks, and all four target package builds. Its
+installed-client smoke failed during service registration with the diagnostic
+recorded in Revision 9, so uninstall/reinstall did not execute. The corrected
+installer lifecycle still needs a successful native run. Production Broker
+login, Credential Manager cleanup, WTS transitions, cold Profile provisioning,
+Agent/worker readiness, service restart/recovery, and multi-pool sessions remain
+unverified on the user's Windows installation; hosted and compile-only evidence
+does not replace that acceptance.
 
 ### Sessions 09 and 10 Test Hooks
 
