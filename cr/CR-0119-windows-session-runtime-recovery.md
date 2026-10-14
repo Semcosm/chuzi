@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: fad5ab1cd9ae2fadf3789f46ef204b3342d57a64
+Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 9
+Revision: 10
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: fad5ab1cd9ae2fadf3789f46ef204b3342d57a64
+Head OID: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integrated Result: pending
 
 ## Summary
@@ -133,6 +133,17 @@ custom exit code. Uninstall cleanup starts only after confirmation, so Cancel
 leaves registrations intact. Lifecycle assertions also check the Broker task's
 exact executable and absence of arguments. Local build-contract and repository
 validators pass; a new exact-commit native installer run remains pending.
+
+Revision 10 fixes the foreground smoke connection after data isolation. Actions
+run 38573233504 passed the HTTP health check but reported `core_unavailable`
+on hello: the launcher still derived the pipe from the fixed service data root.
+The explicitly `coretransport_native_test`-tagged launcher now accepts a native
+test data-root environment variable, which the foreground smoke sets only for
+its connection and removes in cleanup. Production launchers retain the fixed
+root and authenticated service transport. Local launcher/transport tests,
+Windows tagged test compilation, build-contract checks, and repository
+validators pass. Installed lifecycle and production session acceptance remain
+pending.
 
 ## Motivation
 
