@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 9b2c7427288942ea3bd2357589633ca79a87b7b4
+Head or Range: 9d0b602d39dac314ef5f149d10c56a6031eea0cc
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 2
+Revision: 3
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 9b2c7427288942ea3bd2357589633ca79a87b7b4
+Head OID: 9d0b602d39dac314ef5f149d10c56a6031eea0cc
 Integrated Result: pending
 
 ## Summary
@@ -75,6 +75,14 @@ credential/target cleanup before committing stopped.
 
 CR-0119 belongs to Session 07. Session 08 UI work must receive the next unused
 CR number when it begins, after fetching main; it must not reuse CR-0119.
+
+Revision 3 fixes the installer lifecycle observed on a clean uninstall followed
+by install. A missing Core service is now an idempotent stop state rather than an
+installer error; upgrade preparation uses the elevated service-management path,
+and successful installation registers the LocalSystem Core service and the
+interactive Session Broker task. Empty fixed data directories left by an
+interrupted first install are recoverable, while populated or unexpected data
+still fails closed.
 
 ## Motivation
 
