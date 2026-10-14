@@ -1,7 +1,7 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 6e0c1a90d25988b4e81bc3227c60ce3dd1794c10
+Head or Range: 9b2c7427288942ea3bd2357589633ca79a87b7b4
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 6e0c1a90d25988b4e81bc3227c60ce3dd1794c10
+Head OID: 9b2c7427288942ea3bd2357589633ca79a87b7b4
 Integrated Result: pending
 
 ## Summary
