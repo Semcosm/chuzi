@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: a3e8c89d2f9bda8f1e180ae1f2e8dd0a9637d385
+Head or Range: f4000773e7343b213846ee73d47cc4b00d5f00c8
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 4
+Revision: 5
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: a3e8c89d2f9bda8f1e180ae1f2e8dd0a9637d385
+Head OID: f4000773e7343b213846ee73d47cc4b00d5f00c8
 Integrated Result: pending
 
 ## Summary
@@ -92,6 +92,9 @@ installer places in the fixed data root before registration. A Session 0 build
 agent registers the interactive Broker task without trying to start it, while an
 interactive operator session starts it immediately. The installer smoke check
 now fails when Inno reports a script exception despite returning exit code zero.
+
+Revision 5 accepts the fixed top-level `chuzi.db` created by the installed Core
+when the service registration resource gate validates the data root.
 
 ## Motivation
 
