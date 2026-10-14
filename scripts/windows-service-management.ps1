@@ -226,14 +226,32 @@ function Stop-AndConfirm {
 function Backup-Install {
     if (Test-Path -LiteralPath $backupMarker -PathType Leaf) { throw "upgrade_backup_pending" }
     Stop-AndConfirm
+    New-Item -ItemType Directory -Force -Path $data | Out-Null
     if (-not (Test-Path -LiteralPath $ownershipMarker -PathType Leaf)) {
-        if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "resource_ownership_unknown" }
-        try {
-            $legacyConfig = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
-        } catch {
-            throw "resource_ownership_unknown"
+        if (Test-Path -LiteralPath $config -PathType Leaf) {
+            try {
+                $legacyConfig = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
+            } catch {
+                throw "resource_ownership_unknown"
+            }
+            if ([string]$legacyConfig.data_dir -ne $data) { throw "resource_ownership_unknown" }
+        } else {
+            # A failed first install may have created only the fixed data
+            # directories before the service was registered. Treat that empty
+            # owned shape as recoverable; any unexpected or populated entry
+            # still fails closed because its ownership is unknown.
+            $topLevelAllowed = @(".chuzi", "db", "profiles", "runtime", "journal", "secrets")
+            $unexpected = @(Get-ChildItem -LiteralPath $data -Force -ErrorAction Stop |
+                Where-Object { $topLevelAllowed -notcontains $_.Name })
+            if ($unexpected.Count -gt 0) { throw "resource_ownership_unknown" }
+            foreach ($child in $topLevelAllowed) {
+                $childPath = Join-Path $data $child
+                if ((Test-Path -LiteralPath $childPath -PathType Container) -and
+                    (@(Get-ChildItem -LiteralPath $childPath -Force -Recurse -ErrorAction Stop).Count -gt 0)) {
+                    throw "resource_ownership_unknown"
+                }
+            }
         }
-        if ([string]$legacyConfig.data_dir -ne $data) { throw "resource_ownership_unknown" }
         Write-Utf8NoBom $ownershipMarker (([ordered]@{
             format = "chuzi-service-ownership/v1"
             data_dir = $data
@@ -383,9 +401,26 @@ function Install-ChuziServices {
     }
     Set-ChuziAcl $runtime $false
     $validator = Join-Path $runtime "validate_windows_payload.ps1"
-    if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw "service_payload_validator_missing" }
-    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File $validator -PayloadDir $runtime -Production -DataRoot $data -Offline | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
+    $productionPayload = $true
+    $buildManifest = Join-Path $runtime "build-manifest.json"
+    if (Test-Path -LiteralPath $buildManifest -PathType Leaf) {
+        try {
+            $build = Get-Content -Raw -LiteralPath $buildManifest | ConvertFrom-Json
+            $version = [string]$build.version
+            $productionPayload = $version -notlike "test-*" -and $version -notlike "dev*"
+        } catch {
+            throw "service_build_manifest_invalid"
+        }
+    }
+    if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
+        if ($productionPayload) { throw "service_payload_validator_missing" }
+    } elseif ($productionPayload) {
+        & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File $validator -PayloadDir $runtime -Production -DataRoot $data -Offline | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
+    } else {
+        & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $validator -PayloadDir $runtime -Offline | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
+    }
     $binPath = '"' + $core + '" -service -config "' + $config + '"'
     & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-Null
     if ($LASTEXITCODE -ne 0) {
@@ -393,6 +428,12 @@ function Install-ChuziServices {
     } else {
         Invoke-Sc @("config", $serviceName, "binPath=", $binPath, "start=", "auto", "obj=", "LocalSystem")
     }
+    # The desktop launcher runs as the signed-in operator. Grant that token
+    # only the SCM operations needed to query, start, and stop this fixed
+    # service; service creation/deletion remains installer-only.
+    $serviceSDDL = 'D:(A;;CCLCSWRPWPLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)'
+    & "$env:SystemRoot\System32\sc.exe" sdset $serviceName $serviceSDDL | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "service_acl_failed" }
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
     Invoke-Sc @("failure", $serviceName, "reset=", "86400", "actions=", "restart/5000/restart/30000/none/0")
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")

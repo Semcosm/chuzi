@@ -69,10 +69,43 @@ var
   UninstallContext: Boolean;
   KeepUserDataValue: Boolean;
   KeepUserDataPrompted: Boolean;
+  CleanupReady: Boolean;
 
 procedure ShowSetupMessage(Text: String; Typ: TMsgBoxType);
 begin
   SuppressibleMsgBox(Text, Typ, MB_OK, IDOK);
+end;
+
+function ProductionPayloadRequired(): Boolean;
+var
+  Version: String;
+begin
+  Version := '{#AppVersion}';
+  Result := (Length(Version) > 1) and (Version[1] = 'v');
+end;
+
+function RunServiceManagement(Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
+var
+  ScriptPath: String;
+  Parameters: String;
+  ResultCode: Integer;
+  ExecutionPolicy: String;
+begin
+  ScriptPath := AddBackslash(RuntimeRoot) + 'windows-service-management.ps1';
+  if not FileExists(ScriptPath) then
+  begin
+    Result := False;
+    Exit;
+  end;
+  ExecutionPolicy := 'Bypass';
+  if ProductionPayloadRequired() then
+    ExecutionPolicy := 'AllSigned';
+  Parameters := '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy ' + ExecutionPolicy +
+    ' -File "' + ScriptPath + '" -Operation ' + Operation +
+    ' -RuntimeRoot "' + RuntimeRoot + '" -DataRoot "' + DataRoot +
+    '" -InstallRoot "' + InstallRoot + '"';
+  Result := Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
 function KeepUserData(): Boolean;
@@ -97,7 +130,20 @@ end;
 function InitializeUninstall(): Boolean;
 begin
   UninstallContext := True;
+  CleanupReady := True;
   KeepUserData();
+  if FileExists(ExpandConstant('{app}\CorePayload\windows-service-management.ps1')) then
+  begin
+    CleanupReady := RunServiceManagement('UninstallPrepare',
+      ExpandConstant('{app}\CorePayload'), ExpandConstant('{commonappdata}\chuzi\data'),
+      ExpandConstant('{app}'));
+    if not CleanupReady then
+    begin
+      ShowSetupMessage('无法停止 Chuzi 服务，卸载已停止。请等待会话排空后重试。', mbError);
+      Result := False;
+      Exit;
+    end;
+  end;
   Result := True;
 end;
 
@@ -105,22 +151,32 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ExistingLauncher: String;
   ExistingManifest: String;
+  ExistingManagement: String;
   DataRoot: String;
-  Parameters: String;
-  ResultCode: Integer;
 begin
   NeedsRestart := False;
   Result := '';
   ExistingLauncher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
   ExistingManifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
+  ExistingManagement := ExpandConstant('{app}\CorePayload\windows-service-management.ps1');
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
+  if FileExists(ExistingManagement) then
+  begin
+    if not RunServiceManagement('UpgradePrepare', ExpandConstant('{app}\CorePayload'),
+      DataRoot, ExpandConstant('{app}')) then
+    begin
+      Result := '无法停止 Chuzi 服务；请先排空会话后重试。';
+      Exit;
+    end;
+    if not RunServiceManagement('Backup', ExpandConstant('{app}\CorePayload'),
+      DataRoot, ExpandConstant('{app}')) then
+    begin
+      Result := '无法创建升级回滚点；安装已停止。';
+      Exit;
+    end;
+  end;
   if (not FileExists(ExistingLauncher)) or (not FileExists(ExistingManifest)) then
     Exit;
-  Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
-    '" -manifest "' + ExistingManifest + '" -command core-stop';
-  { Old launchers may not have a PID file. Let the new launcher perform the
-    Windows orphan-process fallback after its files have been copied. }
-  Exec(ExistingLauncher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -130,31 +186,30 @@ var
   DataRoot: String;
   Parameters: String;
   ResultCode: Integer;
+  RuntimeRoot: String;
 begin
   if CurStep <> ssPostInstall then
     Exit;
   Launcher := ExpandConstant('{app}\CorePayload\chuzi-launcher.exe');
   Manifest := ExpandConstant('{app}\CorePayload\release-manifest.json');
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
+  RuntimeRoot := ExpandConstant('{app}\CorePayload');
   if (not FileExists(Launcher)) or (not FileExists(Manifest)) then
   begin
     ShowSetupMessage('安装包缺少 Core 文件，无法完成安装。请重新下载最新安装包。', mbError);
     Abort;
   end;
   Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
-    '" -manifest "' + Manifest + '" -command core-stop';
-  if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
-     (ResultCode <> 0) then
-  begin
-    ShowSetupMessage('无法停止旧版 Core，安装已停止。请关闭 Chuzi 后重试。', mbError);
-    Abort;
-  end;
-  Parameters := '-root "' + DataRoot + '" -source-root "' + ExpandConstant('{app}\CorePayload') +
     '" -manifest "' + Manifest + '" -command component-install -item service';
-  if (not ExecAsOriginalUser(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
+  if (not Exec(Launcher, Parameters, '', SW_HIDE, ewWaitUntilTerminated, ResultCode)) or
      (ResultCode <> 0) then
   begin
     ShowSetupMessage('Core 文件安装失败，已停止安装。请关闭 Chuzi 后重试。', mbError);
+    Abort;
+  end;
+  if not RunServiceManagement('Install', RuntimeRoot, DataRoot, ExpandConstant('{app}')) then
+  begin
+    ShowSetupMessage('Chuzi 服务注册失败，安装已停止。请保留安装目录并重试 Repair。', mbError);
     Abort;
   end;
 end;
