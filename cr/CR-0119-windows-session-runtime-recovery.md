@@ -5,7 +5,7 @@ Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 12
+Revision: 13
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -170,6 +170,18 @@ key as active. The replacement private key remains outside the repository at
 the operator's configured SSH path; GitHub account signing-key registration is
 an operator action and does not expose private material to the repository.
 
+Revision 13 records the local Windows package handoff for the rebased head. The
+Windows amd64 test artifact `test-20261015-5bdd867c473d` compiled the Go
+service, broker, launchers, Node runtime, browser worker, and adapter. The
+one-shot local build stopped at its required PresentMon manifest gate until the
+existing `prepare_presentmon.ps1` fetched and verified PresentMon 2.6.0 with
+SHA-256 `b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af`;
+the release manifest and component packages then completed.
+`validate_nightly_artifact.py --artifact dist --target windows-amd64` passed the
+bundle, component archives, adapter, manifest, and checksum evidence. This is a
+test package handoff only; the Slint/Inno installer and native session lifecycle
+remain pending for Sessions 09/10.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -301,6 +313,9 @@ checkout passed the following deterministic checks:
 - `git diff --check`
 - `./scripts/validate_signer_roles.sh`
 - `git show --show-signature --format=fuller --no-patch HEAD`
+- `./scripts/prepare_presentmon.ps1` with the pinned PresentMon SHA-256
+- `./scripts/package.ps1 -Target windows-amd64 -Version test-20261015-5bdd867c473d`
+- `python scripts/validate_nightly_artifact.py --artifact dist --target windows-amd64 --commit 5bdd867c473daa0849a8220b3051ea5b09e8211f --version test-20261015-5bdd867c473d --channel test`
 
 `.ugs/document-map.json` is absent, so its optional validator does not apply.
 
