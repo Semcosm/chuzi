@@ -224,6 +224,23 @@ func TestJobPoolScaleDownUnprovisionedSlotRemainsValid(t *testing.T) {
 	}
 }
 
+func TestGenerationZeroSlotCanBeMarkedStoppedAfterBootOnlyCleanup(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetSlotStatus("pool-test-001", slot.Stopped, storeTestTime.Add(time.Second)); err != nil {
+		t.Fatalf("generation-zero stopped status: %v", err)
+	}
+	value, err := database.GetSlot("pool-test-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Status != slot.Stopped || value.EnvironmentGeneration != 0 {
+		t.Fatalf("stopped boot-only slot = %#v", value)
+	}
+}
+
 func TestJobPoolScaleDownDrainsLeasedSlotAndScaleUpRevivesRetiringSlot(t *testing.T) {
 	database, _ := openTestStore(t)
 	now := storeTestTime

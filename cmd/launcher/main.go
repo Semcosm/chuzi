@@ -408,10 +408,6 @@ func runCoreCommand(ctx context.Context, command, root, method, paramsJSON strin
 }
 
 func runControlCommand(ctx context.Context, command, root, jobPoolInput, poolID string, desiredSlots int, expectedRevision uint64, idempotencyKey, actor, operationID, environmentID, environmentVersion, packageRef string, slotSelector ...string) (bool, error) {
-	manager, err := launcher.NewCoreManager(root)
-	if err != nil {
-		return true, err
-	}
 	method := ""
 	var params any = struct{}{}
 	slotID := ""
@@ -490,6 +486,10 @@ func runControlCommand(ctx context.Context, command, root, jobPoolInput, poolID 
 		}{operationID}
 	default:
 		return false, nil
+	}
+	manager, err := launcher.NewCoreManager(root)
+	if err != nil {
+		return true, err
 	}
 	result, err := manager.Call(ctx, method, mustJSON(params))
 	if err != nil {

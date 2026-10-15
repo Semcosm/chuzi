@@ -494,6 +494,58 @@ func TestSlotSessionCheckpointFencesOwnerAndGeneration(t *testing.T) {
 	}
 }
 
+func TestSlotSessionCheckpointRejectsLateStopAndCancelResults(t *testing.T) {
+	for _, target := range []struct {
+		name   string
+		mutate func(*Store, SlotSessionAction) (SlotSessionOperation, bool, error)
+		state  SlotSessionOperationState
+	}{
+		{name: "stop", mutate: func(database *Store, action SlotSessionAction) (SlotSessionOperation, bool, error) {
+			return database.StopSlotSession(action)
+		}, state: SlotSessionStopping},
+		{name: "cancel", mutate: func(database *Store, action SlotSessionAction) (SlotSessionOperation, bool, error) {
+			return database.CancelSlotSession(action)
+		}, state: SlotSessionCancelling},
+	} {
+		t.Run(target.name, func(t *testing.T) {
+			database, _ := openTestStore(t)
+			if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+				t.Fatal(err)
+			}
+			started, _, err := database.StartSlotSession(SlotSessionMutation{PoolID: "pool-test", Actor: "ui", IdempotencyKey: "late-checkpoint-" + target.name, RequestedAt: storeTestTime})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := database.ClaimSlotSessionOperation(started.OperationID, "controller", storeTestTime, time.Minute); err != nil {
+				t.Fatal(err)
+			}
+			stopping, _, err := target.mutate(database, SlotSessionAction{OperationID: started.OperationID, Actor: "ui", IdempotencyKey: "late-action-" + target.name, At: storeTestTime.Add(time.Second)})
+			if err != nil || stopping.State != target.state || stopping.DesiredState != "stopped" {
+				t.Fatalf("cleanup intent=%#v err=%v", stopping, err)
+			}
+			if _, err := database.CheckpointSlotSessionOperation(SlotSessionCheckpoint{
+				OperationID:  started.OperationID,
+				Owner:        "controller",
+				Generation:   1,
+				Phase:        SlotSessionPhaseWorker,
+				SessionState: "ready",
+				AgentReady:   true,
+				WorkerReady:  true,
+				ObservedAt:   storeTestTime.Add(2 * time.Second),
+			}); !errors.Is(err, ErrSlotSessionActionConflict) {
+				t.Fatalf("late %s checkpoint err=%v", target.name, err)
+			}
+			current, err := database.GetSlotSessionOperation(started.OperationID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if current.State != target.state || current.DesiredState != "stopped" || current.AgentReady || current.WorkerReady || current.SessionState == "ready" {
+				t.Fatalf("late %s checkpoint changed readiness: %#v", target.name, current)
+			}
+		})
+	}
+}
+
 func TestSlotSessionRuntimeFactsRejectMalformedValues(t *testing.T) {
 	database, _ := openTestStore(t)
 	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {

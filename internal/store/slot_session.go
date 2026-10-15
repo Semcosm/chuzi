@@ -1061,6 +1061,12 @@ func (s *Store) CheckpointSlotSessionOperation(checkpoint SlotSessionCheckpoint)
 		if checkpoint.Generation != 0 && result.EnvironmentGeneration != 0 && checkpoint.Generation != result.EnvironmentGeneration {
 			return ErrSlotSessionLateResult
 		}
+		// Stop/Cancel is a durable cleanup fence. A provider result that
+		// arrives after that intent must not republish readiness facts, even
+		// when the controller claim and generation are still valid.
+		if result.DesiredState == "stopped" || result.State == SlotSessionStopping || result.State == SlotSessionCancelling {
+			return ErrSlotSessionActionConflict
+		}
 		result.Phase, result.SessionState, result.AgentReady, result.WorkerReady, result.UpdatedAt = checkpoint.Phase, checkpoint.SessionState, checkpoint.AgentReady, checkpoint.WorkerReady, at
 		if result.EnvironmentGeneration == 0 {
 			result.EnvironmentGeneration = checkpoint.Generation

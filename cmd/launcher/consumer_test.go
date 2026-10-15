@@ -347,6 +347,9 @@ func buildConsumerLauncher(t *testing.T) string {
 
 func runConsumerLauncher(t *testing.T, binary, workingDir, tempDir string, args ...string) ([]byte, string, error) {
 	t.Helper()
+	// Windows defaults the launcher root to the signed executable directory;
+	// this test intentionally exercises a separate synthetic install root.
+	args = append([]string{"-root", workingDir}, args...)
 	command := exec.Command(binary, args...)
 	command.Dir = workingDir
 	command.Env = append(os.Environ(), "TMPDIR="+tempDir, "TMP="+tempDir, "TEMP="+tempDir)

@@ -388,7 +388,7 @@ func (s *Store) SetSlotStatus(slotID string, status slot.Status, now time.Time) 
 		if value.Status == slot.Retiring && status == slot.Ready {
 			return slot.ErrInvalidStatus
 		}
-		if value.EnvironmentGeneration == 0 && status != slot.Unprovisioned && status != slot.Provisioning && status != slot.Retiring && status != slot.Deleted {
+		if value.EnvironmentGeneration == 0 && status != slot.Unprovisioned && status != slot.Provisioning && status != slot.Stopped && status != slot.Retiring && status != slot.Deleted {
 			return slot.ErrInvalidSlot
 		}
 		raw := tx.Bucket([]byte(migrations.SlotLeasesBucket)).Get([]byte(slotID))

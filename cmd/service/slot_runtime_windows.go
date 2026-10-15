@@ -381,7 +381,11 @@ func (r *windowsAllPoolReconciler) advanceClaimedSlotSession(ctx context.Context
 	callCtx := ctx
 	var baseCancel context.CancelFunc
 	if !cleanupIntent && !operation.Deadline.IsZero() {
-		callCtx, baseCancel = context.WithDeadline(ctx, operation.Deadline)
+		remaining := operation.Deadline.Sub(now)
+		if remaining <= 0 {
+			remaining = time.Nanosecond
+		}
+		callCtx, baseCancel = context.WithTimeout(ctx, remaining)
 		defer baseCancel()
 	}
 	callCtx, cancel := context.WithCancel(callCtx)
@@ -589,6 +593,9 @@ func (r *windowsAllPoolReconciler) advanceClaimedSlotSession(ctx context.Context
 	// the subsequent Inspect health gate succeeds.
 	checkpoint := store.SlotSessionCheckpoint{OperationID: operation.OperationID, Owner: owner, Generation: generation, Phase: store.SlotSessionPhaseWorker, SessionState: "provisioning", ObservedAt: observedAt()}
 	if _, err := r.database.CheckpointSlotSessionOperation(checkpoint); err != nil {
+		if latest, lookupErr := r.database.GetSlotSessionOperation(operation.OperationID); lookupErr == nil && (latest.DesiredState == "stopped" || latest.State == store.SlotSessionStopping || latest.State == store.SlotSessionCancelling) {
+			return stopClaimed(latest)
+		}
 		return err
 	}
 	if latest, lookupErr := r.database.GetSlotSessionOperation(operation.OperationID); lookupErr == nil && (latest.DesiredState == "stopped" || latest.State == store.SlotSessionStopping || latest.State == store.SlotSessionCancelling) {
@@ -641,6 +648,9 @@ func (r *windowsAllPoolReconciler) advanceClaimedSlotSession(ctx context.Context
 		WorkerReady:  inspected.WorkerReady,
 		ObservedAt:   readyAt,
 	}); err != nil {
+		if latest, lookupErr := r.database.GetSlotSessionOperation(operation.OperationID); lookupErr == nil && (latest.DesiredState == "stopped" || latest.State == store.SlotSessionStopping || latest.State == store.SlotSessionCancelling) {
+			return stopClaimed(latest)
+		}
 		return err
 	}
 	if latest, lookupErr := r.database.GetSlotSessionOperation(operation.OperationID); lookupErr == nil {
