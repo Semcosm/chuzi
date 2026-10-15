@@ -5,12 +5,12 @@ Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 14
+Revision: 15
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 1f85cdb32b9f485614e65aeb46029391d0d7ae63
+Head OID: 9b05e5224146b0b1e9157e2da85c27d782d2803a
 Integrated Result: pending
 
 ## Summary
@@ -154,7 +154,7 @@ No resource or signing gate is relaxed. The diagnostic native run and installed
 lifecycle acceptance remain pending.
 
 Revision 12 records the final Session 07 review and implementation commit
-`1f85cdb32b9f485614e65aeb46029391d0d7ae63`. The Store now rejects a runtime
+`9b05e5224146b0b1e9157e2da85c27d782d2803a`. The Store now rejects a runtime
 checkpoint after a durable Stop or Cancel intent, including the case where the
 controller claim and generation are still valid; the controller immediately
 enters exact native cleanup when that fence trips. Boot-only generation-zero
@@ -182,6 +182,13 @@ bundle, component archives, adapter, manifest, and checksum evidence. This is a
 test package handoff only; the local host has no `cargo`, `rustc`, or Inno Setup
 `iscc`, so no Slint/Inno installer EXE is claimed. The native session lifecycle
 remains pending for Sessions 09/10.
+
+Revision 15 records signature recovery for the complete PR range. Every commit
+from the Session 07 base through implementation and CR handoff was re-signed
+with the active registered key; the rewritten commits preserve the original
+trees, parent order, authors, and messages. The implementation tree is
+unchanged, and its trusted rewritten commit is
+`9b05e5224146b0b1e9157e2da85c27d782d2803a`.
 
 ## Motivation
 
@@ -296,7 +303,7 @@ shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
 
-At implementation SHA `1f85cdb32b9f485614e65aeb46029391d0d7ae63`, the Windows
+At implementation SHA `9b05e5224146b0b1e9157e2da85c27d782d2803a`, the Windows
 checkout passed the following deterministic checks:
 
 - `go test -count=1 ./...`
