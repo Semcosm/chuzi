@@ -36,6 +36,7 @@ RestartApplications=no
 
 [Files]
 Source: "{#PayloadDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#PayloadDir}\CorePayload\windows-service-management.ps1"; DestDir: "{tmp}"; DestName: "chuzi-prepare-windows-service-management.ps1"; Flags: dontcopy
 
 [Dirs]
 ; Core is launched by the signed-in user, while the installer runs elevated.
@@ -84,14 +85,12 @@ begin
   Result := (Length(Version) > 1) and (Version[1] = 'v');
 end;
 
-function RunServiceManagement(Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
+function RunServiceManagementScript(ScriptPath: String; Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
 var
-  ScriptPath: String;
   Parameters: String;
   ResultCode: Integer;
   ExecutionPolicy: String;
 begin
-  ScriptPath := AddBackslash(RuntimeRoot) + 'windows-service-management.ps1';
   if not FileExists(ScriptPath) then
   begin
     Log('Service management script is missing: ' + ScriptPath);
@@ -110,6 +109,13 @@ begin
     Parameters, '', SW_SHOWNORMAL, ewWaitUntilTerminated, ResultCode, nil);
   Log('Service management exit code: ' + IntToStr(ResultCode));
   Result := Result and (ResultCode = 0);
+end;
+
+function RunServiceManagement(Operation: String; RuntimeRoot: String; DataRoot: String; InstallRoot: String): Boolean;
+begin
+  Result := RunServiceManagementScript(
+    AddBackslash(RuntimeRoot) + 'windows-service-management.ps1',
+    Operation, RuntimeRoot, DataRoot, InstallRoot);
 end;
 
 function GetCustomSetupExitCode(): Integer;
@@ -180,11 +186,13 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ExistingManagement: String;
+  PrepareManagement: String;
   DataRoot: String;
 begin
   NeedsRestart := False;
   Result := '';
   ExistingManagement := ExpandConstant('{app}\CorePayload\windows-service-management.ps1');
+  PrepareManagement := ExpandConstant('{tmp}\chuzi-prepare-windows-service-management.ps1');
   DataRoot := ExpandConstant('{commonappdata}\chuzi\data');
   if FileExists(ExistingManagement) then
   begin
@@ -193,8 +201,13 @@ begin
       they must not turn a fresh retry with no registered service into an
       upgrade failure. The Stop operation is idempotent when no service/task
       exists. }
-    if not RunServiceManagement('Stop', ExpandConstant('{app}\CorePayload'),
-      DataRoot, ExpandConstant('{app}')) then
+    { Use the management script shipped in this installer. The existing
+      installed script may predate the current idempotent registration and
+      can fail before the new payload is copied. }
+    ExtractTemporaryFile('chuzi-prepare-windows-service-management.ps1');
+    if (not FileExists(PrepareManagement)) or
+       (not RunServiceManagementScript(PrepareManagement, 'Stop',
+        ExpandConstant('{app}\CorePayload'), DataRoot, ExpandConstant('{app}'))) then
     begin
       Result := '无法准备安装；请先关闭 Chuzi 后重试。';
       Exit;
