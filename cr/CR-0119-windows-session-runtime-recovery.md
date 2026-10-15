@@ -5,7 +5,7 @@ Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 13
+Revision: 14
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -179,8 +179,9 @@ SHA-256 `b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af`;
 the release manifest and component packages then completed.
 `validate_nightly_artifact.py --artifact dist --target windows-amd64` passed the
 bundle, component archives, adapter, manifest, and checksum evidence. This is a
-test package handoff only; the Slint/Inno installer and native session lifecycle
-remain pending for Sessions 09/10.
+test package handoff only; the local host has no `cargo`, `rustc`, or Inno Setup
+`iscc`, so no Slint/Inno installer EXE is claimed. The native session lifecycle
+remains pending for Sessions 09/10.
 
 ## Motivation
 
