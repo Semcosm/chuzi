@@ -5,7 +5,7 @@ Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 15
+Revision: 16
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -190,6 +190,17 @@ trees, parent order, authors, and messages. The implementation tree is
 unchanged, and its trusted rewritten commit is
 `9b05e5224146b0b1e9157e2da85c27d782d2803a`.
 
+Revision 16 records the final package rebuilt from the trusted branch head
+`60d39b2712f548c3133c764f05cac50219a85f16`. The bundle is
+`dist/chuzi-test-20261015-60d39b2712f5-windows-amd64.zip` with SHA-256
+`4004d26d896f298c787cf149af2919f44f291f1d06b4b8a962af3edc4316c627`; its
+service component is
+`55d69ce613ba79c753c32797dc413baf4bf5999183103a0be9c53649da1435c8`. The
+isolated artifact directory passed the complete bundle, component, adapter,
+manifest, and checksum validation. This is the package handoff for local
+installation; it does not claim Slint/Inno installer or native session
+acceptance.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -324,6 +335,7 @@ checkout passed the following deterministic checks:
 - `./scripts/prepare_presentmon.ps1` with the pinned PresentMon SHA-256
 - `./scripts/package.ps1 -Target windows-amd64 -Version test-20261015-5bdd867c473d`
 - `python scripts/validate_nightly_artifact.py --artifact dist --target windows-amd64 --commit 5bdd867c473daa0849a8220b3051ea5b09e8211f --version test-20261015-5bdd867c473d --channel test`
+- `python scripts/validate_nightly_artifact.py --artifact <isolated-dist> --target windows-amd64 --commit 60d39b2712f548c3133c764f05cac50219a85f16 --version test-20261015-60d39b2712f5 --channel test`
 
 `.ugs/document-map.json` is absent, so its optional validator does not apply.
 
