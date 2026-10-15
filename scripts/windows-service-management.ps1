@@ -52,41 +52,60 @@ function Invoke-Sc([string[]]$Arguments) {
     if ($LASTEXITCODE -ne 0) { throw "service_control_failed" }
 }
 
+function Invoke-NativeCapture([string]$FilePath, [string[]]$Arguments) {
+    # Windows PowerShell 5.1 promotes native stderr to a terminating error
+    # under ErrorActionPreference=Stop. Capture it out of process so expected
+    # not-found results remain idempotent and are classified by exit code.
+    $token = [guid]::NewGuid().ToString("N")
+    $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("chuzi-native-$token.out")
+    $stderrPath = Join-Path ([IO.Path]::GetTempPath()) ("chuzi-native-$token.err")
+    try {
+        $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        [pscustomobject]@{
+            ExitCode = [int]$process.ExitCode
+            StdOut = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
+            StdErr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -Raw -LiteralPath $stderrPath } else { "" }
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Test-BrokerTask {
-    & "$env:SystemRoot\System32\schtasks.exe" /Query /TN $brokerTaskName 2>$null | Out-Null
-    return $LASTEXITCODE -eq 0
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Query', '/TN', $brokerTaskName)
+    return $result.ExitCode -eq 0
 }
 
 function Register-BrokerTask {
     # ONLOGON + /IT binds the signed broker to the operator's interactive
     # token. It is deliberately not an SCM service and never runs in Session 0.
     $taskCommand = '"' + $broker + '"'
-    & "$env:SystemRoot\System32\schtasks.exe" /Create /TN $brokerTaskName /TR $taskCommand /SC ONLOGON /IT /RL LIMITED /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "helper_registration_failed" }
+    $create = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Create', '/TN', $brokerTaskName, '/TR', $taskCommand, '/SC', 'ONLOGON', '/IT', '/RL', 'LIMITED', '/F')
+    if ($create.ExitCode -ne 0) { throw "helper_registration_failed" }
     # Hosted Windows build agents run installers in session 0. The task is
     # still registered there, but it cannot be started until an operator logs
     # on. An interactive installer session must start it immediately so the
     # UI can use the broker without requiring a second logon.
     if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) { return }
-    & "$env:SystemRoot\System32\schtasks.exe" /Run /TN $brokerTaskName | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "helper_start_failed" }
+    $run = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Run', '/TN', $brokerTaskName)
+    if ($run.ExitCode -ne 0) { throw "helper_start_failed" }
 }
 
 function Stop-BrokerTask {
     if (-not (Test-BrokerTask)) { return }
-    & "$env:SystemRoot\System32\schtasks.exe" /End /TN $brokerTaskName 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 128) { throw "helper_stop_failed" }
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/End', '/TN', $brokerTaskName)
+    if ($result.ExitCode -ne 0 -and $result.ExitCode -ne 128) { throw "helper_stop_failed" }
 }
 
 function Remove-BrokerTask {
-    & "$env:SystemRoot\System32\schtasks.exe" /Delete /TN $brokerTaskName /F 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "helper_delete_failed" }
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Delete', '/TN', $brokerTaskName, '/F')
+    if ($result.ExitCode -ne 0 -and $result.ExitCode -ne 1) { throw "helper_delete_failed" }
 }
 
 function Wait-Stopped([string]$name) {
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        $query = & "$env:SystemRoot\System32\sc.exe" query $name 2>$null | Out-String
-        if ($query -match 'STATE\s+:\s+\d+\s+STOPPED') { return }
+        $query = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $name)
+        if ($query.StdOut -match 'STATE\s+:\s+\d+\s+STOPPED') { return }
         Start-Sleep -Milliseconds 250
     }
     throw "service_stop_timeout"
@@ -277,8 +296,8 @@ function Backup-Install {
             Copy-Item -LiteralPath $management -Destination $rollbackManagement -Force -ErrorAction Stop
             Set-ChuziAcl $rollbackManagement $false $false
         }
-        & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-Null
-        $serviceExists = $LASTEXITCODE -eq 0
+        $serviceQuery = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+        $serviceExists = $serviceQuery.ExitCode -eq 0
         $brokerExists = Test-BrokerTask
         $state = [ordered]@{ format = "chuzi-upgrade-state/v1"; backup_root = $destination; install_root = $install; service_exists = $serviceExists; broker_exists = $brokerExists }
         Write-Utf8NoBom $backupMarker ($state | ConvertTo-Json -Depth 4)
@@ -434,8 +453,8 @@ function Install-ChuziServices {
         if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
     }
     $binPath = '"' + $core + '" -service -config "' + $config + '"'
-    & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $serviceQuery = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+    if ($serviceQuery.ExitCode -ne 0) {
         Invoke-Sc @("create", $serviceName, "binPath=", $binPath, "start=", "auto", "obj=", "LocalSystem", "DisplayName=", "Chuzi Core Service")
     } else {
         Invoke-Sc @("config", $serviceName, "binPath=", $binPath, "start=", "auto", "obj=", "LocalSystem")
@@ -455,8 +474,8 @@ function Install-ChuziServices {
 function Stop-ChuziServices {
     # Core shutdown needs the interactive broker to finish exact-session and
     # credential cleanup. Keep the broker alive until SCM confirms Core stopped.
-    $query = & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-String
-    if ($LASTEXITCODE -eq 0 -and $query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
+    $query = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+    if ($query.ExitCode -eq 0 -and $query.StdOut -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
         & "$env:SystemRoot\System32\sc.exe" stop $serviceName | Out-Null
         if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
         Wait-Stopped $serviceName
@@ -466,8 +485,9 @@ function Stop-ChuziServices {
 
 switch ($Operation) {
     "Status" {
-        & "$env:SystemRoot\System32\sc.exe" query $serviceName
-        exit $LASTEXITCODE
+        $result = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+        if (-not [string]::IsNullOrWhiteSpace($result.StdOut)) { Write-Output $result.StdOut }
+        exit $result.ExitCode
     }
     "Stop" { Stop-ChuziServices }
     "ConfirmResources" { Confirm-ResourcesReleased }
@@ -492,8 +512,8 @@ switch ($Operation) {
     "Uninstall" {
         Stop-AndConfirm
         Remove-BrokerTask
-        & "$env:SystemRoot\System32\sc.exe" delete $serviceName | Out-Null
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
+        $result = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('delete', $serviceName)
+        if ($result.ExitCode -ne 0 -and $result.ExitCode -ne 1060 -and $result.ExitCode -ne 1072) { throw "service_delete_failed" }
     }
     "Install" { Install-ChuziServices }
     "Repair" { Stop-AndConfirm; Install-ChuziServices }
