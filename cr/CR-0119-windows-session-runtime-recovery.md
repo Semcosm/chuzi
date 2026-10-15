@@ -5,12 +5,12 @@ Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 11
+Revision: 12
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 9f654d0fa122b59a7695e726da65164f7ae4cc66
+Head OID: 1f85cdb32b9f485614e65aeb46029391d0d7ae63
 Integrated Result: pending
 
 ## Summary
@@ -153,6 +153,23 @@ package was not uploaded and the log did not retain the underlying exception.
 No resource or signing gate is relaxed. The diagnostic native run and installed
 lifecycle acceptance remain pending.
 
+Revision 12 records the final Session 07 review and implementation commit
+`1f85cdb32b9f485614e65aeb46029391d0d7ae63`. The Store now rejects a runtime
+checkpoint after a durable Stop or Cancel intent, including the case where the
+controller claim and generation are still valid; the controller immediately
+enters exact native cleanup when that fence trips. Boot-only generation-zero
+slots may be projected to `stopped` during cleanup, persisted operation
+deadlines are converted to a relative context timeout, and launcher consumer
+tests use an explicit synthetic install root after command validation. Targeted
+Stop/Cancel checkpoint regressions cover both cleanup states and preserve false
+readiness facts.
+
+The repository signer registry now records the lost `SHA256:QEc6AA8Qc/tEaLNkvhRjemILH5EVV8S4ogKIQb1cMks`
+key as revoked and the replacement `SHA256:C7s8v+W+L7S91DrHDmSd/C8b452NSrSz9NqWpW7jDIY`
+key as active. The replacement private key remains outside the repository at
+the operator's configured SSH path; GitHub account signing-key registration is
+an operator action and does not expose private material to the repository.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -266,16 +283,15 @@ shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
 
-The following checks passed on the Linux development host for the original
-implementation and Revision 2 working tree; final rebased implementation OIDs
-are recorded above:
+At implementation SHA `1f85cdb32b9f485614e65aeb46029391d0d7ae63`, the Windows
+checkout passed the following deterministic checks:
 
 - `go test -count=1 ./...`
 - `go test -count=1 -race ./...`
 - `go vet ./...`
-- `GOOS=windows GOARCH=amd64 go test -c -o /tmp/slotwindows.test.exe ./internal/slotwindows`
-- `GOOS=windows GOARCH=amd64 go test -c -o /tmp/service.test.exe ./cmd/service`
-- `GOOS=windows GOARCH=amd64 go test -c -o /tmp/session-broker.test.exe ./cmd/session-broker`
+- `GOOS=windows GOARCH=amd64 go test -c ./internal/slotwindows`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/service`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/session-broker`
 - `./scripts/validate_policy_manifest.sh`
 - `./scripts/validate_quality_profile.sh`
 - `./scripts/validate_supply_chain_profile.sh`
@@ -283,8 +299,17 @@ are recorded above:
 - `./scripts/validate_repository_shape.sh`
 - `./scripts/test_build_contract.sh`
 - `git diff --check`
+- `./scripts/validate_signer_roles.sh`
+- `git show --show-signature --format=fuller --no-patch HEAD`
 
 `.ugs/document-map.json` is absent, so its optional validator does not apply.
+
+The repository checks were executed from Git Bash with `set -o igncr` because
+the Windows checkout uses CRLF and the POSIX validators otherwise pass a
+trailing carriage return into path checks. This is a shell compatibility detail;
+no repository files were rewritten for it. Go tests and cross-compilation are
+not native WTS, RDP, Profile, Credential Manager, ACL, Agent, restart, shutdown,
+or Retire acceptance.
 
 Deterministic coverage includes operation idempotency and revision conflicts,
 claim expiry and late-result fencing, deadlines, bounded retry and backoff,
@@ -332,12 +357,14 @@ shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
 ## Risk
 
-The main remaining risk is unexecuted native Windows behavior. Local RDP and
-Credential Manager policy, helper task identity, named-pipe DACLs, Winlogon
-Profile timing, WTS reuse/disconnect behavior, Agent shutdown, file ACL and
-reparse checks, and service/upgrade interruption can differ from cross-compiled
-and fake-provider tests. Until native acceptance passes, deployment must report
-the runtime unavailable and must not claim production session support.
+The main remaining risk is unexecuted native Windows behavior. WTS and RDP
+transitions, cold Profile initialization, Credential Manager deletion, helper
+identity and named-pipe ACLs, service SID policy, Agent/worker heartbeat and
+shutdown, broker/service restart recovery, service shutdown, and Retire cleanup
+still require a disposable Windows installation in Sessions 09/10. These can
+differ from cross-compiled and fake-provider tests. Until that native
+acceptance passes, deployment must report the runtime unavailable and must not
+claim production session support.
 
 Cleanup deliberately favors preservation over availability. An ambiguous or
 malformed record, active same-SID session without an exact session ID, failed
