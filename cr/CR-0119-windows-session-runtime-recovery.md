@@ -220,6 +220,13 @@ The rebuilt local installer is
 `ab22ee723c45ba9e20031035df3f1b03e8ecd99d718756526807bd9c0b721313`.
 Inno Setup 6.7.3 compiled it successfully and the embedded Core manifest names
 the current commit. This is installer and pre-install recovery evidence only;
+the isolated \`validate_nightly_artifact.py\` run also passed the current
+windows-amd64 bundle, launcher/service/browser-worker/PresentMon components,
+adapter, release index, manifests, and checksums for the same implementation
+commit. The local Git Bash policy chain remains environment-limited because
+Windows \`jq\` emits CRLF records that the POSIX validators read with a trailing
+carriage return; no repository policy result is claimed from that failed host
+invocation.
 WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
 and Retire remain native acceptance pending for Sessions 09/10.
 
