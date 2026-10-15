@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 9f654d0fa122b59a7695e726da65164f7ae4cc66
+Head or Range: f52d036c04cf
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 16
+Revision: 17
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 9b05e5224146b0b1e9157e2da85c27d782d2803a
+Head OID: f52d036c04cfb194fd011b73c54eb7ffdece7535
 Integrated Result: pending
 
 ## Summary
@@ -200,6 +200,28 @@ isolated artifact directory passed the complete bundle, component, adapter,
 manifest, and checksum validation. This is the package handoff for local
 installation; it does not claim Slint/Inno installer or native session
 acceptance.
+
+Revision 17 records the Windows installer recovery fix at signed commits
+`b9f64e3c456be8dad8f495623f1812df46b9b03b` and
+`f52d036c04cfb194fd011b73c54eb7ffdece7535`. The service-management script now
+captures native `schtasks.exe` and `sc.exe` results out of process so Windows
+PowerShell 5.1 does not turn an absent task or service into a terminating
+error. The installer also extracts the management script shipped in the new
+package before `PrepareToInstall` stops an existing installation; an older
+half-install therefore cannot block an upgrade solely because its stale script
+misclassified a missing registration. The local machine had the old
+`C:\Program Files\Chuzi` payload but no `ChuziCore` service, no
+`ChuziSessionBroker` task, and no Chuzi process. The corrected Stop operation
+returned zero for that state.
+
+The rebuilt local installer is
+`dist/windows-ui/ChuziSetup.exe`, version
+`test-20261016-f52d036c04cf`, SHA-256
+`ab22ee723c45ba9e20031035df3f1b03e8ecd99d718756526807bd9c0b721313`.
+Inno Setup 6.7.3 compiled it successfully and the embedded Core manifest names
+the current commit. This is installer and pre-install recovery evidence only;
+WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
+and Retire remain native acceptance pending for Sessions 09/10.
 
 ## Motivation
 
