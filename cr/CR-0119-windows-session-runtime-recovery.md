@@ -5,7 +5,7 @@ Head or Range: 8a82aca2fbe22c56142842823f97e705d3ce2e87
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 20
+Revision: 21
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -323,6 +323,8 @@ generated bindings and existing dead code but succeeded. The installer has not
 been installed yet. The existing stopped installation remains on the previous
 payload, so service-start recovery and all native Session 09/10 acceptance are
 pending. PR #237 remains open; Actions for this implementation are pending push.
+
+Revision 21 records the PR validation synchronization. Push `d42be5f7414c1c53851fb04b8fb43a4ceca93717` triggered UGS run 38864348767 before the updated Revision 20 body had been synchronized, so that event reported `review body differs from CR source`. The current GitHub PR body was then verified byte-for-byte against the committed CR, and `validate_cr_review.sh` passed locally. The UGS workflow uses the default `pull_request` activity types, so editing the body alone did not start another run. This documentation-only revision will synchronize the body before a follow-up push, allowing the next event to validate matching content. It does not change implementation or native acceptance status.
 
 ## Motivation
 
