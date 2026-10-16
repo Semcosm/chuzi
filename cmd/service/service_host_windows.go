@@ -154,6 +154,9 @@ func prepareWindowsService(ctx context.Context, options serviceOptions) (service
 	if err := servicehost.ValidateServiceToken(servicehost.ProductionIdentity()); err != nil {
 		return serviceOptions{}, err
 	}
+	if err := servicehost.EnableServicePrivileges(servicehost.ProductionIdentity()); err != nil {
+		return serviceOptions{}, err
+	}
 	// SCM supplies only the fixed service/config arguments. Derive every
 	// executable and script used by the LocalSystem process from that signed
 	// installation root so a relative PATH or working directory cannot select

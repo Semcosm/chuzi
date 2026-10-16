@@ -5,6 +5,7 @@ package servicehost
 import (
 	"crypto/sha1"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"strings"
 	"syscall"
@@ -76,14 +77,58 @@ func ValidateServiceToken(identity Identity) error {
 			return ErrHostUnavailable
 		}
 		found := false
-		for _, privilege := range privileges.AllPrivileges() {
-			if privilege.Luid == luid && privilege.Attributes&windows.SE_PRIVILEGE_ENABLED != 0 {
-				found = true
-				break
-			}
-		}
+		found = privilegePresent(privileges.AllPrivileges(), luid)
 		if !found {
 			return ErrInvalidConfig
+		}
+	}
+	return nil
+}
+
+// privilegePresent checks that a privilege is carried by the service token.
+// LocalSystem commonly carries the session-creation privileges disabled; the
+// service enables them only at the native boundary that needs them.
+func privilegePresent(privileges []windows.LUIDAndAttributes, wanted windows.LUID) bool {
+	for _, privilege := range privileges {
+		if privilege.Luid == wanted {
+			return true
+		}
+	}
+	return false
+}
+
+// EnableServicePrivileges enables the fixed production privileges after the
+// service identity has been authenticated. Presence is checked separately by
+// ValidateServiceToken so a disabled-but-present LocalSystem privilege is not
+// mistaken for a foreign token.
+func EnableServicePrivileges(identity Identity) error {
+	if err := identity.Validate(); err != nil {
+		return err
+	}
+	var token windows.Token
+	if err := windows.OpenProcessToken(windows.CurrentProcess(), windows.TOKEN_QUERY|windows.TOKEN_ADJUST_PRIVILEGES, &token); err != nil {
+		return ErrHostUnavailable
+	}
+	defer token.Close()
+	for _, name := range identity.Privileges {
+		namePtr, err := syscall.UTF16PtrFromString(name)
+		if err != nil {
+			return ErrInvalidConfig
+		}
+		var luid windows.LUID
+		if err := windows.LookupPrivilegeValue(nil, namePtr, &luid); err != nil {
+			return ErrHostUnavailable
+		}
+		state := windows.Tokenprivileges{PrivilegeCount: 1}
+		state.Privileges[0] = windows.LUIDAndAttributes{Luid: luid, Attributes: windows.SE_PRIVILEGE_ENABLED}
+		if err := windows.AdjustTokenPrivileges(token, false, &state, uint32(unsafe.Sizeof(state)), nil, nil); err != nil {
+			return ErrHostUnavailable
+		}
+		if err := windows.GetLastError(); err != nil {
+			if errors.Is(err, windows.ERROR_NOT_ALL_ASSIGNED) {
+				return ErrInvalidConfig
+			}
+			return ErrHostUnavailable
 		}
 	}
 	return nil
