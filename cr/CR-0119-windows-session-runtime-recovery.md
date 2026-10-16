@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: dc15fcb9534d0afdf3e26b325aa26bf89bfefb61
+Head or Range: 9bdf43d1974ddfdebd189463604c0b91874378d1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 26
+Revision: 27
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: dc15fcb9534d0afdf3e26b325aa26bf89bfefb61
+Head OID: 9bdf43d1974ddfdebd189463604c0b91874378d1
 Integrated Result: pending
 
 ## Summary
@@ -229,6 +229,28 @@ carriage return; no repository policy result is claimed from that failed host
 invocation.
 WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
 and Retire remain native acceptance pending for Sessions 09/10.
+
+Revision 27 records the UI failure reported with diagnostics
+`diag-1792153114170510000-28feea22`,
+`diag-1792153117146873500-cfdbda5f`, and
+`diag-1792153162099235000-8869e589`. All three came from package
+`test-20261016-dc15fcb9534d`, reported Core ready, and captured a generic
+`ui_operation_failed`; the visible event entries were idle queue events, and
+the truncated lists do not identify the failing UI call. ACL
+inspection of `C:\ProgramData\chuzi\data` showed `BUILTIN\Users` has only
+ReadAndExecute while SYSTEM has Modify and Administrators have FullControl.
+The installed UI was writing user-owned preferences, settings input, launcher
+settings, and mutation locks under that service data directory. A standard
+interactive user therefore could not save settings or acquire the lock used by
+Core start/stop.
+
+Signed implementation `9bdf43d1974ddfdebd189463604c0b91874378d1` moves those
+UI-owned files to `%LOCALAPPDATA%\Chuzi` and passes the user-scoped lock path
+through to launcher settings save and Core start/stop commands. Existing theme
+preferences remain available through a read-only legacy fallback. Focused Rust
+path-routing tests and Go launcher tests cover the configured paths. A new
+local installer was built for operator installation; UI save/start/stop
+verification against the installed package is still pending.
 
 Revision 26 records the installed-package check from diagnostic
 `ui-1792152352601`. The installed manifest identifies
@@ -714,16 +736,47 @@ pipe ACLs and caller identity, Credential Manager cleanup, WTS/SID/session
 fences, shell/desktop readiness, Agent/worker heartbeat, Stop, service restart,
 shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
+At implementation SHA `9bdf43d1974ddfdebd189463604c0b91874378d1`, the Windows
+host passed:
+
+- `go test -count=1 ./...`
+- `go test -count=1 -race ./...`
+- `go vet ./...`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/service`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/session-broker`
+- `GOOS=windows GOARCH=amd64 go test -c ./internal/slotwindows`
+- `cargo fmt --manifest-path ui/windows/Cargo.toml -- --check`
+- `cargo test --manifest-path ui/windows/Cargo.toml --locked` (47 tests)
+- `./scripts/validate_policy_manifest.sh`
+- `./scripts/validate_quality_profile.sh`
+- `./scripts/validate_supply_chain_profile.sh`
+- `./scripts/validate_action_pinning.sh`
+- `./scripts/validate_repository_shape.sh`
+- `./scripts/test_build_contract.sh`
+- `git diff --check`
+- UI `--smoke-test`
+
+The local installer
+`dist/windows-ui-user-state-fix-20261016-9bdf43d1974d/ChuziSetup.exe`
+was compiled with Inno Setup 6.7.3. Its SHA-256 is
+`8efe3a72a1803dd9b22f8d2b0b8906a3137ce433f733b44c8a54b2023aee4ec9`;
+the launcher version and all 16 embedded Core manifest resource hashes were
+verified. Build output remains under ignored `dist/`. The installer has not
+been applied yet, so these checks do not verify UI settings persistence or
+Core start/stop on the installed package, and do not constitute native session
+acceptance.
+
 ## Risk
 
-The `test-20261016-dc15fcb9534d` installer is installed. Setup Log #007
-confirms that installation explicitly stopped Core and launched the UI without
-restarting the service; a subsequent SCM start reached ready. The stop path
-also emitted `forced_shutdown`, but the current log does not identify which
+The installed `test-20261016-dc15fcb9534d` package produced the three reported
+UI failures. Its diagnostic event lists are truncated before any failed UI
+operation, but the installed data-root ACL confirms the write-permission
+boundary. The replacement package for `9bdf43d1974ddfdebd189463604c0b91874378d1`
+is built but not installed; saving settings and starting/stopping Core through
+that UI remain pending operator validation. Setup Log #007 from the prior
+installation also recorded `forced_shutdown`, but it does not identify which
 ordered shutdown hook failed or exceeded the five-second deadline. Record the
 individual hook outcome before claiming the stop path is reliable.
-The Slint source build is not part of this package build; the previously
-verified UI binary was used as an explicit prebuilt input.
 
 The empty-file-DACL regression and the Windows PowerShell native argument
 splitting failure are reproduced and fixed on owned test inputs. Applying the
