@@ -346,6 +346,9 @@ jobs:
         run: ./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload" -PrebuiltBinaryPath "$env:RUNNER_TEMP\chuzi-ui-prebuilt\chuzi-native-windows.exe"
         env:
           CHUZI_BUILD_VERSION: ${{ needs.release_context.outputs.version }}
+      - name: Test service ACLs and interrupted-install recovery
+        shell: powershell
+        run: ./scripts/test_windows_service_acl.ps1
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport

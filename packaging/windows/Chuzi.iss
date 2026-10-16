@@ -56,7 +56,7 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 ; installed under ProgramData, so replacing the UI files alone is insufficient
 ; during upgrades unless this old process is stopped first.
 Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonappdata}\chuzi\data"" -source-root ""{app}\CorePayload"" -manifest ""{app}\CorePayload\release-manifest.json"" -command core-stop"; Flags: runhidden waituntilterminated skipifdoesntexist runascurrentuser
-Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent; Check: ServiceInstallationSucceeded
 
 [UninstallRun]
 Filename: "{app}\CorePayload\chuzi-launcher.exe"; Parameters: "-root ""{commonappdata}\chuzi\data"" -source-root ""{app}\CorePayload"" -manifest ""{app}\CorePayload\release-manifest.json"" -command core-stop"; Flags: runhidden waituntilterminated skipifdoesntexist; RunOnceId: StopChuziCore
@@ -126,6 +126,11 @@ begin
     Result := 1
   else
     Result := 0;
+end;
+
+function ServiceInstallationSucceeded(): Boolean;
+begin
+  Result := not ServiceInstallationFailed;
 end;
 
 function KeepUserData(): Boolean;
@@ -210,6 +215,14 @@ begin
         ExpandConstant('{app}\CorePayload'), DataRoot, ExpandConstant('{app}'))) then
     begin
       Result := '无法准备安装；请先关闭 Chuzi 后重试。';
+      Exit;
+    end;
+    { Recover the previous installer's empty file DACLs before file copying
+      and component-install. Ownership validation remains mandatory. }
+    if not RunServiceManagementScript(PrepareManagement, 'RepairFileAccess',
+      ExpandConstant('{app}\CorePayload'), DataRoot, ExpandConstant('{app}')) then
+    begin
+      Result := '无法恢复 Chuzi 文件权限；已保留安装和数据，请检查安装日志。';
       Exit;
     end;
   end;

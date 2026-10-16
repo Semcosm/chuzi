@@ -232,7 +232,7 @@ grep -Fq 'packaging/windows/Chuzi.iss' "$repo_root/scripts/build_windows_slint.p
 grep -Fq 'OutputBaseFilename=ChuziSetup' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses stable setup filename"
 grep -Fq 'Source: "{#PayloadDir}\*"' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses published payload"
 grep -Fq 'function PrepareToInstall' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop the retained Core before upgrade"
-grep -Fq "RunServiceManagement('Stop'" "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not use the idempotent stop operation before replacing the payload"
+grep -Fq "RunServiceManagementScript(PrepareManagement, 'Stop'" "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not use the bundled idempotent stop operation before replacing the payload"
 grep -Fq 'component-install -item service' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not repair the retained Core payload"
 grep -Fq 'core-stop' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop Core during install/uninstall"
 grep -Fq "foreach (\$child in @('db', 'profiles', 'runtime', 'journal', 'secrets'))" "$repo_root/scripts/windows-service-management.ps1" || fail "Windows service registration does not distinguish empty mutable data directories"

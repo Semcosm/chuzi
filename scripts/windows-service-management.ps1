@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Install", "Stop", "UpgradePrepare", "Backup", "Rollback", "CleanupBackup", "ConfirmResources", "ConfirmDataOwnership", "UninstallPrepare", "Repair", "Uninstall", "Status")]
+    [ValidateSet("Install", "Stop", "RepairFileAccess", "UpgradePrepare", "Backup", "Rollback", "CleanupBackup", "ConfirmResources", "ConfirmDataOwnership", "UninstallPrepare", "Repair", "Uninstall", "Status")]
     [string]$Operation,
     [string]$RuntimeRoot = "",
     [string]$DataRoot = "",
@@ -111,18 +111,85 @@ function Wait-Stopped([string]$name) {
     throw "service_stop_timeout"
 }
 
+function Assert-NoReparseParent([string]$path) {
+    $candidate = [IO.Path]::GetFullPath($path)
+    while (-not [string]::IsNullOrEmpty($candidate)) {
+        if (Test-Path -LiteralPath $candidate) {
+            $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+        }
+        $candidate = Split-Path -Parent $candidate
+    }
+}
+
 function Set-ChuziAcl([string]$path, [bool]$Writable, [bool]$Recursive = $true) {
+    Assert-NoReparseParent $path
     if (-not (Test-Path -LiteralPath $path)) { New-Item -ItemType Directory -Force -Path $path | Out-Null }
-    # Use well-known SIDs so ACL setup is independent of the host UI locale.
-    $aclArguments = @($path, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)(F)", "*S-1-5-32-544:(OI)(CI)(F)", "*S-1-5-32-545:(OI)(CI)(RX)", "/C")
-    if ($Recursive) { $aclArguments += "/T" }
-    & "$env:SystemRoot\System32\icacls.exe" @aclArguments | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "runtime_acl_failed" }
-    if ($Writable) {
-        $writeArguments = @($path, "/grant:r", "*S-1-5-18:(OI)(CI)(M)", "/C")
-        if ($Recursive) { $writeArguments += "/T" }
-        & "$env:SystemRoot\System32\icacls.exe" @writeArguments | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "data_acl_failed" }
+    $root = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    $items = @($root)
+    if (($root.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    if ($Recursive -and $root.PSIsContainer) {
+        $items += @(Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction Stop)
+    }
+    # Validate the complete tree before changing any permissions. Never follow
+    # a junction into a foreign Profile or another installation.
+    foreach ($item in $items) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    }
+    foreach ($item in $items) {
+        $acl = if ($item.PSIsContainer) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
+        $inheritance = if ($item.PSIsContainer) { [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' } else { [Security.AccessControl.InheritanceFlags]::None }
+        $acl.SetAccessRuleProtection($true, $false)
+        $systemRights = if ($Writable) { 'Modify' } else { 'FullControl' }
+        foreach ($entry in @(@('S-1-5-18', $systemRights), @('S-1-5-32-544', 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))) {
+            $sid = New-Object Security.Principal.SecurityIdentifier($entry[0])
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]$entry[1], $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+            $acl.AddAccessRule($rule)
+        }
+        # Only write the DACL. Reapplying a Get-Acl object can also request
+        # owner/audit privileges that an ordinary installer does not hold.
+        if ($item.PSIsContainer) { [IO.Directory]::SetAccessControl($item.FullName, $acl) } else { [IO.File]::SetAccessControl($item.FullName, $acl) }
+    }
+}
+
+function Repair-EmptyFileAcl([string]$path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    $acl = Get-Acl -LiteralPath $path -ErrorAction Stop
+    if (-not $acl.AreAccessRulesProtected -or @($acl.Access).Count -ne 0) { return $null }
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $installer = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($owner -notin @($installer, 'S-1-5-18', 'S-1-5-32-544')) { throw "resource_ownership_unknown" }
+    # The old icacls command removed all file ACEs. Recover only that exact
+    # failure shape; retain the owner and never reset arbitrary permissions.
+    Set-ChuziAcl $path $false $false
+    return $acl.Sddl
+}
+
+function Repair-ChuziFileAccess {
+    Assert-NoReparseParent $ownershipMarker
+    Assert-NoReparseParent $runtime
+    if (-not (Test-Path -LiteralPath $ownershipMarker -PathType Leaf)) { return }
+    $original = Repair-EmptyFileAcl $ownershipMarker
+    try {
+        Confirm-DataOwnership | Out-Null
+    } catch {
+        if ($null -ne $original) {
+            $acl = New-Object Security.AccessControl.FileSecurity
+            $acl.SetSecurityDescriptorSddlForm($original, [Security.AccessControl.AccessControlSections]::Access)
+            [IO.File]::SetAccessControl($ownershipMarker, $acl)
+        }
+        throw
+    }
+    Repair-EmptyFileAcl $config | Out-Null
+    if (-not (Test-Path -LiteralPath $runtime -PathType Container)) { return }
+    $items = @((Get-Item -LiteralPath $runtime -Force)) + @(Get-ChildItem -LiteralPath $runtime -Recurse -Force -ErrorAction Stop)
+    foreach ($item in $items) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    }
+    foreach ($item in $items) {
+        if (-not $item.PSIsContainer) { Repair-EmptyFileAcl $item.FullName | Out-Null }
     }
 }
 
@@ -355,6 +422,7 @@ function Cleanup-InstallBackup {
 }
 
 function Install-ChuziServices {
+    Repair-ChuziFileAccess
     if (-not (Test-Path -LiteralPath $core -PathType Leaf)) { throw "core_missing" }
     if (-not (Test-Path -LiteralPath $broker -PathType Leaf)) { throw "service_helper_missing" }
     if (-not (Test-Path -LiteralPath $management -PathType Leaf)) { throw "service_management_missing" }
@@ -490,6 +558,7 @@ switch ($Operation) {
         exit $result.ExitCode
     }
     "Stop" { Stop-ChuziServices }
+    "RepairFileAccess" { Repair-ChuziFileAccess }
     "ConfirmResources" { Confirm-ResourcesReleased }
     "ConfirmDataOwnership" { Confirm-DataOwnership }
     "UpgradePrepare" {
@@ -516,6 +585,6 @@ switch ($Operation) {
         if ($result.ExitCode -ne 0 -and $result.ExitCode -ne 1060 -and $result.ExitCode -ne 1072) { throw "service_delete_failed" }
     }
     "Install" { Install-ChuziServices }
-    "Repair" { Stop-AndConfirm; Install-ChuziServices }
+    "Repair" { Stop-ChuziServices; Repair-ChuziFileAccess; Stop-AndConfirm; Install-ChuziServices }
 }
 Write-Output "service management $Operation completed"
