@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 818963bb7388
+Head or Range: 8a82aca2fbe22c56142842823f97e705d3ce2e87
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 19
+Revision: 20
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 818963bb7388f3470e822849e320180f2f42118f
+Head OID: 8a82aca2fbe22c56142842823f97e705d3ce2e87
 Integrated Result: pending
 
 ## Summary
@@ -287,6 +287,43 @@ installation still has no `ChuziCore` service or `ChuziSessionBroker` task, and
 its latest Setup Log `#003` records the older script's generic
 `service_control_failed` exception.
 
+Revision 20 fixes the service startup failure observed after that installation.
+The UI's redacted `core_lifecycle` diagnostic reported `core_unavailable`; the
+installed `ChuziCore` service was LocalSystem/Automatic but stopped. SCM logged
+7009 and 7000 at 13:12:27 on 2026-10-16, while the installed Core manifest still
+identified `test-20261016-818963bb7388` and the service executable SHA-256 was
+`5c4f58f439754616e4a39bef42d770766ebceea47b1b7bead7aa0086b8b59bbf`. The
+installer had registered the service; the failure occurred because the process
+performed file, token, and full host preflight before connecting to SCM, beyond
+SCM's 30-second startup window. The same host reports a stale Windows 10
+ProductName on build 26200 / DisplayVersion 25H2, which the previous edition
+gate also rejected.
+
+Signed implementation `6165c9a016e7a2321acc68995383f0080ebb170d` registers the
+service with SCM first, sends StartPending checkpoints while fixed runtime
+validation runs, and reports Running only after preparation succeeds. It moves
+session host preflight into the provisioner after the managed SID is known,
+accepts the supported 25H2 stale-ProductName combination, and evaluates local
+group SIDs for effective logon rights. Runtime build classification now rejects
+non-regular or oversized manifests. Signed build fix
+`8a82aca2fbe22c56142842823f97e705d3ce2e87` corrects the service linker symbol
+in all three build entrypoints and guards it in the build-contract validator;
+the old symbol left the service binary reporting `dev` despite a test manifest.
+
+The replacement installer is
+`dist/session-runtime-installer-sourced-ui-test-20261016-8a82aca2fbe2/ChuziSetup.exe`,
+SHA-256 `9a7756774e0a608e73b5e8a8c00ffd287c15afddb9ffc369b37f7cc9b0faf503`.
+Inno Setup 6.7.3 compiled it successfully. Its build and release manifests
+identify implementation `8a82aca2fbe22c56142842823f97e705d3ce2e87`; the service
+reports `test-20261016-8a82aca2fbe2`, and all 16 Core resource hashes and sizes
+match the bundled files. The Slint UI was built from source with the installed
+Rust stable toolchain, Visual Studio 2022 Build Tools, and installed
+`freerdp[client]:x64-windows-static`; the build emitted 379 warnings from
+generated bindings and existing dead code but succeeded. The installer has not
+been installed yet. The existing stopped installation remains on the previous
+payload, so service-start recovery and all native Session 09/10 acceptance are
+pending. PR #237 remains open; Actions for this implementation are pending push.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -399,6 +436,36 @@ and cleanup journal remain available to the next service instance. A forced
 shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
+
+At implementation SHA `8a82aca2fbe22c56142842823f97e705d3ce2e87`, this Windows
+host passed:
+
+- `go test -count=1 ./...`
+- `go test -count=1 -race ./...`
+- `go vet ./...`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/service`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/session-broker`
+- `GOOS=windows GOARCH=amd64 go test -c ./internal/slotwindows`
+- `./scripts/validate_policy_manifest.sh`
+- `./scripts/validate_quality_profile.sh`
+- `./scripts/validate_supply_chain_profile.sh`
+- `./scripts/validate_action_pinning.sh`
+- `./scripts/validate_repository_shape.sh`
+- `./scripts/test_build_contract.sh`
+- `git diff --check`
+- `git rebase origin/main` (branch up to date at `3fbb027a175118e65ef5d645148d516db4ab16ff`)
+
+Native Windows tests cover StartPending before slow preparation, Stop during
+preparation, runtime build classification, and the machine's
+`Windows 10 Pro for Workstations` / build `26200` / `25H2` edition combination.
+The service version linker probe and installer manifest/resource hash checks
+also passed. `cargo build --manifest-path ui/windows/Cargo.toml --target
+x86_64-pc-windows-msvc --locked --release` passed with the initialized MSVC and
+vcpkg environment. `npm ci --ignore-scripts` and browser-worker build passed.
+Inno Setup 6.7.3 compiled the source-built UI installer above; its sidecar
+SHA-256 and all 16 Core resource hashes/sizes match. These checks do not install
+the new package or prove WTS, RDP, Profile, Credential Manager, ACL, Agent,
+restart, shutdown, or Retire behavior.
 
 At implementation SHA `818963bb7388f3470e822849e320180f2f42118f`, the Windows
 host passed `go test -count=1 ./...`, `go test -count=1 -race ./...`,
@@ -526,6 +593,12 @@ fences, shell/desktop readiness, Agent/worker heartbeat, Stop, service restart,
 shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
 ## Risk
+
+The new installer is built and internally hash-checked but has not been
+installed. The machine still runs the previous Core payload and reports the
+service stopped; post-install service start and UI capability recovery must be
+checked after the user installs this package. The Slint source build completed
+with 379 warnings; native Windows session operations remain unverified.
 
 The empty-file-DACL regression and the Windows PowerShell native argument
 splitting failure are reproduced and fixed on owned test inputs. Applying the
