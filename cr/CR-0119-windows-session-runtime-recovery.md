@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: f52d036c04cf
+Head or Range: adc090bfac99
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 17
+Revision: 18
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: f52d036c04cfb194fd011b73c54eb7ffdece7535
+Head OID: adc090bfac99c95c6499b52f3cec7a0acd7474fd
 Integrated Result: pending
 
 ## Summary
@@ -230,6 +230,41 @@ invocation.
 WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
 and Retire remain native acceptance pending for Sessions 09/10.
 
+Revision 18 fixes the next installer failure found on the preserved Windows
+installation. Setup Log 2026-10-16 #001 records a successful Stop and component
+installation, followed by access denied while reading CorePayload's
+build-manifest.json. Service creation had not run: ChuziCore and the Broker task
+were absent. The installed core-config.json had a protected empty DACL. Running
+the old recursive icacls command on owned temporary files under Windows
+PowerShell 5.1 reproduced that exact empty-file-DACL/read-denied result.
+
+Signed implementation adc090bfac99c95c6499b52f3cec7a0acd7474fd replaces that
+command with protected FileSecurity/DirectorySecurity DACLs, applying inheritance
+flags only to directories. SYSTEM and Administrators retain their documented
+access and Users receives read/execute only. The script writes only the access
+section and preserves file owners. Recursive setup rejects reparse points before
+changing the tree. PrepareToInstall uses the current extracted script to recover
+only protected empty file DACLs owned by the installer, SYSTEM, or Administrators.
+The ownership marker must validate before config or payload recovery; an invalid
+marker has its original DACL restored. Other ACL shapes and foreign paths are
+not reset. Repair uses the same recovery before resource checks. Failed service
+registration also suppresses the post-install UI launch.
+
+The native temporary-file regression covers readable runtime/config files,
+exact SID access rules and inheritance, non-recursive behavior, unchanged
+owners/content, idempotence, interrupted-install recovery, rejected ownership
+mismatch with marker-DACL restoration, and embedded/parent junction rejection.
+CI runs it with Windows PowerShell 5.1. This is installer file-ACL evidence only;
+the user's installed service and full native session lifecycle remain pending.
+
+The replacement installer is dist/windows-ui/ChuziSetup.exe, version
+test-20261016-adc090bfac99, SHA-256
+866f4270335cddd0035dc804577d6610b47de2a3ee9d06d34c7ffe25c809cedd. Its payload
+manifest records implementation adc090bfac99c95c6499b52f3cec7a0acd7474fd, and
+its management script matches the signed source. The preserved installation has
+not been uninstalled or had its ACLs changed. The user will run this installer;
+repair of that installation and successful service registration remain pending.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -343,6 +378,34 @@ shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
 
+At implementation adc090bfac99c95c6499b52f3cec7a0acd7474fd, the Windows host
+passed go test -count=1 ./..., go test -count=1 -race ./..., go vet ./..., and
+windows/amd64 test compilation for cmd/service, cmd/session-broker, and
+internal/slotwindows. Windows PowerShell 5.1 passed
+scripts/test_windows_service_acl.ps1. All six required policy/build-contract
+checks and git diff --check passed. Git Bash used igncr and jq --binary through
+an ignored local shell wrapper, resolving the earlier Windows CRLF limitation
+without changing repository policy. After fetching origin, rebase onto
+3fbb027a175118e65ef5d645148d516db4ab16ff reported the branch up to date; the
+native ACL regression and six policy/build-contract checks passed again.
+These checks do not constitute installed-service or session acceptance.
+
+Inno Setup 6.7.3 compiled the replacement installer successfully and its SHA-256
+sidecar matched. The first build.ps1 invocation stopped at manifest generation
+because PresentMon resources were not yet prepared; it is not a passing full
+build. After scripts/prepare_presentmon.ps1 verified the pinned dependency,
+manifest generation, package assembly, and installer compilation completed.
+The final bundle and all component archives, release index, manifests, and
+checksums passed:
+
+```text
+python scripts/validate_nightly_artifact.py --artifact dist/installer-acl-evidence/artifacts --target windows-amd64 --commit adc090bfac99c95c6499b52f3cec7a0acd7474fd --version test-20261016-adc090bfac99 --channel test
+```
+
+All local build artifacts and evidence remain ignored under dist. Exact-commit
+Actions for this revision will run after the signed CR update is pushed; the
+older revision's runs do not validate this installer fix.
+
 At implementation SHA `9b05e5224146b0b1e9157e2da85c27d782d2803a`, the Windows
 checkout passed the following deterministic checks:
 
@@ -420,6 +483,14 @@ fences, shell/desktop readiness, Agent/worker heartbeat, Stop, service restart,
 shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
 ## Risk
+
+The empty-file-DACL regression is reproduced and fixed on owned Windows
+temporary files. Applying the replacement installer to the user's preserved
+partial installation is still pending. Recovery intentionally refuses unknown
+ownership, nonempty or unprotected file ACLs, and reparse paths; those cases
+remain explicit repair failures rather than permission resets. A successful
+temporary-file regression does not establish installed-service, helper-pipe
+ACL, or production session acceptance.
 
 The main remaining risk is unexecuted native Windows behavior. WTS and RDP
 transitions, cold Profile initialization, Credential Manager deletion, helper
