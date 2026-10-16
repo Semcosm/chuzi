@@ -124,6 +124,12 @@ grep -Fq 'chuzi-launcher' "$repo_root/scripts/build.sh" || fail "build.sh misses
 grep -Fq 'test-*' "$repo_root/scripts/build.sh" || fail "build.sh misses test release versions"
 grep -Fq 'test-' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses test release versions"
 grep -Fq 'test-*' "$repo_root/scripts/build_go_target.sh" || fail "build_go_target.sh misses test release versions"
+grep -Fq -- '-X main.version=$Version' "$repo_root/scripts/build.ps1" || fail "build.ps1 does not set the service version"
+grep -Fq -- '-X main.version=$version' "$repo_root/scripts/build.sh" || fail "build.sh does not set the service version"
+grep -Fq -- '-X main.version=$version' "$repo_root/scripts/build_go_target.sh" || fail "build_go_target.sh does not set the service version"
+if rg -Fq -- '-X github.com/Semcosm/chuzi/cmd/service.version=' "$repo_root/scripts/build.ps1" "$repo_root/scripts/build.sh" "$repo_root/scripts/build_go_target.sh"; then
+  fail "service build scripts use a linker symbol that does not set main.version"
+fi
 grep -Fq 'schedule:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "nightly schedule is missing"
 grep -Fq 'workflow_dispatch:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "manual nightly trigger is missing"
 grep -Fq "tags: ['v*.*.*']" "$repo_root/.github/workflows/chuzi-build.yml" || fail "formal release tag trigger is missing"

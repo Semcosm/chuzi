@@ -29,7 +29,7 @@ mkdir -p "$output_dir"
 
 CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   -trimpath \
-  -ldflags "-s -w -X github.com/Semcosm/chuzi/cmd/service.version=$version" \
+  -ldflags "-s -w -X main.version=$version" \
   -o "$output_dir/$service_binary" \
   "$repo_root/cmd/service"
 

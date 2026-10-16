@@ -36,7 +36,7 @@ switch ($Target) {
 $env:CGO_ENABLED = "0"
 $env:GOOS = $goos
 $env:GOARCH = $goarch
-$ldflags = "-s -w -X github.com/Semcosm/chuzi/cmd/service.version=$Version"
+$ldflags = "-s -w -X main.version=$Version"
 & go build -trimpath "-ldflags=$ldflags" -o (Join-Path $stageDir $binary) ./cmd/service
 if ($LASTEXITCODE -ne 0) { throw "go build failed" }
 $brokerLdflags = "-s -w -X main.version=$Version"
