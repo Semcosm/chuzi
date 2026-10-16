@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 8a82aca2fbe22c56142842823f97e705d3ce2e87
+Head or Range: 59114e99bdba0ea737adbc28f2afa99538bfd6fd
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 21
+Revision: 22
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 8a82aca2fbe22c56142842823f97e705d3ce2e87
+Head OID: 59114e99bdba0ea737adbc28f2afa99538bfd6fd
 Integrated Result: pending
 
 ## Summary
@@ -326,6 +326,25 @@ pending. PR #237 remains open; Actions for this implementation are pending push.
 
 Revision 21 records the PR validation synchronization. Push `d42be5f7414c1c53851fb04b8fb43a4ceca93717` triggered UGS run 38864348767 before the updated Revision 20 body had been synchronized, so that event reported `review body differs from CR source`. The current GitHub PR body was then verified byte-for-byte against the committed CR, and `validate_cr_review.sh` passed locally. The UGS workflow uses the default `pull_request` activity types, so editing the body alone did not start another run. This documentation-only revision will synchronize the body before a follow-up push, allowing the next event to validate matching content. It does not change implementation or native acceptance status.
 
+Revision 22 records the native Windows startup failure reproduced after the
+`test-20261016-8a82aca2fbe2` installer was installed. The UI diagnostic
+`ui-1792134920794` reported `core_unavailable`; the installed `ChuziCore`
+service was LocalSystem, Automatic, and configured with an unrestricted service
+SID. `sc start ChuziCore` returned successfully and entered `START_PENDING`,
+then the process exited and SCM returned the service to `STOPPED`. No new
+7000/7009 event, Core log, or `chuzi.db` was created, placing the failure before
+store initialization in `ValidateServiceToken`. LocalSystem carried the three
+required session privileges in a disabled state, which the previous validator
+mistook for a foreign or incomplete token.
+
+Signed implementation
+`59114e99bdba0ea737adbc28f2afa99538bfd6fd` now validates privilege presence
+independently of the enabled bit and explicitly enables
+`SeTcbPrivilege`, `SeAssignPrimaryTokenPrivilege`, and
+`SeIncreaseQuotaPrivilege` only after the service SID, LocalSystem identity,
+and session-0 checks pass. It preserves the existing fixed identity boundary
+and adds focused coverage for disabled-but-present privileges.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -438,6 +457,36 @@ and cleanup journal remain available to the next service instance. A forced
 shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
+
+At implementation SHA `59114e99bdba0ea737adbc28f2afa99538bfd6fd`, the Windows
+host passed:
+
+- `go test -count=1 ./...`
+- `go test -count=1 -race ./...`
+- `go vet ./...`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/service`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/session-broker`
+- `GOOS=windows GOARCH=amd64 go test -c ./internal/slotwindows`
+- `./scripts/validate_policy_manifest.sh`
+- `./scripts/validate_quality_profile.sh`
+- `./scripts/validate_supply_chain_profile.sh`
+- `./scripts/validate_action_pinning.sh`
+- `./scripts/validate_repository_shape.sh`
+- `./scripts/test_build_contract.sh`
+- `git diff --check`
+- `git show --show-signature --format=fuller --no-patch HEAD`
+
+The local Windows package was built with Core version
+`test-20261016-59114e99bdba`. The isolated release artifact validation passed
+for the bundle, launcher, service, browser-worker, PresentMon, and
+genshin-cloudgame archives. Inno Setup 6.7.3 produced
+`dist/session-runtime-installer-test-20261016-59114e99bdba/ChuziSetup.exe`
+with SHA-256
+`06320673117571ff78d872f3834422322bfa7ead4b35ff9bd366e21e1ad1e75b`.
+The installer reuses the previously verified Slint binary because this local
+build used the prebuilt UI input; this is not a new UI source-build claim.
+The package has not yet been installed, so the service-start fix and all
+Session 09/10 native acceptance remain pending.
 
 At implementation SHA `8a82aca2fbe22c56142842823f97e705d3ce2e87`, this Windows
 host passed:
@@ -596,11 +645,14 @@ shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
 ## Risk
 
-The new installer is built and internally hash-checked but has not been
-installed. The machine still runs the previous Core payload and reports the
-service stopped; post-install service start and UI capability recovery must be
-checked after the user installs this package. The Slint source build completed
-with 379 warnings; native Windows session operations remain unverified.
+The new `59114e...` installer is built and internally hash-checked but has not
+been installed. The machine currently has the earlier
+`test-20261016-8a82aca2fbe2` payload installed; its installer completed without
+an error, but Core still exits during service-token validation and the UI
+reports `core_unavailable`. After the user installs the new package, service
+startup, Core capability recovery, and the resulting logs must be checked.
+The Slint source build is not part of this package build; the previously
+verified UI binary was used as an explicit prebuilt input.
 
 The empty-file-DACL regression and the Windows PowerShell native argument
 splitting failure are reproduced and fixed on owned test inputs. Applying the
