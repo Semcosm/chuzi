@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: adc090bfac99
+Head or Range: 818963bb7388
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 18
+Revision: 19
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: adc090bfac99c95c6499b52f3cec7a0acd7474fd
+Head OID: 818963bb7388f3470e822849e320180f2f42118f
 Integrated Result: pending
 
 ## Summary
@@ -265,6 +265,28 @@ its management script matches the signed source. The preserved installation has
 not been uninstalled or had its ACLs changed. The user will run this installer;
 repair of that installation and successful service registration remain pending.
 
+Revision 19 fixes the service-registration failure reproduced on the preserved
+Windows installation. Windows PowerShell 5.1 was splitting the quoted
+`binPath=` and `/TR` values when `sc.exe` or `schtasks.exe` was invoked with an
+argument array. The service-management script now serializes every native
+argument with Windows command-line quoting, captures stdout/stderr and the
+exact exit code, and routes SCM ACL, stop, rollback-delete, and task operations
+through that boundary. A dedicated ArgvProbe regression covers spaces, trailing
+backslashes, embedded quotes, empty arguments, task commands, and native failure
+classification; the hosted Windows package job runs it with PowerShell 5.1.
+
+Signed implementation `818963bb7388f3470e822849e320180f2f42118f` also records
+the current local package handoff. The Core/Broker payload and release index
+were built as `test-20261016-818963bb7388`; isolated artifact validation passed.
+Inno Setup 6.7.3 produced `dist/windows-ui/ChuziSetup.exe` with SHA-256
+`368cba21729b1039fa245b4b0e2bae07ad3a61eeaa5fda47bcaad7984d0d8ce6`. The
+package reuses the already installed Slint client binary because the local
+host has no vcpkg/FreeRDP installation; the UI source build is therefore not
+claimed. The user has not installed this new package yet. The preserved
+installation still has no `ChuziCore` service or `ChuziSessionBroker` task, and
+its latest Setup Log `#003` records the older script's generic
+`service_control_failed` exception.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -378,6 +400,27 @@ shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
 
+At implementation SHA `818963bb7388f3470e822849e320180f2f42118f`, the Windows
+host passed `go test -count=1 ./...`, `go test -count=1 -race ./...`,
+`go vet ./...`, Windows PowerShell 5.1 `scripts/test_windows_service_acl.ps1`,
+and `scripts/test_windows_service_native.ps1`. The three required
+`GOOS=windows GOARCH=amd64 go test -c` commands for service, session-broker,
+and slotwindows passed. The six policy/build-contract validators and
+`git diff --check` passed with the local jq binary wrapper that emits binary
+JSON; no validator changes were made. `git rebase origin/main` reported the
+branch up to date at base `3fbb027a175118e65ef5d645148d516db4ab16ff`.
+
+The isolated `validate_nightly_artifact.py` run passed the Windows amd64 bundle,
+launcher/service/browser-worker/PresentMon components, adapter, release index,
+manifests, and checksums for version `test-20261016-818963bb7388` and commit
+`818963bb7388f3470e822849e320180f2f42118f`. Inno Setup 6.7.3 compiled the
+replacement installer and its sidecar matches SHA-256
+`368cba21729b1039fa245b4b0e2bae07ad3a61eeaa5fda47bcaad7984d0d8ce6`. The
+Slint source build was attempted and stopped because vcpkg/FreeRDP is absent;
+the installer uses the previously installed UI binary as an explicit prebuilt
+input. This package handoff and the deterministic checks do not constitute
+installed-service or session acceptance.
+
 At implementation adc090bfac99c95c6499b52f3cec7a0acd7474fd, the Windows host
 passed go test -count=1 ./..., go test -count=1 -race ./..., go vet ./..., and
 windows/amd64 test compilation for cmd/service, cmd/session-broker, and
@@ -484,9 +527,10 @@ shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
 ## Risk
 
-The empty-file-DACL regression is reproduced and fixed on owned Windows
-temporary files. Applying the replacement installer to the user's preserved
-partial installation is still pending. Recovery intentionally refuses unknown
+The empty-file-DACL regression and the Windows PowerShell native argument
+splitting failure are reproduced and fixed on owned test inputs. Applying the
+new installer to the user's preserved partial installation is still pending.
+Recovery intentionally refuses unknown
 ownership, nonempty or unprotected file ACLs, and reparse paths; those cases
 remain explicit repair failures rather than permission resets. A successful
 temporary-file regression does not establish installed-service, helper-pipe
