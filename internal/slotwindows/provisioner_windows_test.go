@@ -73,6 +73,18 @@ func TestJournalAuthorizesOnlyExactActiveSession(t *testing.T) {
 	}
 }
 
+func TestOwnershipRecordAcceptsHostPreflightPhase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ownership.json")
+	data := `{"version":1,"pool_id":"pool-1","slot_id":"slot-1","ordinal":1,"sid":"S-1-5-21-1","generation":2,"owner":"service","phase":"host_preflight"}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record, err := readOwnership(path)
+	if err != nil || record.Phase != "host_preflight" {
+		t.Fatalf("host preflight ownership record = %#v, %v", record, err)
+	}
+}
+
 func TestCleanupJournalPersistsPostRootDeletionSteps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cleanup", "slot-1.json")
 	record := ownershipRecord{Version: 1, SlotID: "slot-1", Ordinal: 1, SID: "S-1-5-21-1", Generation: 2, Owner: "service", Phase: "stopping", CleanupStep: "begin", Revision: 1}

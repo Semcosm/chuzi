@@ -161,6 +161,17 @@ func (b *brokerHelperBootstrapper) Close(ctx context.Context) error {
 	return nil
 }
 
+type serviceWindowsHostPreflight struct {
+	options servicehost.WindowsPreflightOptions
+}
+
+func (p serviceWindowsHostPreflight) Check(ctx context.Context, managedSID string) error {
+	options := p.options
+	options.LogonSID = managedSID
+	_, err := servicehost.RunWindowsPreflight(ctx, options, time.Now)
+	return err
+}
+
 func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker, environmentRuntime *serviceEnvironmentRuntime, pool slot.PoolConfig) (slotReconciler, slotProfileAccess, error) {
 	if !cfg.WindowsJobPool.Enabled {
 		reconciler, err := newLogicalSlotReconciler(database, now, options.owner)
@@ -209,7 +220,23 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 		browserMode, browserCommand = options.backend, options.headlessBrowserCommand
 	}
 	sessionBootstrapper := resolveSessionBootstrapper(options)
-	provisionOptions := slotwindows.Options{DataDir: cfg.DataDir, UserPrefix: cfg.WindowsJobPool.UserPrefix, EnvironmentID: environmentID, Version: environmentVersion, ManifestDigest: manifestDigest, Signer: signer, RequireTrusted: requireTrusted, RDPEnabled: cfg.WindowsJobPool.RDPEnabled, AgentPath: filepath.Join(runtimeRoot, "chuzi-user-agent.exe"), Runtime: runtimeHandoff, RuntimePath: runtimePath, WorkerRuntimeRoot: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, AdapterScript: adapterScript, BrowserMode: browserMode, BrowserCommand: browserCommand, SessionIdleTimeout: time.Duration(cfg.WindowsJobPool.SessionIdleTimeoutSeconds) * time.Second, CapabilityRevoker: revoker, RuntimeResolver: environmentRuntime.RuntimeResolver, SessionBootstrapper: sessionBootstrapper}
+	hostRuntime, err := servicehost.NewTrustedRuntime(runtimeRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	dataRoot, err := servicehost.FixedDataRoot()
+	if err != nil {
+		return nil, nil, err
+	}
+	requireAuthenticode, err := servicehost.RuntimeSignaturePolicy(runtimeRoot)
+	if err != nil {
+		return nil, nil, err
+	}
+	hostPreflight := serviceWindowsHostPreflight{options: servicehost.WindowsPreflightOptions{
+		Runtime: hostRuntime, DataRoot: dataRoot, MaxSessions: 32,
+		RequireAuthenticode: requireAuthenticode,
+	}}
+	provisionOptions := slotwindows.Options{DataDir: cfg.DataDir, UserPrefix: cfg.WindowsJobPool.UserPrefix, EnvironmentID: environmentID, Version: environmentVersion, ManifestDigest: manifestDigest, Signer: signer, RequireTrusted: requireTrusted, RDPEnabled: cfg.WindowsJobPool.RDPEnabled, AgentPath: filepath.Join(runtimeRoot, "chuzi-user-agent.exe"), Runtime: runtimeHandoff, RuntimePath: runtimePath, WorkerRuntimeRoot: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, AdapterScript: adapterScript, BrowserMode: browserMode, BrowserCommand: browserCommand, SessionIdleTimeout: time.Duration(cfg.WindowsJobPool.SessionIdleTimeoutSeconds) * time.Second, CapabilityRevoker: revoker, RuntimeResolver: environmentRuntime.RuntimeResolver, SessionBootstrapper: sessionBootstrapper, HostPreflight: hostPreflight}
 	provisioner, err := slotwindows.New(provisionOptions)
 	if err != nil {
 		return nil, nil, err
@@ -580,6 +607,9 @@ func (r *windowsAllPoolReconciler) advanceClaimedSlotSession(ctx context.Context
 			if latest, lookupErr := r.database.GetSlotSessionOperation(operation.OperationID); lookupErr == nil {
 				return cleanupAfterFailure(latest)
 			}
+		}
+		if errors.Is(err, slotwindows.ErrHostPreflight) {
+			return retryOperation(store.SlotSessionPhaseHost, "host_preflight_failed", err)
 		}
 		return retryOperation(store.SlotSessionPhaseEnvironment, "provision_failed", err)
 	}

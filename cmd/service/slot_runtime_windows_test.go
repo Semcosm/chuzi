@@ -96,6 +96,18 @@ type failingInspectProvisioner struct {
 	err error
 }
 
+type retryableHostPreflightFailure struct{}
+
+func (retryableHostPreflightFailure) Error() string   { return "host preflight unavailable" }
+func (retryableHostPreflightFailure) Unwrap() error   { return slotwindows.ErrHostPreflight }
+func (retryableHostPreflightFailure) Retryable() bool { return true }
+
+type hostPreflightFailureProvisioner struct{ *dynamicPoolProvisioner }
+
+func (*hostPreflightFailureProvisioner) Provision(context.Context, slot.ProvisionRequest) (slot.ProvisionResult, error) {
+	return slot.ProvisionResult{}, retryableHostPreflightFailure{}
+}
+
 func (p *failingInspectProvisioner) Inspect(context.Context, slot.ProvisionRequest) (slot.EnvironmentSummary, error) {
 	return slot.EnvironmentSummary{}, p.err
 }
@@ -337,6 +349,23 @@ func TestSlotSessionNonRetryableReadinessFailureCleansRuntime(t *testing.T) {
 	defer base.mu.Unlock()
 	if base.stopCalls != 1 {
 		t.Fatalf("readiness failure cleanup calls = %d", base.stopCalls)
+	}
+}
+
+func TestSlotSessionHostPreflightFailureIsDurablyClassified(t *testing.T) {
+	database, pool, operation, now := prepareSessionRuntimeTest(t, "host-preflight", 1)
+	defer database.Close()
+	provisioner := &hostPreflightFailureProvisioner{dynamicPoolProvisioner: &dynamicPoolProvisioner{calls: make(map[string]int)}}
+	reconciler := newSessionRuntimeTestReconciler(database, provisioner, pool, now)
+	if err := reconciler.ReconcileSlotSessionOperations(context.Background(), "service", now); err != nil && !errors.Is(err, slotwindows.ErrHostPreflight) {
+		t.Fatalf("host preflight reconcile error = %v", err)
+	}
+	updated, err := database.GetSlotSessionOperation(operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.State != store.SlotSessionRetrying || updated.Phase != store.SlotSessionPhaseHost || updated.FailureCode != "host_preflight_failed" || !updated.CompletedAt.IsZero() {
+		t.Fatalf("host preflight operation = %#v", updated)
 	}
 }
 
@@ -682,7 +711,7 @@ func markShutdownSlotReady(t *testing.T, database *store.Store, pool slot.PoolCo
 	}
 }
 
-func prepareSessionRuntimeTest(t *testing.T, key string) (*store.Store, slot.PoolConfig, store.SlotSessionOperation, time.Time) {
+func prepareSessionRuntimeTest(t *testing.T, key string, retryBudget ...int) (*store.Store, slot.PoolConfig, store.SlotSessionOperation, time.Time) {
 	t.Helper()
 	cfg, err := config.New(t.TempDir())
 	if err != nil {
@@ -703,7 +732,11 @@ func prepareSessionRuntimeTest(t *testing.T, key string) (*store.Store, slot.Poo
 		database.Close()
 		t.Fatal(err)
 	}
-	operation, _, err := database.StartSlotSession(store.SlotSessionMutation{PoolID: pool.PoolID, Actor: "test", IdempotencyKey: key, RequestedAt: now})
+	budget := 0
+	if len(retryBudget) > 0 {
+		budget = retryBudget[0]
+	}
+	operation, _, err := database.StartSlotSession(store.SlotSessionMutation{PoolID: pool.PoolID, Actor: "test", IdempotencyKey: key, RequestedAt: now, RetryBudget: budget})
 	if err != nil {
 		database.Close()
 		t.Fatal(err)

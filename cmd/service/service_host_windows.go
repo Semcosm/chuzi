@@ -16,89 +16,174 @@ import (
 
 type windowsServiceHost struct {
 	options serviceOptions
+	prepare func(context.Context, serviceOptions) (serviceOptions, error)
+	run     func(context.Context, serviceOptions) error
 }
 
 func (h windowsServiceHost) Execute(_ []string, requests <-chan svc.ChangeRequest, statuses chan<- svc.Status) (bool, uint32) {
 	statuses <- svc.Status{State: svc.StartPending, WaitHint: 5000}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done := make(chan error, 1)
-	go func() { done <- run(ctx, h.options) }()
-	statuses <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+	prepare := h.prepare
+	if prepare == nil {
+		prepare = prepareWindowsService
+	}
+	runner := h.run
+	if runner == nil {
+		runner = run
+	}
+	type serviceEvent struct {
+		ready bool
+		err   error
+	}
+	events := make(chan serviceEvent, 2)
+	go func() {
+		options, err := prepare(ctx, h.options)
+		if err != nil {
+			events <- serviceEvent{err: err}
+			return
+		}
+		if err := ctx.Err(); err != nil {
+			events <- serviceEvent{err: err}
+			return
+		}
+		events <- serviceEvent{ready: true}
+		events <- serviceEvent{err: runner(ctx, options)}
+	}()
+	starting := true
+	stopping := false
+	checkpoint := uint32(1)
+	startTicker := time.NewTicker(2 * time.Second)
+	defer startTicker.Stop()
+	var stopTimer <-chan time.Time
 	for {
 		select {
-		case err := <-done:
-			if err != nil && !errors.Is(err, context.Canceled) {
+		case event := <-events:
+			if event.ready {
+				starting = false
+				if !stopping {
+					statuses <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+				}
+				continue
+			}
+			if event.err != nil && !errors.Is(event.err, context.Canceled) {
+				statuses <- svc.Status{State: svc.Stopped, Win32ExitCode: 1}
 				return true, 1
 			}
 			statuses <- svc.Status{State: svc.Stopped}
 			return false, 0
-		case request := <-requests:
+		case request, ok := <-requests:
+			if !ok {
+				requests = nil
+				continue
+			}
+			if request.Cmd == svc.Interrogate {
+				if stopping {
+					statuses <- svc.Status{State: svc.StopPending, WaitHint: shutdownWaitHint(h.options.shutdownTimeout)}
+				} else if starting {
+					statuses <- svc.Status{State: svc.StartPending, WaitHint: 5000}
+				} else {
+					statuses <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+				}
+				continue
+			}
 			if request.Cmd != svc.Stop && request.Cmd != svc.Shutdown {
 				continue
 			}
-			statuses <- svc.Status{State: svc.StopPending, WaitHint: uint32(h.options.shutdownTimeout / time.Millisecond)}
+			if stopping {
+				continue
+			}
+			stopping = true
+			statuses <- svc.Status{State: svc.StopPending, WaitHint: shutdownWaitHint(h.options.shutdownTimeout)}
 			cancel()
 			limit := h.options.shutdownTimeout
 			if limit <= 0 {
 				limit = 5 * time.Second
 			}
-			select {
-			case err := <-done:
-				if err != nil && !errors.Is(err, context.Canceled) {
-					statuses <- svc.Status{State: svc.Stopped, Win32ExitCode: 1}
-					return true, 1
-				}
-				statuses <- svc.Status{State: svc.Stopped}
-				return false, 0
-			case <-time.After(limit):
-				// Returning makes SCM own the bounded forced termination/recovery
-				// path; no unrelated process is searched or killed here.
-				statuses <- svc.Status{State: svc.Stopped, Win32ExitCode: 1}
-				return true, 1
+			stopTimer = time.After(limit)
+		case <-startTicker.C:
+			if starting && !stopping {
+				checkpoint++
+				statuses <- svc.Status{State: svc.StartPending, CheckPoint: checkpoint, WaitHint: 5000}
 			}
+		case <-stopTimer:
+			// Returning makes SCM own the bounded forced termination/recovery
+			// path; no unrelated process is searched or killed here.
+			statuses <- svc.Status{State: svc.Stopped, Win32ExitCode: 1}
+			return true, 1
 		}
 	}
 }
 
+func shutdownWaitHint(timeout time.Duration) uint32 {
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	milliseconds := timeout / time.Millisecond
+	if milliseconds > time.Duration(^uint32(0)) {
+		return ^uint32(0)
+	}
+	return uint32(milliseconds)
+}
+
 func runServiceHost(ctx context.Context, options serviceOptions) error {
-	if err := validateFixedServiceEntrypoint(options.configPath); err != nil {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
 		return err
+	}
+	// Register with SCM before filesystem, token, or host probes. SCM allows
+	// only a short connection window after process creation.
+	return svc.Run(servicehost.ServiceName, windowsServiceHost{options: options})
+}
+
+func prepareWindowsService(ctx context.Context, options serviceOptions) (serviceOptions, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return serviceOptions{}, err
+	}
+	if err := validateFixedServiceEntrypoint(options.configPath); err != nil {
+		return serviceOptions{}, err
 	}
 	if options.configPath == "" {
-		return servicehost.ErrInvalidConfig
+		return serviceOptions{}, servicehost.ErrInvalidConfig
 	}
 	if err := servicehost.ValidateServiceToken(servicehost.ProductionIdentity()); err != nil {
-		return err
+		return serviceOptions{}, err
 	}
 	// SCM supplies only the fixed service/config arguments. Derive every
 	// executable and script used by the LocalSystem process from that signed
 	// installation root so a relative PATH or working directory cannot select
 	// a user-writable worker.
 	if err := pinServiceRuntime(&options); err != nil {
-		return err
+		return serviceOptions{}, err
 	}
-	if ctx == nil {
-		ctx = context.Background()
+	if err := ctx.Err(); err != nil {
+		return serviceOptions{}, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return servicehost.ErrHostUnavailable
+		return serviceOptions{}, servicehost.ErrHostUnavailable
 	}
 	runtime, err := servicehost.NewTrustedRuntime(filepath.Dir(filepath.Clean(executable)))
 	if err != nil {
-		return err
+		return serviceOptions{}, err
 	}
-	dataRoot, err := servicehost.FixedDataRoot()
+	requireAuthenticode, err := servicehost.RuntimeSignaturePolicy(runtime.Root)
 	if err != nil {
-		return err
+		return serviceOptions{}, err
 	}
-	if _, err := servicehost.RunWindowsPreflight(ctx, servicehost.WindowsPreflightOptions{
-		Runtime: runtime, DataRoot: dataRoot, MaxSessions: 32,
-	}, time.Now); err != nil {
-		return err
+	if err := verifyWindowsServiceRuntime(runtime, requireAuthenticode); err != nil {
+		return serviceOptions{}, err
 	}
-	return svc.Run(servicehost.ServiceName, windowsServiceHost{options: options})
+	return options, nil
+}
+
+func verifyWindowsServiceRuntime(runtime servicehost.TrustedRuntime, requireAuthenticode bool) error {
+	return servicehost.VerifyRuntimeSignature(runtime, requireAuthenticode)
 }
 
 func pinServiceRuntime(options *serviceOptions) error {

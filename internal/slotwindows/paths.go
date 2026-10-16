@@ -21,6 +21,7 @@ import (
 var (
 	ErrInvalidOptions        = errors.New("slotwindows: invalid options")
 	ErrUnsupported           = errors.New("slotwindows: Windows runtime required")
+	ErrHostPreflight         = errors.New("slotwindows: host preflight failed")
 	ErrIdentityCollision     = errors.New("slotwindows: managed username identity collision")
 	slotIDPattern            = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 	userPrefixPattern        = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,11}$`)
@@ -72,10 +73,17 @@ type Options struct {
 	// the existing external-session prerequisite and fails closed if FindSession
 	// cannot locate the managed SID.
 	SessionBootstrapper SessionBootstrapper
+	// HostPreflight validates fixed machine requirements after the managed SID
+	// has been verified and before its Profile or WTS session is touched.
+	HostPreflight HostPreflight
 	// SessionLoginAdapter is the deployment-owned credential boundary for
 	// adapters that establish a real WTS session using a short-lived password
 	// buffer. It is never serialized onto the broker protocol.
 	SessionLoginAdapter SessionLoginAdapter
+}
+
+type HostPreflight interface {
+	Check(context.Context, string) error
 }
 
 type Paths struct {

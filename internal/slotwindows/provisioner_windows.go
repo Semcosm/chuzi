@@ -518,7 +518,7 @@ func (p *windowsProvisioner) Shutdown(ctx context.Context) error {
 			break
 		}
 		switch owned.record.Phase {
-		case "intent", "profile", "wts", "desktop", "shell", "agent", "worker", "stopping":
+		case "intent", "host_preflight", "profile", "wts", "desktop", "shell", "agent", "worker", "stopping":
 		default:
 			continue
 		}
@@ -1076,6 +1076,30 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	if err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	// A NetUserAdd race can return an identity created by another reconcile.
+	// Treat it as pre-existing before any later failure can reach rollback.
+	userExisted = userExisted || !managed.created
+	rootExisted = rootExisted || !managed.created
+	sid = managed.SID
+	if p.options.RDPEnabled {
+		if err := ensureRemoteDesktopMembership(paths.UserName); err != nil {
+			return slot.ProvisionResult{}, err
+		}
+		if err := verifyRemoteDesktopMembership(paths.UserName); err != nil {
+			return slot.ProvisionResult{}, err
+		}
+	}
+	if p.options.HostPreflight != nil {
+		if err := checkpointOwnership(paths, request, sid, "host_preflight", 0); err != nil {
+			return slot.ProvisionResult{}, err
+		}
+		if err := p.options.HostPreflight.Check(ctx, sid); err != nil {
+			// Keep the proven identity and host_preflight journal for retry or
+			// explicit Stop. A failed host gate must not erase its recovery fence.
+			cleanupOnFailure = false
+			return slot.ProvisionResult{}, retryableProvisionFailure{cause: errors.Join(ErrHostPreflight, err)}
+		}
+	}
 	// Existing managed users do not retain a password in the ownership
 	// record. Rotate a one-time local password whenever the selected login
 	// boundary can consume credentials, including the split-process broker
@@ -1095,27 +1119,11 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 		}
 		managed.password = password
 	}
-	// A NetUserAdd race can return an identity created by another reconcile.
-	// Treat that account as pre-existing for rollback so a later failure in
-	// this attempt cannot delete the winner's user/profile/session or root.
-	userExisted = userExisted || !managed.created
-	rootExisted = rootExisted || !managed.created
-	sid = managed.SID
 	if err := p.ensureManagedProfile(ctx, paths.UserName, managed); err != nil {
 		return slot.ProvisionResult{}, err
 	}
 	if err := checkpointOwnership(paths, request, sid, "profile", 0); err != nil {
 		return slot.ProvisionResult{}, err
-	}
-	if p.options.RDPEnabled {
-		if err := ensureRemoteDesktopMembership(paths.UserName); err != nil {
-			return slot.ProvisionResult{}, err
-		}
-		// Group membership alone is insufficient: local policy may deny remote
-		// interactive logon or omit the effective allow right.
-		if err := verifyRemoteDesktopMembership(paths.UserName); err != nil {
-			return slot.ProvisionResult{}, err
-		}
 	}
 	if err := ensureSlotDirectories(paths, sid); err != nil {
 		return slot.ProvisionResult{}, errors.Join(ErrACLDrift, ErrACLSlotDirectories)
@@ -1198,7 +1206,7 @@ func checkpointOwnershipStep(paths Paths, request slot.ProvisionRequest, sid, ph
 		return ErrOwnership
 	}
 	switch phase {
-	case "intent", "profile", "wts", "desktop", "shell", "agent", "worker", "stopping", "stopped", "unknown":
+	case "intent", "host_preflight", "profile", "wts", "desktop", "shell", "agent", "worker", "stopping", "stopped", "unknown":
 	default:
 		return ErrOwnership
 	}
@@ -1975,7 +1983,7 @@ func (p *windowsProvisioner) stopSessionForRecord(ctx context.Context, request s
 		switch record.Phase {
 		case "stopped":
 			return nil
-		case "profile", "intent":
+		case "profile", "host_preflight", "intent":
 			current, findErr := FindSession(record.SID)
 			if findErr == nil || current.State == "disconnected" {
 				// A session exists without a durable session-ID commit. It cannot
@@ -3445,7 +3453,7 @@ func readOwnership(path string) (ownershipRecord, error) {
 		record.Phase = "intent"
 	}
 	switch record.Phase {
-	case "intent", "profile", "wts", "desktop", "shell", "agent", "worker", "stopping", "stopped", "unknown":
+	case "intent", "host_preflight", "profile", "wts", "desktop", "shell", "agent", "worker", "stopping", "stopped", "unknown":
 	default:
 		return ownershipRecord{}, ErrOwnership
 	}
