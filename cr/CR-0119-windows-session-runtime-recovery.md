@@ -5,7 +5,7 @@ Head or Range: 59114e99bdba0ea737adbc28f2afa99538bfd6fd
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 22
+Revision: 23
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -344,6 +344,13 @@ independently of the enabled bit and explicitly enables
 `SeIncreaseQuotaPrivilege` only after the service SID, LocalSystem identity,
 and session-0 checks pass. It preserves the existing fixed identity boundary
 and adds focused coverage for disabled-but-present privileges.
+
+Revision 23 records UGS run `38873413113`, which was triggered by the push of
+`abb92224231e71e62628972ab53a6096be24c6f4` before the updated PR body was
+synchronized and therefore reported `review body differs from CR source`.
+The GitHub API body is now byte-for-byte equal to this CR; a follow-up push
+will provide the matching event snapshot. The implementation and native
+acceptance status are unchanged.
 
 ## Motivation
 
