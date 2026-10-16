@@ -19,6 +19,10 @@ type Config struct {
 	CloseTimeout             time.Duration
 	Authorizer               ConnectionAuthorizer
 	ExpectedServerExecutable string
+	// ExpectedServerPID is supplied only by the launcher after it has queried
+	// the installed service through SCM. It binds the endpoint to that service
+	// when an interactive operator cannot open the SYSTEM process for inspection.
+	ExpectedServerPID uint32
 }
 
 type Server struct {
