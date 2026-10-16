@@ -5,7 +5,7 @@ Head or Range: dc15fcb9534d0afdf3e26b325aa26bf89bfefb61
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 24
+Revision: 25
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -375,6 +375,23 @@ SHA-256
 The package is ready for operator installation; no installed-service handshake
 or session lifecycle acceptance is claimed until the new package is installed.
 
+Revision 25 records UGS run `38886708812`. Its Go, Node, and contract jobs
+passed, while `ugs-validate` reported `review body differs from CR source`
+because the push event was created before the updated Revision 24 body had been
+synchronized. The GitHub API body is now byte-for-byte equal to this CR, and
+PR run `38886708825` passed all required stages. This revision synchronizes the
+body before the next signed push so the next `pull_request` event validates the
+same persisted CR. It does not change the implementation or native acceptance
+decision.
+
+The current Windows installation still contains the earlier
+`test-20261016-59114e99bdba` package. `ChuziCore` is registered and running as
+LocalSystem with service and pipe PID `10464`, but that old launcher reports
+`core_unavailable`; this is not evidence for the `dc15fcb...` package. The
+`test-20261016-dc15fcb9534d` installer remains pending operator installation.
+WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
+and Retire remain native acceptance pending for Sessions 09/10.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -676,12 +693,12 @@ shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
 ## Risk
 
-The new `59114e...` installer is built and internally hash-checked but has not
-been installed. The machine currently has the earlier
-`test-20261016-8a82aca2fbe2` payload installed; its installer completed without
-an error, but Core still exits during service-token validation and the UI
-reports `core_unavailable`. After the user installs the new package, service
-startup, Core capability recovery, and the resulting logs must be checked.
+The `test-20261016-dc15fcb9534d` installer is built and internally hash-checked
+but has not been installed. The machine currently has the older
+`test-20261016-59114e99bdba` payload installed; its service is running and its
+pipe is present, but the old launcher still reports `core_unavailable`. After
+the user installs the current package, service startup, Core capability
+recovery, and the resulting logs must be checked.
 The Slint source build is not part of this package build; the previously
 verified UI binary was used as an explicit prebuilt input.
 
