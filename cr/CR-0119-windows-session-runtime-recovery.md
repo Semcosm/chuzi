@@ -5,7 +5,7 @@ Head or Range: dc15fcb9534d0afdf3e26b325aa26bf89bfefb61
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 25
+Revision: 26
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -229,6 +229,29 @@ carriage return; no repository policy result is claimed from that failed host
 invocation.
 WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
 and Retire remain native acceptance pending for Sessions 09/10.
+
+Revision 26 records the installed-package check from diagnostic
+`ui-1792152352601`. The installed manifest identifies
+`test-20261016-dc15fcb9534d` / implementation
+`dc15fcb9534d0afdf3e26b325aa26bf89bfefb61`. At the diagnostic timestamp,
+`ChuziCore` was stopped. Installer log `Setup Log 2026-10-16 #007` shows that
+setup invoked `core-stop` at 20:05:30, completed service management at
+20:05:42, and launched the UI at 20:05:48; the diagnostic was captured at
+20:05:52. Thus the diagnostic observed the service stopped after the
+installer's explicit stop, before Core was started again. The service log shows
+it had reached `ready` at 17:16 local time and emitted `forced_shutdown` at
+20:05:22 during that stop path. Starting the registered service through SCM
+succeeded. The current process (PID `51300`) reports `RUNNING`, and the
+launcher reports `ready: true`, protocol `chuzi.core/v1`, and
+`capability_status: supported`; a read-only `list_job_pools` call returned an
+empty list. The service was left running.
+
+`forced_shutdown` is emitted when any ordered shutdown hook fails or the
+shared five-second shutdown deadline expires. The current event records only
+that aggregate result, not the failed hook, so the exact reason for the prior
+stop is unknown. This verifies installed Core startup and transport only; WTS,
+RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown, and
+Retire session acceptance remain pending for Sessions 09/10.
 
 Revision 18 fixes the next installer failure found on the preserved Windows
 installation. Setup Log 2026-10-16 #001 records a successful Stop and component
@@ -693,12 +716,12 @@ shutdown, retry, and Retire cleanup on a disposable Windows installation.
 
 ## Risk
 
-The `test-20261016-dc15fcb9534d` installer is built and internally hash-checked
-but has not been installed. The machine currently has the older
-`test-20261016-59114e99bdba` payload installed; its service is running and its
-pipe is present, but the old launcher still reports `core_unavailable`. After
-the user installs the current package, service startup, Core capability
-recovery, and the resulting logs must be checked.
+The `test-20261016-dc15fcb9534d` installer is installed. Setup Log #007
+confirms that installation explicitly stopped Core and launched the UI without
+restarting the service; a subsequent SCM start reached ready. The stop path
+also emitted `forced_shutdown`, but the current log does not identify which
+ordered shutdown hook failed or exceeded the five-second deadline. Record the
+individual hook outcome before claiming the stop path is reliable.
 The Slint source build is not part of this package build; the previously
 verified UI binary was used as an explicit prebuilt input.
 
