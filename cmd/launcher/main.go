@@ -302,7 +302,7 @@ func main() {
 		writeJSON(result)
 		return
 	case "core-status", "core-start", "core-stop", "core-call":
-		if handled, err := runCoreCommand(ctx, *command, root, *coreMethod, *coreParamsJSON); handled {
+		if handled, err := runCoreCommand(ctx, *command, root, *coreMethod, *coreParamsJSON, *lockPath); handled {
 			if err != nil {
 				fatal(err)
 			}
@@ -357,7 +357,7 @@ func main() {
 	}
 }
 
-func runCoreCommand(ctx context.Context, command, root, method, paramsJSON string) (bool, error) {
+func runCoreCommand(ctx context.Context, command, root, method, paramsJSON, lockPath string) (bool, error) {
 	manager, err := launcher.NewCoreManager(root)
 	if err != nil {
 		return true, err
@@ -370,7 +370,7 @@ func runCoreCommand(ctx context.Context, command, root, method, paramsJSON strin
 		}
 		return true, err
 	case "core-start", "core-stop":
-		lock, err := acquireMutationLock(ctx, root, "")
+		lock, err := acquireMutationLock(ctx, root, lockPath)
 		if err != nil {
 			return true, err
 		}

@@ -14,6 +14,7 @@ use models::{
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedString};
+use std::ffi::OsString;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -30,6 +31,7 @@ slint::include_modules!();
 #[derive(Default)]
 struct AppState {
     data_root: PathBuf,
+    user_state_root: PathBuf,
     payload_root: PathBuf,
     release_index_url: Option<String>,
     busy: bool,
@@ -88,8 +90,17 @@ impl AppState {
         } else {
             package_root.join("data")
         };
+        let user_state_root = if cfg!(windows) {
+            let root = std::env::var_os("LOCALAPPDATA")
+                .filter(|value| !value.is_empty())
+                .ok_or("LOCALAPPDATA is not set")?;
+            PathBuf::from(root).join("Chuzi")
+        } else {
+            data_root.clone()
+        };
         Ok(Self {
             data_root,
+            user_state_root,
             payload_root: package_root.join("CorePayload"),
             release_index_url: std::env::var("CHUZI_RELEASE_INDEX_URL")
                 .ok()
@@ -126,7 +137,43 @@ impl AppState {
     }
 
     fn ui_preferences_path(&self) -> PathBuf {
-        self.data_root.join(".chuzi-ui-settings.json")
+        self.user_state_root().join(".chuzi-ui-settings.json")
+    }
+
+    fn user_state_root(&self) -> &Path {
+        if self.user_state_root.as_os_str().is_empty() {
+            &self.data_root
+        } else {
+            &self.user_state_root
+        }
+    }
+
+    fn launcher_state_dir(&self) -> PathBuf {
+        self.user_state_root().join(".chuzi")
+    }
+
+    fn launcher_settings_path(&self) -> PathBuf {
+        self.launcher_state_dir().join("launcher-settings.json")
+    }
+
+    fn launcher_lock_path(&self) -> PathBuf {
+        self.launcher_state_dir().join("launcher.lock")
+    }
+
+    fn launcher_user_state_args(&self, command: &str) -> Vec<OsString> {
+        let mut args = Vec::with_capacity(4);
+        if matches!(command, "settings" | "settings-save") {
+            args.push(OsString::from("-settings-path"));
+            args.push(self.launcher_settings_path().into_os_string());
+        }
+        if matches!(
+            command,
+            "settings-save" | "core-start" | "core-stop" | "core-pool-mode-save"
+        ) {
+            args.push(OsString::from("-lock-path"));
+            args.push(self.launcher_lock_path().into_os_string());
+        }
+        args
     }
 
     fn local_diagnostics_dir(&self) -> PathBuf {
@@ -199,8 +246,16 @@ impl AppState {
 
     fn load_ui_theme(&self) -> String {
         let path = self.ui_preferences_path();
-        let Ok(data) = fs::read(path) else {
-            return default_theme();
+        let legacy_path = self.data_root.join(".chuzi-ui-settings.json");
+        let data = match fs::read(&path) {
+            Ok(data) => data,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && path != legacy_path => {
+                let Ok(data) = fs::read(legacy_path) else {
+                    return default_theme();
+                };
+                data
+            }
+            Err(_) => return default_theme(),
         };
         let Ok(preferences) = serde_json::from_slice::<UiPreferences>(&data) else {
             return default_theme();
@@ -209,7 +264,7 @@ impl AppState {
     }
 
     fn save_ui_theme(&self, theme: &str) -> Result<(), String> {
-        fs::create_dir_all(&self.data_root).map_err(|error| error.to_string())?;
+        fs::create_dir_all(self.user_state_root()).map_err(|error| error.to_string())?;
         let preferences = UiPreferences {
             theme: normalize_theme(theme).to_owned(),
         };
@@ -240,6 +295,7 @@ impl AppState {
             .arg(&self.data_root)
             .arg("-source-root")
             .arg(&self.payload_root);
+        launcher.args(self.launcher_user_state_args(command));
         if self.manifest_path().is_file() {
             launcher.arg("-manifest").arg(self.manifest_path());
         }
@@ -635,7 +691,9 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             &weak,
             Arc::clone(&settings_state),
             move |state| {
-                let input = state.data_root.join(".chuzi-settings-input.json");
+                let input_dir = state.launcher_state_dir();
+                fs::create_dir_all(&input_dir).map_err(|error| error.to_string())?;
+                let input = input_dir.join("settings-input.json");
                 let input_arg = input.to_string_lossy().into_owned();
                 let result = (|| {
                     fs::write(
@@ -3523,6 +3581,50 @@ fn is_core_unavailable(error: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn launcher_user_state_arguments_stay_with_the_interactive_user() {
+        let user_root = PathBuf::from("profile")
+            .join("AppData")
+            .join("Local")
+            .join("Chuzi");
+        let state = AppState {
+            data_root: PathBuf::from("ProgramData").join("chuzi").join("data"),
+            user_state_root: user_root.clone(),
+            ..AppState::default()
+        };
+        let launcher_dir = user_root.join(".chuzi");
+        assert_eq!(
+            state.launcher_user_state_args("settings"),
+            vec![
+                OsString::from("-settings-path"),
+                launcher_dir.join("launcher-settings.json").into_os_string(),
+            ]
+        );
+        assert_eq!(
+            state.launcher_user_state_args("settings-save"),
+            vec![
+                OsString::from("-settings-path"),
+                launcher_dir.join("launcher-settings.json").into_os_string(),
+                OsString::from("-lock-path"),
+                launcher_dir.join("launcher.lock").into_os_string(),
+            ]
+        );
+        for command in ["core-start", "core-stop", "core-pool-mode-save"] {
+            assert_eq!(
+                state.launcher_user_state_args(command),
+                vec![
+                    OsString::from("-lock-path"),
+                    launcher_dir.join("launcher.lock").into_os_string(),
+                ]
+            );
+        }
+        assert!(state.launcher_user_state_args("core-status").is_empty());
+        assert_eq!(
+            state.ui_preferences_path(),
+            user_root.join(".chuzi-ui-settings.json")
+        );
+    }
 
     #[cfg(unix)]
     #[test]

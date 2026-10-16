@@ -38,6 +38,41 @@ func TestLauncherSettingsAndLockHelpers(t *testing.T) {
 	}
 }
 
+func TestConfiguredMutationLockUsesUserPath(t *testing.T) {
+	root := t.TempDir()
+	lockPath := filepath.Join(root, "local-app-data", "Chuzi", ".chuzi", "launcher.lock")
+	lock, err := acquireMutationLock(context.Background(), root, lockPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Release()
+	if _, err := os.Stat(lockPath); err != nil {
+		t.Fatalf("configured user lock was not created: %v", err)
+	}
+	legacyLockPath := filepath.Join(root, ".chuzi", "launcher.lock")
+	if _, err := os.Stat(legacyLockPath); !os.IsNotExist(err) {
+		t.Fatalf("legacy service-root lock exists at %q: %v", legacyLockPath, err)
+	}
+}
+
+func TestSettingsStoreUsesConfiguredUserPath(t *testing.T) {
+	root := t.TempDir()
+	configuredPath := filepath.Join(root, "local-app-data", "Chuzi", ".chuzi", "launcher-settings.json")
+	store, err := newSettingsStore(root, configuredPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Path != configuredPath {
+		t.Fatalf("settings path = %q, want %q", store.Path, configuredPath)
+	}
+	if err := store.Save(context.Background(), launcher.DefaultBehaviorSettings()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(configuredPath); err != nil {
+		t.Fatalf("configured user settings were not saved: %v", err)
+	}
+}
+
 func TestLauncherProgressReporterWritesOnlyToConfiguredWriter(t *testing.T) {
 	var output bytes.Buffer
 	reporter := stderrProgress{writer: &output}
