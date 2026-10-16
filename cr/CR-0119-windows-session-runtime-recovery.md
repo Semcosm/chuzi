@@ -5,7 +5,7 @@ Head or Range: 9bdf43d1974ddfdebd189463604c0b91874378d1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 27
+Revision: 28
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -229,6 +229,17 @@ carriage return; no repository policy result is claimed from that failed host
 invocation.
 WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
 and Retire remain native acceptance pending for Sessions 09/10.
+
+Revision 28 records the operator installation of the replacement package
+`test-20261016-9bdf43d1974d`. The installed `CorePayload/build-manifest.json`
+identifies implementation `9bdf43d1974ddfdebd189463604c0b91874378d1`, and
+`ChuziCore` is currently running. The operator reports that Core start/stop
+through the UI now works. The user-scoped
+`%LOCALAPPDATA%\Chuzi\.chuzi\launcher-settings.json` exists, was created after
+installation, and is owned by the interactive user with FullControl. No UI
+diagnostics newer than the pre-install failures are present. This confirms the
+new user-state location is writable; direct confirmation of the UI's
+`Settings saved.` result and persistence after reopening remains pending.
 
 Revision 27 records the UI failure reported with diagnostics
 `diag-1792153114170510000-28feea22`,
@@ -768,13 +779,14 @@ acceptance.
 
 ## Risk
 
-The installed `test-20261016-dc15fcb9534d` package produced the three reported
-UI failures. Its diagnostic event lists are truncated before any failed UI
-operation, but the installed data-root ACL confirms the write-permission
-boundary. The replacement package for `9bdf43d1974ddfdebd189463604c0b91874378d1`
-is built but not installed; saving settings and starting/stopping Core through
-that UI remain pending operator validation. Setup Log #007 from the prior
-installation also recorded `forced_shutdown`, but it does not identify which
+The installed `test-20261016-9bdf43d1974d` package matches implementation
+`9bdf43d1974ddfdebd189463604c0b91874378d1`; `ChuziCore` is running and the
+operator reports that UI Core start/stop works. The user-scoped settings file
+exists with an owner FullControl ACL, while the installed service data root
+remains read-only for `BUILTIN\Users`. Confirmation of the UI Save changes
+success message and settings persistence after reopening remains pending.
+Setup Log #007 from the prior installation also recorded `forced_shutdown`,
+but it does not identify which
 ordered shutdown hook failed or exceeded the five-second deadline. Record the
 individual hook outcome before claiming the stop path is reliable.
 
