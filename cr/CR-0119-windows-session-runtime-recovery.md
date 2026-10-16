@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 59114e99bdba0ea737adbc28f2afa99538bfd6fd
+Head or Range: dc15fcb9534d0afdf3e26b325aa26bf89bfefb61
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 23
+Revision: 24
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 59114e99bdba0ea737adbc28f2afa99538bfd6fd
+Head OID: dc15fcb9534d0afdf3e26b325aa26bf89bfefb61
 Integrated Result: pending
 
 ## Summary
@@ -352,6 +352,29 @@ The GitHub API body is now byte-for-byte equal to this CR; a follow-up push
 will provide the matching event snapshot. The implementation and native
 acceptance status are unchanged.
 
+Revision 24 records signed implementation
+`dc15fcb9534d0afdf3e26b325aa26bf89bfefb61`. The interactive launcher now opens
+SCM and `ChuziCore` with query-only rights for status, adding only the exact
+start/stop right for those mutations; the previous `ALL_ACCESS` request made a
+healthy LocalSystem service appear as `host_unavailable` to a standard operator.
+Core transport now binds the named-pipe server PID to the PID returned by that
+authenticated SCM record. If the operator is denied `OpenProcess` on the
+LocalSystem service, the fixed service configuration (LocalSystem, Session 0,
+and the exact installed executable) remains the authority; a mismatched pipe
+PID is still rejected. Focused Windows tests cover query-only controller status
+and the PID fence. A local probe observed query status `RUNNING` with service
+and pipe PID `10464`; the old launcher path was intentionally rejected by the
+Core caller policy because it was outside the installed runtime.
+
+The local Windows test package for this implementation is
+`test-20261016-dc15fcb9534d`. Its isolated bundle and component archives passed
+release-index/artifact validation. Inno Setup 6.7.3 produced
+`dist/session-runtime-installer-test-20261016-dc15fcb9534d/ChuziSetup.exe` with
+SHA-256
+`aef9b61d1f7ea4463ccd0d3e882a824ccd66fdfabccfd2b8b632f2c52117b03f`.
+The package is ready for operator installation; no installed-service handshake
+or session lifecycle acceptance is claimed until the new package is installed.
+
 ## Motivation
 
 The Core operation APIs, Windows account/Profile/session providers, fixed
@@ -465,7 +488,7 @@ shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
 
-At implementation SHA `59114e99bdba0ea737adbc28f2afa99538bfd6fd`, the Windows
+At implementation SHA `dc15fcb9534d0afdf3e26b325aa26bf89bfefb61`, the Windows
 host passed:
 
 - `go test -count=1 ./...`
@@ -484,16 +507,17 @@ host passed:
 - `git show --show-signature --format=fuller --no-patch HEAD`
 
 The local Windows package was built with Core version
-`test-20261016-59114e99bdba`. The isolated release artifact validation passed
-for the bundle, launcher, service, browser-worker, PresentMon, and
-genshin-cloudgame archives. Inno Setup 6.7.3 produced
-`dist/session-runtime-installer-test-20261016-59114e99bdba/ChuziSetup.exe`
+`test-20261016-dc15fcb9534d`. The isolated release-index and test-channel
+artifact validation passed for the bundle, launcher, service, browser-worker,
+PresentMon, and genshin-cloudgame archives. Inno Setup 6.7.3 produced
+`dist/session-runtime-installer-test-20261016-dc15fcb9534d/ChuziSetup.exe`
 with SHA-256
-`06320673117571ff78d872f3834422322bfa7ead4b35ff9bd366e21e1ad1e75b`.
+`aef9b61d1f7ea4463ccd0d3e882a824ccd66fdfabccfd2b8b632f2c52117b03f`.
 The installer reuses the previously verified Slint binary because this local
 build used the prebuilt UI input; this is not a new UI source-build claim.
-The package has not yet been installed, so the service-start fix and all
-Session 09/10 native acceptance remain pending.
+The package is not installed yet, so WTS, RDP, Profile, Credential Manager,
+ACL, Agent/worker, restart, shutdown, and Retire remain native acceptance
+pending for Sessions 09/10.
 
 At implementation SHA `8a82aca2fbe22c56142842823f97e705d3ce2e87`, this Windows
 host passed:
