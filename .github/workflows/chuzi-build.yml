@@ -349,6 +349,9 @@ jobs:
       - name: Test service ACLs and interrupted-install recovery
         shell: powershell
         run: ./scripts/test_windows_service_acl.ps1
+      - name: Test Windows service and task native argument boundaries
+        shell: powershell
+        run: ./scripts/test_windows_service_native.ps1
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport

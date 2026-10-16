@@ -48,8 +48,37 @@ $managedComponentNames = @(
 )
 
 function Invoke-Sc([string[]]$Arguments) {
-    & "$env:SystemRoot\System32\sc.exe" @Arguments | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "service_control_failed" }
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" $Arguments
+    if ($result.ExitCode -ne 0) {
+        $action = if ($Arguments.Count -gt 0) { $Arguments[0] } else { "unknown" }
+        throw ("service_control_failed: action={0}; exit_code={1}" -f $action, $result.ExitCode)
+    }
+}
+
+function ConvertTo-NativeArgument([string]$Argument) {
+    if ($null -eq $Argument) { return '""' }
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') { return $Argument }
+    $builder = New-Object Text.StringBuilder
+    [void]$builder.Append('"')
+    $slashes = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq '\') {
+            $slashes++
+            continue
+        }
+        if ($character -eq '"') {
+            for ($index = 0; $index -lt (($slashes * 2) + 1); $index++) { [void]$builder.Append('\') }
+            [void]$builder.Append('"')
+            $slashes = 0
+            continue
+        }
+        for ($index = 0; $index -lt $slashes; $index++) { [void]$builder.Append('\') }
+        $slashes = 0
+        [void]$builder.Append($character)
+    }
+    for ($index = 0; $index -lt ($slashes * 2); $index++) { [void]$builder.Append('\') }
+    [void]$builder.Append('"')
+    return $builder.ToString()
 }
 
 function Invoke-NativeCapture([string]$FilePath, [string[]]$Arguments) {
@@ -60,7 +89,8 @@ function Invoke-NativeCapture([string]$FilePath, [string[]]$Arguments) {
     $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("chuzi-native-$token.out")
     $stderrPath = Join-Path ([IO.Path]::GetTempPath()) ("chuzi-native-$token.err")
     try {
-        $process = Start-Process -FilePath $FilePath -ArgumentList $Arguments -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        $argumentLine = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join ' ')
+        $process = Start-Process -FilePath $FilePath -ArgumentList $argumentLine -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
         [pscustomobject]@{
             ExitCode = [int]$process.ExitCode
             StdOut = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
@@ -405,8 +435,8 @@ function Rollback-Install {
         Install-ChuziServices
     } else {
         Remove-BrokerTask
-        & "$env:SystemRoot\System32\sc.exe" delete $serviceName | Out-Null
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
+        $delete = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('delete', $serviceName)
+        if ($delete.ExitCode -ne 0 -and $delete.ExitCode -ne 1060 -and $delete.ExitCode -ne 1072) { throw "service_delete_failed" }
     }
 }
 
@@ -531,8 +561,11 @@ function Install-ChuziServices {
     # only the SCM operations needed to query, start, and stop this fixed
     # service; service creation/deletion remains installer-only.
     $serviceSDDL = 'D:(A;;CCLCSWRPWPLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)'
-    & "$env:SystemRoot\System32\sc.exe" sdset $serviceName $serviceSDDL | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "service_acl_failed" }
+    try {
+        Invoke-Sc @("sdset", $serviceName, $serviceSDDL)
+    } catch {
+        throw "service_acl_failed: $($_.Exception.Message)"
+    }
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
     Invoke-Sc @("failure", $serviceName, "reset=", "86400", "actions=", "restart/5000/restart/30000/none/0")
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
@@ -544,8 +577,11 @@ function Stop-ChuziServices {
     # credential cleanup. Keep the broker alive until SCM confirms Core stopped.
     $query = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
     if ($query.ExitCode -eq 0 -and $query.StdOut -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
-        & "$env:SystemRoot\System32\sc.exe" stop $serviceName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
+        try {
+            Invoke-Sc @("stop", $serviceName)
+        } catch {
+            throw "service_stop_failed: $($_.Exception.Message)"
+        }
         Wait-Stopped $serviceName
     }
     Stop-BrokerTask
