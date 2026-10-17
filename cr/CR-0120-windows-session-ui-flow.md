@@ -40,6 +40,8 @@ That could show a false idle state while Core still owned the durable operation,
 or repeat an old intent after a revision change. Session 08 makes the UI a
 projection and action client of the Session 07 Core operation contract without
 reading storage, credentials, Profiles, pipes, or native session state.
+This PR is intentionally stacked on the open Session 07 runtime PR; after
+that dependency integrates, the branch can be retargeted to main.
 
 ## Test Evidence
 
