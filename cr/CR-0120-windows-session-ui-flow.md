@@ -1,6 +1,6 @@
 # CR-0120: complete Windows UI slot-session operation flow
 
-Base: main
+Base: feat/windows-session-runtime-recovery
 Head or Range: fcee169c2d795dd33974a6ba73d111c6f69af899
 Integration Strategy: rebase-ff
 Review Evidence: trailers
@@ -9,7 +9,7 @@ Revision: 1
 Status: pending
 Decision: pending
 Policy Version: v0.3
-Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
+Base OID: fbbef8d6615385fabd51e7e55c2d24e75618d7df
 Head OID: fcee169c2d795dd33974a6ba73d111c6f69af899
 Integrated Result: pending
 
