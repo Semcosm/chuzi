@@ -5,7 +5,7 @@ Head or Range: 9bdf43d1974ddfdebd189463604c0b91874378d1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 28
+Revision: 29
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -230,6 +230,16 @@ invocation.
 WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
 and Retire remain native acceptance pending for Sessions 09/10.
 
+Revision 29 records the operator's final UI verification of the replacement package
+`test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
+completes without an error and that the saved settings remain correct after
+reopening the UI. Core start and stop through the UI also remain functional.
+Together with the installed manifest, writable user-scoped settings file, and
+the successful deterministic and hosted checks, this closes the Session 07
+implementation and UI-state verification scope. Native WTS, RDP, Profile,
+Credential Manager, helper ACL/identity, Agent/worker, restart, shutdown, and
+Retire acceptance remain explicitly deferred to Sessions 09/10.
+
 Revision 28 records the operator installation of the replacement package
 `test-20261016-9bdf43d1974d`. The installed `CorePayload/build-manifest.json`
 identifies implementation `9bdf43d1974ddfdebd189463604c0b91874378d1`, and
@@ -238,8 +248,8 @@ through the UI now works. The user-scoped
 `%LOCALAPPDATA%\Chuzi\.chuzi\launcher-settings.json` exists, was created after
 installation, and is owned by the interactive user with FullControl. No UI
 diagnostics newer than the pre-install failures are present. This confirms the
-new user-state location is writable; direct confirmation of the UI's
-`Settings saved.` result and persistence after reopening remains pending.
+new user-state location is writable; the operator has confirmed the UI's
+`Settings saved.` result and persistence after reopening.
 
 Revision 27 records the UI failure reported with diagnostics
 `diag-1792153114170510000-28feea22`,
@@ -772,10 +782,9 @@ The local installer
 was compiled with Inno Setup 6.7.3. Its SHA-256 is
 `8efe3a72a1803dd9b22f8d2b0b8906a3137ce433f733b44c8a54b2023aee4ec9`;
 the launcher version and all 16 embedded Core manifest resource hashes were
-verified. Build output remains under ignored `dist/`. The installer has not
-been applied yet, so these checks do not verify UI settings persistence or
-Core start/stop on the installed package, and do not constitute native session
-acceptance.
+verified. Build output remains under ignored `dist/`. The package was subsequently installed and its UI settings persistence and Core
+start/stop were confirmed by the operator; these checks still do not constitute
+native session acceptance.
 
 ## Risk
 
@@ -783,16 +792,17 @@ The installed `test-20261016-9bdf43d1974d` package matches implementation
 `9bdf43d1974ddfdebd189463604c0b91874378d1`; `ChuziCore` is running and the
 operator reports that UI Core start/stop works. The user-scoped settings file
 exists with an owner FullControl ACL, while the installed service data root
-remains read-only for `BUILTIN\Users`. Confirmation of the UI Save changes
-success message and settings persistence after reopening remains pending.
+remains read-only for `BUILTIN\Users`. The operator has confirmed the UI Save
+changes success message and settings persistence after reopening.
 Setup Log #007 from the prior installation also recorded `forced_shutdown`,
 but it does not identify which
 ordered shutdown hook failed or exceeded the five-second deadline. Record the
 individual hook outcome before claiming the stop path is reliable.
 
 The empty-file-DACL regression and the Windows PowerShell native argument
-splitting failure are reproduced and fixed on owned test inputs. Applying the
-new installer to the user's preserved partial installation is still pending.
+splitting failure are reproduced and fixed on owned test inputs. The replacement
+installer has been applied to the user's preserved installation and the UI
+state and Core lifecycle checks passed.
 Recovery intentionally refuses unknown
 ownership, nonempty or unprotected file ACLs, and reparse paths; those cases
 remain explicit repair failures rather than permission resets. A successful
