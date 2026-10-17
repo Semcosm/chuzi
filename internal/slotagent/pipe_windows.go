@@ -391,6 +391,12 @@ type JobLauncher interface {
 	Start(context.Context, Request) (Job, error)
 }
 
+// CapabilityProbe independently verifies that the fixed worker runtime is
+// usable during an agent health check, without starting a user job.
+type CapabilityProbe interface {
+	Probe(context.Context) error
+}
+
 type Job interface {
 	RoundTrip(context.Context, protocol.Envelope) (protocol.Envelope, error)
 	Stop() error
@@ -409,7 +415,24 @@ func (h *RuntimeHandler) HandleAgentCommand(ctx context.Context, request Request
 	if h.SessionStateFunc != nil {
 		state = h.SessionStateFunc()
 	}
-	response := Response{OK: true, AgentVersion: h.Version, SessionState: state}
+	response := Response{OK: true, AgentVersion: h.Version, SessionState: state, WorkerReady: true}
+	if request.Command == Health {
+		if h.Launcher == nil {
+			response.OK = false
+			response.WorkerReady = false
+			response.Failure = "worker_unavailable"
+		} else if probe, ok := h.Launcher.(CapabilityProbe); ok {
+			if err := probe.Probe(ctx); err != nil {
+				response.OK = false
+				response.WorkerReady = false
+				response.Failure = "worker_unavailable"
+			}
+		} else {
+			response.OK = false
+			response.WorkerReady = false
+			response.Failure = "worker_unavailable"
+		}
+	}
 	switch request.Command {
 	case PrepareSlot:
 		if h.Leases == nil || request.Auth == "" {

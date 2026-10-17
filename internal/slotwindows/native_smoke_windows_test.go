@@ -408,7 +408,7 @@ func prepareLocalRDPTestSession(t *testing.T, root string, options Options, requ
 	if exists, err := managedPathExists(paths.Root); err != nil || exists {
 		t.Fatal("local RDP smoke ownership root is not fresh")
 	}
-	if err := writeOwnership(paths.Metadata, ownershipRecord{Version: 1, SlotID: request.SlotID, Ordinal: request.Ordinal, SID: sid, Generation: request.EnvironmentGeneration}); err != nil {
+	if err := writeOwnership(paths.Metadata, ownershipRecord{Version: 1, PoolID: request.PoolID, SlotID: request.SlotID, Ordinal: request.Ordinal, SID: sid, Generation: request.EnvironmentGeneration, SessionID: session.ID, Owner: request.Owner, Phase: "wts", Revision: 1, UpdatedAt: time.Now().UTC(), Username: paths.UserName}); err != nil {
 		t.Fatal("local RDP smoke ownership record setup failed")
 	}
 }

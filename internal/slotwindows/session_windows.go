@@ -153,44 +153,52 @@ type Session struct {
 	State string
 }
 
-// FindSession returns only an active session whose token SID exactly matches
-// the managed slot identity. Session 0 is never returned.
+// FindSession runs in the LocalSystem service with SeTcbPrivilege and matches
+// the managed SID exactly. Disconnected sessions retain their cleanup fence;
+// query failures are never evidence of absence. Session 0 is never returned.
 func FindSession(expectedSID string) (Session, error) {
-	if expectedSID == "" {
+	if !managedSIDPattern.MatchString(expectedSID) {
 		return Session{}, ErrSessionIdentity
 	}
 	var raw *windows.WTS_SESSION_INFO
 	var count uint32
 	if err := windows.WTSEnumerateSessions(0, 0, 1, &raw, &count); err != nil {
-		return Session{}, ErrSessionUnavailable
+		return Session{}, ErrSessionQuery
+	}
+	if raw == nil && count != 0 {
+		return Session{}, ErrSessionQuery
 	}
 	defer windows.WTSFreeMemory(uintptr(unsafe.Pointer(raw)))
-	entries := unsafe.Slice(raw, count)
-	var disconnected bool
-	for _, entry := range entries {
-		if entry.SessionID == 0 {
-			continue
-		}
-		if entry.State != wtsActive && entry.State != wtsDisconnected {
+	var found Session
+	for _, entry := range unsafe.Slice(raw, count) {
+		if entry.SessionID == 0 || (entry.State != wtsActive && entry.State != wtsDisconnected) {
 			continue
 		}
 		var token windows.Token
 		if err := windows.WTSQueryUserToken(entry.SessionID, &token); err != nil {
-			continue
+			return Session{}, ErrSessionQuery
 		}
 		user, err := token.GetTokenUser()
 		_ = token.Close()
-		if err != nil || user.User.Sid.String() != expectedSID {
+		if err != nil || user == nil || user.User.Sid == nil {
+			return Session{}, ErrSessionQuery
+		}
+		if user.User.Sid.String() != expectedSID {
 			continue
 		}
+		if found.ID != 0 {
+			return Session{}, ErrSessionChanged
+		}
+		found = Session{ID: entry.SessionID, State: "active"}
 		if entry.State == wtsDisconnected {
-			disconnected = true
-			continue
+			found.State = "disconnected"
 		}
-		return Session{ID: entry.SessionID, State: "active"}, nil
 	}
-	if disconnected {
-		return Session{State: "disconnected"}, ErrSessionDisconnected
+	if found.State == "disconnected" {
+		return found, ErrSessionDisconnected
+	}
+	if found.ID != 0 {
+		return found, nil
 	}
 	return Session{State: "logged_off"}, ErrSessionUnavailable
 }

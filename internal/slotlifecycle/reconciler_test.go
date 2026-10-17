@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,6 +17,31 @@ var lifecycleNow = time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
 type memorySlots struct {
 	items  map[string]slot.Slot
 	leases map[string]slot.Lease
+}
+
+type blockedReadyStore struct {
+	*memorySlots
+	readyAttempt chan struct{}
+	allowReady   chan struct{}
+	once         sync.Once
+}
+
+func (s *blockedReadyStore) MarkSlotReady(string, slot.EnvironmentSummary, time.Time) error {
+	s.once.Do(func() { close(s.readyAttempt) })
+	<-s.allowReady
+	return slot.ErrInvalidStatus
+}
+
+func (m *memorySlots) QuarantineSlotLease(slotID, leaseID, owner string, at time.Time, _ string) error {
+	lease, ok := m.leases[slotID]
+	if !ok || lease.LeaseID != leaseID || lease.Owner != owner {
+		return ErrLeaseMismatch
+	}
+	delete(m.leases, slotID)
+	value := m.items[slotID]
+	value.Status, value.HealthAt, value.UpdatedAt = slot.Quarantined, at, at
+	m.items[slotID] = value
+	return nil
 }
 
 type environmentAuthority struct {
@@ -81,6 +107,8 @@ type fakeProvisioner struct {
 	summary                             slot.EnvironmentSummary
 	inspectErr, provisionErr, retireErr error
 	shutdownCalls                       int
+	stopCalls                           int
+	stopErr                             error
 	owner                               string
 }
 
@@ -88,6 +116,25 @@ type retryableProvisionError struct{}
 
 func (retryableProvisionError) Error() string   { return "session unavailable" }
 func (retryableProvisionError) Retryable() bool { return true }
+
+type healthProvisioner struct {
+	*fakeProvisioner
+	healthErr error
+}
+
+func (f *healthProvisioner) Health(_ context.Context, _ slot.ProvisionRequest, _ slot.Lease) error {
+	f.calls = append(f.calls, "health")
+	return f.healthErr
+}
+
+type fakeCapabilityRevoker struct {
+	leaseIDs []string
+}
+
+func (f *fakeCapabilityRevoker) RevokeSlotLease(_ context.Context, leaseID string) error {
+	f.leaseIDs = append(f.leaseIDs, leaseID)
+	return nil
+}
 
 func (f *fakeProvisioner) Provision(_ context.Context, request slot.ProvisionRequest) (slot.ProvisionResult, error) {
 	f.calls = append(f.calls, "provision")
@@ -107,6 +154,11 @@ func (f *fakeProvisioner) Shutdown(_ context.Context) error {
 	f.shutdownCalls++
 	return nil
 }
+func (f *fakeProvisioner) StopSession(_ context.Context, _ slot.ProvisionRequest) error {
+	f.calls = append(f.calls, "stop-session")
+	f.stopCalls++
+	return f.stopErr
+}
 
 func TestReconcilerShutdownDelegatesToProcessProvisioner(t *testing.T) {
 	db := &memorySlots{items: map[string]slot.Slot{}, leases: map[string]slot.Lease{}}
@@ -124,7 +176,7 @@ func TestReconcilerShutdownDelegatesToProcessProvisioner(t *testing.T) {
 }
 
 func validSummary(generation uint64) slot.EnvironmentSummary {
-	return slot.EnvironmentSummary{EnvironmentID: "env/v1", Version: "1.0", Generation: generation, Capabilities: []string{"desktop"}, Trusted: true, AgentVersion: "1.2.0", SessionState: "ready", DesktopReady: true, UpdatedAt: lifecycleNow}
+	return slot.EnvironmentSummary{EnvironmentID: "env/v1", Version: "1.0", Generation: generation, Capabilities: []string{"desktop"}, Trusted: true, AgentVersion: "1.2.0", SessionState: "ready", DesktopReady: true, WorkerReady: true, UpdatedAt: lifecycleNow}
 }
 func validPool(desired int) slot.PoolConfig {
 	return slot.PoolConfig{PoolID: "pool", EnvironmentID: "env/v1", EnvironmentVersion: "1.0", DesiredSlots: desired, Capabilities: []string{"desktop"}, RequireTrusted: true, UpdatedAt: lifecycleNow}
@@ -198,6 +250,79 @@ func TestReconcileRefreshesDurablePoolConfiguration(t *testing.T) {
 	}
 }
 
+func TestReconcileStoppedIntentFencesRuntimeAndDoesNotRestart(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Ready, 1)}, leases: map[string]slot.Lease{}}
+	db.items["pool-001"] = func() slot.Slot { v := db.items["pool-001"]; v.SessionDesiredState = "stopped"; return v }()
+	provisioner := &fakeProvisioner{summary: validSummary(1)}
+	r, err := New(db, provisioner, validPool(1), func() time.Time { return lifecycleNow }, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provisioner.stopCalls != 1 || len(provisioner.calls) != 1 || provisioner.calls[0] != "stop-session" {
+		t.Fatalf("stopped reconcile calls=%v stop=%d", provisioner.calls, provisioner.stopCalls)
+	}
+	if db.items["pool-001"].Status != slot.Ready {
+		t.Fatalf("stopped intent changed retained slot status=%s", db.items["pool-001"].Status)
+	}
+}
+
+func TestReconcileStoppedIntentDrainsLeasedSlotBeforeCleanup(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Ready, 1)}, leases: map[string]slot.Lease{"pool-001": {SlotID: "pool-001", EnvironmentGeneration: 1}}}
+	db.items["pool-001"] = func() slot.Slot {
+		v := db.items["pool-001"]
+		v.SessionDesiredState = "stopped"
+		return v
+	}()
+	provisioner := &fakeProvisioner{summary: validSummary(1)}
+	reconciler, err := New(db, provisioner, validPool(1), func() time.Time { return lifecycleNow }, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if provisioner.stopCalls != 0 || len(provisioner.calls) != 0 {
+		t.Fatalf("leased stopped intent cleaned runtime: calls=%v stop=%d", provisioner.calls, provisioner.stopCalls)
+	}
+	if db.items["pool-001"].Status != slot.Draining {
+		t.Fatalf("leased stopped intent status=%s, want draining", db.items["pool-001"].Status)
+	}
+}
+
+func TestReconcileStopRacingPrewarmFencesLateReadyRuntime(t *testing.T) {
+	memory := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
+	db := &blockedReadyStore{memorySlots: memory, readyAttempt: make(chan struct{}), allowReady: make(chan struct{})}
+	provisioner := &fakeProvisioner{summary: validSummary(1)}
+	reconciler, err := New(db, provisioner, validPool(1), func() time.Time { return lifecycleNow }, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() { result <- reconciler.Reconcile(context.Background()) }()
+	select {
+	case <-db.readyAttempt:
+	case <-time.After(time.Second):
+		t.Fatal("prewarm did not attempt to publish readiness")
+	}
+	value := memory.items["pool-001"]
+	value.SessionDesiredState = "stopped"
+	value.Status = slot.Stopped
+	memory.items[value.SlotID] = value
+	close(db.allowReady)
+	if err := <-result; !errors.Is(err, slot.ErrInvalidStatus) {
+		t.Fatalf("late ready reconcile error = %v", err)
+	}
+	if current := memory.items[value.SlotID]; current.Status == slot.Ready || current.SessionDesiredState != "stopped" {
+		t.Fatalf("late ready revived stopped slot: %#v", current)
+	}
+	if provisioner.stopCalls != 1 {
+		t.Fatalf("late ready cleanup calls = %d, want 1", provisioner.stopCalls)
+	}
+}
+
 func TestReconcileRetiresDrainingPoolWithoutReadyAuthority(t *testing.T) {
 	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Ready, 1)}, leases: map[string]slot.Lease{}}
 	provisioner := &fakeProvisioner{}
@@ -266,8 +391,35 @@ func TestReconcileHealthGateQuarantinesAfterProvision(t *testing.T) {
 	if db.items["pool-001"].Status != slot.Quarantined {
 		t.Fatalf("health failure status = %s, want quarantined", db.items["pool-001"].Status)
 	}
-	if len(provisioner.calls) != 2 || provisioner.calls[0] != "provision" || provisioner.calls[1] != "inspect" {
+	if len(provisioner.calls) != 3 || provisioner.calls[0] != "provision" || provisioner.calls[1] != "inspect" || provisioner.calls[2] != "stop-session" {
 		t.Fatalf("lifecycle order = %v", provisioner.calls)
+	}
+}
+
+func TestReconcileLeasedHealthFailureRevokesAndQuarantines(t *testing.T) {
+	lease := slot.Lease{LeaseID: "lease-1", SlotID: "pool-001", PoolID: "pool", RequestID: "request-1", AccountID: "account-1", Owner: "queue-owner", EnvironmentGeneration: 1, AcquiredAt: lifecycleNow, ExpiresAt: lifecycleNow.Add(time.Minute)}
+	value := slotRecord(slot.Leased, 1)
+	value.EnvironmentVersion = "1.0"
+	value.Capabilities = []string{"desktop"}
+	value.Trusted = true
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": value}, leases: map[string]slot.Lease{"pool-001": lease}}
+	provisioner := &healthProvisioner{fakeProvisioner: &fakeProvisioner{summary: validSummary(1)}, healthErr: retryableProvisionError{}}
+	revoker := &fakeCapabilityRevoker{}
+	reconciler, err := New(db, provisioner, validPool(1), func() time.Time { return lifecycleNow }, time.Minute, time.Minute, revoker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(context.Background()); err == nil || err.Error() != "slotlifecycle: agent health failed" {
+		t.Fatalf("leased health failure = %v", err)
+	}
+	if len(revoker.leaseIDs) != 1 || revoker.leaseIDs[0] != lease.LeaseID {
+		t.Fatalf("revoked leases = %v", revoker.leaseIDs)
+	}
+	if db.items["pool-001"].Status != slot.Quarantined {
+		t.Fatalf("leased health failure status = %s", db.items["pool-001"].Status)
+	}
+	if _, exists := db.leases["pool-001"]; exists {
+		t.Fatal("failed runtime lease remained schedulable")
 	}
 }
 
@@ -280,6 +432,71 @@ func TestReconcileKeepsRetryableSessionFailureProvisioning(t *testing.T) {
 	}
 	if db.items["pool-001"].Status != slot.Provisioning {
 		t.Fatalf("retryable failure quarantined slot: %s", db.items["pool-001"].Status)
+	}
+}
+
+func TestReconcileBacksOffAndBoundsRetryablePrewarmFailures(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
+	provisioner := &fakeProvisioner{summary: validSummary(1), provisionErr: retryableProvisionError{}}
+	now := lifecycleNow
+	reconciler, err := New(db, provisioner, validPool(1), func() time.Time { return now }, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(context.Background()); err == nil {
+		t.Fatal("retryable provision error unexpectedly succeeded")
+	}
+	if db.items["pool-001"].FailureCount != 1 || db.items["pool-001"].Status != slot.Provisioning {
+		t.Fatalf("first retry state=%#v", db.items["pool-001"])
+	}
+	provisioner.calls = nil
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatalf("backoff reconcile failed: %v", err)
+	}
+	if len(provisioner.calls) != 0 {
+		t.Fatalf("retry ran during durable backoff: %v", provisioner.calls)
+	}
+	now = now.Add(prewarmRetryBase)
+	if err := reconciler.Reconcile(context.Background()); err == nil {
+		t.Fatal("retry after backoff unexpectedly succeeded")
+	}
+	if len(provisioner.calls) != 2 || provisioner.calls[0] != "provision" || provisioner.calls[1] != "stop-session" || db.items["pool-001"].FailureCount != 2 {
+		t.Fatalf("retry state=%#v calls=%v", db.items["pool-001"], provisioner.calls)
+	}
+	value := db.items["pool-001"]
+	value.FailureCount = prewarmMaxAttempts - 1
+	value.UpdatedAt = now.Add(-prewarmRetryMax)
+	db.items["pool-001"] = value
+	now = now.Add(time.Second)
+	if err := reconciler.Reconcile(context.Background()); err == nil {
+		t.Fatal("bounded retry unexpectedly succeeded")
+	}
+	if db.items["pool-001"].Status != slot.Quarantined || db.items["pool-001"].FailureCount != prewarmMaxAttempts {
+		t.Fatalf("retry budget did not quarantine: %#v", db.items["pool-001"])
+	}
+}
+
+func TestReconcileBacksOffRetryableHealthFailureAfterReadySlot(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Ready, 1)}, leases: map[string]slot.Lease{}}
+	provisioner := &fakeProvisioner{summary: validSummary(1), inspectErr: retryableProvisionError{}, provisionErr: retryableProvisionError{}}
+	now := lifecycleNow
+	reconciler, err := New(db, provisioner, validPool(1), func() time.Time { return now }, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(context.Background()); err == nil {
+		t.Fatal("retryable health failure unexpectedly succeeded")
+	}
+	value := db.items["pool-001"]
+	if value.Status != slot.Provisioning || value.FailureCount != 1 || value.AgentHandle != "" {
+		t.Fatalf("health failure projection=%#v", value)
+	}
+	provisioner.calls = nil
+	if err := reconciler.Reconcile(context.Background()); err != nil {
+		t.Fatalf("backoff reconcile failed: %v", err)
+	}
+	if len(provisioner.calls) != 0 {
+		t.Fatalf("health retry ignored durable backoff: %v", provisioner.calls)
 	}
 }
 

@@ -30,7 +30,7 @@ mkdir -p "$stage_dir/browser-worker"
 
 CGO_ENABLED=0 GOOS="$goos" GOARCH="$goarch" go build \
   -trimpath \
-  -ldflags "-s -w -X github.com/Semcosm/chuzi/cmd/service.version=$version" \
+  -ldflags "-s -w -X main.version=$version" \
   -o "$stage_dir/$binary" \
   "$repo_root/cmd/service"
 

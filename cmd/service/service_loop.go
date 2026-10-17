@@ -94,15 +94,24 @@ func run(ctx context.Context, options serviceOptions) (runErr error) {
 			}
 		})
 	}
+	if controller, ok := runtime.slotReconciler.(slotOperationReconciler); ok {
+		startBackground("slot session operations", func(workerCtx context.Context) error {
+			return runSlotSessionController(workerCtx, controller, options.owner+"-session", runtime.slotInterval, func(controllerErr error) {
+				runtime.record(observability.Event{At: time.Now().UTC(), Component: "slot", Operation: "session_controller", Outcome: "failed", ErrorClass: slotReconcileErrorClass(controllerErr)})
+			})
+		})
+	}
 	if runtime.slotReconciler != nil || runtime.jobPoolID != "" {
 		startBackground("slot lifecycle", func(workerCtx context.Context) error {
 			reconcile := func() {
 				var err error
-				// Session start operations are durable intents. Project the latest
-				// slot facts before pool reconciliation so launchers can observe
-				// requested -> provisioning -> ready deterministically.
+				if _, pruneErr := runtime.store.PruneSlotSessionOperations(time.Now().UTC(), 1024, 7*24*time.Hour); pruneErr != nil {
+					err = pruneErr
+				}
 				if sessionErr := runtime.store.ReconcileSlotSessionOperations(time.Now().UTC()); sessionErr != nil {
-					err = sessionErr
+					if err == nil {
+						err = sessionErr
+					}
 				}
 				if allPools, ok := runtime.slotReconciler.(allPoolReconciler); ok {
 					if err == nil {
@@ -242,6 +251,28 @@ func run(ctx context.Context, options serviceOptions) (runErr error) {
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
+		}
+	}
+}
+
+func runSlotSessionController(ctx context.Context, controller slotOperationReconciler, owner string, interval time.Duration, record func(error)) error {
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	runPass := func() {
+		if err := controller.ReconcileSlotSessionOperations(ctx, owner, time.Now().UTC()); err != nil && record != nil {
+			record(err)
+		}
+	}
+	runPass()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+			runPass()
 		}
 	}
 }

@@ -119,6 +119,39 @@ func TestMetricsExposeStableLabelsWithoutIdentifiers(t *testing.T) {
 	}
 }
 
+func TestEventBoundariesClampAttemptDurationAndRedactIdentifiers(t *testing.T) {
+	var output bytes.Buffer
+	logger, err := NewJSONLogger(LoggerConfig{Writer: &output, Clock: func() time.Time { return time.Unix(10, 0).UTC() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer logger.Close()
+	secretRequest := "request-secret-value"
+	secretResource := "resource-secret-value"
+	logger.Record(Event{Component: "slot_session", Operation: "attempt_login", Outcome: "failed", RequestID: secretRequest, Resource: secretResource, Attempt: 65, Duration: 48 * time.Hour})
+	var record logRecord
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record.Attempt != 0 || record.DurationMS != (24*time.Hour).Milliseconds() {
+		t.Fatalf("bounded log record = %#v", record)
+	}
+	if strings.Contains(output.String(), secretRequest) || strings.Contains(output.String(), secretResource) {
+		t.Fatalf("log leaked identifiers: %s", output.String())
+	}
+
+	metrics := NewMetrics()
+	metrics.Record(Event{Component: "slot_session", Operation: "attempt_login", Outcome: "failed", RequestID: secretRequest, Resource: secretResource, Attempt: 65, Duration: 48 * time.Hour})
+	metrics.Record(Event{Component: "slot_session", Operation: "attempt_login", Outcome: "retrying", Attempt: 3, Duration: time.Second})
+	text := metrics.Prometheus()
+	if strings.Contains(text, `attempt="65"`) || !strings.Contains(text, `attempt="3"`) || !strings.Contains(text, `chuzi_event_duration_seconds_sum{component="slot_session",operation="attempt_login",outcome="failed"} 86400`) {
+		t.Fatalf("bounded metrics = %s", text)
+	}
+	if strings.Contains(text, secretRequest) || strings.Contains(text, secretResource) {
+		t.Fatalf("metrics leaked identifiers: %s", text)
+	}
+}
+
 func TestMetricsCountRateLimitedSubmissionsSeparately(t *testing.T) {
 	metrics := NewMetrics()
 	metrics.Record(Event{Component: "request", Operation: "submit", Outcome: "denied", ErrorClass: "rate_limited"})

@@ -52,8 +52,9 @@ Chuzi service
 - 密码由 provisioner 生成并保存到受保护的凭据边界；不进入脚本、日志、RDP DTO 或普通配置。
 - Shell、启动项和用户级策略只写入该用户自己的 hive。
 
-Profile policy/bootstrap 只对目标 SID 的用户 hive 生效。首次初始化使用
-`CreateProcessWithLogonW(LOGON_WITH_PROFILE)` 创建该用户自己的 Profile，不复制其他用户的
+Profile policy/bootstrap 只对目标 SID 的用户 hive 生效。LocalSystem 生产服务首次初始化使用
+`userenv!CreateProfile` 创建该用户自己的 Profile；`CreateProcessWithLogonW(LOGON_WITH_PROFILE)`
+仅可保留在交互式 probe/operator harness，不能由 LocalSystem 生产路径调用，不复制其他用户的
 `NTUSER.DAT` 或 `UsrClass.dat`。Shell policy 幂等地更新同一个 `Shell` 值，不添加启动项；
 不修改 HKLM，也不接受调用方传入 executable、脚本、命令或 Profile 路径。
 

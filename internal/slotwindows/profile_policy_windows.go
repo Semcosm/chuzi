@@ -6,7 +6,6 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -14,19 +13,14 @@ import (
 )
 
 const (
-	logonWithProfile                = 0x00000001
-	profileCreateUnicodeEnvironment = 0x00000400
-	createNoWindow                  = 0x08000000
-	regProcessAppKey                = 0x00000001
-	keyReadWrite                    = registry.READ | registry.WRITE | registry.CREATE_SUB_KEY
-	waitObject0                     = 0x00000000
-	waitTimeout                     = 0x00000102
+	regProcessAppKey = 0x00000001
+	keyReadWrite     = registry.READ | registry.WRITE | registry.CREATE_SUB_KEY
 )
 
 var (
-	advapi32Profile             = windows.NewLazySystemDLL("advapi32.dll")
-	procCreateProcessWithLogonW = advapi32Profile.NewProc("CreateProcessWithLogonW")
-	procRegLoadAppKeyW          = advapi32Profile.NewProc("RegLoadAppKeyW")
+	advapi32Profile    = windows.NewLazySystemDLL("advapi32.dll")
+	procCreateProfile  = windows.NewLazySystemDLL("userenv.dll").NewProc("CreateProfile")
+	procRegLoadAppKeyW = advapi32Profile.NewProc("RegLoadAppKeyW")
 )
 
 // ApplyProfilePolicy derives the target hive from the managed SID and writes
@@ -164,68 +158,42 @@ func openUserHive(sid, profilePath string) (registry.Key, func(), error) {
 	return loaded, func() { _ = loaded.Close() }, nil
 }
 
-// bootstrapProfileWithLogon performs the first profile initialization with
-// LOGON_WITH_PROFILE. The command is fixed to system32\cmd.exe /c exit; no
-// caller text, script, or executable can enter this boundary.
-func bootstrapProfileWithLogon(ctx context.Context, username string, password []uint16) error {
-	if ctx == nil || username == "" || len(password) == 0 {
+// bootstrapManagedProfile uses the service-compatible userenv API. The SID
+// and account name must resolve to the same managed local user; Windows chooses
+// the profile path. No password or child logon process enters this boundary.
+func bootstrapManagedProfile(ctx context.Context, sid, username string) error {
+	if ctx == nil || !managedSIDPattern.MatchString(sid) || username == "" {
 		return ErrProfileBootstrap
 	}
-	systemDir, err := windows.GetSystemDirectory()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	resolved, _, use, err := windows.LookupSID("", ".\\"+username)
+	if err != nil || use != windows.SidTypeUser || resolved.String() != sid {
+		return ErrProfileBootstrap
+	}
+	sidPtr, err := windows.UTF16PtrFromString(sid)
 	if err != nil {
 		return ErrProfileBootstrap
 	}
-	application, err := windows.UTF16PtrFromString(filepath.Join(systemDir, "cmd.exe"))
+	userPtr, err := windows.UTF16PtrFromString(username)
 	if err != nil {
 		return ErrProfileBootstrap
 	}
-	user, err := windows.UTF16PtrFromString(username)
-	if err != nil {
+	path := make([]uint16, 32768)
+	result, _, _ := procCreateProfile.Call(uintptr(unsafe.Pointer(sidPtr)), uintptr(unsafe.Pointer(userPtr)), uintptr(unsafe.Pointer(&path[0])), uintptr(len(path)))
+	// CreateProfile returns HRESULT, including HRESULT_FROM_WIN32(ALREADY_EXISTS).
+	if uint32(result) != 0 && uint32(result) != 0x800700b7 {
 		return ErrProfileBootstrap
 	}
-	domain, err := windows.UTF16PtrFromString(".")
-	if err != nil {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	profile, err := profilePathForSID(sid)
+	if err != nil || validateProfileHivePath(profile) != nil {
 		return ErrProfileBootstrap
 	}
-	command, err := windows.UTF16FromString("cmd.exe /c exit")
-	if err != nil {
-		return ErrProfileBootstrap
-	}
-	working, err := windows.UTF16PtrFromString(systemDir)
-	if err != nil {
-		return ErrProfileBootstrap
-	}
-	defer clearUTF16(command)
-	var startup windows.StartupInfo
-	startup.Cb = uint32(unsafe.Sizeof(startup))
-	var info windows.ProcessInformation
-	created, _, callErr := procCreateProcessWithLogonW.Call(
-		uintptr(unsafe.Pointer(user)), uintptr(unsafe.Pointer(domain)), uintptr(unsafe.Pointer(&password[0])),
-		logonWithProfile, uintptr(unsafe.Pointer(application)), uintptr(unsafe.Pointer(&command[0])),
-		profileCreateUnicodeEnvironment|createNoWindow, 0, uintptr(unsafe.Pointer(working)), uintptr(unsafe.Pointer(&startup)), uintptr(unsafe.Pointer(&info)))
-	if created == 0 {
-		_ = callErr
-		return ErrProfileBootstrap
-	}
-	defer windows.CloseHandle(info.Thread)
-	defer windows.CloseHandle(info.Process)
-	for {
-		if err := ctx.Err(); err != nil {
-			_ = windows.TerminateProcess(info.Process, 1)
-			return err
-		}
-		state, waitErr := windows.WaitForSingleObject(info.Process, 100)
-		if waitErr != nil {
-			return ErrProfileBootstrap
-		}
-		if state == waitObject0 {
-			return nil
-		}
-		if state != waitTimeout {
-			return ErrProfileBootstrap
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	return nil
 }
 
 func clearUTF16(value []uint16) {

@@ -3,6 +3,7 @@ package servicehost
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -23,6 +24,41 @@ func TestTrustedRuntimeDerivesFixedExecutables(t *testing.T) {
 	for _, bad := range []TrustedRuntime{{Root: runtime.Root, Core: "/tmp/other.exe", Broker: runtime.Broker, Agent: runtime.Agent, Node: runtime.Node, Shell: runtime.Shell}, {Root: runtime.Root, Core: runtime.Core, Broker: runtime.Broker, Agent: runtime.Agent, Node: runtime.Node, Shell: filepath.Join(runtime.Root, "..", "shell.ps1")}} {
 		if err := bad.Validate(); err == nil {
 			t.Fatal("untrusted runtime path accepted")
+		}
+	}
+}
+
+func TestRuntimeSignaturePolicyFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	if requireAuthenticode, err := RuntimeSignaturePolicy(root); err != nil || !requireAuthenticode {
+		t.Fatalf("missing build manifest policy = %v, %v; want Authenticode required", requireAuthenticode, err)
+	}
+	manifest := filepath.Join(root, "build-manifest.json")
+	for _, test := range []struct {
+		version string
+		want    bool
+	}{
+		{version: "test-20261016-818963bb7388", want: false},
+		{version: "nightly-1234-0123456789ab", want: false},
+		{version: "dev", want: true},
+		{version: "v1.2.3", want: true},
+	} {
+		t.Run(test.version, func(t *testing.T) {
+			if err := os.WriteFile(manifest, []byte(`{"version":"`+test.version+`"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := RuntimeSignaturePolicy(root)
+			if err != nil || got != test.want {
+				t.Fatalf("RuntimeSignaturePolicy() = %v, %v; want %v", got, err, test.want)
+			}
+		})
+	}
+	for _, malformed := range []string{"", `{"version":"test-1-0123456789ab"} {}`, `{"version":42}`} {
+		if err := os.WriteFile(manifest, []byte(malformed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RuntimeSignaturePolicy(root); err == nil {
+			t.Fatalf("malformed build manifest %q was accepted", malformed)
 		}
 	}
 }

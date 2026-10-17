@@ -177,27 +177,44 @@ func namedPipeServerProcessID(handle windows.Handle) (uint32, error) {
 	return pid, nil
 }
 
-func validatePipeServerIdentity(conn net.Conn, expectedExecutable string) error {
+func validatePipeServerIdentity(conn net.Conn, expectedExecutable string, expectedPID uint32) error {
 	pipe, ok := conn.(pipeHandleConn)
-	if !ok || pipe.Fd() == 0 || pipe.Fd() == ^uintptr(0) {
+	if !ok || pipe.Fd() == 0 || pipe.Fd() == ^uintptr(0) || strings.TrimSpace(expectedExecutable) == "" {
 		return ErrUnauthorized
 	}
 	pid, err := namedPipeServerProcessID(windows.Handle(pipe.Fd()))
 	if err != nil || pid == 0 {
 		return ErrUnauthorized
 	}
+	if expectedPID != 0 && pid != expectedPID {
+		return ErrUnauthorized
+	}
 	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
 	if err != nil {
+		if expectedPID != 0 && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			// A standard interactive operator may be denied a limited query handle
+			// for a LocalSystem service process. The PID was obtained from the
+			// authenticated SCM service record above and still matches the pipe;
+			// accepting that binding preserves the service identity boundary without
+			// granting the operator process inspection rights.
+			return nil
+		}
 		return ErrUnauthorized
 	}
 	defer windows.CloseHandle(process)
 	var token windows.Token
 	if err := windows.OpenProcessToken(process, windows.TOKEN_QUERY, &token); err != nil {
+		if expectedPID != 0 && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return nil
+		}
 		return ErrUnauthorized
 	}
 	defer token.Close()
 	user, err := token.GetTokenUser()
 	if err != nil || user == nil || user.User.Sid == nil {
+		if expectedPID != 0 && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return nil
+		}
 		return ErrUnauthorized
 	}
 	systemSID, err := windows.StringToSid("S-1-5-18")
@@ -210,6 +227,9 @@ func validatePipeServerIdentity(conn net.Conn, expectedExecutable string) error 
 	}
 	executable, err := processImagePath(process)
 	if err != nil || !validServerExecutablePath(executable, expectedExecutable) {
+		if expectedPID != 0 && errors.Is(err, windows.ERROR_ACCESS_DENIED) {
+			return nil
+		}
 		return ErrUnauthorized
 	}
 	if currentPID, err := namedPipeServerProcessID(windows.Handle(pipe.Fd())); err != nil || currentPID != pid {
@@ -222,7 +242,7 @@ func validatePipeServerIdentity(conn net.Conn, expectedExecutable string) error 
 // PID, SYSTEM token, session 0, and exact installed executable path. Clients
 // use this before accepting any protocol response from a fixed endpoint.
 func ValidateWindowsPipeServer(conn net.Conn, expectedExecutable string) error {
-	return validatePipeServerIdentity(conn, expectedExecutable)
+	return validatePipeServerIdentity(conn, expectedExecutable, 0)
 }
 
 // ValidateWindowsPipeExecutable authenticates a non-service named-pipe peer

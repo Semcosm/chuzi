@@ -447,6 +447,7 @@ type SlotSessionStatus struct {
 	EnvironmentGeneration uint64    `json:"environment_generation"`
 	SessionState          string    `json:"session_state"`
 	AgentReady            bool      `json:"agent_ready"`
+	WorkerReady           bool      `json:"worker_ready"`
 	ObservedAt            time.Time `json:"observed_at,omitempty"`
 	FreshUntil            time.Time `json:"fresh_until,omitempty"`
 }

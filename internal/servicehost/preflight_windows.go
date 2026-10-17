@@ -25,6 +25,12 @@ type windowsPreflightSource struct {
 
 const maxSupportedSessions = 32
 
+const localGroupIncludeIndirect = 1
+
+type localGroupUsersInfo0 struct {
+	Name *uint16
+}
+
 func NewWindowsPreflightSource(options WindowsPreflightOptions) (FactSource, error) {
 	if err := options.Runtime.Validate(); err != nil || !fixedDataRoot(options.DataRoot) {
 		return nil, ErrInvalidConfig
@@ -119,7 +125,9 @@ func (s windowsPreflightSource) osEdition() (FactState, string, string) {
 func supportedWindowsEdition(product, build, displayVersion, installationType string) bool {
 	product = strings.ToLower(strings.TrimSpace(product))
 	buildNumber, buildOK := parseWindowsBuild(build)
-	if strings.Contains(product, "windows 11") &&
+	workstationProduct := strings.Contains(product, "windows 11") ||
+		(strings.Contains(product, "windows 10") && buildOK && buildNumber >= 22621)
+	if workstationProduct &&
 		(strings.Contains(product, " pro") || strings.Contains(product, " enterprise")) {
 		// Some images report the 22H2 base build while DisplayVersion carries
 		// the servicing release, so enforce both the build floor and release.
@@ -281,14 +289,23 @@ func (s windowsPreflightSource) logonRights() (FactState, string, string) {
 	if _, err := windows.StringToSid(s.options.LogonSID); err != nil {
 		return FactFail, "target_account_invalid", "repair_managed_account"
 	}
-	hasRight, err := lsaAccountHasRight(s.options.LogonSID, "SeRemoteInteractiveLogonRight")
+	groupSIDs, err := localGroupSIDsForAccount(s.options.LogonSID)
 	if err != nil {
 		return FactSkip, "effective_logon_rights_unavailable", "inspect_effective_logon_rights"
 	}
-	if !hasRight {
+	effectiveSIDs := append([]string{s.options.LogonSID, "S-1-1-0", "S-1-5-11"}, groupSIDs...)
+	allow := false
+	for _, sid := range effectiveSIDs {
+		hasRight, rightErr := lsaAccountHasRight(sid, "SeRemoteInteractiveLogonRight")
+		if rightErr != nil {
+			return FactSkip, "effective_logon_rights_unavailable", "inspect_effective_logon_rights"
+		}
+		allow = allow || hasRight
+	}
+	if !allow {
 		return FactFail, "remote_interactive_right_missing", "grant_remote_interactive_right_explicitly"
 	}
-	for _, sid := range []string{s.options.LogonSID, "S-1-1-0", "S-1-5-11"} {
+	for _, sid := range effectiveSIDs {
 		denied, denyErr := lsaAccountHasRight(sid, "SeDenyRemoteInteractiveLogonRight")
 		if denyErr != nil {
 			return FactSkip, "effective_logon_rights_unavailable", "inspect_effective_logon_rights"
@@ -298,6 +315,64 @@ func (s windowsPreflightSource) logonRights() (FactState, string, string) {
 		}
 	}
 	return FactPass, "remote_interactive_right_granted", ""
+}
+
+func localGroupSIDsForAccount(accountSID string) ([]string, error) {
+	sid, err := windows.StringToSid(accountSID)
+	if err != nil {
+		return nil, err
+	}
+	nameSize, domainSize := uint32(0), uint32(0)
+	var use uint32
+	err = windows.LookupAccountSid(nil, sid, nil, &nameSize, nil, &domainSize, &use)
+	if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+		return nil, err
+	}
+	name := make([]uint16, nameSize+1)
+	domain := make([]uint16, domainSize+1)
+	if err := windows.LookupAccountSid(nil, sid, &name[0], &nameSize, &domain[0], &domainSize, &use); err != nil {
+		return nil, err
+	}
+	username, err := windows.UTF16PtrFromString(windows.UTF16ToString(name[:nameSize]))
+	if err != nil {
+		return nil, err
+	}
+	proc := windows.NewLazySystemDLL("netapi32.dll").NewProc("NetUserGetLocalGroups")
+	var buffer *byte
+	var read, total uint32
+	status, _, _ := proc.Call(0, uintptr(unsafe.Pointer(username)), 0, localGroupIncludeIndirect, uintptr(unsafe.Pointer(&buffer)), ^uintptr(0), uintptr(unsafe.Pointer(&read)), uintptr(unsafe.Pointer(&total)))
+	if status != 0 {
+		return nil, errors.New("local group lookup failed")
+	}
+	defer windows.NetApiBufferFree(buffer)
+	groups := unsafe.Slice((*localGroupUsersInfo0)(unsafe.Pointer(buffer)), read)
+	groupSIDs := make([]string, 0, len(groups))
+	for _, group := range groups {
+		if group.Name == nil {
+			continue
+		}
+		groupName := windows.UTF16PtrToString(group.Name)
+		groupNamePtr, err := windows.UTF16PtrFromString(groupName)
+		if err != nil {
+			return nil, err
+		}
+		groupSIDSize, groupDomainSize := uint32(0), uint32(0)
+		err = windows.LookupAccountName(nil, groupNamePtr, nil, &groupSIDSize, nil, &groupDomainSize, &use)
+		if err != nil && !errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
+			return nil, err
+		}
+		if groupSIDSize == 0 {
+			return nil, errors.New("local group SID unavailable")
+		}
+		sidBuffer := make([]byte, groupSIDSize)
+		domainBuffer := make([]uint16, groupDomainSize+1)
+		groupSID := (*windows.SID)(unsafe.Pointer(&sidBuffer[0]))
+		if err := windows.LookupAccountName(nil, groupNamePtr, groupSID, &groupSIDSize, &domainBuffer[0], &groupDomainSize, &use); err != nil {
+			return nil, err
+		}
+		groupSIDs = append(groupSIDs, groupSID.String())
+	}
+	return groupSIDs, nil
 }
 
 func (s windowsPreflightSource) diskPermissions() (FactState, string, string) {
@@ -337,19 +412,41 @@ func (s windowsPreflightSource) diskPermissions() (FactState, string, string) {
 }
 
 func (s windowsPreflightSource) runtimeSignature() (FactState, string, string) {
-	for _, path := range []string{s.options.Runtime.Core, s.options.Runtime.Broker, s.options.Runtime.Agent, s.options.Runtime.Node, s.options.Runtime.Shell} {
-		info, err := os.Stat(path)
+	if err := VerifyRuntimeSignature(s.options.Runtime, s.options.RequireAuthenticode); err != nil {
+		return FactFail, "runtime_signature_invalid", "repair_signed_runtime"
+	}
+	if s.options.RequireAuthenticode {
+		return FactPass, "runtime_signature_valid", ""
+	}
+	return FactPass, "runtime_validation_build", ""
+}
+
+// VerifyRuntimeSignature checks the fixed service payload before it is used by
+// LocalSystem. Unsigned validation builds are accepted only when the runtime
+// manifest explicitly classifies them as test or nightly builds.
+func VerifyRuntimeSignature(runtime TrustedRuntime, requireAuthenticode bool) error {
+	if runtime.Validate() != nil {
+		return ErrInvalidConfig
+	}
+	policy, err := RuntimeSignaturePolicy(runtime.Root)
+	if err != nil || policy != requireAuthenticode {
+		return ErrHostUnavailable
+	}
+	if requireAuthenticode {
+		if _, err := os.Stat(filepath.Join(runtime.Root, "authenticode-policy.json")); err != nil {
+			return ErrHostUnavailable
+		}
+	}
+	for _, path := range []string{runtime.Core, runtime.Broker, runtime.Agent, runtime.Node, runtime.Shell} {
+		info, err := os.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() {
-			return FactFail, "runtime_file_missing", "repair_signed_runtime"
+			return ErrHostUnavailable
 		}
-		if err := verifyAuthenticode(path); err != nil {
-			return FactFail, "runtime_signature_invalid", "repair_signed_runtime"
+		if requireAuthenticode && verifyAuthenticode(path) != nil {
+			return ErrHostUnavailable
 		}
 	}
-	if _, err := os.Stat(filepath.Join(s.options.Runtime.Root, "authenticode-policy.json")); err != nil {
-		return FactSkip, "signature_policy_unavailable", "run_installer_signature_validation"
-	}
-	return FactPass, "runtime_signature_valid", ""
+	return nil
 }
 
 func verifyAuthenticode(path string) error {

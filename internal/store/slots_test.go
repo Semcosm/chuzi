@@ -224,6 +224,23 @@ func TestJobPoolScaleDownUnprovisionedSlotRemainsValid(t *testing.T) {
 	}
 }
 
+func TestGenerationZeroSlotCanBeMarkedStoppedAfterBootOnlyCleanup(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetSlotStatus("pool-test-001", slot.Stopped, storeTestTime.Add(time.Second)); err != nil {
+		t.Fatalf("generation-zero stopped status: %v", err)
+	}
+	value, err := database.GetSlot("pool-test-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Status != slot.Stopped || value.EnvironmentGeneration != 0 {
+		t.Fatalf("stopped boot-only slot = %#v", value)
+	}
+}
+
 func TestJobPoolScaleDownDrainsLeasedSlotAndScaleUpRevivesRetiringSlot(t *testing.T) {
 	database, _ := openTestStore(t)
 	now := storeTestTime
@@ -523,6 +540,37 @@ func TestExpiredAgentSlotAcquireWaitsForExplicitFence(t *testing.T) {
 	current, exists, err := database.GetSlotLease(value.SlotID)
 	if err != nil || !exists || current.LeaseID != first.LeaseID {
 		t.Fatalf("expired agent lease after competing acquire = %#v exists=%t err=%v", current, exists, err)
+	}
+}
+
+func TestAgentSlotAcquireRequiresFreshHealth(t *testing.T) {
+	database, _ := openTestStore(t)
+	now := storeTestTime
+	if err := database.ReconcileJobPool(testPoolConfig(1), now); err != nil {
+		t.Fatal(err)
+	}
+	items, err := database.ListSlots("pool-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := testEnvironmentSummary(1)
+	summary.AgentHandle = "slot:pool-test-001"
+	if err := database.MarkSlotReady(items[0].SlotID, summary, now); err != nil {
+		t.Fatal(err)
+	}
+	staleAt := now.Add(SlotSessionFreshnessWindow)
+	if _, _, err := database.AcquireSlotLease(staleAt, "pool-test", testPoolConfig(1).Requirement(), "request-stale", "account-stale", "owner-stale", "lease-stale", time.Minute); !errors.Is(err, slot.ErrSlotUnavailable) {
+		t.Fatalf("stale agent slot acquire = %v, want slot unavailable", err)
+	}
+	if err := database.MarkSlotReady(items[0].SlotID, summary, staleAt); err != nil {
+		t.Fatal(err)
+	}
+	lease, value, err := database.AcquireSlotLease(staleAt, "pool-test", testPoolConfig(1).Requirement(), "request-fresh", "account-fresh", "owner-fresh", "lease-fresh", time.Minute)
+	if err != nil {
+		t.Fatalf("fresh agent slot acquire: %v", err)
+	}
+	if lease.SlotID != items[0].SlotID || value.Status != slot.Leased {
+		t.Fatalf("fresh agent lease = %#v slot=%#v", lease, value)
 	}
 }
 

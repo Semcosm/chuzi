@@ -364,6 +364,7 @@ func (s *Store) MarkSlotReady(slotID string, summary slot.EnvironmentSummary, no
 		value.ManifestDigest, value.Signer, value.Trusted = summary.ManifestDigest, summary.Signer, summary.Trusted
 		value.RequireTrusted = pool.RequireTrusted
 		value.AgentHandle = summary.AgentHandle
+		value.FailureCount = 0
 		value.Status, value.HealthAt, value.UpdatedAt = slot.Ready, now.UTC(), now.UTC()
 		if err := putJSON(tx.Bucket([]byte(migrations.EnvironmentSummariesBucket)), summary.EnvironmentID, summary); err != nil {
 			return err
@@ -387,7 +388,7 @@ func (s *Store) SetSlotStatus(slotID string, status slot.Status, now time.Time) 
 		if value.Status == slot.Retiring && status == slot.Ready {
 			return slot.ErrInvalidStatus
 		}
-		if value.EnvironmentGeneration == 0 && status != slot.Unprovisioned && status != slot.Provisioning && status != slot.Retiring && status != slot.Deleted {
+		if value.EnvironmentGeneration == 0 && status != slot.Unprovisioned && status != slot.Provisioning && status != slot.Stopped && status != slot.Retiring && status != slot.Deleted {
 			return slot.ErrInvalidSlot
 		}
 		raw := tx.Bucket([]byte(migrations.SlotLeasesBucket)).Get([]byte(slotID))
@@ -472,6 +473,12 @@ func (s *Store) AcquireSlotLease(now time.Time, poolID string, requirement slot.
 		slot.SortSlots(all)
 		for _, candidate := range all {
 			if !candidate.Matches(requirement) {
+				continue
+			}
+			if candidate.AgentHandle != "" && (candidate.HealthAt.IsZero() || !now.Before(candidate.HealthAt.Add(SlotSessionFreshnessWindow))) {
+				// A Windows-backed slot is schedulable only while its independently
+				// observed Agent/worker health is fresh. Reconcile will refresh or
+				// quarantine it; acquisition must not trust a durable Ready bit.
 				continue
 			}
 			var current *slot.Lease

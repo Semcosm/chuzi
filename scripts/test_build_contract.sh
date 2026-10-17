@@ -124,6 +124,12 @@ grep -Fq 'chuzi-launcher' "$repo_root/scripts/build.sh" || fail "build.sh misses
 grep -Fq 'test-*' "$repo_root/scripts/build.sh" || fail "build.sh misses test release versions"
 grep -Fq 'test-' "$repo_root/scripts/build.ps1" || fail "build.ps1 misses test release versions"
 grep -Fq 'test-*' "$repo_root/scripts/build_go_target.sh" || fail "build_go_target.sh misses test release versions"
+grep -Fq -- '-X main.version=$Version' "$repo_root/scripts/build.ps1" || fail "build.ps1 does not set the service version"
+grep -Fq -- '-X main.version=$version' "$repo_root/scripts/build.sh" || fail "build.sh does not set the service version"
+grep -Fq -- '-X main.version=$version' "$repo_root/scripts/build_go_target.sh" || fail "build_go_target.sh does not set the service version"
+if rg -Fq -- '-X github.com/Semcosm/chuzi/cmd/service.version=' "$repo_root/scripts/build.ps1" "$repo_root/scripts/build.sh" "$repo_root/scripts/build_go_target.sh"; then
+  fail "service build scripts use a linker symbol that does not set main.version"
+fi
 grep -Fq 'schedule:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "nightly schedule is missing"
 grep -Fq 'workflow_dispatch:' "$repo_root/.github/workflows/chuzi-build.yml" || fail "manual nightly trigger is missing"
 grep -Fq "tags: ['v*.*.*']" "$repo_root/.github/workflows/chuzi-build.yml" || fail "formal release tag trigger is missing"
@@ -232,8 +238,12 @@ grep -Fq 'packaging/windows/Chuzi.iss' "$repo_root/scripts/build_windows_slint.p
 grep -Fq 'OutputBaseFilename=ChuziSetup' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses stable setup filename"
 grep -Fq 'Source: "{#PayloadDir}\*"' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer misses published payload"
 grep -Fq 'function PrepareToInstall' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop the retained Core before upgrade"
+grep -Fq "RunServiceManagementScript(PrepareManagement, 'Stop'" "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not use the bundled idempotent stop operation before replacing the payload"
 grep -Fq 'component-install -item service' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not repair the retained Core payload"
 grep -Fq 'core-stop' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer does not stop Core during install/uninstall"
+grep -Fq "foreach (\$child in @('db', 'profiles', 'runtime', 'journal', 'secrets'))" "$repo_root/scripts/windows-service-management.ps1" || fail "Windows service registration does not distinguish empty mutable data directories"
+grep -Fq 'Installed component directories such as' "$repo_root/scripts/windows-service-management.ps1" || fail "Windows service registration does not document populated component directories"
+grep -Fq "\$productionPayload = \$version -match '^v[0-9]+\\.[0-9]+\\.[0-9]+\$'" "$repo_root/scripts/windows-service-management.ps1" || fail "Windows service registration does not restrict Authenticode gating to stable releases"
 grep -Fq 'procedure ShowSetupMessage' "$repo_root/packaging/windows/Chuzi.iss" || fail "Windows installer errors are not suppressible in silent mode"
 if rg -n '^[[:space:]]*MsgBox\(' "$repo_root/packaging/windows/Chuzi.iss"; then
   fail "Windows installer contains a non-suppressible message box"

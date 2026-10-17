@@ -21,6 +21,7 @@ import (
 var (
 	ErrInvalidOptions        = errors.New("slotwindows: invalid options")
 	ErrUnsupported           = errors.New("slotwindows: Windows runtime required")
+	ErrHostPreflight         = errors.New("slotwindows: host preflight failed")
 	ErrIdentityCollision     = errors.New("slotwindows: managed username identity collision")
 	slotIDPattern            = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 	userPrefixPattern        = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]{0,11}$`)
@@ -72,22 +73,30 @@ type Options struct {
 	// the existing external-session prerequisite and fails closed if FindSession
 	// cannot locate the managed SID.
 	SessionBootstrapper SessionBootstrapper
+	// HostPreflight validates fixed machine requirements after the managed SID
+	// has been verified and before its Profile or WTS session is touched.
+	HostPreflight HostPreflight
 	// SessionLoginAdapter is the deployment-owned credential boundary for
 	// adapters that establish a real WTS session using a short-lived password
 	// buffer. It is never serialized onto the broker protocol.
 	SessionLoginAdapter SessionLoginAdapter
 }
 
+type HostPreflight interface {
+	Check(context.Context, string) error
+}
+
 type Paths struct {
-	Root       string
-	Generation string
-	Work       string
-	Temp       string
-	Logs       string
-	Metadata   string
-	Secret     string
-	UserName   string
-	Desktop    string
+	Root           string
+	Generation     string
+	Work           string
+	Temp           string
+	Logs           string
+	Metadata       string
+	CleanupJournal string
+	Secret         string
+	UserName       string
+	Desktop        string
 }
 
 type Provisioner interface {
@@ -158,7 +167,7 @@ func (o Options) DerivePaths(slotID string, ordinal int, generation uint64) (Pat
 	if err != nil {
 		return Paths{}, ErrInvalidOptions
 	}
-	return Paths{Root: root, Generation: gen, Work: filepath.Join(gen, "work"), Temp: filepath.Join(gen, "tmp"), Logs: filepath.Join(gen, "logs"), Metadata: filepath.Join(root, "ownership.json"), Secret: filepath.Join(root, "account.dpapi"), UserName: user, Desktop: desktop}, nil
+	return Paths{Root: root, Generation: gen, Work: filepath.Join(gen, "work"), Temp: filepath.Join(gen, "tmp"), Logs: filepath.Join(gen, "logs"), Metadata: filepath.Join(root, "ownership.json"), CleanupJournal: filepath.Join(filepath.Clean(o.DataDir), "cleanup-journal", slotID+".json"), Secret: filepath.Join(root, "account.dpapi"), UserName: user, Desktop: desktop}, nil
 }
 
 // DeriveUsername returns the only username that the service may use for a

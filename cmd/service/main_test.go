@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,11 +21,61 @@ import (
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/observability"
+	requestservice "github.com/Semcosm/chuzi/internal/request"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
 )
 
 type testFactory struct{}
+
+type blockingSlotSessionController struct {
+	started chan struct{}
+}
+
+type leaseHeartbeatTestFactory struct {
+	worker      *leaseHeartbeatTestWorker
+	started     chan struct{}
+	startedOnce sync.Once
+}
+
+type leaseHeartbeatTestWorker struct {
+	release     chan struct{}
+	releaseOnce sync.Once
+}
+
+func (f *leaseHeartbeatTestFactory) Start(context.Context, browser.WorkerSpec) (browser.Worker, error) {
+	f.startedOnce.Do(func() { close(f.started) })
+	return f.worker, nil
+}
+
+func (w *leaseHeartbeatTestWorker) Run(ctx context.Context) (browser.WorkerResult, error) {
+	select {
+	case <-w.release:
+		return browser.WorkerResult{Succeeded: true}, nil
+	case <-ctx.Done():
+		return browser.WorkerResult{}, ctx.Err()
+	}
+}
+
+func (w *leaseHeartbeatTestWorker) Cancel(context.Context) error {
+	w.releaseWorker()
+	return nil
+}
+
+func (w *leaseHeartbeatTestWorker) Close(context.Context) error {
+	w.releaseWorker()
+	return nil
+}
+
+func (w *leaseHeartbeatTestWorker) releaseWorker() {
+	w.releaseOnce.Do(func() { close(w.release) })
+}
+
+func (c *blockingSlotSessionController) ReconcileSlotSessionOperations(ctx context.Context, _ string, _ time.Time) error {
+	close(c.started)
+	<-ctx.Done()
+	return ctx.Err()
+}
 
 func TestWorkerStderrRequiresExplicitDebugOptIn(t *testing.T) {
 	t.Setenv("CHUZI_WORKER_DEBUG", "")
@@ -121,6 +172,153 @@ func TestAssembleRuntimeOpensPersistentStoreAndBuildsBoundaries(t *testing.T) {
 	}
 	if err := reopened.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSlowSlotSessionControllerDoesNotBlockSchedulerLeaseHeartbeats(t *testing.T) {
+	cfg, err := config.New(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testNow := time.Now().UTC()
+	digest := strings.Repeat("f", 64)
+	pool := slot.PoolConfig{
+		PoolID: "pool-heartbeat", EnvironmentID: "env/heartbeat", EnvironmentVersion: "1.0.0",
+		DesiredSlots: 1, Capabilities: []string{"desktop"}, ManifestDigest: digest, Signer: "test-signer", RequireTrusted: true,
+	}
+	cfg.JobPool = config.JobPoolConfig{
+		PoolID: pool.PoolID, EnvironmentID: pool.EnvironmentID, EnvironmentVersion: pool.EnvironmentVersion,
+		DesiredSlots: pool.DesiredSlots, Capabilities: pool.Capabilities, ManifestDigest: digest, Signer: pool.Signer, RequireTrusted: true,
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := database.PutEnvironmentRecord(environment.Record{
+		EnvironmentID: pool.EnvironmentID, Version: pool.EnvironmentVersion, Capabilities: pool.Capabilities,
+		ManifestDigest: digest, Signer: pool.Signer, Installed: true, Verified: true, Trusted: true,
+		Enabled: true, Healthy: true, Ready: true, Generation: 1, UpdatedAt: testNow,
+	}); err != nil {
+		database.Close()
+		t.Fatal(err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := &leaseHeartbeatTestWorker{release: make(chan struct{})}
+	factory := &leaseHeartbeatTestFactory{worker: worker, started: make(chan struct{})}
+	options := testServiceOptions()
+	options.leaseTTL = 200 * time.Millisecond
+	options.heartbeat = 20 * time.Millisecond
+	options.runTimeout = 2 * time.Second
+	options.cancelTimeout = 100 * time.Millisecond
+	options.shutdownTimeout = 100 * time.Millisecond
+	now := func() time.Time { return time.Now().UTC() }
+	runtime, err := assembleRuntimeWithFactory(cfg, options, now, factory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.store.Close()
+	defer worker.releaseWorker()
+	slots, err := runtime.store.ListSlots(pool.PoolID)
+	if err != nil || len(slots) != 1 {
+		t.Fatalf("heartbeat slots = %#v, %v", slots, err)
+	}
+	if err := runtime.store.MarkSlotReady(slots[0].SlotID, slot.EnvironmentSummary{
+		EnvironmentID: pool.EnvironmentID, Version: pool.EnvironmentVersion, Generation: 1,
+		Capabilities: pool.Capabilities, ManifestDigest: digest, Signer: pool.Signer, Trusted: true, UpdatedAt: now(),
+	}, now()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.store.CreateAccount("account-heartbeat"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runtime.requests.Submit(requestservice.SubmitInput{
+		RequestID: "request-heartbeat", AccountID: "account-heartbeat", IdempotencyKey: "heartbeat",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	controller := &blockingSlotSessionController{started: make(chan struct{})}
+	controllerCtx, cancelController := context.WithCancel(context.Background())
+	defer cancelController()
+	controllerDone := make(chan error, 1)
+	go func() {
+		controllerDone <- runSlotSessionController(controllerCtx, controller, "service-session", time.Hour, nil)
+	}()
+	select {
+	case <-controller.started:
+	case <-time.After(time.Second):
+		cancelController()
+		t.Fatal("slot session controller did not start")
+	}
+
+	schedulerDone := make(chan error, 1)
+	go func() {
+		outcome, runErr := runtime.scheduler.RunOnce(context.Background())
+		if runErr == nil && !outcome.Succeeded {
+			runErr = errors.New("scheduler run did not succeed")
+		}
+		schedulerDone <- runErr
+	}()
+	select {
+	case <-factory.started:
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not start the leased worker")
+	}
+	accountLease, accountLeased, err := runtime.store.GetLease("account-heartbeat")
+	if err != nil || !accountLeased {
+		t.Fatalf("account lease = %#v, exists=%t, err=%v", accountLease, accountLeased, err)
+	}
+	slotLease, slotLeased, err := runtime.store.GetSlotLease(slots[0].SlotID)
+	if err != nil || !slotLeased {
+		t.Fatalf("slot lease = %#v, exists=%t, err=%v", slotLease, slotLeased, err)
+	}
+	accountAdvanced, slotAdvanced := false, false
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.After(time.Second)
+	for !accountAdvanced || !slotAdvanced {
+		select {
+		case <-ticker.C:
+			latestAccount, exists, getErr := runtime.store.GetLease("account-heartbeat")
+			if getErr != nil || !exists {
+				t.Fatalf("account heartbeat lease = %#v, exists=%t, err=%v", latestAccount, exists, getErr)
+			}
+			latestSlot, exists, getErr := runtime.store.GetSlotLease(slots[0].SlotID)
+			if getErr != nil || !exists {
+				t.Fatalf("slot heartbeat lease = %#v, exists=%t, err=%v", latestSlot, exists, getErr)
+			}
+			accountAdvanced = latestAccount.ExpiresAt.After(accountLease.ExpiresAt)
+			slotAdvanced = latestSlot.ExpiresAt.After(slotLease.ExpiresAt)
+		case <-timeout:
+			t.Fatalf("lease heartbeats did not advance during slow login: account=%t slot=%t", accountAdvanced, slotAdvanced)
+		}
+	}
+	select {
+	case controllerErr := <-controllerDone:
+		t.Fatalf("slow slot session controller exited before lease heartbeat: %v", controllerErr)
+	default:
+	}
+
+	worker.releaseWorker()
+	select {
+	case runErr := <-schedulerDone:
+		if runErr != nil {
+			t.Fatal(runErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("scheduler did not finish after worker completion")
+	}
+	cancelController()
+	select {
+	case controllerErr := <-controllerDone:
+		if controllerErr != nil {
+			t.Fatal(controllerErr)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("slot session controller did not stop")
 	}
 }
 

@@ -21,6 +21,7 @@ type Event struct {
 	RequestID  string        `json:"request_id,omitempty"`
 	Resource   string        `json:"resource,omitempty"`
 	ErrorClass string        `json:"error_class,omitempty"`
+	Attempt    int           `json:"attempt,omitempty"`
 	Duration   time.Duration `json:"-"`
 }
 
@@ -69,6 +70,9 @@ func SanitizeEvent(event Event, fallback time.Time) Event {
 	}
 	if event.Duration > 24*time.Hour {
 		event.Duration = 24 * time.Hour
+	}
+	if event.Attempt < 0 || event.Attempt > 64 {
+		event.Attempt = 0
 	}
 	return event
 }
