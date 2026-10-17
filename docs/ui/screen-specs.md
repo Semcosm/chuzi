@@ -61,7 +61,13 @@ slot session remains separate from the business request Sessions list.
 The operation panel appears above the pool cards. Refresh operation remains
 available after ready or failed results, preserves the initial idempotent
 marker for the same operation, and uses the slot-session polling method.
-Controls remain disabled while a background operation owns the busy guard.
+Start is disabled for an unknown mode, missing revision, unavailable approved
+environment, draining pool, or active pool operation. Controls remain disabled
+while a background operation owns the busy guard. The operation panel offers
+confirmed Cancel while a start is running, confirmed Stop after ready, and
+confirmed Retry after failed or cancelled results. These controls dispatch
+cancel_slot_session, stop_slot_session, and retry_slot_session; the UI does not
+synthesize a terminal cleanup state.
 
 Environment cards and the environment form expose install, verify, trust,
 enable, disable, health, upgrade, and rollback. Package input is an opaque

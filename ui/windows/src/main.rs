@@ -11,6 +11,7 @@ use models::{
     CoreRequestList, CoreSlotSessionOperation, CoreStatus, DiagnosticCoreStatus, DiagnosticEvent,
     DiagnosticSnapshot, UiPreferences,
 };
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use slint::language::ColorScheme;
 use slint::{ComponentHandle, Image, Model, ModelRc, SharedString};
@@ -19,6 +20,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -36,6 +38,7 @@ struct AppState {
     release_index_url: Option<String>,
     busy: bool,
     slot_session_retry: Mutex<Option<(String, bool)>>,
+    local_operation_generation: AtomicU64,
     settings: BehaviorSettings,
     session_view_model: SessionViewModel,
     workspace_host: RdpHost,
@@ -45,6 +48,7 @@ struct AppState {
 
 const CORE_PROTOCOL_VERSION: &str = "chuzi.core/v1";
 const DIAGNOSTIC_METHOD: &str = "get_diagnostic_snapshot";
+static INTENT_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Default)]
 struct DiagnosticCapabilities {
@@ -108,6 +112,7 @@ impl AppState {
                 .filter(|value| !value.is_empty()),
             busy: false,
             slot_session_retry: Mutex::new(None),
+            local_operation_generation: AtomicU64::new(0),
             settings: BehaviorSettings {
                 auto_check_updates: false,
                 auto_repair: false,
@@ -158,6 +163,57 @@ impl AppState {
 
     fn launcher_lock_path(&self) -> PathBuf {
         self.launcher_state_dir().join("launcher.lock")
+    }
+
+    fn active_slot_operation_path(&self) -> PathBuf {
+        self.launcher_state_dir().join("active-slot-operation.json")
+    }
+
+    fn begin_local_operation(&self) -> u64 {
+        self.local_operation_generation
+            .fetch_add(1, Ordering::SeqCst)
+            .wrapping_add(1)
+    }
+
+    fn cancel_local_operation(&self) {
+        self.local_operation_generation
+            .fetch_add(1, Ordering::SeqCst);
+    }
+
+    fn local_operation_is_current(&self, generation: u64) -> bool {
+        self.local_operation_generation.load(Ordering::SeqCst) == generation
+    }
+
+    fn save_active_slot_operation(
+        &self,
+        operation_id: &str,
+        pool_id: &str,
+        attempt: i32,
+        generation: u64,
+    ) -> Result<(), String> {
+        let record = ActiveSlotOperation {
+            operation_id: operation_id.to_owned(),
+            pool_id: pool_id.to_owned(),
+            attempt,
+            generation,
+        };
+        let directory = self.launcher_state_dir();
+        fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+        let temporary = directory.join(".active-slot-operation.tmp");
+        let bytes = serde_json::to_vec(&record).map_err(|error| error.to_string())?;
+        fs::write(&temporary, bytes).map_err(|error| error.to_string())?;
+        let destination = self.active_slot_operation_path();
+        let _ = fs::remove_file(&destination);
+        fs::rename(&temporary, destination).map_err(|error| error.to_string())
+    }
+
+    fn load_active_slot_operation(&self) -> Option<ActiveSlotOperation> {
+        let bytes = fs::read(self.active_slot_operation_path()).ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    fn clear_active_slot_operation(&self) {
+        let _ = fs::remove_file(self.active_slot_operation_path());
     }
 
     fn launcher_user_state_args(&self, command: &str) -> Vec<OsString> {
@@ -354,6 +410,14 @@ impl AppState {
     }
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct ActiveSlotOperation {
+    operation_id: String,
+    pool_id: String,
+    attempt: i32,
+    generation: u64,
+}
+
 fn launcher_command_needs_manifest(command: &str) -> bool {
     !matches!(
         command,
@@ -395,6 +459,9 @@ enum CoreMethod {
     DeleteJobPool,
     GetJobPoolOperation,
     StartSlotSession,
+    CancelSlotSession,
+    StopSlotSession,
+    RetrySlotSession,
     GetSlotSessionOperation,
     ListEnvironments,
     EnvironmentOperation,
@@ -418,6 +485,9 @@ impl CoreMethod {
             Self::DeleteJobPool => "delete_job_pool",
             Self::GetJobPoolOperation => "get_job_pool_operation",
             Self::StartSlotSession => "start_slot_session",
+            Self::CancelSlotSession => "cancel_slot_session",
+            Self::StopSlotSession => "stop_slot_session",
+            Self::RetrySlotSession => "retry_slot_session",
             Self::GetSlotSessionOperation => "get_slot_session_operation",
             Self::ListEnvironments => "list_environments",
             Self::EnvironmentOperation => "environment_operation",
@@ -451,13 +521,23 @@ fn core_status(state: &AppState) -> Result<CoreStatus, String> {
 
 fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
     let navigate_weak = ui.as_weak();
+    let navigate_state = Arc::clone(&state);
     ui.on_navigate(move |page| {
         let page = if page.as_str() == "settings" {
             "settings"
         } else {
             "sessions"
         };
+        {
+            let mut guard = navigate_state.lock().unwrap();
+            guard.cancel_local_operation();
+            guard.busy = false;
+        }
         if let Some(window) = navigate_weak.upgrade() {
+            // Navigation cancels only local fetch/polling. Clear the visible
+            // busy state synchronously while the durable Core operation keeps
+            // running in the background.
+            window.set_busy(false);
             // Navigation is a presentation concern; launcher settings are
             // loaded once and saved explicitly from the Settings page.
             window.set_page(page.into());
@@ -611,6 +691,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             return;
         };
         let pending = window.get_pending_operation().to_string();
+        let pending_slot_operation_id = window.get_pending_slot_operation_id().to_string();
         let pool_id = window.get_pending_pool_id().to_string();
         let environment_id = window.get_pending_environment_id().to_string();
         let environment_version = window.get_pending_environment_version().to_string();
@@ -647,6 +728,15 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
             "start-slot-session" => {
                 submit_slot_session(&weak, Arc::clone(&operation_state), pool_id)
             }
+            "slot-session-cancel" | "slot-session-stop" | "slot-session-retry" => {
+                let action = pending.trim_start_matches("slot-session-").to_owned();
+                submit_slot_session_action(
+                    &weak,
+                    Arc::clone(&operation_state),
+                    pending_slot_operation_id,
+                    action,
+                );
+            }
             value if value.starts_with("environment:") => submit_environment_operation(
                 &weak,
                 Arc::clone(&operation_state),
@@ -664,6 +754,7 @@ fn connect_callbacks(ui: &MainWindow, state: Arc<Mutex<AppState>>) {
         if let Some(window) = weak.upgrade() {
             window.set_operation_confirmation_visible(false);
             window.set_pending_operation(SharedString::default());
+            window.set_pending_slot_operation_id(SharedString::default());
         }
     });
 
@@ -1767,6 +1858,7 @@ struct CoreSnapshot {
 fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
     let sessions_state = Arc::clone(&state);
     let pools_state = Arc::clone(&state);
+    let resume_state = Arc::clone(&state);
     run_background_with(
         ui,
         state,
@@ -1822,6 +1914,7 @@ fn refresh_core(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
             window.set_core_status(snapshot.status.into());
             window.set_core_details(snapshot.details.into());
             if snapshot.ready {
+                resume_active_slot_operation(&window.as_weak(), Arc::clone(&resume_state));
                 if window.get_page() == "settings" {
                     refresh_job_pools(&window.as_weak(), Arc::clone(&pools_state));
                 } else {
@@ -1884,6 +1977,7 @@ fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) 
 }
 
 fn job_pool_row(pool: &CoreJobPool) -> JobPoolRowData {
+    let (start_allowed, start_blocked_reason) = slot_session_start_gate(pool);
     JobPoolRowData {
         execution_mode: execution_mode(&pool.status.execution_mode).into(),
         pool_id: pool.config.pool_id.clone().into(),
@@ -1919,8 +2013,33 @@ fn job_pool_row(pool: &CoreJobPool) -> JobPoolRowData {
         last_failure_code: pool.status.last_failure_code.clone().into(),
         config_revision: pool.status.config_revision.to_string().into(),
         operation_id: pool.status.operation_id.clone().into(),
+        start_allowed,
+        start_blocked_reason: start_blocked_reason.into(),
         selected: false,
     }
+}
+
+fn slot_session_start_gate(pool: &CoreJobPool) -> (bool, &'static str) {
+    let mode = execution_mode(&pool.status.execution_mode);
+    if mode == "unknown" {
+        return (false, "execution mode is unavailable");
+    }
+    if pool.status.config_revision == 0 && pool.config.config_revision == 0 {
+        return (false, "pool revision is unavailable");
+    }
+    if !pool.status.operation_id.trim().is_empty() {
+        return (false, "pool operation is still running");
+    }
+    if matches!(pool.config.desired_state.as_str(), "draining" | "disabled") {
+        return (false, "pool is draining");
+    }
+    if !pool.status.environment_ready || pool.status.environment_readiness != "ready" {
+        return (false, "approved environment is not ready");
+    }
+    if pool.status.reconcile_state == "failed" {
+        return (false, "pool reconciliation needs attention");
+    }
+    (true, "")
 }
 
 fn environment_row(environment: &CoreEnvironment) -> EnvironmentRowData {
@@ -1971,6 +2090,50 @@ fn idempotency_key(operation: &str, subject: &str, revision: u64, details: &str)
         .take(48)
         .collect::<String>();
     format!("windows-ui-{operation}-{subject}-{revision}-{fingerprint:016x}")
+}
+
+// Idempotency keys identify one user intent. The nonce is process-local and
+// combined with wall-clock entropy; it is bounded and contains no user data.
+fn new_intent_key(operation: &str, subject: &str, revision: u64) -> String {
+    let nonce = INTENT_NONCE.fetch_add(1, Ordering::Relaxed);
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_nanos())
+        .unwrap_or_default();
+    idempotency_key(
+        operation,
+        subject,
+        revision,
+        &format!("intent-{now:x}-{nonce:x}"),
+    )
+}
+
+fn core_call_with_transport_retry(
+    state: &AppState,
+    method: CoreMethod,
+    params: Value,
+) -> Result<Value, String> {
+    let mut last_error = String::new();
+    for attempt in 0..3 {
+        match core_call(state, method, params.clone()) {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < 2 && is_transport_retryable(&error) => {
+                last_error = error;
+                thread::sleep(Duration::from_millis(100 * (attempt + 1)));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error)
+}
+
+fn is_transport_retryable(error: &str) -> bool {
+    let value = error.to_ascii_lowercase();
+    is_core_unavailable(error)
+        || value.contains("broken pipe")
+        || value.contains("connection")
+        || value.contains("timed out")
+        || value.contains("timeout")
 }
 
 fn pool_revision(state: &AppState, pool_id: &str) -> Result<u64, String> {
@@ -2237,8 +2400,8 @@ fn submit_slot_session(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>
         move |state| {
             validate_text(&pool_id_for_key, "pool ID")?;
             let revision = pool_revision(state, &pool_id_for_key)?;
-            let key = idempotency_key("start_slot_session", &pool_id_for_key, revision, "");
-            let value = core_call(
+            let key = new_intent_key("start_slot_session", &pool_id_for_key, revision);
+            let value = core_call_with_transport_retry(
                 state,
                 CoreMethod::StartSlotSession,
                 json!({
@@ -2263,7 +2426,7 @@ fn submit_slot_session(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>
             Ok(value)
         },
         move |state, operation_id| {
-            let value = core_call(
+            let value = core_call_with_transport_retry(
                 state,
                 CoreMethod::GetSlotSessionOperation,
                 json!({"operation_id": operation_id}),
@@ -2284,6 +2447,80 @@ fn submit_slot_session(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>
     );
 }
 
+fn build_slot_session_action_request(
+    action: &str,
+    operation: &CoreSlotSessionOperation,
+) -> Result<(CoreMethod, Value), String> {
+    let method = match action {
+        "cancel" => CoreMethod::CancelSlotSession,
+        "stop" => CoreMethod::StopSlotSession,
+        "retry" => CoreMethod::RetrySlotSession,
+        _ => return Err("unsupported_slot_session_action".to_owned()),
+    };
+    let key = new_intent_key(
+        &format!("{action}_slot_session"),
+        &operation.operation_id,
+        operation.revision,
+    );
+    Ok((
+        method,
+        json!({
+            "operation_id": operation.operation_id,
+            "expected_revision": operation.revision,
+            "generation": operation.generation.max(operation.environment_generation),
+            "attempt": operation.attempt,
+            "idempotency_key": key,
+            "actor": "windows-ui"
+        }),
+    ))
+}
+
+fn submit_slot_session_action(
+    ui: &slint::Weak<MainWindow>,
+    state: Arc<Mutex<AppState>>,
+    operation_id: String,
+    action: String,
+) {
+    if !matches!(action.as_str(), "cancel" | "stop" | "retry") {
+        return;
+    }
+    // Cancel is allowed while the start operation is being polled. Stop the
+    // local poller before dispatching the durable action so the shared busy
+    // guard cannot reject the user intent; Core remains the source of truth
+    // for the operation's terminal state.
+    if action == "cancel" {
+        let mut guard = state.lock().unwrap();
+        guard.cancel_local_operation();
+        guard.busy = false;
+    }
+    start_operation(
+        ui,
+        state,
+        "slot-session",
+        operation_id.clone(),
+        move |state| {
+            validate_text(&operation_id, "operation ID")?;
+            let current = core_call_with_transport_retry(
+                state,
+                CoreMethod::GetSlotSessionOperation,
+                json!({"operation_id": operation_id}),
+            )?;
+            let operation = decode_slot_session_operation(current)
+                .map_err(|_| "invalid_operation_projection".to_owned())?;
+            let (method, params) = build_slot_session_action_request(&action, &operation)?;
+            core_call_with_transport_retry(state, method, params)
+        },
+        move |state, operation_id| {
+            let value = core_call_with_transport_retry(
+                state,
+                CoreMethod::GetSlotSessionOperation,
+                json!({"operation_id": operation_id}),
+            )?;
+            slot_session_projection(state, value)
+        },
+    );
+}
+
 fn start_job_pool_operation<F>(
     ui: &slint::Weak<MainWindow>,
     state: Arc<Mutex<AppState>>,
@@ -2299,7 +2536,7 @@ fn start_job_pool_operation<F>(
         pool_id,
         request,
         |state, operation_id| {
-            let value = core_call(
+            let value = core_call_with_transport_retry(
                 state,
                 CoreMethod::GetJobPoolOperation,
                 json!({"operation_id": operation_id}),
@@ -2329,7 +2566,7 @@ fn poll_job_pool_operation(
         "job-pool",
         operation_id,
         |state, operation_id| {
-            let value = core_call(
+            let value = core_call_with_transport_retry(
                 state,
                 CoreMethod::GetJobPoolOperation,
                 json!({"operation_id": operation_id}),
@@ -2359,7 +2596,7 @@ fn poll_slot_session_operation(
         "slot-session",
         operation_id,
         |state, operation_id| {
-            let value = core_call(
+            let value = core_call_with_transport_retry(
                 state,
                 CoreMethod::GetSlotSessionOperation,
                 json!({"operation_id": operation_id}),
@@ -2378,6 +2615,30 @@ fn poll_slot_session_operation(
             slot_session_projection(state, value)
         },
     );
+}
+
+fn resume_active_slot_operation(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) {
+    let Some(record) = state.lock().unwrap().load_active_slot_operation() else {
+        return;
+    };
+    if record.operation_id.trim().is_empty() {
+        state.lock().unwrap().clear_active_slot_operation();
+        return;
+    }
+    let Some(window) = ui.upgrade() else {
+        return;
+    };
+    if window.get_busy() || state.lock().unwrap().busy {
+        return;
+    }
+    window.set_operation_kind("slot-session".into());
+    window.set_operation_id(record.operation_id.clone().into());
+    window.set_operation_phase("resume".into());
+    window.set_operation_state("unknown".into());
+    window.set_operation_detail(
+        "Restored an active slot operation after restart; checking its durable Core status.".into(),
+    );
+    poll_slot_session_operation(ui, state, record.operation_id);
 }
 
 fn submit_environment_operation(
@@ -2532,19 +2793,37 @@ fn decode_slot_session_operation(
         serde_json::from_value(value.get("operation").cloned().unwrap_or(Value::Null))?;
     if !matches!(
         operation.state.as_str(),
-        "requested" | "provisioning" | "ready" | "failed" | "cancelled"
+        "requested"
+            | "provisioning"
+            | "stopping"
+            | "cancelling"
+            | "retrying"
+            | "ready"
+            | "stopped"
+            | "failed"
+            | "cancelled"
     ) {
         operation.state = "failed".to_owned();
         operation.failure_code = "invalid_operation_projection".to_owned();
     }
     if !matches!(
         operation.failure_code.as_str(),
-        "" | "slot_quarantined"
+        "" | "agent_unavailable"
+            | "cleanup_failed"
+            | "configuration_invalid"
+            | "credential_required"
+            | "deadline_exceeded"
+            | "permission_denied"
+            | "operation_failed"
+            | "slot_quarantined"
             | "slot_not_found"
             | "slot_unavailable"
             | "session_unavailable"
             | "stale_revision"
             | "timeout"
+            | "readiness_stale"
+            | "service_restarted"
+            | "unknown"
             | "invalid_operation_projection"
     ) {
         operation.failure_code = "session_failed".to_owned();
@@ -2575,7 +2854,22 @@ fn slot_session_projection(
 fn redacted_slot_state(value: &str) -> &str {
     match value {
         "unprovisioned" | "provisioning" | "ready" | "leased" | "quarantined" | "draining"
-        | "retiring" | "deleted" | "unavailable" => value,
+        | "retiring" | "deleted" | "stopped" | "unavailable" => value,
+        _ => "unknown",
+    }
+}
+
+fn redacted_slot_phase(value: &str) -> &str {
+    match value {
+        "environment" | "host_preflight" | "profile" | "login" | "wts" | "desktop" | "shell"
+        | "agent" | "worker" | "stopping" | "stopped" => value,
+        _ => "unknown",
+    }
+}
+
+fn redacted_desired_state(value: &str) -> &str {
+    match value {
+        "running" | "stopped" => value,
         _ => "unknown",
     }
 }
@@ -2593,15 +2887,49 @@ fn format_slot_session_detail(
         "windows" => "Windows Agent not ready",
         _ => "Agent readiness unknown",
     };
+    let freshness = if operation.status.status == "unavailable" {
+        "unavailable"
+    } else if operation.status.fresh_until.is_empty() {
+        "unknown"
+    } else {
+        "reported"
+    };
+    let phase = redacted_slot_phase(&operation.phase);
+    let desired = redacted_desired_state(&operation.desired_state);
+    let deadline = if operation.deadline.is_empty() {
+        "none"
+    } else {
+        "set"
+    };
+    let worker = if mode == "logical" {
+        "no worker (logical test)"
+    } else if operation.status.worker_ready {
+        "worker ready"
+    } else {
+        "worker not ready"
+    };
     let mut detail = format!(
-        "slot #{} · mode {} · current status {} · session {} · {} · environment generation {}",
+        "slot #{} · mode {} · phase {} · state {} · current status {} · session {} · {} · environment generation {} · attempt {} · revision {} · desired {} · deadline {} · retry budget {} · freshness {}",
         operation.ordinal,
         mode,
+        phase,
+        operation.state,
         status,
         session_state,
         agent,
         operation.status.environment_generation,
+        operation.attempt,
+        operation.revision,
+        desired,
+        deadline,
+        operation.retry_budget,
+        freshness,
     );
+    detail.push_str(" · ");
+    detail.push_str(worker);
+    if !operation.next_attempt_at.is_empty() {
+        detail.push_str(" · next attempt scheduled");
+    }
     if operation.idempotent || initial_idempotent {
         detail.push_str(" · idempotent");
     }
@@ -2609,14 +2937,14 @@ fn format_slot_session_detail(
 }
 
 fn set_operation_kind(ui: &slint::Weak<MainWindow>, kind: &str) {
-    let weak = ui.clone();
-    let kind = kind.to_owned();
-    let _ = slint::invoke_from_event_loop(move || {
-        if let Some(window) = weak.upgrade() {
-            window.set_operation_kind(kind.into());
-            window.set_busy(true);
-        }
-    });
+    // The caller is already on the Slint event loop. Apply this initial
+    // presentation state synchronously so a subsequent navigation cannot be
+    // followed by a stale queued `busy=true` update. Polling updates remain
+    // generation-fenced in `set_operation_progress`.
+    if let Some(window) = ui.upgrade() {
+        window.set_operation_kind(kind.into());
+        window.set_busy(true);
+    }
 }
 
 fn decode_environment_operation(
@@ -2641,16 +2969,22 @@ fn start_operation<F, P>(
 {
     let weak = ui.clone();
     let poll = Arc::new(poll);
+    let kind = kind.to_owned();
+    let kind_for_thread = kind.clone();
+    let local_generation;
     {
         let mut guard = state.lock().unwrap();
         if guard.busy {
             return;
         }
         guard.busy = true;
+        local_generation = guard.begin_local_operation();
     }
-    set_operation_kind(ui, kind);
+    set_operation_kind(ui, &kind);
     set_operation_progress(
         &weak,
+        &state,
+        local_generation,
         "submitting",
         "",
         "requested",
@@ -2667,10 +3001,38 @@ fn start_operation<F, P>(
                     .and_then(Value::as_str)
                     .ok_or_else(|| "invalid_operation_projection".to_owned())?
                     .to_owned();
-                Ok(poll_operation(&weak, &state, &operation_id, &poll)?)
+                if kind_for_thread == "slot-session" {
+                    let operation = decode_slot_session_operation(value)
+                        .map_err(|_| "invalid_operation_projection".to_owned())?;
+                    state.lock().unwrap().save_active_slot_operation(
+                        &operation_id,
+                        &operation.pool_id,
+                        operation.attempt,
+                        operation.generation.max(operation.environment_generation),
+                    )?;
+                }
+                Ok(poll_operation(
+                    &weak,
+                    &state,
+                    &operation_id,
+                    &poll,
+                    local_generation,
+                )?)
             })();
-        state.lock().unwrap().busy = false;
-        finish_operation(&weak, result, subject, state);
+        {
+            let mut guard = state.lock().unwrap();
+            if guard.local_operation_is_current(local_generation) {
+                guard.busy = false;
+            }
+        }
+        finish_operation(
+            &weak,
+            result,
+            subject,
+            kind_for_thread,
+            state,
+            local_generation,
+        );
     });
 }
 
@@ -2688,25 +3050,35 @@ fn start_operation_with_id<P>(
 {
     let weak = ui.clone();
     let poll = Arc::new(poll);
+    let kind = kind.to_owned();
+    let local_generation;
     {
         let mut guard = state.lock().unwrap();
         if guard.busy {
             return;
         }
         guard.busy = true;
+        local_generation = guard.begin_local_operation();
     }
-    set_operation_kind(ui, kind);
+    set_operation_kind(ui, &kind);
     set_operation_progress(
         &weak,
+        &state,
+        local_generation,
         "polling",
         &operation_id,
         "requested",
         "Polling operation…",
     );
     thread::spawn(move || {
-        let result = poll_operation(&weak, &state, &operation_id, &poll);
-        state.lock().unwrap().busy = false;
-        finish_operation(&weak, result, operation_id, state);
+        let result = poll_operation(&weak, &state, &operation_id, &poll, local_generation);
+        {
+            let mut guard = state.lock().unwrap();
+            if guard.local_operation_is_current(local_generation) {
+                guard.busy = false;
+            }
+        }
+        finish_operation(&weak, result, operation_id, kind, state, local_generation);
     });
 }
 
@@ -2715,6 +3087,7 @@ fn poll_operation<P>(
     state: &Arc<Mutex<AppState>>,
     operation_id: &str,
     poll: &Arc<P>,
+    local_generation: u64,
 ) -> Result<(String, String, String, String), String>
 where
     P: Fn(&AppState, &str) -> Result<(String, String, String, String), String>
@@ -2726,8 +3099,15 @@ where
     // request path. Keep polling long enough for the default lease TTL, then
     // leave the operation ID available for an explicit refresh instead of
     // presenting a still-running delete as a failed operation.
-    const MAX_POLL_ATTEMPTS: usize = 1200;
+    const MAX_POLL_ATTEMPTS: usize = 120;
     for attempt in 0..MAX_POLL_ATTEMPTS {
+        if !state
+            .lock()
+            .unwrap()
+            .local_operation_is_current(local_generation)
+        {
+            return Err("local_operation_cancelled".to_owned());
+        }
         let value = match poll(&state.lock().unwrap(), operation_id) {
             Ok(value) => value,
             Err(error) if is_core_unavailable(&error) => {
@@ -2738,6 +3118,8 @@ where
         let (state_name, id, failure, result) = value;
         set_operation_progress(
             ui,
+            state,
+            local_generation,
             "polling",
             &id,
             &state_name,
@@ -2749,7 +3131,8 @@ where
         if attempt + 1 == MAX_POLL_ATTEMPTS {
             return Err("operation_timeout".to_owned());
         }
-        thread::sleep(Duration::from_millis(250));
+        let delay = 200_u64.saturating_mul(1_u64 << attempt.min(3));
+        thread::sleep(Duration::from_millis(delay.min(2_000)));
     }
     Err("operation_timeout".to_owned())
 }
@@ -2757,7 +3140,7 @@ where
 fn is_terminal_operation(state: &str) -> bool {
     matches!(
         state,
-        "applied" | "ready" | "failed" | "rolled_back" | "cancelled"
+        "applied" | "ready" | "stopped" | "failed" | "rolled_back" | "cancelled"
     )
 }
 
@@ -2776,6 +3159,8 @@ fn format_operation_detail(state: &str, failure: &str, result: &str) -> String {
 
 fn set_operation_progress(
     ui: &slint::Weak<MainWindow>,
+    app_state: &Arc<Mutex<AppState>>,
+    local_generation: u64,
     phase: &str,
     operation_id: &str,
     state: &str,
@@ -2784,14 +3169,21 @@ fn set_operation_progress(
     let weak = ui.clone();
     let phase = phase.to_owned();
     let operation_id = operation_id.to_owned();
-    let state = state.to_owned();
+    let state_name = state.to_owned();
     let detail = detail.to_owned();
+    let app_state = Arc::clone(app_state);
     let _ = slint::invoke_from_event_loop(move || {
-        if let Some(window) = weak.upgrade() {
-            window.set_operation_phase(phase.into());
-            window.set_operation_id(operation_id.into());
-            window.set_operation_state(state.into());
-            window.set_operation_detail(detail.into());
+        if app_state
+            .lock()
+            .unwrap()
+            .local_operation_is_current(local_generation)
+        {
+            if let Some(window) = weak.upgrade() {
+                window.set_operation_phase(phase.into());
+                window.set_operation_id(operation_id.into());
+                window.set_operation_state(state_name.into());
+                window.set_operation_detail(detail.into());
+            }
         }
     });
 }
@@ -2800,22 +3192,34 @@ fn finish_operation(
     ui: &slint::Weak<MainWindow>,
     result: Result<(String, String, String, String), String>,
     subject: String,
+    kind: String,
     state: Arc<Mutex<AppState>>,
+    local_generation: u64,
 ) {
     let weak = ui.clone();
     let _ = slint::invoke_from_event_loop(move || {
+        if !state
+            .lock()
+            .unwrap()
+            .local_operation_is_current(local_generation)
+        {
+            return;
+        }
         if let Some(window) = weak.upgrade() {
             window.set_busy(false);
             match result {
                 Ok((operation_state, operation_id, failure, outcome)) => {
+                    let terminal = is_terminal_operation(&operation_state);
                     let failed = operation_state == "failed" || !failure.is_empty();
                     window.set_operation_phase(
                         if failed {
                             operation_error_phase(&failure)
                         } else if operation_state == "ready" {
                             "ready"
+                        } else if operation_state == "stopped" || operation_state == "cancelled" {
+                            operation_state.as_str()
                         } else {
-                            "applied"
+                            operation_state.as_str()
                         }
                         .into(),
                     );
@@ -2833,9 +3237,15 @@ fn finish_operation(
                         .into(),
                     );
                     window.set_message_kind(if failed { "error" } else { "success" }.into());
+                    if kind == "slot-session" && terminal {
+                        state.lock().unwrap().clear_active_slot_operation();
+                    }
                     refresh_job_pools(&window.as_weak(), Arc::clone(&state));
                 }
                 Err(error) => {
+                    if error == "local_operation_cancelled" {
+                        return;
+                    }
                     if error == "operation_timeout" {
                         window.set_operation_phase("polling".into());
                         window.set_operation_detail(
@@ -2870,6 +3280,12 @@ fn operation_error_phase(error: &str) -> &'static str {
         "slot unavailable"
     } else if value.contains("session_unavailable") {
         "session unavailable"
+    } else if value.contains("cleanup_failed") {
+        "cleanup failed"
+    } else if value.contains("readiness_stale") {
+        "readiness stale"
+    } else if value.contains("deadline_exceeded") {
+        "deadline exceeded"
     } else if value.contains("timeout") {
         "timeout"
     } else if value.contains("package_unavailable") {
@@ -2929,7 +3345,43 @@ mod job_pool_tests {
     use super::{
         format_job_pool_summary,
         models::{CoreJobPool, CoreJobPoolConfig, CoreJobPoolList, CoreJobPoolStatus},
+        slot_session_start_gate,
     };
+
+    fn ready_pool() -> CoreJobPool {
+        CoreJobPool {
+            config: CoreJobPoolConfig {
+                pool_id: "pool-a".to_owned(),
+                desired_slots: 1,
+                max_concurrency: 1,
+                environment_id: "env-a".to_owned(),
+                environment_version: "1".to_owned(),
+                manifest_digest: "a".repeat(64),
+                signer: "signed".to_owned(),
+                require_trusted: true,
+                desired_state: "enabled".to_owned(),
+                enabled: true,
+                config_revision: 7,
+            },
+            status: CoreJobPoolStatus {
+                execution_mode: "windows".to_owned(),
+                desired: 1,
+                ready: 0,
+                leased: 0,
+                quarantined: 0,
+                draining: 0,
+                provisioning: 0,
+                retiring: 0,
+                effective_capacity: 0,
+                environment_readiness: "ready".to_owned(),
+                reconcile_state: "applied".to_owned(),
+                last_failure_code: String::new(),
+                operation_id: String::new(),
+                config_revision: 7,
+                environment_ready: true,
+            },
+        }
+    }
 
     #[test]
     fn summary_contains_safe_capacity_and_failure_fields() {
@@ -2985,6 +3437,33 @@ mod job_pool_tests {
                 "summary leaked {secret}: {summary}"
             );
         }
+    }
+
+    #[test]
+    fn slot_session_start_gate_blocks_unknown_stale_and_conflicting_pools() {
+        let mut pool = ready_pool();
+        assert_eq!(slot_session_start_gate(&pool), (true, ""));
+
+        pool.status.execution_mode.clear();
+        assert_eq!(
+            slot_session_start_gate(&pool),
+            (false, "execution mode is unavailable")
+        );
+        pool = ready_pool();
+        pool.status.environment_ready = false;
+        assert_eq!(
+            slot_session_start_gate(&pool),
+            (false, "approved environment is not ready")
+        );
+        pool = ready_pool();
+        pool.status.operation_id = "pool-op-1".to_owned();
+        assert_eq!(
+            slot_session_start_gate(&pool),
+            (false, "pool operation is still running")
+        );
+        pool = ready_pool();
+        pool.config.desired_state = "draining".to_owned();
+        assert_eq!(slot_session_start_gate(&pool), (false, "pool is draining"));
     }
 }
 
@@ -3514,6 +3993,35 @@ fn friendly_error(error: &str) -> String {
         return "The execution slot session is unavailable. Refresh the operation and try again."
             .to_owned();
     }
+    if value.contains("cleanup_failed") {
+        return "Core kept the slot owned because cleanup did not finish. Refresh the operation and retry after the resource is quarantined.".to_owned();
+    }
+    if value.contains("deadline_exceeded") {
+        return "The session deadline expired before cleanup completed. Refresh the operation; Core keeps ownership until it is safe to retry.".to_owned();
+    }
+    if value.contains("readiness_stale") {
+        return "The reported session readiness is stale. Refresh the operation before taking another action.".to_owned();
+    }
+    if value.contains("agent_unavailable") {
+        return "The Windows Agent is not ready. Refresh the operation after the environment health gate recovers.".to_owned();
+    }
+    if value.contains("credential_required") {
+        return "The service could not obtain the authorized session credential. Check the deployment login service and retry.".to_owned();
+    }
+    if value.contains("permission_denied") {
+        return "The service did not have permission to establish this session. Check the deployment service identity.".to_owned();
+    }
+    if value.contains("configuration_invalid") {
+        return "The session environment configuration is invalid. Repair the approved environment and retry.".to_owned();
+    }
+    if value.contains("slot_not_found") {
+        return "The selected execution slot no longer exists. Refresh the pool before retrying."
+            .to_owned();
+    }
+    if value.contains("cancelled") {
+        return "The session operation was cancelled after Core completed its cleanup path."
+            .to_owned();
+    }
     if value.contains("stale_revision")
         || value.contains("stale revision")
         || value.contains("conflict")
@@ -3754,7 +4262,10 @@ mod tests {
             .filter(|call| call["method"] == "start_slot_session")
             .collect::<Vec<_>>();
         assert_eq!(starts.len(), 5);
-        assert_eq!(starts[0]["params"], starts[1]["params"]);
+        assert_ne!(
+            starts[0]["params"]["idempotency_key"],
+            starts[1]["params"]["idempotency_key"]
+        );
         for call in starts {
             let params = call["params"].as_object().unwrap();
             assert_eq!(params.len(), 4);
@@ -3769,6 +4280,225 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
         drop(ui);
         pool_mode_confirmation_saves_offline_and_rejects_unsafe_states();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn slot_session_actions_call_backend_and_follow_cleanup_terminal_states() {
+        use slint::Model;
+        use std::cell::Cell;
+        use std::os::unix::fs::PermissionsExt;
+        use std::rc::Rc;
+        use std::time::Instant;
+
+        i_slint_backend_testing::init_integration_test_with_system_time();
+        let root = std::env::temp_dir().join(format!(
+            "chuzi-slot-actions-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let state = Arc::new(Mutex::new(AppState {
+            data_root: root.clone(),
+            payload_root: root.clone(),
+            ..AppState::default()
+        }));
+        let launcher = state.lock().unwrap().launcher_path();
+        fs::write(
+            &launcher,
+            include_str!("../tests/fixtures/slot_session_launcher.py"),
+        )
+        .unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(root.join("scenario"), "actions").unwrap();
+        let ui = MainWindow::new().unwrap();
+        connect_callbacks(&ui, Arc::clone(&state));
+        let confirm = |window: &MainWindow, action: &str| {
+            window.set_pending_operation(format!("slot-session-{action}").into());
+            window.set_pending_slot_operation_id(window.get_operation_id());
+            window.set_operation_confirmation_visible(true);
+            window.invoke_operation_confirmed();
+            assert!(!window.get_operation_confirmation_visible());
+        };
+        ui.set_pending_operation("start-slot-session".into());
+        ui.set_pending_pool_id("pool-a".into());
+        ui.set_operation_confirmation_visible(true);
+        ui.invoke_operation_confirmed();
+
+        let stage = Rc::new(Cell::new(0));
+        let timer_stage = Rc::clone(&stage);
+        let weak = ui.as_weak();
+        let timer_state = Arc::clone(&state);
+        let fixture_root = root.clone();
+        let began = Instant::now();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(20),
+            move || {
+                assert!(
+                    began.elapsed() < Duration::from_secs(25),
+                    "slot action fixture timed out"
+                );
+                let window = weak.upgrade().unwrap();
+                if window.get_busy() || timer_state.lock().unwrap().busy {
+                    return;
+                }
+                match timer_stage.get() {
+                    0 => {
+                        assert_eq!(window.get_operation_state(), "ready");
+                        confirm(&window, "cancel");
+                    }
+                    1 => {
+                        assert_eq!(window.get_operation_state(), "cancelled");
+                        confirm(&window, "retry");
+                    }
+                    2 => {
+                        assert_eq!(window.get_operation_state(), "ready");
+                        confirm(&window, "stop");
+                    }
+                    3 => {
+                        assert_eq!(window.get_operation_state(), "stopped");
+                        assert!(!fixture_root
+                            .join(".chuzi/active-slot-operation.json")
+                            .exists());
+                        slint::quit_event_loop().unwrap();
+                    }
+                    _ => unreachable!(),
+                }
+                timer_stage.set(timer_stage.get() + 1);
+            },
+        );
+        slint::run_event_loop().unwrap();
+        timer.stop();
+
+        let calls = fs::read_to_string(root.join("calls.jsonl")).unwrap();
+        let calls = calls
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap())
+            .collect::<Vec<_>>();
+        for method in [
+            "start_slot_session",
+            "cancel_slot_session",
+            "retry_slot_session",
+            "stop_slot_session",
+        ] {
+            assert_eq!(
+                calls.iter().filter(|call| call["method"] == method).count(),
+                1,
+                "missing exactly one {method} wire call"
+            );
+        }
+        let action_calls = calls
+            .iter()
+            .filter(|call| {
+                matches!(
+                    call["method"].as_str(),
+                    Some("cancel_slot_session")
+                        | Some("retry_slot_session")
+                        | Some("stop_slot_session")
+                )
+            })
+            .collect::<Vec<_>>();
+        let keys = action_calls
+            .iter()
+            .map(|call| call["params"]["idempotency_key"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(keys.len(), 3);
+        assert_ne!(keys[0], keys[1]);
+        assert_ne!(keys[1], keys[2]);
+        for call in action_calls {
+            assert_eq!(call["params"]["operation_id"], "slotop-actions-start");
+            assert_eq!(call["params"]["expected_revision"], 7);
+            assert_eq!(call["params"]["actor"], "windows-ui");
+            assert_eq!(call["params"]["generation"], 9);
+        }
+        assert_eq!(stage.get(), 4);
+        fs::remove_dir_all(root).unwrap();
+        drop(ui);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn active_slot_operation_resumes_after_ui_restart_and_queries_core_only() {
+        use std::cell::Cell;
+        use std::os::unix::fs::PermissionsExt;
+        use std::rc::Rc;
+        use std::time::Instant;
+
+        i_slint_backend_testing::init_integration_test_with_system_time();
+        let root = std::env::temp_dir().join(format!(
+            "chuzi-slot-resume-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let state = Arc::new(Mutex::new(AppState {
+            data_root: root.clone(),
+            payload_root: root.clone(),
+            ..AppState::default()
+        }));
+        let launcher = state.lock().unwrap().launcher_path();
+        fs::write(
+            &launcher,
+            include_str!("../tests/fixtures/slot_session_launcher.py"),
+        )
+        .unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(root.join("scenario"), "resume").unwrap();
+        state
+            .lock()
+            .unwrap()
+            .save_active_slot_operation("slotop-resume", "pool-a", 1, 9)
+            .unwrap();
+
+        let ui = MainWindow::new().unwrap();
+        connect_callbacks(&ui, Arc::clone(&state));
+        resume_active_slot_operation(&ui.as_weak(), Arc::clone(&state));
+        let done = Rc::new(Cell::new(false));
+        let done_for_timer = Rc::clone(&done);
+        let weak = ui.as_weak();
+        let timer_state = Arc::clone(&state);
+        let began = Instant::now();
+        let timer = slint::Timer::default();
+        timer.start(
+            slint::TimerMode::Repeated,
+            Duration::from_millis(20),
+            move || {
+                assert!(
+                    began.elapsed() < Duration::from_secs(15),
+                    "slot resume fixture timed out"
+                );
+                let window = weak.upgrade().unwrap();
+                if window.get_busy() || timer_state.lock().unwrap().busy {
+                    return;
+                }
+                assert_eq!(window.get_operation_phase(), "ready");
+                assert_eq!(window.get_operation_id(), "slotop-resume");
+                assert_eq!(window.get_operation_state(), "ready");
+                done_for_timer.set(true);
+                slint::quit_event_loop().unwrap();
+            },
+        );
+        slint::run_event_loop().unwrap();
+        timer.stop();
+        assert!(done.get());
+        assert!(!root.join(".chuzi/active-slot-operation.json").exists());
+        let calls = fs::read_to_string(root.join("calls.jsonl")).unwrap();
+        assert!(calls
+            .lines()
+            .any(|line| line.contains("get_slot_session_operation")));
+        assert!(!calls
+            .lines()
+            .any(|line| line.contains("start_slot_session")));
+        fs::remove_dir_all(root).unwrap();
+        drop(ui);
     }
 
     #[test]
@@ -4224,6 +4954,107 @@ mod tests {
         assert_ne!(key, changed);
         assert!(!key.contains('/'));
         assert!(!key.contains('\\'));
+    }
+
+    #[test]
+    fn slot_session_actions_use_fenced_wire_requests_and_new_intents() {
+        let operation = decode_slot_session_operation(json!({
+            "operation": {
+                "operation_id": "slotop-1",
+                "state": "ready",
+                "revision": 12,
+                "generation": 17,
+                "attempt": 2,
+                "environment_generation": 13,
+                "status": {
+                    "execution_mode": "windows",
+                    "status": "ready",
+                    "session_state": "ready"
+                }
+            }
+        }))
+        .unwrap();
+        let (cancel_method, cancel_params) =
+            build_slot_session_action_request("cancel", &operation).unwrap();
+        let (stop_method, stop_params) =
+            build_slot_session_action_request("stop", &operation).unwrap();
+        let (retry_method, retry_params) =
+            build_slot_session_action_request("retry", &operation).unwrap();
+        assert_eq!(cancel_method.wire_name(), "cancel_slot_session");
+        assert_eq!(stop_method.wire_name(), "stop_slot_session");
+        assert_eq!(retry_method.wire_name(), "retry_slot_session");
+        for params in [&cancel_params, &stop_params, &retry_params] {
+            assert_eq!(params["operation_id"], "slotop-1");
+            assert_eq!(params["expected_revision"], 12);
+            assert_eq!(params["generation"], 17);
+            assert_eq!(params["attempt"], 2);
+            assert_eq!(params["actor"], "windows-ui");
+            assert!(params["idempotency_key"]
+                .as_str()
+                .unwrap()
+                .contains("slot_session"));
+        }
+        assert_ne!(
+            cancel_params["idempotency_key"],
+            stop_params["idempotency_key"]
+        );
+        assert_ne!(
+            stop_params["idempotency_key"],
+            retry_params["idempotency_key"]
+        );
+    }
+
+    #[test]
+    fn slot_session_projection_defaults_missing_fields_and_redacts_unknowns() {
+        let operation = decode_slot_session_operation(json!({
+            "operation": {
+                "operation_id": "slotop-2",
+                "state": "ready",
+                "failure_code": "native-secret-path",
+                "status": {
+                    "status": "stopped",
+                    "session_state": "stopped",
+                    "execution_mode": "future-mode"
+                }
+            }
+        }))
+        .unwrap();
+        assert_eq!(operation.failure_code, "session_failed");
+        let detail = format_slot_session_detail(&operation, false);
+        assert!(detail.contains("status stopped"));
+        assert!(detail.contains("mode unknown"));
+        assert!(detail.contains("phase unknown"));
+        assert!(!detail.contains("native-secret"));
+    }
+
+    #[test]
+    fn active_slot_operation_survives_ui_restart_and_local_generation_fences_late_results() {
+        let root = std::env::temp_dir().join(format!(
+            "chuzi-active-slot-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let state = AppState {
+            data_root: root.clone(),
+            user_state_root: root.clone(),
+            ..AppState::default()
+        };
+        state
+            .save_active_slot_operation("slotop-3", "pool-a", 2, 19)
+            .unwrap();
+        assert_eq!(
+            state.load_active_slot_operation().unwrap().operation_id,
+            "slotop-3"
+        );
+        let generation = state.begin_local_operation();
+        state.cancel_local_operation();
+        assert!(!state.local_operation_is_current(generation));
+        state.clear_active_slot_operation();
+        assert!(state.load_active_slot_operation().is_none());
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

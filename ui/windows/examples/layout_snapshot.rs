@@ -610,6 +610,19 @@ fn pool_row(
         .into(),
         config_revision: revision.into(),
         operation_id: operation_id.into(),
+        start_allowed: reconcile != "failed"
+            && desired_state != "draining"
+            && desired_state != "disabled"
+            && operation_id.is_empty(),
+        start_blocked_reason: if reconcile == "failed" {
+            "approved environment is not ready".into()
+        } else if desired_state == "draining" || desired_state == "disabled" {
+            "pool is draining".into()
+        } else if !operation_id.is_empty() {
+            "pool operation is still running".into()
+        } else {
+            "".into()
+        },
         selected: false,
     }
 }

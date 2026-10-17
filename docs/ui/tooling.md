@@ -99,8 +99,10 @@ windows-user-pool-stopped and windows-user-pool-blocked cover the save controls
 and running Core restriction. Slot fixtures scroll to the operation panel so
 it remains visible at 800x600. The Windows CI layout matrix includes these
 mode/readiness fixtures. Launcher callback fixtures verify fixed save arguments,
-cleanup refusal, stale revision, running status races, and malformed responses
-without accessing native resources.
+cleanup refusal, stale revision, running status races, malformed responses, and
+the slot-session Cancel/Stop/Retry wire sequence without accessing native
+resources. The callback fixture also verifies that transport retries reuse one
+start intent while each confirmed session action receives a new intent key.
 Windows-only UI Automation smoke tests should run in the Windows CI job and
 cover launch, selection, search/filter, Inspector visibility, theme switching,
 and keyboard focus behavior.

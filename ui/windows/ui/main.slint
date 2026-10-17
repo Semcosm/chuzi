@@ -122,6 +122,7 @@ export component MainWindow inherits Window {
     in-out property <string> operation-confirmation-title: "Confirm operation";
     in-out property <string> operation-confirmation-message: "";
     in-out property <string> pending-operation: "";
+    in-out property <string> pending-slot-operation-id: "";
     in-out property <string> pending-pool-id: "";
     in-out property <string> pending-environment-id: "";
     in-out property <string> pending-environment-version: "";
@@ -588,11 +589,11 @@ export component MainWindow inherits Window {
                         }
                         Text { text: "Each card shows the active Core execution mode. Logical ready does not mean a Windows session or Agent exists."; color: ChuziTheme.text-secondary; font-size: ChuziTheme.type-secondary; wrap: word-wrap; vertical-stretch: 0; }
                         if root.operation-phase != "idle": Rectangle {
-                            background: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" ? ChuziTheme.status-danger.with-alpha(0.10) : ChuziTheme.accent-soft;
-                            border-color: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" ? ChuziTheme.status-danger : ChuziTheme.accent.with-alpha(0.35);
+                            background: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "cleanup failed" || root.operation-phase == "readiness stale" || root.operation-phase == "deadline exceeded" || root.operation-phase == "timeout" ? ChuziTheme.status-danger.with-alpha(0.10) : ChuziTheme.accent-soft;
+                            border-color: root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "cleanup failed" || root.operation-phase == "readiness stale" || root.operation-phase == "deadline exceeded" || root.operation-phase == "timeout" ? ChuziTheme.status-danger : ChuziTheme.accent.with-alpha(0.35);
                             border-width: 1px;
                             border-radius: ChuziTheme.radius-small;
-                            height: 132px;
+                            height: root.operation-kind == "slot-session" ? 190px : 132px;
                             VerticalBox {
                                 padding: ChuziTheme.space-3;
                                 spacing: 2px;
@@ -602,7 +603,44 @@ export component MainWindow inherits Window {
                                     spacing: ChuziTheme.space-2;
                                     height: ChuziTheme.control-height;
                                     if root.operation-id != "": Button { text: "Refresh operation"; enabled: !root.busy && root.operation-phase != "submitting"; clicked => { root.refresh-operation(root.operation-id); } }
-                                    if root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "timeout" || root.operation-phase == "service restarted" || root.operation-phase == "polling": Button { text: "Refresh projection"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
+                                    if root.operation-phase == "failed" || root.operation-phase == "stale revision" || root.operation-phase == "slot unavailable" || root.operation-phase == "session unavailable" || root.operation-phase == "cleanup failed" || root.operation-phase == "readiness stale" || root.operation-phase == "deadline exceeded" || root.operation-phase == "timeout" || root.operation-phase == "service restarted" || root.operation-phase == "polling": Button { text: "Refresh projection"; enabled: !root.busy; clicked => { root.refresh-job-pools(); } }
+                                }
+                                if root.operation-kind == "slot-session": HorizontalBox {
+                                    spacing: ChuziTheme.space-2;
+                                    height: ChuziTheme.control-height;
+                                    if root.operation-state == "requested" || root.operation-state == "provisioning" || root.operation-state == "retrying": Button {
+                                        text: "Cancel session";
+                                        enabled: !root.busy || root.operation-kind == "slot-session";
+                                        clicked => {
+                                            root.pending-operation = "slot-session-cancel";
+                                            root.pending-slot-operation-id = root.operation-id;
+                                            root.operation-confirmation-title = "Cancel this session operation?";
+                                            root.operation-confirmation-message = "Core will revoke the running intent and wait for owned cleanup. The operation remains visible until Core confirms the terminal result.";
+                                            root.operation-confirmation-visible = true;
+                                        }
+                                    }
+                                    if root.operation-state == "ready": Button {
+                                        text: "Stop session";
+                                        enabled: !root.busy;
+                                        clicked => {
+                                            root.pending-operation = "slot-session-stop";
+                                            root.pending-slot-operation-id = root.operation-id;
+                                            root.operation-confirmation-title = "Stop this session?";
+                                            root.operation-confirmation-message = "Core will drain the owned session and report cleanup progress. A leased slot is not forcibly removed.";
+                                            root.operation-confirmation-visible = true;
+                                        }
+                                    }
+                                    if root.operation-state == "failed" || root.operation-state == "cancelled": Button {
+                                        text: "Retry session";
+                                        enabled: !root.busy;
+                                        clicked => {
+                                            root.pending-operation = "slot-session-retry";
+                                            root.pending-slot-operation-id = root.operation-id;
+                                            root.operation-confirmation-title = "Retry this session?";
+                                            root.operation-confirmation-message = "Core will create a new fenced attempt with a new idempotency key. The previous result remains in history.";
+                                            root.operation-confirmation-visible = true;
+                                        }
+                                    }
                                 }
                             }
                         }
