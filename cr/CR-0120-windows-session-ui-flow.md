@@ -70,6 +70,8 @@ that dependency integrates, the branch can be retargeted to main.
 - The local FreeRDP build prerequisite was installed with vcpkg
   (freerdp[client]:x64-windows-static) and the Rust crate compiled against
   the MSVC static triplet.
+- The stacked dependency was verified at Session 07 head
+  fbbef8d6615385fabd51e7e55c2d24e75618d7df; PR #237 remains open.
 
 ## Risk
 
