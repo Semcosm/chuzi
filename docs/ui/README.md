@@ -79,6 +79,18 @@ only slot ordinal, redacted slot/session state, environment generation, agent
 readiness, idempotent result, and stable failure classes. This execution slot
 session is separate from the business request Sessions list and does not expose
 Windows identities, Profile paths, RDP endpoints, or credentials.
+Start is disabled while the pool revision, execution mode, approved environment,
+or current pool operation is unknown or unavailable. A running operation cannot
+be started twice from the card; the card shows the bounded reason to refresh,
+finish cleanup, or repair the environment. Cancel during provisioning, Stop
+after readiness, and Retry after a terminal failure or cancellation are separate
+confirmed actions. Each action calls its matching Core method and keeps the
+operation panel on the durable Core result until cleanup is terminal.
+
+The UI keeps a small redacted active-operation pointer in the interactive user
+state directory. It is only a lookup hint for restart recovery; Core remains the
+source of truth. Polling uses bounded backoff and a local generation fence, so a
+page change or a late response cannot cancel or overwrite a newer backend intent.
 
 RDP is a Session Workspace capability. The default host is the main window;
 `DesktopRdpWindow` is the optional floating host for the same RDP runtime.

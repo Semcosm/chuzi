@@ -115,7 +115,7 @@ pub(crate) struct CoreJobPoolOperation {
     pub(crate) idempotent: bool,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub(crate) struct CoreSlotSessionStatus {
     #[serde(default)]
     pub(crate) execution_mode: String,
@@ -133,9 +133,15 @@ pub(crate) struct CoreSlotSessionStatus {
     pub(crate) session_state: String,
     #[serde(default)]
     pub(crate) agent_ready: bool,
+    #[serde(default)]
+    pub(crate) worker_ready: bool,
+    #[serde(default)]
+    pub(crate) observed_at: String,
+    #[serde(default)]
+    pub(crate) fresh_until: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub(crate) struct CoreSlotSessionOperation {
     #[serde(default)]
     pub(crate) operation_id: String,
@@ -148,9 +154,25 @@ pub(crate) struct CoreSlotSessionOperation {
     #[serde(default)]
     pub(crate) state: String,
     #[serde(default)]
+    pub(crate) phase: String,
+    #[serde(default)]
     pub(crate) failure_code: String,
     #[serde(default)]
     pub(crate) environment_generation: u64,
+    #[serde(default)]
+    pub(crate) generation: u64,
+    #[serde(default)]
+    pub(crate) attempt: i32,
+    #[serde(default)]
+    pub(crate) revision: u64,
+    #[serde(default)]
+    pub(crate) desired_state: String,
+    #[serde(default)]
+    pub(crate) deadline: String,
+    #[serde(default)]
+    pub(crate) retry_budget: i32,
+    #[serde(default)]
+    pub(crate) next_attempt_at: String,
     #[serde(default)]
     pub(crate) status: CoreSlotSessionStatus,
     #[serde(default)]

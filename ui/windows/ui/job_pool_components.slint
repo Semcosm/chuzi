@@ -22,6 +22,8 @@ export struct JobPoolRowData {
     last_failure_code: string,
     config_revision: string,
     operation_id: string,
+    start_allowed: bool,
+    start_blocked_reason: string,
     selected: bool,
 }
 
@@ -39,7 +41,7 @@ export component ChuziJobPoolCard inherits Rectangle {
     callback action(string, string);
     callback selected(string);
 
-    height: 330px;
+    height: 350px;
     background: root.item.selected ? ChuziTheme.accent-soft : ChuziTheme.surface-background;
     border-color: root.item.selected ? ChuziTheme.accent.with-alpha(0.45) : ChuziTheme.separator;
     border-width: 1px;
@@ -77,8 +79,9 @@ export component ChuziJobPoolCard inherits Rectangle {
             spacing: ChuziTheme.space-2;
             vertical-stretch: 0;
             Text { text: "Revision " + root.item.config_revision; color: ChuziTheme.text-tertiary; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; }
-            ChuziActionButton { label: "Start basic session"; enabled: !root.busy; width: 132px; pressed => { root.action(root.item.pool_id, "start-slot-session"); } }
+            ChuziActionButton { label: root.item.start_allowed ? "Start basic session" : "Start unavailable"; enabled: !root.busy && root.item.start_allowed; width: 132px; pressed => { root.action(root.item.pool_id, "start-slot-session"); } }
         }
+        if !root.item.start_allowed: Text { text: "Start unavailable · " + root.item.start_blocked_reason; color: ChuziTheme.status-warning; font-size: 10px; wrap: word-wrap; vertical-stretch: 0; }
         HorizontalBox {
             spacing: ChuziTheme.space-2;
             vertical-stretch: 0;
