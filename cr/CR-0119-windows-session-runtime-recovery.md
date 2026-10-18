@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 9bdf43d1974ddfdebd189463604c0b91874378d1
+Head or Range: 067aa45641c184911e332968f7bff9d241a367ee
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 29
+Revision: 30
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 9bdf43d1974ddfdebd189463604c0b91874378d1
+Head OID: 067aa45641c184911e332968f7bff9d241a367ee
 Integrated Result: pending
 
 ## Summary
@@ -229,6 +229,60 @@ carriage return; no repository policy result is claimed from that failed host
 invocation.
 WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
 and Retire remain native acceptance pending for Sessions 09/10.
+
+Revision 30 fixes the protected-store failure found while exercising the
+installed Windows UI. A standard interactive user could read
+`C:\ProgramData\chuzi\data\chuzi.db` but could not open it for writing.
+When Core was stopped, the launcher still ran the offline pool-mode maintenance
+command and mapped that access failure to `core_stop_required`, which the UI
+reported as `core_unavailable`.
+
+Signed implementation `067aa45641c184911e332968f7bff9d241a367ee` adds the
+optional `configure_pool_mode` Core API. On Windows the launcher starts the
+registered LocalSystem Core when needed, sends the mode request over the
+authenticated Core transport, and stops the temporary Core instance after the
+service has validated cleanup, revision, signed-environment, and runtime
+readiness. The service owns the bbolt open and atomic config write; no
+ProgramData ACL is broadened and the operator never calls the store directly.
+Invalid and unavailable results remain redacted Core error classes. A focused
+service API test covers writing through an open store and rejecting an invalid
+mode without changing configuration.
+
+The implementation also includes the already staged Session 09 UI projection
+fixes: terminal pool operations are no longer presented as active, logical
+capacity cannot claim a Windows session, and the compact inspector close action
+receives focus when opened.
+
+At implementation SHA `067aa45641c184911e332968f7bff9d241a367ee`, the Windows
+host passed the following checks. Cargo used `VCPKG_ROOT=C:\Tools\vcpkg`,
+`VCPKGRS_TRIPLET=x64-windows-static`, and
+`LIBCLANG_PATH=C:\Program Files\LLVM\bin` in the PowerShell environment:
+
+- `go test -count=1 ./...`
+- `go test -count=1 -race ./...`
+- `go vet ./...`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/service`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/session-broker`
+- `GOOS=windows GOARCH=amd64 go test -c ./internal/slotwindows`
+- `cargo fmt --manifest-path ui/windows/Cargo.toml -- --check`
+- `cargo test --manifest-path ui/windows/Cargo.toml --locked` (48 tests)
+- `cargo build --manifest-path ui/windows/Cargo.toml --target x86_64-pc-windows-msvc --locked --release`
+- `./scripts/validate_policy_manifest.sh`
+- `./scripts/validate_quality_profile.sh`
+- `./scripts/validate_supply_chain_profile.sh`
+- `./scripts/validate_action_pinning.sh`
+- `./scripts/validate_repository_shape.sh`
+- `./scripts/test_build_contract.sh`
+- `git diff --check`
+
+The policy and quality validators were run with a local Git Bash `jq` shim
+that removes Windows CRLF from JSON path records; this only compensates for
+the Windows jq stdout mode and does not alter repository files. The source
+build and cross-compilation checks do not constitute native WTS, RDP, Profile,
+Credential Manager, ACL, Agent/worker, restart, shutdown, or Retire acceptance.
+Those remain pending for Sessions 09/10. The new local installer built from
+this implementation will be recorded below after its payload and hash are
+verified.
 
 Revision 29 records the operator's final UI verification of the replacement package
 `test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
