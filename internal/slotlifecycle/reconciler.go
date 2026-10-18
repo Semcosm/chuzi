@@ -189,6 +189,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		return err
 	}
 	cleanupOnly := pool.DesiredSlots == 0 || pool.DesiredState == "draining" || pool.DesiredState == "disabled"
+	targetSlots := pool.DesiredSlots
+	if cleanupOnly {
+		targetSlots = 0
+	}
 	var packageGeneration uint64
 	if r.authority != nil && !cleanupOnly {
 		record, authorityErr := r.authority.GetEnvironmentRecord(pool.EnvironmentID, pool.EnvironmentVersion)
@@ -238,7 +242,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			// A newly created logical slot has no runtime generation yet. The
 			// first provision is generation one.
 			generation = 1
-		} else if environmentChanged && value.Ordinal <= pool.DesiredSlots {
+		} else if environmentChanged && value.Ordinal <= targetSlots {
 			if generation == ^uint64(0) {
 				if first == nil {
 					first = errors.New("slotlifecycle: environment generation exhausted")
@@ -257,7 +261,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			}
 		}
 		request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: requestGeneration, PackageGeneration: packageGeneration, Requirement: pool.Requirement()}
-		if value.Ordinal > pool.DesiredSlots {
+		if value.Ordinal > targetSlots {
 			if leased {
 				if value.Status != slot.Draining {
 					if err := r.store.SetSlotStatus(value.SlotID, slot.Draining, r.clock().UTC()); err != nil && first == nil {

@@ -339,6 +339,26 @@ func TestReconcileRetiresDrainingPoolWithoutReadyAuthority(t *testing.T) {
 	}
 }
 
+func TestReconcileRetiresDrainingPoolWithNonzeroConfiguredTarget(t *testing.T) {
+	pool := validPool(1)
+	pool.DesiredState = "draining"
+	value := slotRecord(slot.Ready, 1)
+	value.EnvironmentID, value.EnvironmentVersion = pool.EnvironmentID, pool.EnvironmentVersion
+	value.Capabilities, value.RequireTrusted, value.Trusted = append([]string(nil), pool.Capabilities...), pool.RequireTrusted, true
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": value}, leases: map[string]slot.Lease{}}
+	provisioner := &fakeProvisioner{summary: validSummary(1)}
+	r, err := New(db, provisioner, pool, func() time.Time { return lifecycleNow }, time.Minute, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("draining reconcile failed: %v", err)
+	}
+	if db.items["pool-001"].Status != slot.Deleted || len(provisioner.calls) != 1 || provisioner.calls[0] != "retire" {
+		t.Fatalf("draining cleanup state=%#v calls=%v", db.items["pool-001"], provisioner.calls)
+	}
+}
+
 func TestReconcileRequiresExactReadyEnvironmentAuthority(t *testing.T) {
 	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Unprovisioned, 0)}, leases: map[string]slot.Lease{}}
 	p := validPool(1)
