@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 86cc007ea2db617ee24d92fd52cfc7d61e8ef4ce
+Head or Range: d34d4b73cc56f400eac3ece1864a59a101352072
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 33
+Revision: 34
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 86cc007ea2db617ee24d92fd52cfc7d61e8ef4ce
+Head OID: d34d4b73cc56f400eac3ece1864a59a101352072
 Integrated Result: pending
 
 ## Summary
@@ -313,9 +313,39 @@ for Sessions 09/10.
 Revision 33 records the review synchronization failure in Actions run
 39116193402. The branch was pushed before the PR body was updated from this CR,
 so the push-triggered validator compared the previous body with the current CR.
-The implementation SHA above is the full signed commit that contains the UI
-projection fix; the corrected CR body must be applied to PR #237 before the next
-push so the validator receives matching content.
+The UI projection fix is signed implementation
+`86cc007ea2db617ee24d92fd52cfc7d61e8ef4ce`. The corrected CR body must be
+applied to PR #237 before the next push so the validator receives matching
+content.
+
+Revision 34 fixes the Drain operation found during the installed Windows
+check. Core remained ready and answered launcher queries, while operation
+`op_2179e08fc6c4164b` stayed `draining` with `pool-test` configured at
+`desired_slots=1` and one retiring slot. The store treated a draining pool as
+having zero effective slots, but the lifecycle reconciler still compared the
+slot ordinal against the nonzero configured target and never called `Retire`.
+Signed implementation `d34d4b73cc56f400eac3ece1864a59a101352072` applies the
+zero target consistently for cleanup-only states and adds a regression test
+for a draining pool with a nonzero configured target.
+
+The Windows test checks passed: `go test -count=1 ./...`,
+`go test -count=1 -race ./...`, `go vet ./...`, Windows amd64 test-binary
+compilation for `cmd/service`, `cmd/session-broker`, and `internal/slotwindows`,
+`cargo fmt --manifest-path ui/windows/Cargo.toml -- --check`, 49 Rust UI tests,
+and a Windows MSVC Release UI build using the installed FreeRDP static triplet.
+The policy manifest, quality profile, supply-chain profile, action-pinning,
+repository-shape, build-contract, and `git diff --check` validations passed.
+
+Inno Setup 6.7.3 compiled
+`dist/windows-session-drain-fix-test-20261018-d34d4b73cc56/ChuziSetup.exe`,
+version `test-20261018-d34d4b73cc56`, SHA-256
+`4055c7709f163f15bcf57038aed59b926cc9cfd83bbe1bc9a9c560f7497303b0`. Its Core
+manifest identifies the full implementation SHA above. This installer is built
+for operator installation and has not yet been installed. The currently
+installed Core remains healthy but still has the old Drain behavior. Its pool
+mode is `logical`, so the UI's `No Windows session` label is expected; native
+WTS/RDP/Profile/Credential Manager/ACL/Agent/restart/shutdown/Retire acceptance
+remains pending for Sessions 09/10.
 
 Revision 29 records the operator's final UI verification of the replacement package
 `test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
@@ -875,12 +905,20 @@ native session acceptance.
 
 ## Risk
 
-The installed `test-20261016-9bdf43d1974d` package matches implementation
-`9bdf43d1974ddfdebd189463604c0b91874378d1`; `ChuziCore` is running and the
-operator reports that UI Core start/stop works. The user-scoped settings file
-exists with an owner FullControl ACL, while the installed service data root
-remains read-only for `BUILTIN\Users`. The operator has confirmed the UI Save
-changes success message and settings persistence after reopening.
+At the latest installed observation, `ChuziCore` was ready, its health probes
+passed, and the UI process was responsive. The old installed build continued to
+report operation `op_2179e08fc6c4164b` as draining because its reconciler retained
+the configured target of one slot. The new Drain fix is in the locally built
+installer above and awaits operator installation. Since the current configured
+pool mode is `logical`, no Windows session is expected in that mode. No native
+session acceptance is claimed.
+
+At Revision 29, the then-installed `test-20261016-9bdf43d1974d` package matched
+implementation `9bdf43d1974ddfdebd189463604c0b91874378d1`; `ChuziCore` was
+running and the operator reported that UI Core start/stop worked. The user-scoped
+settings file existed with an owner FullControl ACL, while the installed service
+data root remained read-only for `BUILTIN\Users`. The operator confirmed the UI
+Save changes success message and settings persistence after reopening.
 Setup Log #007 from the prior installation also recorded `forced_shutdown`,
 but it does not identify which
 ordered shutdown hook failed or exceeded the five-second deadline. Record the
