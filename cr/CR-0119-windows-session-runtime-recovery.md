@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 74e3f334bcf2819d8809ad49d51bc3771dc9c629
+Head or Range: 86cc007ea2db617ee24d92fd52cfc7d61e8ef4ce
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 32
+Revision: 33
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 74e3f334bcf2819d8809ad49d51bc3771dc9c629
+Head OID: 86cc007ea2db617ee24d92fd52cfc7d61e8ef4ce
 Integrated Result: pending
 
 ## Summary
@@ -297,7 +297,7 @@ the outer envelope as the operation itself. The operation was committed in
 Core, then the UI reported invalid_operation_projection and opened the
 diagnostic dialog while refreshing the pool list.
 
-Signed implementation 86cc007e90c0d428cf38637d8bc8c4a83d6864c1 reuses the
+Signed implementation 86cc007ea2db617ee24d92fd52cfc7d61e8ef4ce reuses the
 same envelope decoder for the refresh projection and adds a regression test for
 both terminal and active operation envelopes. The focused and full Rust UI
 tests pass (49 passed). A Release Windows build completed with the local
@@ -309,6 +309,13 @@ This package is ready for operator installation and retest. The fix only
 changes UI projection decoding; WTS, RDP, Profile, Credential Manager, ACL,
 Agent/worker, restart, shutdown, and Retire remain native acceptance pending
 for Sessions 09/10.
+
+Revision 33 records the review synchronization failure in Actions run
+39116193402. The branch was pushed before the PR body was updated from this CR,
+so the push-triggered validator compared the previous body with the current CR.
+The implementation SHA above is the full signed commit that contains the UI
+projection fix; the corrected CR body must be applied to PR #237 before the next
+push so the validator receives matching content.
 
 Revision 29 records the operator's final UI verification of the replacement package
 `test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
