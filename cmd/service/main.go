@@ -690,10 +690,11 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if cfg.WindowsJobPool.Enabled {
 		executionMode = "windows"
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{ExecutionMode: executionMode, Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, SlotSessions: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
+	coreService, coreErr := core.New(core.Dependencies{ExecutionMode: executionMode, Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, SlotSessions: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}
+	var coreAPI coreapi.API = &servicePoolModeAPI{Service: coreService, configPath: options.configPath, cfg: cfg, database: database, environment: environmentManager}
 	runtime := &serviceRuntime{
 		store: database, environment: environmentManager, environmentID: poolConfig.EnvironmentID, environmentVersion: poolConfig.EnvironmentVersion, jobPoolID: poolConfig.PoolID, requests: requestService, credentials: credentials,
 		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, diagnostics: diagnosticService, eventBuffer: eventBuffer, coreAPI: coreAPI,

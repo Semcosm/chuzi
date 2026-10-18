@@ -96,7 +96,7 @@ pub(crate) struct CoreJobPoolStatus {
     pub(crate) environment_ready: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Default, Deserialize)]
 pub(crate) struct CoreJobPoolOperation {
     pub(crate) operation_id: String,
     #[serde(default)]

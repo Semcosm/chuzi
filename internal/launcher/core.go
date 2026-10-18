@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/coretransport"
 	"github.com/Semcosm/chuzi/internal/servicehost"
 )
@@ -550,11 +551,40 @@ func (m *CoreManager) SavePoolMode(ctx context.Context, mode, poolID string, rev
 	if err != nil {
 		return nil, err
 	}
-	if status.Running {
-		return nil, errors.New("core_stop_required")
-	}
 	if !status.Installed {
 		return nil, ErrNotFound
+	}
+	if runtime.GOOS == "windows" {
+		wasRunning := status.Running
+		if !wasRunning {
+			if _, err := m.Start(ctx); err != nil {
+				return nil, err
+			}
+		}
+		params, marshalErr := json.Marshal(coreapi.PoolModeRequest{Mode: mode, PoolID: poolID, ExpectedRevision: revision})
+		if marshalErr != nil {
+			if !wasRunning {
+				_ = m.Stop(context.Background())
+			}
+			return nil, errors.New("pool_mode_save_failed")
+		}
+		output, callErr := m.Call(ctx, coretransport.MethodConfigurePoolMode, params)
+		if callErr != nil {
+			if !wasRunning {
+				_ = m.Stop(context.Background())
+			}
+			return nil, poolModeCoreError(callErr)
+		}
+		if stopErr := m.Stop(ctx); stopErr != nil {
+			return nil, stopErr
+		}
+		if !json.Valid(output) {
+			return nil, errors.New("pool_mode_save_failed")
+		}
+		return output, nil
+	}
+	if status.Running {
+		return nil, errors.New("core_stop_required")
 	}
 	if err := m.writeConfig(); err != nil {
 		return nil, err
@@ -577,6 +607,21 @@ func (m *CoreManager) SavePoolMode(ctx context.Context, mode, poolID string, rev
 		return nil, errors.New("pool_mode_save_failed")
 	}
 	return output, nil
+}
+
+func poolModeCoreError(err error) error {
+	switch coreapi.CodeOf(err) {
+	case coreapi.CodeInvalidArgument:
+		return errors.New("invalid_pool_mode")
+	case coreapi.CodeNotFound:
+		return errors.New("pool_not_found")
+	case coreapi.CodeConflict:
+		return errors.New("pool_cleanup_required")
+	case coreapi.CodeUnavailable:
+		return errors.New("environment_unavailable")
+	default:
+		return errors.New("pool_mode_save_failed")
+	}
 }
 
 func (m *CoreManager) readPID() int {

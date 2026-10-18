@@ -58,6 +58,8 @@ Core choose the first available execution slot. The operation panel shows slot
 ordinal, session state, agent readiness, environment generation, and idempotent
 result while polling requested, provisioning, ready, or failed. This execution
 slot session remains separate from the business request Sessions list.
+Logical test pools show a disabled `No Windows session` action so their ready
+capacity cannot be mistaken for a Windows user session or Agent.
 The operation panel appears above the pool cards. Refresh operation remains
 available after ready or failed results, preserves the initial idempotent
 marker for the same operation, and uses the slot-session polling method.

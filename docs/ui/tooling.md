@@ -95,6 +95,7 @@ slot-session-provisioning, slot-session-ready, slot-session-failed, and
 slot-session-unavailable. These fixtures validate the redacted execution-slot
 operation panel and are not evidence of a native Windows WTS session.
 slot-session-logical-ready verifies the explicit absence of a Windows Agent;
+logical pool cards also render a disabled `No Windows session` action;
 windows-user-pool-stopped and windows-user-pool-blocked cover the save controls
 and running Core restriction. Slot fixtures scroll to the operation panel so
 it remains visible at 800x600. The Windows CI layout matrix includes these

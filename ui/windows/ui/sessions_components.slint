@@ -20,6 +20,7 @@ export component ChuziActionButton inherits Rectangle {
     in property <bool> primary: false;
     in property <bool> destructive: false;
     in property <bool> escape-enabled: false;
+    in property <bool> focus-request: false;
     callback pressed();
     callback escape-pressed();
 
@@ -30,6 +31,10 @@ export component ChuziActionButton inherits Rectangle {
     border-width: 1px;
     border-radius: ChuziTheme.radius-control;
     opacity: root.enabled ? 1 : 0.48;
+
+    changed focus-request => {
+        if root.focus-request { focus-scope.focus(); }
+    }
 
     Text {
         text: root.label;
@@ -252,6 +257,7 @@ export component ChuziSessionRow inherits Rectangle {
 }
 
 export component ChuziSessionInspector inherits Rectangle {
+    in property <bool> focus-close: false;
     in property <bool> selected: false;
     in property <string> request-id: "";
     in property <string> account-label: "";
@@ -296,6 +302,7 @@ export component ChuziSessionInspector inherits Rectangle {
                 label: "Close";
                 enabled: true;
                 escape-enabled: true;
+                focus-request: root.focus-close;
                 width: 56px;
                 pressed => { root.close(); }
                 escape-pressed => { root.close(); }

@@ -34,6 +34,7 @@ const (
 	methodSubmitDiagnostic        = "submit_diagnostic_report"
 	methodGetDiagnosticSnapshot   = "get_diagnostic_snapshot"
 	methodGetJobPoolStatus        = "get_job_pool_status"
+	methodConfigurePoolMode       = "configure_pool_mode"
 	methodListJobPools            = "list_job_pools"
 	methodGetJobPool              = "get_job_pool"
 	methodApplyJobPool            = "apply_job_pool"
@@ -68,6 +69,7 @@ const (
 	MethodSubmitDiagnostic        = methodSubmitDiagnostic
 	MethodGetDiagnosticSnapshot   = methodGetDiagnosticSnapshot
 	MethodGetJobPoolStatus        = methodGetJobPoolStatus
+	MethodConfigurePoolMode       = methodConfigurePoolMode
 	MethodListJobPools            = methodListJobPools
 	MethodGetJobPool              = methodGetJobPool
 	MethodApplyJobPool            = methodApplyJobPool

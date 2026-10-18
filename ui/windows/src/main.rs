@@ -1846,8 +1846,23 @@ fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) 
         |state| {
             ensure_core_ready(state)?;
             let value = core_call(state, CoreMethod::ListJobPools, json!({}))?;
-            let list: CoreJobPoolList = serde_json::from_value(value)
+            let mut list: CoreJobPoolList = serde_json::from_value(value)
                 .map_err(|error| format!("invalid_job_pool_projection: {error}"))?;
+            for pool in &mut list.job_pools {
+                let operation_id = pool.status.operation_id.clone();
+                if operation_id.is_empty() {
+                    continue;
+                }
+                let operation = core_call(
+                    state,
+                    CoreMethod::GetJobPoolOperation,
+                    json!({"operation_id": operation_id}),
+                )?;
+                let operation: CoreJobPoolOperation = serde_json::from_value(operation)
+                    .map_err(|error| format!("invalid_operation_projection: {error}"))?;
+                pool.status.operation_id =
+                    active_job_pool_operation_id(&operation, &pool.config.pool_id);
+            }
             let environments =
                 core_call(state, CoreMethod::ListEnvironments, json!({})).and_then(|value| {
                     serde_json::from_value::<CoreEnvironmentList>(value)
@@ -1921,6 +1936,16 @@ fn job_pool_row(pool: &CoreJobPool) -> JobPoolRowData {
         operation_id: pool.status.operation_id.clone().into(),
         selected: false,
     }
+}
+
+fn active_job_pool_operation_id(operation: &CoreJobPoolOperation, pool_id: &str) -> String {
+    if operation.operation_id.is_empty()
+        || (!operation.pool_id.is_empty() && operation.pool_id != pool_id)
+        || is_terminal_operation(&operation.state)
+    {
+        return String::new();
+    }
+    operation.operation_id.clone()
 }
 
 fn environment_row(environment: &CoreEnvironment) -> EnvironmentRowData {
@@ -4144,6 +4169,36 @@ mod tests {
         .expect("environment operation envelope should decode");
         assert_eq!(environment.operation_id, "envop-1");
         assert_eq!(environment.state, "failed");
+    }
+
+    #[test]
+    fn pool_projection_exposes_only_active_operation_ids() {
+        let applied = CoreJobPoolOperation {
+            operation_id: "op-applied".to_owned(),
+            pool_id: "pool-a".to_owned(),
+            state: "applied".to_owned(),
+            ..CoreJobPoolOperation::default()
+        };
+        assert!(active_job_pool_operation_id(&applied, "pool-a").is_empty());
+
+        let requested = CoreJobPoolOperation {
+            operation_id: "op-requested".to_owned(),
+            pool_id: "pool-a".to_owned(),
+            state: "requested".to_owned(),
+            ..CoreJobPoolOperation::default()
+        };
+        assert_eq!(
+            active_job_pool_operation_id(&requested, "pool-a"),
+            "op-requested"
+        );
+
+        let foreign = CoreJobPoolOperation {
+            operation_id: "op-foreign".to_owned(),
+            pool_id: "pool-b".to_owned(),
+            state: "requested".to_owned(),
+            ..CoreJobPoolOperation::default()
+        };
+        assert!(active_job_pool_operation_id(&foreign, "pool-a").is_empty());
     }
 
     #[test]

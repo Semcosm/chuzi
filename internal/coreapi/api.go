@@ -327,6 +327,27 @@ type JobPoolStatusAPI interface {
 	GetJobPoolStatus(context.Context, string) (JobPoolStatus, error)
 }
 
+// PoolModeRequest is the privileged, service-mediated mode transition input.
+// The service revalidates cleanup, revision, trust, and runtime readiness
+// against its own Store; callers never provide paths or platform identities.
+type PoolModeRequest struct {
+	Mode             string `json:"mode"`
+	PoolID           string `json:"pool_id,omitempty"`
+	ExpectedRevision uint64 `json:"expected_revision,omitempty"`
+}
+
+type PoolModeResult struct {
+	ConfiguredPoolMode string `json:"configured_pool_mode"`
+	Status             string `json:"status"`
+}
+
+// PoolModeAPI is optional so older Core implementations remain usable for
+// ordinary lifecycle operations while newer launchers can use the SYSTEM
+// service boundary for protected configuration writes.
+type PoolModeAPI interface {
+	ConfigurePoolMode(context.Context, PoolModeRequest) (PoolModeResult, error)
+}
+
 type JobPoolConfig struct {
 	PoolID             string    `json:"pool_id"`
 	DesiredSlots       int       `json:"desired_slots"`
