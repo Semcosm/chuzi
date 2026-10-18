@@ -5,7 +5,7 @@ Head or Range: 067aa45641c184911e332968f7bff9d241a367ee
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 30
+Revision: 31
 Status: pending
 Decision: pending
 Policy Version: v0.3
@@ -280,9 +280,15 @@ that removes Windows CRLF from JSON path records; this only compensates for
 the Windows jq stdout mode and does not alter repository files. The source
 build and cross-compilation checks do not constitute native WTS, RDP, Profile,
 Credential Manager, ACL, Agent/worker, restart, shutdown, or Retire acceptance.
-Those remain pending for Sessions 09/10. The new local installer built from
-this implementation will be recorded below after its payload and hash are
-verified.
+Those remain pending for Sessions 09/10. The local installer built from
+source commit `a0e4fdadbbedf5b7638e535e829b343570bad184` is
+`dist/session-runtime-installer-test-20261018-a0e4fdadbbed/ChuziSetup.exe`,
+version `test-20261018-a0e4fdadbbed`, SHA-256
+`b421e586555e4bab29c190fb9b193b6a8d9103e14c19692c437bcbdf7d500605`.
+The installer payload manifest matches all 16 Core resource hashes and sizes;
+the release index and isolated Windows amd64 artifact validator passed. The
+installer is ready for operator installation. Its compile and smoke checks do
+not claim native session acceptance.
 
 Revision 29 records the operator's final UI verification of the replacement package
 `test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
