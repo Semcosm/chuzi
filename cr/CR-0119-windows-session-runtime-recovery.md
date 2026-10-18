@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 067aa45641c184911e332968f7bff9d241a367ee
+Head or Range: 86cc007e90c0d428cf38637d8bc8c4a83d6864c1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 31
+Revision: 32
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 067aa45641c184911e332968f7bff9d241a367ee
+Head OID: 86cc007e90c0d428cf38637d8bc8c4a83d6864c1
 Integrated Result: pending
 
 ## Summary
@@ -289,6 +289,26 @@ The installer payload manifest matches all 16 Core resource hashes and sizes;
 the release index and isolated Windows amd64 artifact validator passed. The
 installer is ready for operator installation. Its compile and smoke checks do
 not claim native session acceptance.
+
+Revision 32 fixes the installed UI failure reproduced while applying the test
+pool configuration. Core returned the valid {"operation": {...}} envelope
+with terminal state applied, but the UI refresh path attempted to deserialize
+the outer envelope as the operation itself. The operation was committed in
+Core, then the UI reported invalid_operation_projection and opened the
+diagnostic dialog while refreshing the pool list.
+
+Signed implementation 86cc007e90c0d428cf38637d8bc8c4a83d6864c1 reuses the
+same envelope decoder for the refresh projection and adds a regression test for
+both terminal and active operation envelopes. The focused and full Rust UI
+tests pass (49 passed). A Release Windows build completed with the local
+FreeRDP x64-windows-static-md vcpkg dependency, and Inno Setup 6.7.3 produced
+dist/session-runtime-installer-test-20261018-pool-projection-fix/ChuziSetup.exe
+with SHA-256
+8a4d3fac6f140588659bba0ed51a50bc7d0d00618b9dc2c33842b3b11c64e712.
+This package is ready for operator installation and retest. The fix only
+changes UI projection decoding; WTS, RDP, Profile, Credential Manager, ACL,
+Agent/worker, restart, shutdown, and Retire remain native acceptance pending
+for Sessions 09/10.
 
 Revision 29 records the operator's final UI verification of the replacement package
 `test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
