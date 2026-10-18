@@ -1858,10 +1858,9 @@ fn refresh_job_pools(ui: &slint::Weak<MainWindow>, state: Arc<Mutex<AppState>>) 
                     CoreMethod::GetJobPoolOperation,
                     json!({"operation_id": operation_id}),
                 )?;
-                let operation: CoreJobPoolOperation = serde_json::from_value(operation)
-                    .map_err(|error| format!("invalid_operation_projection: {error}"))?;
                 pool.status.operation_id =
-                    active_job_pool_operation_id(&operation, &pool.config.pool_id);
+                    refreshed_job_pool_operation_id(operation, &pool.config.pool_id)
+                        .map_err(|error| format!("invalid_operation_projection: {error}"))?;
             }
             let environments =
                 core_call(state, CoreMethod::ListEnvironments, json!({})).and_then(|value| {
@@ -2548,6 +2547,14 @@ fn poll_environment_operation(
 
 fn decode_job_pool_operation(value: Value) -> Result<CoreJobPoolOperation, serde_json::Error> {
     serde_json::from_value(value.get("operation").cloned().unwrap_or(Value::Null))
+}
+
+fn refreshed_job_pool_operation_id(
+    value: Value,
+    pool_id: &str,
+) -> Result<String, serde_json::Error> {
+    let operation = decode_job_pool_operation(value)?;
+    Ok(active_job_pool_operation_id(&operation, pool_id))
 }
 
 fn decode_slot_session_operation(
@@ -4199,6 +4206,33 @@ mod tests {
             ..CoreJobPoolOperation::default()
         };
         assert!(active_job_pool_operation_id(&foreign, "pool-a").is_empty());
+    }
+
+    #[test]
+    fn refreshed_pool_projection_decodes_core_operation_envelope() {
+        let operation = serde_json::json!({
+            "operation": {
+                "operation_id": "op-applied",
+                "pool_id": "pool-a",
+                "state": "applied"
+            }
+        });
+        assert_eq!(
+            refreshed_job_pool_operation_id(operation, "pool-a").unwrap(),
+            ""
+        );
+
+        let operation = serde_json::json!({
+            "operation": {
+                "operation_id": "op-requested",
+                "pool_id": "pool-a",
+                "state": "requested"
+            }
+        });
+        assert_eq!(
+            refreshed_job_pool_operation_id(operation, "pool-a").unwrap(),
+            "op-requested"
+        );
     }
 
     #[test]
