@@ -229,7 +229,8 @@ attempt. Transport retries reuse the original key. Retrying an operation with
 a stale generation, released lease, unknown ownership, or expired deadline
 fails closed. Leased slots are never stopped by prewarm reconciliation;
 draining slots accept no new work; quarantined slots require explicit recovery;
-deleted slots cannot be revived.
+deleted slot IDs cannot be revived. If an enabled pool later requires that ordinal,
+the Store allocates a new slot incarnation ID and retains the deleted ID as a tombstone.
 
 Session 07 implements durable StartSlotSession, StopSlotSession,
 CancelSlotSession, and RetrySlotSession operations and connects them to the

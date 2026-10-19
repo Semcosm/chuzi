@@ -181,7 +181,7 @@ func TestSlotReadyCommitRejectsStaleGenerationAndRequirementCannotEscapePool(t *
 	}
 }
 
-func TestDeletedSlotIsNotRevivedByPoolTargetChange(t *testing.T) {
+func TestDeletedSlotIsNotRevivedAndPoolCreatesNewOrdinalIncarnation(t *testing.T) {
 	database, _ := openTestStore(t)
 	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
 		t.Fatal(err)
@@ -203,6 +203,30 @@ func TestDeletedSlotIsNotRevivedByPoolTargetChange(t *testing.T) {
 	}
 	if item.Status != slot.Deleted {
 		t.Fatalf("deleted slot revived after target change: %s", item.Status)
+	}
+	slots, err := database.ListSlots("pool-test")
+	if err != nil || len(slots) != 2 {
+		t.Fatalf("slots after target change = %#v, err=%v", slots, err)
+	}
+	var replacement slot.Slot
+	for _, current := range slots {
+		if current.Status != slot.Deleted {
+			replacement = current
+		}
+	}
+	if replacement.SlotID != "pool-test-001-inc-2" || replacement.Ordinal != 1 || replacement.Status != slot.Unprovisioned || replacement.EnvironmentVersion != changed.EnvironmentVersion {
+		t.Fatalf("replacement incarnation = %#v", replacement)
+	}
+	status, err := database.SlotPoolStatus("pool-test", storeTestTime.Add(3*time.Second))
+	if err != nil || status.Unprovisioned != 1 || status.Ready != 0 {
+		t.Fatalf("replacement slot projection = %#v, err=%v", status, err)
+	}
+	if err := database.ReconcileJobPool(changed, storeTestTime.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := database.ListSlots("pool-test")
+	if err != nil || len(repeated) != 2 || repeated[1].SlotID != replacement.SlotID {
+		t.Fatalf("repeated reconcile created another incarnation: %#v, err=%v", repeated, err)
 	}
 }
 

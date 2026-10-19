@@ -30,82 +30,11 @@ func (s *Store) ReconcileJobPool(config slot.PoolConfig, now time.Time) error {
 	if err := config.Validate(); err != nil {
 		return err
 	}
-	targetSlots := config.DesiredSlots
-	if config.DesiredState == "draining" || config.DesiredState == "disabled" {
-		targetSlots = 0
-	}
 	return s.update(func(tx *bbolt.Tx) error {
 		if err := putJSON(tx.Bucket([]byte(migrations.JobPoolsBucket)), config.PoolID, config); err != nil {
 			return err
 		}
-		slots, err := slotsForPoolTx(tx, config.PoolID)
-		if err != nil {
-			return err
-		}
-		byOrdinal := make(map[int]slot.Slot, len(slots))
-		for _, current := range slots {
-			byOrdinal[current.Ordinal] = current
-		}
-		for ordinal := 1; ordinal <= targetSlots; ordinal++ {
-			current, ok := byOrdinal[ordinal]
-			if ok {
-				if current.Status == slot.Deleted {
-					// Deleted slots are tombstones. Never revive one merely because
-					// the pool target or desired capacity changed.
-					continue
-				}
-				targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || current.RequireTrusted != config.RequireTrusted || !capabilitiesEqual(current.Capabilities, config.Capabilities)
-				if targetChanged {
-					if current.Status == slot.Quarantined {
-						// Quarantine requires an explicit recovery action; ordinary
-						// pool updates must not restore this slot.
-						continue
-					}
-					if current.Status == slot.Leased || current.Status == slot.Draining {
-						current.Status = slot.Draining
-					} else {
-						current.Status = slot.Provisioning
-					}
-					current.UpdatedAt = now.UTC()
-					if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
-						return err
-					}
-					continue
-				}
-				if current.Status == slot.Retiring {
-					if current.EnvironmentGeneration == 0 {
-						current.Status = slot.Unprovisioned
-					} else {
-						current.Status = slot.Ready
-					}
-					current.UpdatedAt = now.UTC()
-					if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			created := slot.Slot{SlotID: fmt.Sprintf("%s-%03d", config.PoolID, ordinal), Ordinal: ordinal, PoolID: config.PoolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Capabilities: append([]string(nil), config.Capabilities...), ManifestDigest: config.ManifestDigest, Signer: config.Signer, RequireTrusted: config.RequireTrusted, Status: slot.Unprovisioned, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
-			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), created.SlotID, created); err != nil {
-				return err
-			}
-		}
-		leaseBucket := tx.Bucket([]byte(migrations.SlotLeasesBucket))
-		for _, current := range slots {
-			if current.Ordinal <= targetSlots || current.Status == slot.Deleted || current.Status == slot.Quarantined {
-				continue
-			}
-			if (current.Status == slot.Leased || current.Status == slot.Draining) && leaseBucket.Get([]byte(current.SlotID)) != nil {
-				current.Status = slot.Draining
-			} else {
-				current.Status = slot.Retiring
-			}
-			current.UpdatedAt = now.UTC()
-			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
-				return err
-			}
-		}
-		return nil
+		return reconcilePoolSlotsTx(tx, config, now.UTC())
 	})
 }
 
