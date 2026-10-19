@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: d34d4b73cc56f400eac3ece1864a59a101352072
+Head or Range: 1e9b8fd909de05dc7f5b87f4b06adfa3c1eb5e78
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 34
+Revision: 35
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: d34d4b73cc56f400eac3ece1864a59a101352072
+Head OID: 1e9b8fd909de05dc7f5b87f4b06adfa3c1eb5e78
 Integrated Result: pending
 
 ## Summary
@@ -346,6 +346,39 @@ installed Core remains healthy but still has the old Drain behavior. Its pool
 mode is `logical`, so the UI's `No Windows session` label is expected; native
 WTS/RDP/Profile/Credential Manager/ACL/Agent/restart/shutdown/Retire acceptance
 remains pending for Sessions 09/10.
+
+Revision 35 fixes the logical pool capacity loss found while verifying the
+installed Drain recovery. After Drain finalized `pool-test-001` as a deleted
+tombstone, Resume restored `desired_slots=1` but the reconciler skipped the
+tombstone without creating a replacement. The installed
+`test-20261018-d34d4b73cc56` Core therefore left the pool at `provisioning`,
+desired/logical ready `1/0`, and effective capacity `0`; operation
+`op_ff844a3b3f43a167` became failed after the service restarted while it was
+running. This is an allocator/reconciliation failure, not a real Windows
+session failure: the configured mode is `logical`, so `No Windows session` is
+expected.
+
+Signed implementation `1e9b8fd909de05dc7f5b87f4b06adfa3c1eb5e78` keeps deleted
+slot IDs as permanent tombstones and allocates a new slot incarnation for an
+enabled pool that again needs that ordinal. Direct pool reconciliation and
+control-operation reconciliation now share the same path. Store and logical
+reconciler tests cover Drain, Resume, replacement identity, ready capacity,
+operation completion, and repeat-reconcile idempotency. The new package below
+is built from this implementation and awaits operator installation. Native
+WTS, RDP, Profile, Credential Manager, ACL, Agent/worker, restart, shutdown,
+and Retire acceptance remains pending for Sessions 09/10.
+
+The isolated Windows build produced test version `test-20261019-1e9b8fd909de`.
+`validate_nightly_artifact.py` passed the Windows amd64 bundle, service and
+other component archives, adapter, release index, manifests, and checksums.
+Inno Setup 6.7.3 produced
+`dist/windows-session-slot-incarnation-test-20261019-1e9b8fd909de/installer/ChuziSetup.exe`
+with SHA-256
+`5131d09101bc58519d3a17ba8a298cd78458d94ab27e7926e959af4616f734a1`.
+Its embedded Core build manifest identifies the full implementation SHA
+above. The Go service and package contents were built from that commit; the
+unchanged Slint UI binary was reused from the currently installed package
+(`ab586f882287bc62ad6ddc9cdb2f677fe6c2665299ef59dede0c0b71d4970775`).
 
 Revision 29 records the operator's final UI verification of the replacement package
 `test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
@@ -688,6 +721,35 @@ shutdown is observable and does not authorize deletion or claim transfer.
 
 ## Test Evidence
 
+At implementation SHA `1e9b8fd909de05dc7f5b87f4b06adfa3c1eb5e78`, the Windows
+host passed:
+
+- `go test -count=1 ./...`
+- `go test -count=1 -race ./...`
+- `go vet ./...`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/service`
+- `GOOS=windows GOARCH=amd64 go test -c ./cmd/session-broker`
+- `GOOS=windows GOARCH=amd64 go test -c ./internal/slotwindows`
+- `./scripts/validate_policy_manifest.sh`
+- `./scripts/validate_quality_profile.sh`
+- `./scripts/validate_supply_chain_profile.sh`
+- `./scripts/validate_action_pinning.sh`
+- `./scripts/validate_repository_shape.sh`
+- `./scripts/test_build_contract.sh`
+- `git diff --check`
+- `git rebase origin/main` (up to date at `3fbb027a175118e65ef5d645148d516db4ab16ff`)
+- `python scripts/validate_nightly_artifact.py` against the isolated build at
+  `C:\Users\ChenZhiPeng\AppData\Local\Temp\chuzi-build-slot-incarnation-1e9b8fd909de\dist`
+  for commit `1e9b8fd909de05dc7f5b87f4b06adfa3c1eb5e78` and version
+  `test-20261019-1e9b8fd909de`
+
+The local build used an isolated source archive and the already verified
+PresentMon 2.6.0 binary (`b2a706bc6ad475749e3b7e3409263aa1e6906d45bdcf993f6dbc0f660188f1af`).
+No repository build script was changed. The prebuilt Slint UI hash is recorded
+in Revision 35; this package does not claim a new UI source build or native
+session acceptance. The six POSIX validators ran under Git Bash with `igncr`
+and an ignored local `jq --binary` shim to handle Windows CRLF output.
+
 At implementation SHA `dc15fcb9534d0afdf3e26b325aa26bf89bfefb61`, the Windows
 host passed:
 
@@ -905,13 +967,15 @@ native session acceptance.
 
 ## Risk
 
-At the latest installed observation, `ChuziCore` was ready, its health probes
-passed, and the UI process was responsive. The old installed build continued to
-report operation `op_2179e08fc6c4164b` as draining because its reconciler retained
-the configured target of one slot. The new Drain fix is in the locally built
-installer above and awaits operator installation. Since the current configured
-pool mode is `logical`, no Windows session is expected in that mode. No native
-session acceptance is claimed.
+At the latest installed observation, `ChuziCore` was running and the UI reported
+Core ready. The installed Core build manifest identifies
+`test-20261018-d34d4b73cc56`. The pool remained at desired/logical ready `1/0`,
+effective capacity `0`, with operation `op_ff844a3b3f43a167` failed because the
+Core restarted while it was running; the old `pool-test-001` ID is a deleted
+tombstone. The new incarnation fix is in the local installer recorded in
+Revision 35 and awaits operator installation. Since the current configured pool
+mode is `logical`, no Windows session is expected. No native session acceptance
+is claimed.
 
 At Revision 29, the then-installed `test-20261016-9bdf43d1974d` package matched
 implementation `9bdf43d1974ddfdebd189463604c0b91874378d1`; `ChuziCore` was
