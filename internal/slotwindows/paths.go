@@ -80,6 +80,10 @@ type Options struct {
 	// adapters that establish a real WTS session using a short-lived password
 	// buffer. It is never serialized onto the broker protocol.
 	SessionLoginAdapter SessionLoginAdapter
+	// ProvisionFailureRecorder receives only a bounded failure stage,
+	// classification, and optional native numeric error code. Implementations
+	// must redact Resource before persisting or exporting it.
+	ProvisionFailureRecorder func(ProvisionFailureDiagnostic)
 }
 
 type HostPreflight interface {

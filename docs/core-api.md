@@ -197,8 +197,10 @@ The snapshot uses the `chuzi.diagnostic/v2` schema. It includes a stable
 `error_class` and `operation`, the total `event_count`, an `events_truncated`
 flag for the bounded 64-event window, per-event `duration_ms`, and a
 `core_status` projection (`installed`, `running`, `ready`, and lifecycle status).
-Event fields remain allow-listed and redacted; no paths, credentials, tokens,
-screenshots, or raw error text are included. If event capture or the Core call
+Event fields remain allow-listed and redacted. Provisioning failures may also
+include a fixed `failure_stage` token and a numeric `native_error_code` tagged
+as `win32` or `hresult`; the slot reference is hashed before export. No paths,
+credentials, tokens, screenshots, or raw error text are included. If event capture or the Core call
 fails, `capture_error_class` records a stable classification and the native
 client writes a v2 UI fallback with the same context and one synthetic redacted capture-failure event.
 Older or malformed snapshot payloads are treated as invalid projections and

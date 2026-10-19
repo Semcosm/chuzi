@@ -20,7 +20,7 @@ func TestJSONLoggerRedactsFieldsAndWritesStructuredLine(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer logger.Close()
-	if err := logger.Write(Event{Component: "queue", Operation: "claim", Outcome: "failed", RequestID: "request-1", Resource: "!secret-room:example.org", ErrorClass: "transient", Duration: 2 * time.Millisecond}); err != nil {
+	if err := logger.Write(Event{Component: "queue", Operation: "claim", Outcome: "failed", RequestID: "request-1", Resource: "!secret-room:example.org", ErrorClass: "transient", FailureStage: "profile_create", NativeErrorKind: "hresult", NativeErrorCode: 0x80070005, Duration: 2 * time.Millisecond}); err != nil {
 		t.Fatal(err)
 	}
 	var record map[string]any
@@ -29,6 +29,9 @@ func TestJSONLoggerRedactsFieldsAndWritesStructuredLine(t *testing.T) {
 	}
 	if record["request_id"] == "request-1" || record["resource"] == "!secret-room:example.org" || record["duration_ms"] != float64(2) {
 		t.Fatalf("record = %#v", record)
+	}
+	if record["failure_stage"] != "profile_create" || record["native_error_kind"] != "hresult" || record["native_error_code"] != float64(0x80070005) {
+		t.Fatalf("native diagnostic fields = %#v", record)
 	}
 	if strings.Contains(output.String(), "secret-room") {
 		t.Fatalf("log contains raw room: %s", output.String())

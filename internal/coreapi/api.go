@@ -240,14 +240,17 @@ type DiagnosticSnapshotRequest struct {
 }
 
 type DiagnosticEvent struct {
-	At         time.Time `json:"at,omitempty"`
-	Component  string    `json:"component,omitempty"`
-	Operation  string    `json:"operation,omitempty"`
-	Outcome    string    `json:"outcome,omitempty"`
-	RequestID  string    `json:"request_id,omitempty"`
-	Resource   string    `json:"resource,omitempty"`
-	ErrorClass string    `json:"error_class,omitempty"`
-	DurationMS int64     `json:"duration_ms,omitempty"`
+	At              time.Time `json:"at,omitempty"`
+	Component       string    `json:"component,omitempty"`
+	Operation       string    `json:"operation,omitempty"`
+	Outcome         string    `json:"outcome,omitempty"`
+	RequestID       string    `json:"request_id,omitempty"`
+	Resource        string    `json:"resource,omitempty"`
+	ErrorClass      string    `json:"error_class,omitempty"`
+	FailureStage    string    `json:"failure_stage,omitempty"`
+	NativeErrorKind string    `json:"native_error_kind,omitempty"`
+	NativeErrorCode uint32    `json:"native_error_code,omitempty"`
+	DurationMS      int64     `json:"duration_ms,omitempty"`
 }
 
 // DiagnosticCoreStatus records the launcher-visible lifecycle state without

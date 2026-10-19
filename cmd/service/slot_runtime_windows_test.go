@@ -12,6 +12,7 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/environment"
+	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/slotlifecycle"
 	"github.com/Semcosm/chuzi/internal/slotwindows"
@@ -30,14 +31,14 @@ func (serviceSessionBootstrapper) Stop(context.Context, slotwindows.ManagedIdent
 
 func TestResolveSessionBootstrapperUsesInjectedProvider(t *testing.T) {
 	fake := serviceSessionBootstrapper{}
-	resolved := resolveSessionBootstrapper(serviceOptions{sessionBootstrapper: fake})
+	resolved := resolveSessionBootstrapper(serviceOptions{sessionBootstrapper: fake}, nil)
 	if _, ok := resolved.(serviceSessionBootstrapper); !ok {
 		t.Fatalf("resolved provider = %T, want injected fake", resolved)
 	}
 }
 
 func TestResolveSessionBootstrapperDefaultsToFixedBrokerClient(t *testing.T) {
-	resolved := resolveSessionBootstrapper(serviceOptions{})
+	resolved := resolveSessionBootstrapper(serviceOptions{}, nil)
 	if resolved == nil {
 		t.Fatal("default session bootstrapper is nil")
 	}
@@ -46,6 +47,23 @@ func TestResolveSessionBootstrapperDefaultsToFixedBrokerClient(t *testing.T) {
 	_, err := resolved.Start(ctx, slotwindows.ManagedIdentity{})
 	if !errors.Is(err, slotwindows.ErrSessionUnavailable) {
 		t.Fatalf("cancelled broker client error = %v", err)
+	}
+}
+
+func TestBrokerFailureEventSeparatesBrokerStartupFromLogin(t *testing.T) {
+	buffer := observability.NewEventBuffer(4)
+	broker := &brokerHelperBootstrapper{record: buffer.Record}
+	broker.recordFailureEvent("slot-private-id", "broker_start")
+	events := buffer.Snapshot(4)
+	if len(events) != 1 {
+		t.Fatalf("events = %#v", events)
+	}
+	event := events[0]
+	if event.FailureStage != "broker_start" || event.ErrorClass != "session_unavailable" || event.Outcome != "failed" {
+		t.Fatalf("broker failure event = %#v", event)
+	}
+	if strings.Contains(event.Resource, "slot-private-id") {
+		t.Fatalf("slot id leaked into event: %#v", event)
 	}
 }
 

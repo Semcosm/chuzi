@@ -996,6 +996,12 @@ func (p *windowsProvisioner) checkIdentityCollision(paths Paths, request slot.Pr
 }
 
 func (p *windowsProvisioner) Provision(ctx context.Context, request slot.ProvisionRequest) (result slot.ProvisionResult, provisionErr error) {
+	failureStage := "request_validation"
+	defer func() {
+		if provisionErr != nil {
+			p.recordProvisionFailure(request, failureStage, provisionErr)
+		}
+	}()
 	if p == nil {
 		return slot.ProvisionResult{}, ErrInvalidOptions
 	}
@@ -1004,15 +1010,18 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	if err := p.validateRequest(request); err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "slot_lock"
 	unlock := p.lockSlot(request.SlotID)
 	defer unlock()
 	if err := ctx.Err(); err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "path_resolution"
 	paths, err := p.resolvePaths(request)
 	if err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "ownership_recovery"
 	if cleanup, cleanupErr := readOwnership(paths.CleanupJournal); cleanupErr == nil {
 		if cleanup.SlotID != request.SlotID || cleanup.Ordinal != request.Ordinal || cleanup.CleanupStep != "user_deleted" {
 			return slot.ProvisionResult{}, ErrOwnership
@@ -1072,6 +1081,7 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 			provisionErr = errors.Join(provisionErr, ErrCleanup, cleanupErr)
 		}
 	}()
+	failureStage = "managed_user"
 	managed, err = ensureManagedUser(paths, request)
 	if err != nil {
 		return slot.ProvisionResult{}, err
@@ -1082,17 +1092,21 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	rootExisted = rootExisted || !managed.created
 	sid = managed.SID
 	if p.options.RDPEnabled {
+		failureStage = "rdp_group_membership"
 		if err := ensureRemoteDesktopMembership(paths.UserName); err != nil {
 			return slot.ProvisionResult{}, err
 		}
+		failureStage = "rdp_group_verify"
 		if err := verifyRemoteDesktopMembership(paths.UserName); err != nil {
 			return slot.ProvisionResult{}, err
 		}
 	}
 	if p.options.HostPreflight != nil {
+		failureStage = "host_preflight_checkpoint"
 		if err := checkpointOwnership(paths, request, sid, "host_preflight", 0); err != nil {
 			return slot.ProvisionResult{}, err
 		}
+		failureStage = "host_preflight"
 		if err := p.options.HostPreflight.Check(ctx, sid); err != nil {
 			// Keep the proven identity and host_preflight journal for retry or
 			// explicit Stop. A failed host gate must not erase its recovery fence.
@@ -1113,46 +1127,56 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 		credentialedProvider = true
 	}
 	if !managed.created && credentialedProvider {
+		failureStage = "password_recovery"
 		password, recoverErr := recoverManagedUserPassword(ctx, paths, request, managed.SID)
 		if recoverErr != nil {
 			return slot.ProvisionResult{}, recoverErr
 		}
 		managed.password = password
 	}
+	failureStage = "profile_initialization"
 	if err := p.ensureManagedProfile(ctx, paths.UserName, managed); err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "profile_checkpoint"
 	if err := checkpointOwnership(paths, request, sid, "profile", 0); err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "slot_acl"
 	if err := ensureSlotDirectories(paths, sid); err != nil {
 		return slot.ProvisionResult{}, errors.Join(ErrACLDrift, ErrACLSlotDirectories)
 	}
+	failureStage = "session_bootstrap"
 	if err := p.ensureSessionBootstrap(ctx, request, paths.UserName, managed); err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "wts_checkpoint"
 	if session, findErr := journaledActiveSession(paths, sid); findErr != nil {
 		return slot.ProvisionResult{}, findErr
 	} else if err := checkpointOwnership(paths, request, sid, "wts", session.ID); err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "agent_start"
 	if err := p.ensureAgent(ctx, paths, request, sid); err != nil {
 		if errors.Is(err, ErrACLDrift) {
 			return slot.ProvisionResult{}, errors.Join(err, ErrACLRuntime)
 		}
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "agent_checkpoint"
 	if session, findErr := journaledActiveSession(paths, sid); findErr != nil {
 		return slot.ProvisionResult{}, findErr
 	} else if err := checkpointOwnership(paths, request, sid, "agent", session.ID); err != nil {
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "profile_acl_verify"
 	if err := p.verifyProfileGrant(paths, sid); err != nil {
 		if errors.Is(err, ErrACLDrift) {
 			return slot.ProvisionResult{}, errors.Join(err, ErrACLProfile)
 		}
 		return slot.ProvisionResult{}, err
 	}
+	failureStage = "worker_checkpoint"
 	if session, findErr := journaledActiveSession(paths, sid); findErr != nil {
 		return slot.ProvisionResult{}, findErr
 	} else if err := checkpointOwnership(paths, request, sid, "worker", session.ID); err != nil {
@@ -1162,17 +1186,32 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 	return slot.ProvisionResult{AgentHandle: "slot:" + request.SlotID, Summary: p.summary(request, sid)}, nil
 }
 
+func (p *windowsProvisioner) recordProvisionFailure(request slot.ProvisionRequest, fallbackStage string, cause error) {
+	if p == nil || p.options.ProvisionFailureRecorder == nil || cause == nil {
+		return
+	}
+	p.options.ProvisionFailureRecorder(provisionFailureDiagnostic(request.SlotID, fallbackStage, cause))
+}
+
 // ensureManagedProfile initializes a newly created account through the
 // Winlogon profile path before any WTS session is requested, then applies the
 // fixed user-level PowerShell shell policy. Existing accounts are reconciled
 // from their SID-derived profile hive without receiving a new password.
-func (p *windowsProvisioner) ensureManagedProfile(ctx context.Context, username string, managed managedUserCredentials) error {
+func (p *windowsProvisioner) ensureManagedProfile(ctx context.Context, username string, managed managedUserCredentials) (result error) {
+	failureStage := "profile_hive_probe"
+	defer func() {
+		if result != nil {
+			result = withProvisionStage(failureStage, result)
+		}
+	}()
 	profilePath, profileErr := profilePathForSID(managed.SID)
 	if profileErr != nil || validateProfileHivePath(profilePath) != nil {
+		failureStage = "profile_create"
 		if err := bootstrapManagedProfile(ctx, managed.SID, username); err != nil {
 			return err
 		}
 	}
+	failureStage = "profile_policy"
 	return applyProfilePolicy(ctx, managed.SID, filepath.Dir(filepath.Clean(p.options.AgentPath)))
 }
 
@@ -1832,22 +1871,32 @@ func validateCleanupSessionFence(record ownershipRecord) error {
 // ensureSessionBootstrap invokes only the optional, deployment-owned session
 // provider. It always re-queries WTS after Start; a provider result alone can
 // never satisfy the production FindSession fence.
-func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request slot.ProvisionRequest, username string, managed managedUserCredentials) error {
+func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request slot.ProvisionRequest, username string, managed managedUserCredentials) (result error) {
+	failureStage := "session_context"
+	defer func() {
+		if result != nil {
+			result = withProvisionStage(failureStage, result)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	failureStage = "managed_identity"
 	identity, err := p.managedIdentity(request, managed.SID)
 	if err != nil {
 		return err
 	}
+	failureStage = "slot_paths"
 	paths, err := p.resolvePaths(request)
 	if err != nil {
 		return err
 	}
+	failureStage = "ownership_read"
 	record, err := readOwnership(paths.Metadata)
 	if err != nil {
 		return ErrOwnership
 	}
+	failureStage = "wts_query_before_login"
 	current, findErr := FindSession(managed.SID)
 	if findErr == nil && current.State == "active" {
 		if journalAuthorizesActiveSession(record, current, managed.SID) {
@@ -1863,6 +1912,7 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 	provider := p.options.SessionBootstrapper
 	loginAdapter := p.options.SessionLoginAdapter
 	if provider == nil && loginAdapter == nil {
+		failureStage = "session_provider_missing"
 		return retryableProvisionFailure{cause: ErrSessionUnavailable}
 	}
 
@@ -1873,8 +1923,10 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 		if current, findErr := FindSession(managed.SID); findErr == nil && current.ID == previous.session.ID && current.State == "active" {
 			return nil
 		}
+		failureStage = "previous_session_cleanup"
 		_ = p.stopSessionBootstrap(ctx, request.SlotID)
 	}
+	failureStage = "session_login"
 	var started BootstrapSession
 	var startErr error
 	if loginAdapter != nil {
@@ -1885,6 +1937,7 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 	if startErr != nil {
 		return retryableProvisionFailure{cause: classifySessionBootstrapError(startErr)}
 	}
+	failureStage = "session_login_result"
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		if started.ID != 0 {
 			cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -1902,6 +1955,7 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 		}
 		return retryableProvisionFailure{cause: ErrSessionUnavailable}
 	}
+	failureStage = "wts_verify_after_login"
 	current, findErr = FindSession(managed.SID)
 	if findErr != nil {
 		if stopErr := p.stopManagedSession(ctx, identity, started); stopErr != nil {
@@ -1921,6 +1975,7 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 	// Commit the exact WTS session before desktop or agent work starts. If the
 	// durable fence cannot be written, stop the just-created session instead of
 	// leaving an unowned login that a later pass could mistake for this slot.
+	failureStage = "wts_checkpoint"
 	if err := checkpointOwnership(paths, request, managed.SID, "wts", current.ID); err != nil {
 		if stopErr := p.stopSessionBootstrap(ctx, request.SlotID); stopErr != nil {
 			return ErrCleanup
@@ -1931,21 +1986,23 @@ func (p *windowsProvisioner) ensureSessionBootstrap(ctx context.Context, request
 }
 
 func classifySessionBootstrapError(err error) error {
+	var classified error
 	switch {
 	case errors.Is(err, ErrSessionChanged):
-		return ErrSessionChanged
+		classified = ErrSessionChanged
 	case errors.Is(err, ErrSessionDisconnected):
-		return ErrSessionDisconnected
+		classified = ErrSessionDisconnected
 	case errors.Is(err, ErrSessionIdentity):
-		return ErrSessionIdentity
+		classified = ErrSessionIdentity
 	case errors.Is(err, ErrSessionUnavailable), errors.Is(err, ErrSessionBootstrapUnavailable):
-		return ErrSessionUnavailable
+		classified = ErrSessionUnavailable
 	default:
 		// Provider implementation errors are intentionally collapsed to the
 		// stable session classification; raw Win32/provider text must not cross
 		// the smoke, log, or control-plane boundary.
-		return ErrSessionUnavailable
+		classified = ErrSessionUnavailable
 	}
+	return preserveProvisionNativeError(err, classified)
 }
 
 func (p *windowsProvisioner) stopSessionBootstrap(ctx context.Context, slotID string) error {
@@ -2779,7 +2836,7 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 		return managedUserCredentials{}, ErrOwnership
 	}
 	if status != 0 {
-		return managedUserCredentials{}, ErrOwnership
+		return managedUserCredentials{}, withProvisionNativeError("managed_user_create", "win32", status, ErrOwnership)
 	}
 	sid, err := lookupSIDEventually(paths.UserName)
 	if err != nil {
@@ -2814,7 +2871,13 @@ func ensureManagedUser(paths Paths, request slot.ProvisionRequest) (managedUserC
 // recoverManagedUserPassword rotates the disposable local password only after
 // the durable WTS fence proves that no owned session is active. The password
 // remains in memory for the immediately following login adapter call.
-func recoverManagedUserPassword(ctx context.Context, paths Paths, request slot.ProvisionRequest, sid string) ([]uint16, error) {
+func recoverManagedUserPassword(ctx context.Context, paths Paths, request slot.ProvisionRequest, sid string) (password []uint16, result error) {
+	failureStage := "password_session_probe"
+	defer func() {
+		if result != nil {
+			result = withProvisionStage(failureStage, result)
+		}
+	}()
 	if ctx == nil || ctx.Err() != nil || sid == "" {
 		return nil, ErrSessionIdentity
 	}
@@ -2829,6 +2892,7 @@ func recoverManagedUserPassword(ctx context.Context, paths Paths, request slot.P
 	if !errors.Is(findErr, ErrSessionUnavailable) || current.State != "logged_off" {
 		return nil, findErr
 	}
+	failureStage = "password_generation"
 	password, err := randomPasswordUTF16(48)
 	if err != nil {
 		return nil, ErrSessionIdentity
@@ -2839,13 +2903,15 @@ func recoverManagedUserPassword(ctx context.Context, paths Paths, request slot.P
 			clear(password)
 		}
 	}()
+	failureStage = "password_reset_arguments"
 	name, err := windows.UTF16PtrFromString(paths.UserName)
 	if err != nil {
 		return nil, ErrSessionIdentity
 	}
 	info := userInfo1003{Password: &password[0]}
+	failureStage = "password_reset"
 	if status := callNetUserSetInfo(name, 1003, unsafe.Pointer(&info)); status != 0 {
-		return nil, ErrSessionIdentity
+		return nil, withProvisionNativeError("password_reset", "win32", status, ErrSessionIdentity)
 	}
 	keep = true
 	return password, nil

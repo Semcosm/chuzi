@@ -169,29 +169,35 @@ func bootstrapManagedProfile(ctx context.Context, sid, username string) error {
 		return err
 	}
 	resolved, _, use, err := windows.LookupSID("", ".\\"+username)
-	if err != nil || use != windows.SidTypeUser || resolved.String() != sid {
-		return ErrProfileBootstrap
+	if err != nil {
+		return withProvisionWin32Error("profile_identity_lookup", err, ErrProfileBootstrap)
+	}
+	if use != windows.SidTypeUser || resolved.String() != sid {
+		return withProvisionStage("profile_identity_verify", ErrProfileBootstrap)
 	}
 	sidPtr, err := windows.UTF16PtrFromString(sid)
 	if err != nil {
-		return ErrProfileBootstrap
+		return withProvisionStage("profile_create_arguments", ErrProfileBootstrap)
 	}
 	userPtr, err := windows.UTF16PtrFromString(username)
 	if err != nil {
-		return ErrProfileBootstrap
+		return withProvisionStage("profile_create_arguments", ErrProfileBootstrap)
 	}
 	path := make([]uint16, 32768)
 	result, _, _ := procCreateProfile.Call(uintptr(unsafe.Pointer(sidPtr)), uintptr(unsafe.Pointer(userPtr)), uintptr(unsafe.Pointer(&path[0])), uintptr(len(path)))
 	// CreateProfile returns HRESULT, including HRESULT_FROM_WIN32(ALREADY_EXISTS).
 	if uint32(result) != 0 && uint32(result) != 0x800700b7 {
-		return ErrProfileBootstrap
+		return withProvisionNativeError("profile_create", "hresult", uint32(result), ErrProfileBootstrap)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	profile, err := profilePathForSID(sid)
-	if err != nil || validateProfileHivePath(profile) != nil {
-		return ErrProfileBootstrap
+	if err != nil {
+		return withProvisionWin32Error("profile_path_lookup", err, ErrProfileBootstrap)
+	}
+	if err := validateProfileHivePath(profile); err != nil {
+		return withProvisionStage("profile_hive_verify", ErrProfileBootstrap)
 	}
 	return nil
 }

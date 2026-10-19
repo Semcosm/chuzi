@@ -698,7 +698,9 @@ func (s *Service) GetDiagnosticSnapshot(ctx context.Context, input coreapi.Diagn
 			At: event.At, Component: event.Component, Operation: event.Operation,
 			Outcome: event.Outcome, RequestID: event.RequestID,
 			Resource: event.Resource, ErrorClass: event.ErrorClass,
-			DurationMS: durationMilliseconds(event.Duration),
+			FailureStage: event.FailureStage, NativeErrorKind: event.NativeErrorKind,
+			NativeErrorCode: event.NativeErrorCode,
+			DurationMS:      durationMilliseconds(event.Duration),
 		})
 	}
 	schema := report.Schema

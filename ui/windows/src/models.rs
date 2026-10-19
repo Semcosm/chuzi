@@ -281,6 +281,12 @@ pub(crate) struct DiagnosticEvent {
     pub(crate) resource: String,
     #[serde(default)]
     pub(crate) error_class: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) failure_stage: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) native_error_kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) native_error_code: Option<u32>,
     #[serde(default)]
     pub(crate) duration_ms: i64,
 }

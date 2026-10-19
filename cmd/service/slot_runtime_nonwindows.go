@@ -8,6 +8,7 @@ import (
 
 	"github.com/Semcosm/chuzi/internal/browser"
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/observability"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/slotwindows"
 	"github.com/Semcosm/chuzi/internal/store"
@@ -21,7 +22,7 @@ func configureWorkerFactory(_ config.Config, _ serviceOptions, factory browser.W
 	return factory, nil
 }
 
-func newSlotReconciler(config config.Config, options serviceOptions, database *store.Store, now func() time.Time, _ slotCapabilityRevoker, _ *serviceEnvironmentRuntime, _ slot.PoolConfig) (slotReconciler, slotProfileAccess, error) {
+func newSlotReconciler(config config.Config, options serviceOptions, database *store.Store, now func() time.Time, _ slotCapabilityRevoker, _ *serviceEnvironmentRuntime, _ slot.PoolConfig, _ func(observability.Event)) (slotReconciler, slotProfileAccess, error) {
 	if config.WindowsJobPool.Enabled {
 		return nil, nil, slotwindows.ErrUnsupported
 	}

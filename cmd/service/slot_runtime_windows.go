@@ -52,7 +52,7 @@ func configureWorkerFactory(cfg config.Config, options serviceOptions, factory b
 	return browser.NewAgentProcessFactory(slotAgentBridge{resolver: resolver}, slotagent.BrowserWorker)
 }
 
-func resolveSessionBootstrapper(options serviceOptions) slotwindows.SessionBootstrapper {
+func resolveSessionBootstrapper(options serviceOptions, recordFailure func(observability.Event)) slotwindows.SessionBootstrapper {
 	if options.sessionBootstrapper != nil {
 		return options.sessionBootstrapper
 	}
@@ -60,7 +60,7 @@ func resolveSessionBootstrapper(options serviceOptions) slotwindows.SessionBoots
 	// interactive operator session before using its ACL-protected pipe. The
 	// broker owns the deployment-specific WTS/RDP login implementation.
 	inner := slotwindows.NewRunnerSessionBootstrapper()
-	return newBrokerHelperBootstrapper(inner)
+	return newBrokerHelperBootstrapper(inner, recordFailure)
 }
 
 // brokerHelperBootstrapper binds the fixed broker client to the authenticated
@@ -68,13 +68,14 @@ func resolveSessionBootstrapper(options serviceOptions) slotwindows.SessionBoots
 // credentials only through the private service-authenticated channel.
 type brokerHelperBootstrapper struct {
 	inner   slotwindows.SessionBootstrapper
+	record  func(observability.Event)
 	runtime servicehost.TrustedRuntime
 	starter *servicehost.WindowsHelperStarter
 	mu      sync.Mutex
 	process servicehost.HelperProcess
 }
 
-func newBrokerHelperBootstrapper(inner slotwindows.SessionBootstrapper) slotwindows.SessionBootstrapper {
+func newBrokerHelperBootstrapper(inner slotwindows.SessionBootstrapper, recordFailure func(observability.Event)) slotwindows.SessionBootstrapper {
 	executable, err := os.Executable()
 	if err != nil {
 		return inner
@@ -83,7 +84,7 @@ func newBrokerHelperBootstrapper(inner slotwindows.SessionBootstrapper) slotwind
 	if err != nil {
 		return inner
 	}
-	return &brokerHelperBootstrapper{inner: inner, runtime: runtime, starter: servicehost.NewWindowsHelperStarter()}
+	return &brokerHelperBootstrapper{inner: inner, runtime: runtime, starter: servicehost.NewWindowsHelperStarter(), record: recordFailure}
 }
 
 func (b *brokerHelperBootstrapper) ensure(ctx context.Context) error {
@@ -114,6 +115,7 @@ func (b *brokerHelperBootstrapper) ensure(ctx context.Context) error {
 
 func (b *brokerHelperBootstrapper) Start(ctx context.Context, identity slotwindows.ManagedIdentity) (slotwindows.BootstrapSession, error) {
 	if err := b.ensure(ctx); err != nil {
+		b.recordFailureEvent(identity.SlotID, "broker_start")
 		return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
 	}
 	return b.inner.Start(ctx, identity)
@@ -121,23 +123,38 @@ func (b *brokerHelperBootstrapper) Start(ctx context.Context, identity slotwindo
 
 func (b *brokerHelperBootstrapper) StartWithCredential(ctx context.Context, identity slotwindows.ManagedIdentity, username string, password []uint16) (slotwindows.BootstrapSession, error) {
 	if err := b.ensure(ctx); err != nil {
+		b.recordFailureEvent(identity.SlotID, "broker_start")
 		return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
 	}
 	secret := slotwindows.SessionBrokerSecret{PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner, Username: username, Password: append([]uint16(nil), password...)}
 	defer clear(secret.Password)
 	if _, err := rand.Read(secret.Nonce[:]); err != nil {
+		b.recordFailureEvent(identity.SlotID, "broker_nonce_generation")
 		return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
 	}
 	if err := slotwindows.SendSessionBrokerSecret(ctx, secret, b.runtime.Broker); err != nil {
+		b.recordFailureEvent(identity.SlotID, "broker_secret_handoff")
 		return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
 	}
 	started, err := b.inner.Start(ctx, identity)
 	if err != nil {
+		b.recordFailureEvent(identity.SlotID, "broker_login")
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = slotwindows.DropSessionBrokerSecret(cleanupCtx, slotwindows.SessionBrokerOwnership{PoolID: identity.PoolID, SlotID: identity.SlotID, Ordinal: identity.Ordinal, Generation: identity.Generation, SID: identity.SID, Owner: identity.Owner}, secret.Nonce, b.runtime.Broker)
 		cancel()
 	}
 	return started, err
+}
+
+func (b *brokerHelperBootstrapper) recordFailureEvent(slotID, stage string) {
+	if b == nil || b.record == nil {
+		return
+	}
+	b.record(observability.Event{
+		At: time.Now().UTC(), Component: "windows_session", Operation: "broker",
+		Outcome: "failed", Resource: slotID, ErrorClass: "session_unavailable",
+		FailureStage: stage,
+	})
 }
 
 func (b *brokerHelperBootstrapper) Stop(ctx context.Context, identity slotwindows.ManagedIdentity, session slotwindows.BootstrapSession) error {
@@ -172,7 +189,7 @@ func (p serviceWindowsHostPreflight) Check(ctx context.Context, managedSID strin
 	return err
 }
 
-func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker, environmentRuntime *serviceEnvironmentRuntime, pool slot.PoolConfig) (slotReconciler, slotProfileAccess, error) {
+func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker, environmentRuntime *serviceEnvironmentRuntime, pool slot.PoolConfig, recordProvisionFailure func(observability.Event)) (slotReconciler, slotProfileAccess, error) {
 	if !cfg.WindowsJobPool.Enabled {
 		reconciler, err := newLogicalSlotReconciler(database, now, options.owner)
 		if err != nil {
@@ -219,7 +236,7 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 	if options.backend == backendHeadless || options.backend == backendHeaded {
 		browserMode, browserCommand = options.backend, options.headlessBrowserCommand
 	}
-	sessionBootstrapper := resolveSessionBootstrapper(options)
+	sessionBootstrapper := resolveSessionBootstrapper(options, recordProvisionFailure)
 	hostRuntime, err := servicehost.NewTrustedRuntime(runtimeRoot)
 	if err != nil {
 		return nil, nil, err
@@ -237,6 +254,16 @@ func newSlotReconciler(cfg config.Config, options serviceOptions, database *stor
 		RequireAuthenticode: requireAuthenticode,
 	}}
 	provisionOptions := slotwindows.Options{DataDir: cfg.DataDir, UserPrefix: cfg.WindowsJobPool.UserPrefix, EnvironmentID: environmentID, Version: environmentVersion, ManifestDigest: manifestDigest, Signer: signer, RequireTrusted: requireTrusted, RDPEnabled: cfg.WindowsJobPool.RDPEnabled, AgentPath: filepath.Join(runtimeRoot, "chuzi-user-agent.exe"), Runtime: runtimeHandoff, RuntimePath: runtimePath, WorkerRuntimeRoot: runtimeRoot, WorkerCommand: workerCommand, WorkerScript: workerScript, AdapterScript: adapterScript, BrowserMode: browserMode, BrowserCommand: browserCommand, SessionIdleTimeout: time.Duration(cfg.WindowsJobPool.SessionIdleTimeoutSeconds) * time.Second, CapabilityRevoker: revoker, RuntimeResolver: environmentRuntime.RuntimeResolver, SessionBootstrapper: sessionBootstrapper, HostPreflight: hostPreflight}
+	if recordProvisionFailure != nil {
+		provisionOptions.ProvisionFailureRecorder = func(failure slotwindows.ProvisionFailureDiagnostic) {
+			recordProvisionFailure(observability.Event{
+				At: now().UTC(), Component: "windows_session", Operation: "provision",
+				Outcome: "failed", Resource: failure.Resource, ErrorClass: failure.ErrorClass,
+				FailureStage: failure.Stage, NativeErrorKind: failure.NativeErrorKind,
+				NativeErrorCode: failure.NativeErrorCode,
+			})
+		}
+	}
 	provisioner, err := slotwindows.New(provisionOptions)
 	if err != nil {
 		return nil, nil, err

@@ -74,7 +74,11 @@ func processStartFailure(stage error) error {
 }
 
 func processStartFailureWithWin32Error(stage error, cause error) error {
-	return processStartError{stage: stage, detail: classifyProcessStartWin32Error(cause)}
+	classified := processStartError{stage: stage, detail: classifyProcessStartWin32Error(cause)}
+	if code, ok := provisionWin32Code(cause); ok {
+		return withProvisionNativeError("agent_process_start", "win32", code, classified)
+	}
+	return classified
 }
 
 func classifyProcessStartWin32Error(err error) error {
@@ -163,10 +167,10 @@ func FindSession(expectedSID string) (Session, error) {
 	var raw *windows.WTS_SESSION_INFO
 	var count uint32
 	if err := windows.WTSEnumerateSessions(0, 0, 1, &raw, &count); err != nil {
-		return Session{}, ErrSessionQuery
+		return Session{}, withProvisionWin32Error("wts_enumerate_sessions", err, ErrSessionQuery)
 	}
 	if raw == nil && count != 0 {
-		return Session{}, ErrSessionQuery
+		return Session{}, withProvisionStage("wts_enumerate_sessions", ErrSessionQuery)
 	}
 	defer windows.WTSFreeMemory(uintptr(unsafe.Pointer(raw)))
 	var found Session
@@ -176,12 +180,15 @@ func FindSession(expectedSID string) (Session, error) {
 		}
 		var token windows.Token
 		if err := windows.WTSQueryUserToken(entry.SessionID, &token); err != nil {
-			return Session{}, ErrSessionQuery
+			return Session{}, withProvisionWin32Error("wts_query_user_token", err, ErrSessionQuery)
 		}
 		user, err := token.GetTokenUser()
 		_ = token.Close()
-		if err != nil || user == nil || user.User.Sid == nil {
-			return Session{}, ErrSessionQuery
+		if err != nil {
+			return Session{}, withProvisionWin32Error("wts_read_token_user", err, ErrSessionQuery)
+		}
+		if user == nil || user.User.Sid == nil {
+			return Session{}, withProvisionStage("wts_read_token_user", ErrSessionQuery)
 		}
 		if user.User.Sid.String() != expectedSID {
 			continue

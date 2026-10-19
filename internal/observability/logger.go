@@ -258,28 +258,34 @@ func removeRotationTarget(path string) error {
 }
 
 type logRecord struct {
-	At         string `json:"at"`
-	Component  string `json:"component,omitempty"`
-	Operation  string `json:"operation,omitempty"`
-	Outcome    string `json:"outcome,omitempty"`
-	RequestID  string `json:"request_id,omitempty"`
-	Resource   string `json:"resource,omitempty"`
-	ErrorClass string `json:"error_class,omitempty"`
-	Attempt    int    `json:"attempt,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
+	At              string `json:"at"`
+	Component       string `json:"component,omitempty"`
+	Operation       string `json:"operation,omitempty"`
+	Outcome         string `json:"outcome,omitempty"`
+	RequestID       string `json:"request_id,omitempty"`
+	Resource        string `json:"resource,omitempty"`
+	ErrorClass      string `json:"error_class,omitempty"`
+	FailureStage    string `json:"failure_stage,omitempty"`
+	NativeErrorKind string `json:"native_error_kind,omitempty"`
+	NativeErrorCode uint32 `json:"native_error_code,omitempty"`
+	Attempt         int    `json:"attempt,omitempty"`
+	DurationMS      int64  `json:"duration_ms,omitempty"`
 }
 
 func sanitizeEvent(event Event, fallback time.Time) logRecord {
 	event = SanitizeEvent(event, fallback)
 	record := logRecord{
-		At:         event.At.Format(time.RFC3339Nano),
-		Component:  event.Component,
-		Operation:  event.Operation,
-		Outcome:    event.Outcome,
-		RequestID:  event.RequestID,
-		Resource:   event.Resource,
-		ErrorClass: event.ErrorClass,
-		Attempt:    event.Attempt,
+		At:              event.At.Format(time.RFC3339Nano),
+		Component:       event.Component,
+		Operation:       event.Operation,
+		Outcome:         event.Outcome,
+		RequestID:       event.RequestID,
+		Resource:        event.Resource,
+		ErrorClass:      event.ErrorClass,
+		FailureStage:    event.FailureStage,
+		NativeErrorKind: event.NativeErrorKind,
+		NativeErrorCode: event.NativeErrorCode,
+		Attempt:         event.Attempt,
 	}
 	if event.Duration > 0 {
 		record.DurationMS = event.Duration.Milliseconds()

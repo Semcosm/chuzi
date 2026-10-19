@@ -548,7 +548,9 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
   不要求远程诊断开启，不写发送队列，也不产生网络请求。文件只包含分类事件、平台/版本和脱敏摘要，
   不包含密码、Cookie、Token、Profile 路径、RDP endpoint 或原始日志。文件使用
   `chuzi.diagnostic/v2` schema，包含稳定的 `error_class`、`operation`、事件总数、
-  截断标志、事件耗时和 Core 生命周期状态。事件窗口最多保留最近 64 条，超过窗口时
+  截断标志、事件耗时和 Core 生命周期状态。Session provision 失败可包含固定的
+  `failure_stage`、`win32`/`hresult` 类型及原生数值错误码；slot ID 在导出前哈希。
+  事件窗口最多保留最近 64 条，超过窗口时
   `events_truncated=true` 且 `event_count` 保留原始总数。Core 不可用、返回旧 schema 或
   采集失败时，UI 保存包含 `capture_error_class` 的 v2 本地回退快照；失败分类只使用固定值，
   不写入原始错误文本。诊断文件还记录 capture_stage、Core schema/version、

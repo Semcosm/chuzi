@@ -1013,6 +1013,9 @@ fn diagnostic_snapshot(
         request_id: String::new(),
         resource: String::new(),
         error_class: capture_error_class.clone(),
+        failure_stage: String::new(),
+        native_error_kind: String::new(),
+        native_error_code: None,
         duration_ms: 0,
     };
     DiagnosticSnapshot {
@@ -4456,6 +4459,27 @@ mod tests {
             .any(|field| field == "schema"));
         assert!(capture.response_fingerprint.starts_with("fnv1a64:"));
         assert!(!capture.response_fingerprint.contains(&snapshot.summary));
+    }
+
+    #[test]
+    fn diagnostic_response_preserves_safe_native_failure_details() {
+        let mut response = valid_diagnostic_response();
+        response["event_count"] = json!(1);
+        response["events"] = json!([{
+            "component": "windows_session",
+            "operation": "provision",
+            "outcome": "failed",
+            "error_class": "provision_failed",
+            "failure_stage": "profile_create",
+            "native_error_kind": "hresult",
+            "native_error_code": 0x80070005u32
+        }]);
+        let capture = inspect_diagnostic_response(response);
+        let snapshot = capture.snapshot.expect("valid snapshot");
+        let event = &snapshot.events[0];
+        assert_eq!(event.failure_stage, "profile_create");
+        assert_eq!(event.native_error_kind, "hresult");
+        assert_eq!(event.native_error_code, Some(0x80070005u32));
     }
 
     #[test]

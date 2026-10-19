@@ -257,6 +257,13 @@ session_unavailable, session_changed, deadline_exceeded, cancelled, conflict,
 already_started, cleanup_failed, and readiness_stale. Native error text never
 crosses the boundary.
 
+An explicit local diagnostic snapshot may include a fixed `failure_stage` token
+and, when the failing Windows API exposes it, a numeric `native_error_code`
+tagged as `win32` or `hresult`. The slot reference is hashed before export.
+These fields identify where provisioning stopped without exposing native error
+text, credentials, SID, account name, or filesystem path. The bounded snapshot
+retains classified failures when high-volume background events continue.
+
 ### I. Readiness layers
 
 Readiness is a vector of timestamped checks, not one durable boolean:

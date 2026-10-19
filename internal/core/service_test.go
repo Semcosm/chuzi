@@ -109,7 +109,7 @@ func (testDiagnosticsPort) Snapshot(context.Context, diagnostics.ReportInput) (d
 		ID: "diag-snapshot-1", CreatedAt: time.Unix(1, 0).UTC(), Version: "test",
 		Platform: "windows", Arch: "amd64", Severity: diagnostics.SeverityError,
 		Category: "core", Summary: "Core unavailable",
-		Events: []observability.Event{{RequestID: "request-secret", Resource: "C:\\Users\\Chen", ErrorClass: "core_unavailable", Duration: 2 * time.Millisecond}},
+		Events: []observability.Event{{RequestID: "request-secret", Resource: "C:\\Users\\Chen", ErrorClass: "provision_failed", FailureStage: "profile_create", NativeErrorKind: "hresult", NativeErrorCode: 0x80070005, Duration: 2 * time.Millisecond}},
 	}, nil
 }
 
@@ -179,6 +179,9 @@ func TestGetDiagnosticSnapshotProjectsOnlyRedactedFields(t *testing.T) {
 	}
 	if snapshot.Events[0].DurationMS != 2 {
 		t.Fatalf("event duration = %d, want 2ms", snapshot.Events[0].DurationMS)
+	}
+	if snapshot.Events[0].FailureStage != "profile_create" || snapshot.Events[0].NativeErrorKind != "hresult" || snapshot.Events[0].NativeErrorCode != 0x80070005 {
+		t.Fatalf("native failure details = %#v", snapshot.Events[0])
 	}
 }
 
