@@ -1,16 +1,16 @@
 # CR-0123: diagnose Windows Core startup exits and close UI during installer lifecycle
 
 Base: main
-Head or Range: pending signed implementation commit
+Head or Range: 09cd256cab6f802a769e9aa0231a6df3c3e1715a (implementation commit)
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows Core startup diagnostics and installer UI shutdown
-Revision: 1
+Revision: 2
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: pending
+Head OID: 09cd256cab6f802a769e9aa0231a6df3c3e1715a
 Integrated Result: pending
 
 ## Summary
@@ -44,7 +44,19 @@ only UI shutdown mechanism.
   from piped JSON lines; no repository files were changed for this workaround.
 - Windows PowerShell parsed `scripts/windows-service-management.ps1`, and the
   new `StopUI` operation passed its no-running-UI smoke check.
-- Installer build and a matching-window close integration smoke are pending.
+- Rebuilt the Windows amd64 Core executables and browser-worker from this
+  implementation. Reused the CR-0122 Windows UI binary because `ui/windows/`
+  has no source changes after that build.
+- Inno Setup 6.7.3 compiled the operator installer successfully at
+  `dist/windows-uninstall-fix-test-20261019-09cd256c/installer/ChuziSetup.exe`
+  (SHA-256 `b64c6d039976029b0ee9c3901cc1f5901d0e94d7ec7688f1412e0257e505dbe3`).
+  The embedded Core version and commit match this implementation, all 16
+  release-manifest resource hashes and the installer checksum sidecar were
+  verified. The test installer is unsigned because no Windows code-signing
+  certificate is configured.
+- The actual install/uninstall cycle and a matching-window close integration
+  smoke remain pending for operator testing; this local build did not install
+  the package.
 
 ## Risk
 
@@ -53,9 +65,12 @@ error-class tokens; they do not record raw errors, paths, identities, or
 credentials. Installer lifecycle now fails closed if the exact installed UI
 does not exit normally within the wait bound. This can require the operator to
 close the app and retry; it avoids deleting files while its UI is still open.
-ProgramData and per-user settings remain governed by the existing data-retention
-prompt. No Windows session, WTS, RDP, Profile, Credential Manager, ACL, Agent,
-restart, shutdown, or Retire acceptance is claimed by these checks.
+If the operator, Core, or broker does not stop cleanly, uninstall also stops
+before removing registrations or files. ProgramData and per-user settings
+remain governed by the existing data-retention prompt. The local package build
+does not claim a successful live install/uninstall cycle. No Windows session,
+WTS, RDP, Profile, Credential Manager, ACL, Agent, restart, shutdown, or Retire
+acceptance is claimed by these checks.
 
 ## Rollback
 
