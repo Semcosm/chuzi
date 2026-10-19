@@ -517,7 +517,7 @@ func (r *windowsAllPoolReconciler) advanceClaimedSlotSession(ctx context.Context
 	if generation == 0 {
 		generation = 1
 	}
-	request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: generation, Requirement: pool.Requirement()}
+	request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: generation, PackageGeneration: slotPackageGeneration(provisioner), Requirement: pool.Requirement()}
 	recordCleanupFailure := func(current store.SlotSessionOperation, phase store.SlotSessionPhase, code string, cause error) error {
 		r.recordSessionEvent(observedAt(), "cleanup", string(phase), "failed", code, time.Since(startedAt), current.Attempt)
 		if _, leased, leaseErr := r.database.GetSlotLease(value.SlotID); leaseErr == nil && !leased {
@@ -611,6 +611,10 @@ func (r *windowsAllPoolReconciler) advanceClaimedSlotSession(ctx context.Context
 				}
 				return retryOperation(store.SlotSessionPhaseEnvironment, "environment_unavailable", updateErr)
 			}
+			// The runtime handoff is resolved above. Stamp the request only after
+			// that update so its package-generation fence matches the signed
+			// package the provisioner will validate.
+			request.PackageGeneration = slotPackageGeneration(provisioner)
 		}
 	}
 	if operation.DesiredState == "stopped" || operation.State == store.SlotSessionStopping || operation.State == store.SlotSessionCancelling {
@@ -955,7 +959,7 @@ func (r *windowsAllPoolReconciler) Shutdown(ctx context.Context) error {
 				if _, protected := protectedSlots[value.SlotID]; protected {
 					continue
 				}
-				request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: value.EnvironmentGeneration, Requirement: pool.Requirement()}
+				request := slot.ProvisionRequest{SlotID: value.SlotID, PoolID: value.PoolID, Ordinal: value.Ordinal, Owner: r.owner, EnvironmentGeneration: value.EnvironmentGeneration, PackageGeneration: slotPackageGeneration(provisioner), Requirement: pool.Requirement()}
 				if stopErr := stopper.StopSession(ctx, request); stopErr != nil && !errors.Is(stopErr, slot.ErrSlotNotFound) && first == nil {
 					first = stopErr
 				}
@@ -1024,6 +1028,13 @@ func (r *windowsAllPoolReconciler) provisionerForSlot(slotID string) (slotlifecy
 		return nil, slot.ErrSlotUnavailable
 	}
 	return provisioner, nil
+}
+
+func slotPackageGeneration(provisioner slotlifecycle.Provisioner) uint64 {
+	if provider, ok := provisioner.(interface{ PackageGeneration() uint64 }); ok {
+		return provider.PackageGeneration()
+	}
+	return 0
 }
 
 func (r *windowsAllPoolReconciler) GrantProfile(ctx context.Context, slotID, profilePath string) error {

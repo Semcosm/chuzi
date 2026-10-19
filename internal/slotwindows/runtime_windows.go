@@ -44,3 +44,15 @@ func (p *windowsProvisioner) UpdatePoolRuntime(ctx context.Context, pool slot.Po
 	p.options.AdapterScript = filepath.Clean(runtime.AdapterBridgePath())
 	return nil
 }
+
+// PackageGeneration reports the signed package generation selected by the
+// latest successful UpdatePoolRuntime call. Callers use it to stamp explicit
+// session operations with the same handoff that Provision and Inspect verify.
+func (p *windowsProvisioner) PackageGeneration() uint64 {
+	if p == nil {
+		return 0
+	}
+	p.runtimeMu.RLock()
+	defer p.runtimeMu.RUnlock()
+	return p.options.Runtime.PackageGeneration()
+}

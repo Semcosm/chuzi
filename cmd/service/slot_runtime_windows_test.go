@@ -73,6 +73,65 @@ type dynamicPoolProvisioner struct {
 	stopCalls int
 }
 
+type packageGenerationPoolProvisioner struct {
+	*dynamicPoolProvisioner
+	mu                   sync.Mutex
+	packageGeneration    uint64
+	provisionGenerations []uint64
+	inspectGenerations   []uint64
+	stopGenerations      []uint64
+}
+
+func (p *packageGenerationPoolProvisioner) UpdatePoolRuntime(context.Context, slot.PoolConfig) error {
+	p.mu.Lock()
+	p.packageGeneration = 9
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *packageGenerationPoolProvisioner) PackageGeneration() uint64 {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.packageGeneration
+}
+
+func (p *packageGenerationPoolProvisioner) validatePackageGeneration(request slot.ProvisionRequest) error {
+	if generation := p.PackageGeneration(); generation != 0 && request.PackageGeneration != generation {
+		return slotwindows.ErrInvalidOptions
+	}
+	return nil
+}
+
+func (p *packageGenerationPoolProvisioner) Provision(ctx context.Context, request slot.ProvisionRequest) (slot.ProvisionResult, error) {
+	if err := p.validatePackageGeneration(request); err != nil {
+		return slot.ProvisionResult{}, err
+	}
+	p.mu.Lock()
+	p.provisionGenerations = append(p.provisionGenerations, request.PackageGeneration)
+	p.mu.Unlock()
+	return p.dynamicPoolProvisioner.Provision(ctx, request)
+}
+
+func (p *packageGenerationPoolProvisioner) Inspect(ctx context.Context, request slot.ProvisionRequest) (slot.EnvironmentSummary, error) {
+	if err := p.validatePackageGeneration(request); err != nil {
+		return slot.EnvironmentSummary{}, err
+	}
+	p.mu.Lock()
+	p.inspectGenerations = append(p.inspectGenerations, request.PackageGeneration)
+	p.mu.Unlock()
+	return p.dynamicPoolProvisioner.Inspect(ctx, request)
+}
+
+func (p *packageGenerationPoolProvisioner) StopSession(ctx context.Context, request slot.ProvisionRequest) error {
+	if err := p.validatePackageGeneration(request); err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.stopGenerations = append(p.stopGenerations, request.PackageGeneration)
+	p.mu.Unlock()
+	return p.dynamicPoolProvisioner.StopSession(ctx, request)
+}
+
 func (p *dynamicPoolProvisioner) Provision(_ context.Context, request slot.ProvisionRequest) (slot.ProvisionResult, error) {
 	p.mu.Lock()
 	p.calls[request.PoolID]++
@@ -304,6 +363,56 @@ func TestSlotSessionReadinessStaysFalseUntilInspectPasses(t *testing.T) {
 	}
 	if completed.State != store.SlotSessionReady || !completed.AgentReady || !completed.WorkerReady {
 		t.Fatalf("completed readiness=%#v", completed)
+	}
+}
+
+func TestSlotSessionUsesResolvedPackageGenerationForStartInspectAndStop(t *testing.T) {
+	database, pool, operation, now := prepareSessionRuntimeTest(t, "package-generation")
+	defer database.Close()
+	provisioner := &packageGenerationPoolProvisioner{
+		dynamicPoolProvisioner: &dynamicPoolProvisioner{calls: make(map[string]int)},
+	}
+	reconciler := newSessionRuntimeTestReconciler(database, provisioner, pool, now)
+	if err := reconciler.ReconcileSlotSessionOperations(context.Background(), "service", now); err != nil {
+		t.Fatalf("start reconciliation failed: %v", err)
+	}
+	ready, err := database.GetSlotSessionOperation(operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready.State != store.SlotSessionReady || !ready.AgentReady || !ready.WorkerReady {
+		t.Fatalf("start did not reach ready with resolved package generation: %#v", ready)
+	}
+	if _, _, err := database.StopSlotSession(store.SlotSessionAction{
+		OperationID: ready.OperationID, Actor: "test", IdempotencyKey: "stop-package-generation", At: now.Add(time.Second),
+	}); err != nil {
+		t.Fatalf("stop intent failed: %v", err)
+	}
+	if err := reconciler.ReconcileSlotSessionOperations(context.Background(), "service", now.Add(time.Second)); err != nil {
+		t.Fatalf("stop reconciliation failed: %v", err)
+	}
+	stopped, err := database.GetSlotSessionOperation(operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.State != store.SlotSessionStopped {
+		t.Fatalf("stop did not complete: %#v", stopped)
+	}
+	provisioner.mu.Lock()
+	defer provisioner.mu.Unlock()
+	for name, generations := range map[string][]uint64{
+		"provision": provisioner.provisionGenerations,
+		"inspect":   provisioner.inspectGenerations,
+		"stop":      provisioner.stopGenerations,
+	} {
+		if len(generations) == 0 {
+			t.Fatalf("%s did not receive a request", name)
+		}
+		for _, generation := range generations {
+			if generation != 9 {
+				t.Fatalf("%s package generation = %d, want resolved generation 9", name, generation)
+			}
+		}
 	}
 }
 
