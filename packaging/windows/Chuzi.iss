@@ -172,7 +172,7 @@ begin
       ExpandConstant('{app}\CorePayload'), ExpandConstant('{commonappdata}\chuzi\data'),
       ExpandConstant('{app}')) then
     begin
-      ShowSetupMessage('无法停止 Chuzi 服务，卸载已停止。请等待会话排空后重试。', mbError);
+      ShowSetupMessage('无法关闭 Chuzi 窗口或停止 Core 服务，卸载已停止。请先关闭 Chuzi 后重试。', mbError);
       Abort;
     end;
     { Remove the fixed service and task while their management script still

@@ -197,22 +197,62 @@ func (c scmController) Stop(ctx context.Context) error {
 }
 
 func waitSCMState(ctx context.Context, s *mgr.Service, running bool) (Status, error) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	timeout := scmStopWaitTimeout
+	if running {
+		timeout = scmStartWaitTimeout
+	}
+	return waitSCMStateWithQuery(ctx, s.Query, running, timeout)
+}
+
+const (
+	scmStatePollInterval = 100 * time.Millisecond
+	scmStartWaitTimeout  = 2 * time.Minute
+	scmStopWaitTimeout   = 30 * time.Second
+	scmStartGracePeriod  = 500 * time.Millisecond
+)
+
+func waitSCMStateWithQuery(ctx context.Context, query func() (svc.Status, error), running bool, timeout time.Duration) (Status, error) {
+	if ctx == nil || query == nil || timeout <= 0 {
+		return Status{}, ErrHostUnavailable
+	}
+	ticker := time.NewTicker(scmStatePollInterval)
 	defer ticker.Stop()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	startedAt := time.Now()
+	startPendingSeen := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return Status{}, err
 		}
-		status, err := s.Query()
+		status, err := query()
 		if err != nil {
 			return Status{}, ErrHostUnavailable
 		}
-		if (running && status.State == svc.Running) || (!running && status.State == svc.Stopped) {
+		if running {
+			switch status.State {
+			case svc.Running:
+				return Status{State: mapServiceState(status.State), PID: int(status.ProcessId)}, nil
+			case svc.StartPending:
+				startPendingSeen = true
+			case svc.Stopped:
+				// StartService can return just before the service publishes its first
+				// StartPending status. Allow that small race, but fail promptly once
+				// an accepted start has returned to Stopped.
+				if startPendingSeen || time.Since(startedAt) >= scmStartGracePeriod {
+					return Status{}, ErrHostUnavailable
+				}
+			default:
+				return Status{}, ErrHostUnavailable
+			}
+		} else if status.State == svc.Stopped {
 			return Status{State: mapServiceState(status.State), PID: int(status.ProcessId)}, nil
 		}
 		select {
 		case <-ctx.Done():
 			return Status{}, ctx.Err()
+		case <-deadline.C:
+			return Status{}, ErrHostUnavailable
 		case <-ticker.C:
 		}
 	}

@@ -15,13 +15,21 @@ import (
 )
 
 type windowsServiceHost struct {
-	options serviceOptions
-	prepare func(context.Context, serviceOptions) (serviceOptions, error)
-	run     func(context.Context, serviceOptions) error
+	options  serviceOptions
+	prepare  func(context.Context, serviceOptions) (serviceOptions, error)
+	run      func(context.Context, serviceOptions) error
+	diagnose func(serviceHostDiagnosticEvent)
+}
+
+func (h windowsServiceHost) recordDiagnostic(event serviceHostDiagnosticEvent) {
+	if h.diagnose != nil {
+		h.diagnose(event)
+	}
 }
 
 func (h windowsServiceHost) Execute(_ []string, requests <-chan svc.ChangeRequest, statuses chan<- svc.Status) (bool, uint32) {
 	statuses <- svc.Status{State: svc.StartPending, WaitHint: 5000}
+	h.recordDiagnostic(serviceHostDiagnosticEvent{Stage: "service_dispatch", Outcome: "entered"})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	prepare := h.prepare
@@ -40,15 +48,34 @@ func (h windowsServiceHost) Execute(_ []string, requests <-chan svc.ChangeReques
 	go func() {
 		options, err := prepare(ctx, h.options)
 		if err != nil {
+			h.recordDiagnostic(serviceHostDiagnosticEvent{
+				Stage: serviceStartupStage(err, "service_preparation"), Outcome: "failed", ErrorClass: serviceHostErrorClass(err),
+			})
 			events <- serviceEvent{err: err}
 			return
 		}
 		if err := ctx.Err(); err != nil {
+			h.recordDiagnostic(serviceHostDiagnosticEvent{
+				Stage: "service_preparation", Outcome: "cancelled", ErrorClass: serviceHostErrorClass(err),
+			})
 			events <- serviceEvent{err: err}
 			return
 		}
+		h.recordDiagnostic(serviceHostDiagnosticEvent{Stage: "service_preparation", Outcome: "completed"})
 		events <- serviceEvent{ready: true}
-		events <- serviceEvent{err: runner(ctx, options)}
+		runErr := runner(ctx, options)
+		event := serviceHostDiagnosticEvent{Stage: serviceStartupStage(runErr, "service_runtime")}
+		switch {
+		case runErr != nil:
+			event.Outcome = "failed"
+			event.ErrorClass = serviceHostErrorClass(runErr)
+		case ctx.Err() != nil:
+			event.Outcome = "stopped"
+		default:
+			event.Outcome = "returned"
+		}
+		h.recordDiagnostic(event)
+		events <- serviceEvent{err: runErr}
 	}()
 	starting := true
 	stopping := false
@@ -63,6 +90,7 @@ func (h windowsServiceHost) Execute(_ []string, requests <-chan svc.ChangeReques
 				starting = false
 				if !stopping {
 					statuses <- svc.Status{State: svc.Running, Accepts: svc.AcceptStop | svc.AcceptShutdown}
+					h.recordDiagnostic(serviceHostDiagnosticEvent{Stage: "service_state", Outcome: "running"})
 				}
 				continue
 			}
@@ -94,7 +122,12 @@ func (h windowsServiceHost) Execute(_ []string, requests <-chan svc.ChangeReques
 				continue
 			}
 			stopping = true
+			control := "stop"
+			if request.Cmd == svc.Shutdown {
+				control = "shutdown"
+			}
 			statuses <- svc.Status{State: svc.StopPending, WaitHint: shutdownWaitHint(h.options.shutdownTimeout)}
+			h.recordDiagnostic(serviceHostDiagnosticEvent{Stage: "service_control", Outcome: "received", Control: control})
 			cancel()
 			limit := h.options.shutdownTimeout
 			if limit <= 0 {
@@ -135,7 +168,13 @@ func runServiceHost(ctx context.Context, options serviceOptions) error {
 	}
 	// Register with SCM before filesystem, token, or host probes. SCM allows
 	// only a short connection window after process creation.
-	return svc.Run(servicehost.ServiceName, windowsServiceHost{options: options})
+	err := svc.Run(servicehost.ServiceName, windowsServiceHost{options: options, diagnose: recordServiceHostDiagnostic})
+	if err != nil {
+		recordServiceHostDiagnostic(serviceHostDiagnosticEvent{
+			Stage: "service_dispatch", Outcome: "failed", ErrorClass: serviceHostErrorClass(err),
+		})
+	}
+	return err
 }
 
 func prepareWindowsService(ctx context.Context, options serviceOptions) (serviceOptions, error) {
@@ -146,41 +185,41 @@ func prepareWindowsService(ctx context.Context, options serviceOptions) (service
 		return serviceOptions{}, err
 	}
 	if err := validateFixedServiceEntrypoint(options.configPath); err != nil {
-		return serviceOptions{}, err
+		return serviceOptions{}, withServiceStartupStage("entrypoint_validation", err)
 	}
 	if options.configPath == "" {
-		return serviceOptions{}, servicehost.ErrInvalidConfig
+		return serviceOptions{}, withServiceStartupStage("configuration_path", servicehost.ErrInvalidConfig)
 	}
 	if err := servicehost.ValidateServiceToken(servicehost.ProductionIdentity()); err != nil {
-		return serviceOptions{}, err
+		return serviceOptions{}, withServiceStartupStage("service_identity", err)
 	}
 	if err := servicehost.EnableServicePrivileges(servicehost.ProductionIdentity()); err != nil {
-		return serviceOptions{}, err
+		return serviceOptions{}, withServiceStartupStage("service_privileges", err)
 	}
 	// SCM supplies only the fixed service/config arguments. Derive every
 	// executable and script used by the LocalSystem process from that signed
 	// installation root so a relative PATH or working directory cannot select
 	// a user-writable worker.
 	if err := pinServiceRuntime(&options); err != nil {
-		return serviceOptions{}, err
+		return serviceOptions{}, withServiceStartupStage("runtime_pin", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return serviceOptions{}, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return serviceOptions{}, servicehost.ErrHostUnavailable
+		return serviceOptions{}, withServiceStartupStage("runtime_executable", servicehost.ErrHostUnavailable)
 	}
 	runtime, err := servicehost.NewTrustedRuntime(filepath.Dir(filepath.Clean(executable)))
 	if err != nil {
-		return serviceOptions{}, err
+		return serviceOptions{}, withServiceStartupStage("runtime_layout", err)
 	}
 	requireAuthenticode, err := servicehost.RuntimeSignaturePolicy(runtime.Root)
 	if err != nil {
-		return serviceOptions{}, err
+		return serviceOptions{}, withServiceStartupStage("signature_policy", err)
 	}
 	if err := verifyWindowsServiceRuntime(runtime, requireAuthenticode); err != nil {
-		return serviceOptions{}, err
+		return serviceOptions{}, withServiceStartupStage("runtime_integrity", err)
 	}
 	return options, nil
 }

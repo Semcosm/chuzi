@@ -14,20 +14,54 @@ import (
 	"github.com/Semcosm/chuzi/internal/slot"
 )
 
+type serviceStartupStageError struct {
+	stage string
+	err   error
+}
+
+func (e *serviceStartupStageError) Error() string {
+	if e == nil || e.err == nil {
+		return "service startup failed"
+	}
+	return e.err.Error()
+}
+
+func (e *serviceStartupStageError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func withServiceStartupStage(stage string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &serviceStartupStageError{stage: stage, err: err}
+}
+
+func serviceStartupStage(err error, fallback string) string {
+	var staged *serviceStartupStageError
+	if errors.As(err, &staged) && staged.stage != "" {
+		return staged.stage
+	}
+	return fallback
+}
+
 // run owns the long-lived service loop. Runtime assembly and maintenance
 // commands live in separate modules so this supervisor only coordinates
 // lifecycle, endpoints, and scheduling.
 func run(ctx context.Context, options serviceOptions) (runErr error) {
 	cfg, err := config.Load(options.configPath)
 	if err != nil {
-		return err
+		return withServiceStartupStage("configuration_load", err)
 	}
 	if strings.TrimSpace(options.healthListen) != "" {
 		cfg.Health.Listen = options.healthListen
 	}
 	runtime, err := assembleRuntime(cfg, options, time.Now)
 	if err != nil {
-		return err
+		return withServiceStartupStage("runtime_assembly", err)
 	}
 	defer func() {
 		if runtime.rdp != nil {
@@ -49,7 +83,7 @@ func run(ctx context.Context, options serviceOptions) (runErr error) {
 	}()
 	endpoints, err := wireEndpointRunners(ctx, runtime, cfg)
 	if err != nil {
-		return err
+		return withServiceStartupStage("endpoint_setup", err)
 	}
 	backgroundCtx, cancelBackground := context.WithCancel(ctx)
 	defer cancelBackground()

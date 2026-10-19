@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Install", "Stop", "RepairFileAccess", "UpgradePrepare", "Backup", "Rollback", "CleanupBackup", "ConfirmResources", "ConfirmDataOwnership", "UninstallPrepare", "Repair", "Uninstall", "Status")]
+    [ValidateSet("Install", "Stop", "StopUI", "RepairFileAccess", "UpgradePrepare", "Backup", "Rollback", "CleanupBackup", "ConfirmResources", "ConfirmDataOwnership", "UninstallPrepare", "Repair", "Uninstall", "Status")]
     [string]$Operation,
     [string]$RuntimeRoot = "",
     [string]$DataRoot = "",
@@ -573,6 +573,7 @@ function Install-ChuziServices {
 }
 
 function Stop-ChuziServices {
+    Stop-ChuziUI
     # Core shutdown needs the interactive broker to finish exact-session and
     # credential cleanup. Keep the broker alive until SCM confirms Core stopped.
     $query = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
@@ -587,6 +588,48 @@ function Stop-ChuziServices {
     Stop-BrokerTask
 }
 
+function Stop-ChuziUI {
+    $uiPath = [IO.Path]::GetFullPath((Join-Path $install "Chuzi.Native.Windows.exe"))
+    $candidates = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='Chuzi.Native.Windows.exe'" -ErrorAction Stop)
+    $processes = @()
+    foreach ($candidate in $candidates) {
+        $candidatePath = [string]$candidate.ExecutablePath
+        if ([string]::IsNullOrWhiteSpace($candidatePath)) { continue }
+        try {
+            $candidatePath = [IO.Path]::GetFullPath($candidatePath)
+        } catch {
+            continue
+        }
+        if (-not [string]::Equals($candidatePath, $uiPath, [StringComparison]::OrdinalIgnoreCase)) { continue }
+
+        $process = Get-Process -Id ([int]$candidate.ProcessId) -ErrorAction SilentlyContinue
+        if ($null -eq $process) { continue }
+        $process.Refresh()
+        if ($process.HasExited) { continue }
+        $processes += $process
+    }
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    foreach ($process in $processes) {
+        $process.Refresh()
+        if ($process.HasExited) { continue }
+        if ($process.MainWindowHandle -ne 0) {
+            try {
+                [void]$process.CloseMainWindow()
+            } catch {
+                throw "ui_close_failed"
+            }
+        }
+    }
+    foreach ($process in $processes) {
+        $process.Refresh()
+        if ($process.HasExited) { continue }
+        $remaining = 15000 - [int]$deadline.ElapsedMilliseconds
+        if ($remaining -le 0 -or -not $process.WaitForExit($remaining)) {
+            throw "ui_stop_timeout"
+        }
+    }
+}
+
 switch ($Operation) {
     "Status" {
         $result = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
@@ -594,6 +637,7 @@ switch ($Operation) {
         exit $result.ExitCode
     }
     "Stop" { Stop-ChuziServices }
+    "StopUI" { Stop-ChuziUI }
     "RepairFileAccess" { Repair-ChuziFileAccess }
     "ConfirmResources" { Confirm-ResourcesReleased }
     "ConfirmDataOwnership" { Confirm-DataOwnership }
