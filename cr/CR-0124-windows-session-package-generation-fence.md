@@ -1,7 +1,7 @@
 # CR-0124: align Windows session requests with signed package generation
 
 Base: main
-Head or Range: implementation commit to follow
+Head or Range: 238bf7cc79c8b9e25f0efc0f8037af333d45a33d (implementation commit)
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session package generation fence
@@ -10,7 +10,7 @@ Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: pending
+Head OID: 238bf7cc79c8b9e25f0efc0f8037af333d45a33d
 Integrated Result: pending
 
 ## Summary
@@ -39,7 +39,16 @@ left the pool with zero ready capacity and the UI showed no Windows session.
 - Policy and quality validators passed with the local Git Bash `jq` wrapper
   that removes Windows CRLF from piped JSON output. Supply-chain, action
   pinning, repository-shape, build-contract, and `git diff --check` passed.
-- Local installer build and SHA-256 evidence pending.
+- Built the Windows Core payload and Slint installer locally with the pinned
+  PresentMon 2.6.0 binary and the already-installed vcpkg FreeRDP package.
+  Inno Setup 6.7.3 produced
+  `dist/session-runtime-package-generation-fix-test-20261019-238bf7c/ChuziSetup.exe`
+  for version `test-20261019-238bf7cc79c8`, commit
+  `238bf7cc79c8b9e25f0efc0f8037af333d45a33d`. The installer SHA-256 is
+  `e494f5117f7564327af502d0732f3e2693b2e1e6723b2a5b2e81b12835016a05`;
+  its sidecar and all 16 embedded release-manifest resource hashes/sizes were
+  verified. The installer is unsigned because no Windows code-signing
+  certificate is configured. The package has not been installed yet.
 
 ## Risk
 
@@ -48,7 +57,10 @@ that the provisioner validates. No caller-supplied generation or package path
 is trusted. This is a Core request-construction fix; it does not prove native
 WTS, RDP, Profile, Credential Manager, ACL, Agent, restart, shutdown, or Retire
 behavior. The current installed Core also reports the interactive helper as
-unavailable, which remains a later startup prerequisite.
+unavailable and the pool has zero ready slots; those remain runtime checks
+after the operator installs this package. Windows WTS, RDP, Profile,
+Credential Manager, ACL, Agent, restart, shutdown, and Retire acceptance remain
+pending. No native session acceptance is claimed by the local build.
 
 ## Rollback
 
