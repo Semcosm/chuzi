@@ -663,9 +663,7 @@ func (s *Store) environmentReadiness(config slot.PoolConfig) (bool, string, uint
 }
 
 func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) error {
-	if config.DesiredState == "" {
-		config.DesiredState = "enabled"
-	}
+	config = config.Normalized()
 	if err := config.Validate(); err != nil {
 		return err
 	}
@@ -679,18 +677,26 @@ func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) e
 	}
 	byOrdinal := make(map[int]slot.Slot, len(slots))
 	for _, current := range slots {
-		byOrdinal[current.Ordinal] = current
+		if current.Status == slot.Deleted {
+			// A deleted slot ID is a permanent tombstone. It no longer owns the
+			// desired ordinal, so a later pool resume can create a new incarnation.
+			continue
+		}
+		if _, exists := byOrdinal[current.Ordinal]; !exists {
+			byOrdinal[current.Ordinal] = current
+		}
 	}
 	for ordinal := 1; ordinal <= target; ordinal++ {
 		current, ok := byOrdinal[ordinal]
 		if !ok {
-			created := slot.Slot{SlotID: fmt.Sprintf("%s-%03d", config.PoolID, ordinal), Ordinal: ordinal, PoolID: config.PoolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Capabilities: append([]string(nil), config.Capabilities...), ManifestDigest: config.ManifestDigest, Signer: config.Signer, RequireTrusted: config.RequireTrusted, Status: slot.Unprovisioned, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
+			slotID, err := nextPoolSlotIDTx(tx, config.PoolID, ordinal)
+			if err != nil {
+				return err
+			}
+			created := slot.Slot{SlotID: slotID, Ordinal: ordinal, PoolID: config.PoolID, EnvironmentID: config.EnvironmentID, EnvironmentVersion: config.EnvironmentVersion, Capabilities: append([]string(nil), config.Capabilities...), ManifestDigest: config.ManifestDigest, Signer: config.Signer, RequireTrusted: config.RequireTrusted, Status: slot.Unprovisioned, CreatedAt: now.UTC(), UpdatedAt: now.UTC()}
 			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), created.SlotID, created); err != nil {
 				return err
 			}
-			continue
-		}
-		if current.Status == slot.Deleted {
 			continue
 		}
 		targetChanged := current.EnvironmentID != config.EnvironmentID || current.EnvironmentVersion != config.EnvironmentVersion || current.ManifestDigest != config.ManifestDigest || current.Signer != config.Signer || current.RequireTrusted != config.RequireTrusted || !capabilitiesEqual(current.Capabilities, config.Capabilities)
@@ -704,6 +710,16 @@ func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) e
 				current.Status = slot.Draining
 			} else {
 				current.Status = slot.Provisioning
+			}
+			current.UpdatedAt = now.UTC()
+			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
+				return err
+			}
+		} else if current.Status == slot.Retiring {
+			if current.EnvironmentGeneration == 0 {
+				current.Status = slot.Unprovisioned
+			} else {
+				current.Status = slot.Ready
 			}
 			current.UpdatedAt = now.UTC()
 			if err := putJSON(tx.Bucket([]byte(migrations.ExecutionSlotsBucket)), current.SlotID, current); err != nil {
@@ -727,6 +743,23 @@ func reconcilePoolSlotsTx(tx *bbolt.Tx, config slot.PoolConfig, now time.Time) e
 		}
 	}
 	return nil
+}
+
+func nextPoolSlotIDTx(tx *bbolt.Tx, poolID string, ordinal int) (string, error) {
+	bucket := tx.Bucket([]byte(migrations.ExecutionSlotsBucket))
+	if bucket == nil || strings.TrimSpace(poolID) == "" || ordinal < 1 {
+		return "", ErrInvalidRequest
+	}
+	base := fmt.Sprintf("%s-%03d", poolID, ordinal)
+	if bucket.Get([]byte(base)) == nil {
+		return base, nil
+	}
+	for incarnation := 2; ; incarnation++ {
+		candidate := fmt.Sprintf("%s-inc-%d", base, incarnation)
+		if bucket.Get([]byte(candidate)) == nil {
+			return candidate, nil
+		}
+	}
 }
 
 func (s *Store) ReconcileJobPoolControl(poolID string, at time.Time) (JobPoolProjection, error) {

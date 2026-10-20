@@ -74,12 +74,18 @@ func ValidateFixedDataRoot(root string) error {
 	return nil
 }
 
-func (c scmController) open() (*mgr.Mgr, *mgr.Service, error) {
-	m, err := mgr.Connect()
+func (c scmController) open(serviceAccess uint32) (*mgr.Mgr, *mgr.Service, error) {
+	// The launcher is an interactive operator and only needs to query the
+	// fixed service. mgr.Connect/OpenService request ALL_ACCESS, which is
+	// intentionally unavailable to that caller and made a healthy service look
+	// like an unavailable host. Request the smallest SCM/service rights for the
+	// operation instead; Install/Uninstall retain their separate admin path.
+	handle, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
 	if err != nil {
 		return nil, nil, ErrHostUnavailable
 	}
-	s, err := m.OpenService(ServiceName)
+	m := &mgr.Mgr{Handle: handle}
+	serviceHandle, err := windows.OpenService(handle, windows.StringToUTF16Ptr(ServiceName), serviceAccess)
 	if err != nil {
 		_ = m.Disconnect()
 		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
@@ -87,7 +93,7 @@ func (c scmController) open() (*mgr.Mgr, *mgr.Service, error) {
 		}
 		return nil, nil, ErrHostUnavailable
 	}
-	return m, s, nil
+	return m, &mgr.Service{Name: ServiceName, Handle: serviceHandle}, nil
 }
 
 func (c scmController) compatible(s *mgr.Service) error {
@@ -105,7 +111,7 @@ func (c scmController) Status(ctx context.Context) (Status, error) {
 	if err := ctx.Err(); err != nil {
 		return Status{}, err
 	}
-	m, s, err := c.open()
+	m, s, err := c.open(windows.SERVICE_QUERY_CONFIG | windows.SERVICE_QUERY_STATUS)
 	if err != nil {
 		if errors.Is(err, ErrNotInstalled) {
 			return Status{State: StateStopped}, err
@@ -141,7 +147,7 @@ func (c scmController) Start(ctx context.Context) (Status, error) {
 	if err := ctx.Err(); err != nil {
 		return Status{}, err
 	}
-	m, s, err := c.open()
+	m, s, err := c.open(windows.SERVICE_QUERY_CONFIG | windows.SERVICE_QUERY_STATUS | windows.SERVICE_START)
 	if err != nil {
 		return Status{}, err
 	}
@@ -167,7 +173,7 @@ func (c scmController) Stop(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	m, s, err := c.open()
+	m, s, err := c.open(windows.SERVICE_QUERY_CONFIG | windows.SERVICE_QUERY_STATUS | windows.SERVICE_STOP)
 	if err != nil {
 		if errors.Is(err, ErrNotInstalled) {
 			return nil
@@ -191,22 +197,62 @@ func (c scmController) Stop(ctx context.Context) error {
 }
 
 func waitSCMState(ctx context.Context, s *mgr.Service, running bool) (Status, error) {
-	ticker := time.NewTicker(100 * time.Millisecond)
+	timeout := scmStopWaitTimeout
+	if running {
+		timeout = scmStartWaitTimeout
+	}
+	return waitSCMStateWithQuery(ctx, s.Query, running, timeout)
+}
+
+const (
+	scmStatePollInterval = 100 * time.Millisecond
+	scmStartWaitTimeout  = 2 * time.Minute
+	scmStopWaitTimeout   = 30 * time.Second
+	scmStartGracePeriod  = 500 * time.Millisecond
+)
+
+func waitSCMStateWithQuery(ctx context.Context, query func() (svc.Status, error), running bool, timeout time.Duration) (Status, error) {
+	if ctx == nil || query == nil || timeout <= 0 {
+		return Status{}, ErrHostUnavailable
+	}
+	ticker := time.NewTicker(scmStatePollInterval)
 	defer ticker.Stop()
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	startedAt := time.Now()
+	startPendingSeen := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return Status{}, err
 		}
-		status, err := s.Query()
+		status, err := query()
 		if err != nil {
 			return Status{}, ErrHostUnavailable
 		}
-		if (running && status.State == svc.Running) || (!running && status.State == svc.Stopped) {
+		if running {
+			switch status.State {
+			case svc.Running:
+				return Status{State: mapServiceState(status.State), PID: int(status.ProcessId)}, nil
+			case svc.StartPending:
+				startPendingSeen = true
+			case svc.Stopped:
+				// StartService can return just before the service publishes its first
+				// StartPending status. Allow that small race, but fail promptly once
+				// an accepted start has returned to Stopped.
+				if startPendingSeen || time.Since(startedAt) >= scmStartGracePeriod {
+					return Status{}, ErrHostUnavailable
+				}
+			default:
+				return Status{}, ErrHostUnavailable
+			}
+		} else if status.State == svc.Stopped {
 			return Status{State: mapServiceState(status.State), PID: int(status.ProcessId)}, nil
 		}
 		select {
 		case <-ctx.Done():
 			return Status{}, ctx.Err()
+		case <-deadline.C:
+			return Status{}, ErrHostUnavailable
 		case <-ticker.C:
 		}
 	}

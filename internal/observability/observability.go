@@ -14,14 +14,18 @@ import (
 // Event contains only classified, non-secret operational metadata. Callers
 // must not add raw errors, credentials, message bodies, or account IDs.
 type Event struct {
-	At         time.Time     `json:"at,omitempty"`
-	Component  string        `json:"component,omitempty"`
-	Operation  string        `json:"operation,omitempty"`
-	Outcome    string        `json:"outcome,omitempty"`
-	RequestID  string        `json:"request_id,omitempty"`
-	Resource   string        `json:"resource,omitempty"`
-	ErrorClass string        `json:"error_class,omitempty"`
-	Duration   time.Duration `json:"-"`
+	At              time.Time     `json:"at,omitempty"`
+	Component       string        `json:"component,omitempty"`
+	Operation       string        `json:"operation,omitempty"`
+	Outcome         string        `json:"outcome,omitempty"`
+	RequestID       string        `json:"request_id,omitempty"`
+	Resource        string        `json:"resource,omitempty"`
+	ErrorClass      string        `json:"error_class,omitempty"`
+	FailureStage    string        `json:"failure_stage,omitempty"`
+	NativeErrorKind string        `json:"native_error_kind,omitempty"`
+	NativeErrorCode uint32        `json:"native_error_code,omitempty"`
+	Attempt         int           `json:"attempt,omitempty"`
+	Duration        time.Duration `json:"-"`
 }
 
 // Sink receives redacted operational events.
@@ -64,11 +68,20 @@ func SanitizeEvent(event Event, fallback time.Time) Event {
 		event.Resource = RedactIdentifier(event.Resource)
 	}
 	event.ErrorClass = safeField(event.ErrorClass)
+	event.FailureStage = safeField(event.FailureStage)
+	event.NativeErrorKind = safeField(event.NativeErrorKind)
+	if event.NativeErrorKind != "win32" && event.NativeErrorKind != "hresult" {
+		event.NativeErrorKind = ""
+		event.NativeErrorCode = 0
+	}
 	if event.Duration < 0 {
 		event.Duration = 0
 	}
 	if event.Duration > 24*time.Hour {
 		event.Duration = 24 * time.Hour
+	}
+	if event.Attempt < 0 || event.Attempt > 64 {
+		event.Attempt = 0
 	}
 	return event
 }
@@ -99,11 +112,32 @@ func (b *EventBuffer) Record(event Event) {
 	event = SanitizeEvent(event, time.Now().UTC())
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.events = append(b.events, event)
-	if excess := len(b.events) - b.limit; excess > 0 {
-		copy(b.events, b.events[excess:])
-		b.events = b.events[:b.limit]
+	if len(b.events) < b.limit {
+		b.events = append(b.events, event)
+		return
 	}
+	// Keep classified failures available for an explicit support snapshot even
+	// when high-volume idle events continue after the failure. Ordinary events
+	// still rotate through the remaining capacity.
+	remove := -1
+	for index, current := range b.events {
+		if !priorityEvent(current) {
+			remove = index
+			break
+		}
+	}
+	if remove < 0 {
+		if !priorityEvent(event) {
+			return
+		}
+		remove = 0
+	}
+	copy(b.events[remove:], b.events[remove+1:])
+	b.events[len(b.events)-1] = event
+}
+
+func priorityEvent(event Event) bool {
+	return event.Outcome == "failed" || event.ErrorClass != ""
 }
 
 func (b *EventBuffer) Snapshot(limit int) []Event {

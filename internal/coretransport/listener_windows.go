@@ -68,7 +68,7 @@ func DialWithConfig(ctx context.Context, path string, config Config) (net.Conn, 
 	if err != nil {
 		return nil, err
 	}
-	if err := validatePipeServerIdentity(conn, config.ExpectedServerExecutable); err != nil {
+	if err := validatePipeServerIdentity(conn, config.ExpectedServerExecutable, config.ExpectedServerPID); err != nil {
 		_ = conn.Close()
 		return nil, err
 	}

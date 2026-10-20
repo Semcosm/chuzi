@@ -10,7 +10,7 @@ import (
 )
 
 func TestManagedIdentityValidationRejectsUntrustedValues(t *testing.T) {
-	valid := ManagedIdentity{SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}
+	valid := ManagedIdentity{PoolID: "pool-a", SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}
 	if err := valid.validate(); err != nil {
 		t.Fatalf("valid managed identity rejected: %v", err)
 	}
@@ -39,7 +39,7 @@ func (noCredentialBootstrapper) Stop(context.Context, ManagedIdentity, Bootstrap
 
 func TestStartManagedSessionDoesNotExposePasswordToPublicProvider(t *testing.T) {
 	provider := noCredentialBootstrapper{}
-	_, err := startManagedSession(context.Background(), provider, ManagedIdentity{SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}, "derived-user", []uint16{'s', 'e', 'c', 0})
+	_, err := startManagedSession(context.Background(), provider, ManagedIdentity{PoolID: "pool-a", SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}, "derived-user", []uint16{'s', 'e', 'c', 0})
 	if !errors.Is(err, ErrSessionBootstrapUnavailable) {
 		t.Fatalf("unexpected provider error: %v", err)
 	}
@@ -61,7 +61,7 @@ func (a *recordingLoginAdapter) Stop(context.Context, ManagedIdentity, Bootstrap
 func TestSessionLoginAdapterPasswordBufferIsClearedAfterCall(t *testing.T) {
 	var adapter recordingLoginAdapter
 	password := []uint16{'s', 'e', 'c', 0}
-	_, err := startManagedLoginSession(context.Background(), &adapter, ManagedIdentity{SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}, "derived-user", password)
+	_, err := startManagedLoginSession(context.Background(), &adapter, ManagedIdentity{PoolID: "pool-a", SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}, "derived-user", password)
 	if err != nil {
 		t.Fatal(err)
 	}

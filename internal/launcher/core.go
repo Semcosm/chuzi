@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/coretransport"
 	"github.com/Semcosm/chuzi/internal/servicehost"
 )
@@ -165,7 +166,14 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 	if pid <= 0 {
 		pid = m.readPID()
 	}
-	endpointReady := m.ready(ctx)
+	endpointReady := false
+	if runtime.GOOS == "windows" {
+		if controllerErr == nil && serviceState.PID > 0 && serviceState.Status != ServiceStopped {
+			endpointReady = m.readyWithPID(ctx, uint32(serviceState.PID))
+		}
+	} else {
+		endpointReady = m.readyWithPID(ctx, 0)
+	}
 	// Windows readiness is SCM-backed. A reachable pipe is not sufficient when
 	// the service is missing or incompatible, because a manually started or
 	// same-name process must never become the production host by accident.
@@ -209,7 +217,11 @@ func (m *CoreManager) Status(ctx context.Context) (CoreStatus, error) {
 		}
 	}
 	if endpointReady {
-		capabilities, err := m.capabilities(ctx)
+		servicePID := uint32(0)
+		if serviceState.PID > 0 {
+			servicePID = uint32(serviceState.PID)
+		}
+		capabilities, err := m.capabilities(ctx, servicePID)
 		if err != nil {
 			result.CapabilityStatus = "probe_error"
 		} else {
@@ -254,8 +266,8 @@ type coreCapabilities struct {
 	Methods []string `json:"methods"`
 }
 
-func (m *CoreManager) capabilities(ctx context.Context) (coreCapabilities, error) {
-	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
+func (m *CoreManager) capabilities(ctx context.Context, servicePID uint32) (coreCapabilities, error) {
+	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath, ExpectedServerPID: servicePID})
 	if err != nil {
 		return coreCapabilities{}, err
 	}
@@ -398,7 +410,15 @@ func (m *CoreManager) Call(ctx context.Context, method string, params json.RawMe
 	if !json.Valid(params) {
 		return nil, fmt.Errorf("%w: invalid core parameters", ErrInvalidPath)
 	}
-	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
+	servicePID := uint32(0)
+	if runtime.GOOS == "windows" {
+		var pidErr error
+		servicePID, pidErr = m.runningServicePID(ctx)
+		if pidErr != nil {
+			return nil, ErrCoreUnavailable
+		}
+	}
+	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath, ExpectedServerPID: servicePID})
 	if err != nil {
 		return nil, ErrCoreUnavailable
 	}
@@ -414,12 +434,38 @@ func (m *CoreManager) Call(ctx context.Context, method string, params json.RawMe
 }
 
 func (m *CoreManager) ready(ctx context.Context) bool {
-	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath})
+	if runtime.GOOS == "windows" {
+		servicePID, err := m.runningServicePID(ctx)
+		if err != nil {
+			return false
+		}
+		return m.readyWithPID(ctx, servicePID)
+	}
+	return m.readyWithPID(ctx, 0)
+}
+
+func (m *CoreManager) readyWithPID(ctx context.Context, servicePID uint32) bool {
+	client, err := connectCore(ctx, coretransport.EndpointPath(m.Root), coretransport.Config{ExpectedServerExecutable: m.ServicePath, ExpectedServerPID: servicePID})
 	if err != nil {
 		return false
 	}
 	_ = client.Close()
 	return true
+}
+
+func (m *CoreManager) runningServicePID(ctx context.Context) (uint32, error) {
+	controller, err := m.serviceController()
+	if err != nil {
+		return 0, err
+	}
+	state, err := controller.Status(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if state.PID <= 0 || (state.Status != ServiceRunning && state.Status != ServiceStartPending && state.Status != ServiceStopPending) {
+		return 0, ErrCoreUnavailable
+	}
+	return uint32(state.PID), nil
 }
 
 func (m *CoreManager) waitReady(ctx context.Context) error {
@@ -505,11 +551,40 @@ func (m *CoreManager) SavePoolMode(ctx context.Context, mode, poolID string, rev
 	if err != nil {
 		return nil, err
 	}
-	if status.Running {
-		return nil, errors.New("core_stop_required")
-	}
 	if !status.Installed {
 		return nil, ErrNotFound
+	}
+	if runtime.GOOS == "windows" {
+		wasRunning := status.Running
+		if !wasRunning {
+			if _, err := m.Start(ctx); err != nil {
+				return nil, err
+			}
+		}
+		params, marshalErr := json.Marshal(coreapi.PoolModeRequest{Mode: mode, PoolID: poolID, ExpectedRevision: revision})
+		if marshalErr != nil {
+			if !wasRunning {
+				_ = m.Stop(context.Background())
+			}
+			return nil, errors.New("pool_mode_save_failed")
+		}
+		output, callErr := m.Call(ctx, coretransport.MethodConfigurePoolMode, params)
+		if callErr != nil {
+			if !wasRunning {
+				_ = m.Stop(context.Background())
+			}
+			return nil, poolModeCoreError(callErr)
+		}
+		if stopErr := m.Stop(ctx); stopErr != nil {
+			return nil, stopErr
+		}
+		if !json.Valid(output) {
+			return nil, errors.New("pool_mode_save_failed")
+		}
+		return output, nil
+	}
+	if status.Running {
+		return nil, errors.New("core_stop_required")
 	}
 	if err := m.writeConfig(); err != nil {
 		return nil, err
@@ -532,6 +607,21 @@ func (m *CoreManager) SavePoolMode(ctx context.Context, mode, poolID string, rev
 		return nil, errors.New("pool_mode_save_failed")
 	}
 	return output, nil
+}
+
+func poolModeCoreError(err error) error {
+	switch coreapi.CodeOf(err) {
+	case coreapi.CodeInvalidArgument:
+		return errors.New("invalid_pool_mode")
+	case coreapi.CodeNotFound:
+		return errors.New("pool_not_found")
+	case coreapi.CodeConflict:
+		return errors.New("pool_cleanup_required")
+	case coreapi.CodeUnavailable:
+		return errors.New("environment_unavailable")
+	default:
+		return errors.New("pool_mode_save_failed")
+	}
 }
 
 func (m *CoreManager) readPID() int {

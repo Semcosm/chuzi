@@ -144,7 +144,9 @@ Slot records additionally persist session desired intent and operation revision.
 手动 Stop/Cancel 将 slot desired intent 设为 stopped；leased slot 先进入 draining，
 释放或确认 cleanup 后才成为 stopped。stopped 不计入 ready/effective capacity，也不会被
 普通 pool prewarm reconcile 自动拉起；只有显式 Start 才能把它改回 running/provisioning。
-这不会创建替代 slot 来补足 desired_slots，quarantined/deleted slot 仍需独立恢复。
+手动 Stop/Cancel 不会创建替代 slot 来补足 `desired_slots`。已删除 slot ID 始终是墓碑，
+不会被复活；如果 pool 后续显式 Resume 且仍需要该 ordinal，Store 会创建新的 slot incarnation
+ID 并保留旧墓碑。Quarantined slot 仍需独立恢复。
 
 ## 事务边界与幂等
 

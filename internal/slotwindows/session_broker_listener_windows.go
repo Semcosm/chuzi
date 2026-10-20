@@ -132,7 +132,7 @@ func (l *SessionBrokerListener) serveConn(ctx context.Context, conn net.Conn) {
 		return
 	}
 	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-	reader := bufio.NewReader(io.LimitReader(conn, sessionBrokerMaxFrame))
+	reader := bufio.NewReader(io.LimitReader(conn, 1024*1024))
 	data, err := reader.ReadBytes('\n')
 	if err != nil || len(data) > sessionBrokerMaxFrame {
 		_ = writeSessionBrokerResponseContext(ctx, conn, SessionBrokerResponse{Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, Code: SessionBrokerInvalidRequest})
@@ -143,7 +143,7 @@ func (l *SessionBrokerListener) serveConn(ctx context.Context, conn net.Conn) {
 		_ = writeSessionBrokerResponseContext(ctx, conn, SessionBrokerResponse{Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, Code: sessionBrokerCode(err)})
 		return
 	}
-	response := l.broker.Handle(ctx, request)
+	response := l.broker.Handle(withBrokerWTSAuthority(ctx, conn, reader), request)
 	_ = writeSessionBrokerResponseContext(ctx, conn, response)
 }
 

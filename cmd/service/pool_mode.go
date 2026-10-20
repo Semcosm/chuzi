@@ -7,9 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/config"
+	"github.com/Semcosm/chuzi/internal/core"
+	"github.com/Semcosm/chuzi/internal/coreapi"
 	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/store"
@@ -20,6 +24,79 @@ import (
 type poolModeError string
 
 func (e poolModeError) Error() string { return string(e) }
+
+// servicePoolModeAPI runs the protected configuration mutation inside the
+// LocalSystem Core process. The interactive launcher never opens bbolt or
+// writes the machine-scoped config directly.
+type servicePoolModeAPI struct {
+	*core.Service
+	configPath  string
+	cfg         config.Config
+	database    *store.Store
+	environment *environment.Manager
+	mu          sync.Mutex
+}
+
+var _ coreapi.API = (*servicePoolModeAPI)(nil)
+var _ coreapi.PoolModeAPI = (*servicePoolModeAPI)(nil)
+
+func (s *servicePoolModeAPI) ConfigurePoolMode(ctx context.Context, input coreapi.PoolModeRequest) (coreapi.PoolModeResult, error) {
+	if s == nil || s.database == nil || strings.TrimSpace(s.configPath) == "" {
+		return coreapi.PoolModeResult{}, coreapi.NewError(coreapi.CodeUnavailable, "pool mode configuration is unavailable")
+	}
+	if err := ctx.Err(); err != nil {
+		return coreapi.PoolModeResult{}, coreapi.NewError(coreapi.CodeCancelled, "operation was cancelled")
+	}
+	if input.Mode != "logical" && input.Mode != "windows" {
+		return coreapi.PoolModeResult{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	if input.Mode == "windows" && runtime.GOOS != "windows" {
+		return coreapi.PoolModeResult{}, coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidate, err := poolModeCandidate(s.cfg, s.database, input.Mode, input.PoolID, input.ExpectedRevision, time.Now().UTC())
+	if err != nil {
+		return coreapi.PoolModeResult{}, classifyPoolModeError(err)
+	}
+	if input.Mode == "windows" {
+		if s.environment == nil {
+			return coreapi.PoolModeResult{}, coreapi.NewError(coreapi.CodeUnavailable, "pool mode configuration is unavailable")
+		}
+		selected, getErr := s.database.GetJobPool(input.PoolID)
+		if getErr != nil {
+			return coreapi.PoolModeResult{}, classifyPoolModeError(poolModeError("pool_not_found"))
+		}
+		if err := verifyWindowsModeEnvironment(s.database, s.environment, candidate, selected); err != nil {
+			return coreapi.PoolModeResult{}, classifyPoolModeError(err)
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return coreapi.PoolModeResult{}, coreapi.NewError(coreapi.CodeCancelled, "operation was cancelled")
+	}
+	if err := config.Save(s.configPath, candidate); err != nil {
+		return coreapi.PoolModeResult{}, coreapi.NewError(coreapi.CodeInternal, "pool mode configuration failed")
+	}
+	return coreapi.PoolModeResult{ConfiguredPoolMode: input.Mode, Status: "restart_required"}, nil
+}
+
+func classifyPoolModeError(err error) error {
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, poolModeError("invalid_pool_mode")), errors.Is(err, poolModeError("windows_required")):
+		return coreapi.NewError(coreapi.CodeInvalidArgument, "request is invalid")
+	case errors.Is(err, poolModeError("pool_not_found")):
+		return coreapi.NewError(coreapi.CodeNotFound, "pool was not found")
+	case errors.Is(err, poolModeError("pool_cleanup_required")), errors.Is(err, poolModeError("stale_revision")), errors.Is(err, poolModeError("signed_environment_required")):
+		return coreapi.NewError(coreapi.CodeConflict, "pool mode conflicts with current state")
+	case errors.Is(err, poolModeError("environment_unavailable")):
+		return coreapi.NewError(coreapi.CodeUnavailable, "environment is unavailable")
+	default:
+		return coreapi.NewError(coreapi.CodeInternal, "pool mode configuration failed")
+	}
+}
 
 func runPoolModeMaintenance(ctx context.Context, configPath, mode, poolID string, revision uint64) error {
 	if mode != "logical" && mode != "windows" {

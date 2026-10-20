@@ -77,7 +77,12 @@ export component ChuziJobPoolCard inherits Rectangle {
             spacing: ChuziTheme.space-2;
             vertical-stretch: 0;
             Text { text: "Revision " + root.item.config_revision; color: ChuziTheme.text-tertiary; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; }
-            ChuziActionButton { label: "Start basic session"; enabled: !root.busy; width: 132px; pressed => { root.action(root.item.pool_id, "start-slot-session"); } }
+            ChuziActionButton {
+                label: root.item.execution_mode == "windows" ? "Start basic session" : "No Windows session";
+                enabled: !root.busy && root.item.execution_mode == "windows";
+                width: 132px;
+                pressed => { root.action(root.item.pool_id, "start-slot-session"); }
+            }
         }
         HorizontalBox {
             spacing: ChuziTheme.space-2;

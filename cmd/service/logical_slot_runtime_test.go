@@ -99,3 +99,83 @@ func TestLogicalSlotReconcilerCompletesApplyAndDelete(t *testing.T) {
 		t.Fatalf("logical delete operation = %#v, err=%v", finished, err)
 	}
 }
+
+func TestLogicalSlotReconcilerResumesDrainedPoolWithNewIncarnation(t *testing.T) {
+	cfg, err := config.New(filepath.Join(t.TempDir(), "data"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	database, err := store.Open(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+	nowValue := time.Date(2026, time.October, 19, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return nowValue }
+	pool := slot.PoolConfig{PoolID: "logical-resume", EnvironmentID: "environment", DesiredSlots: 1}
+	created, _, err := database.ApplyJobPool(store.JobPoolMutation{Config: pool, Operation: "apply", IdempotencyKey: "apply-logical-resume", Actor: "operator", RequestedAt: now()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciler, err := newLogicalSlotReconciler(database, now, "service")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	nowValue = nowValue.Add(time.Second)
+	drain, _, err := database.DrainJobPool(pool.PoolID, created.ConfigRevision, "drain-logical-resume", "operator", now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	finishedDrain, err := database.GetJobPoolOperation(drain.OperationID)
+	if err != nil || finishedDrain.State != store.JobPoolApplied {
+		t.Fatalf("drain operation = %#v, err=%v", finishedDrain, err)
+	}
+	oldSlot, err := database.GetSlot("logical-resume-001")
+	if err != nil || oldSlot.Status != slot.Deleted {
+		t.Fatalf("drained slot tombstone = %#v, err=%v", oldSlot, err)
+	}
+	current, err := database.GetJobPool(pool.PoolID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nowValue = nowValue.Add(time.Second)
+	resume, _, err := database.ResumeJobPool(pool.PoolID, current.ConfigRevision, "resume-logical-pool", "operator", now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reconciler.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	finishedResume, err := database.GetJobPoolOperation(resume.OperationID)
+	if err != nil || finishedResume.State != store.JobPoolApplied {
+		t.Fatalf("resume operation = %#v, err=%v", finishedResume, err)
+	}
+	slots, err := database.ListSlots(pool.PoolID)
+	if err != nil || len(slots) != 2 {
+		t.Fatalf("resumed slots = %#v, err=%v", slots, err)
+	}
+	var replacement slot.Slot
+	for _, current := range slots {
+		if current.SlotID != oldSlot.SlotID {
+			replacement = current
+		}
+	}
+	if oldSlot.Status != slot.Deleted || replacement.SlotID == "" || replacement.Ordinal != 1 || replacement.Status != slot.Ready {
+		t.Fatalf("resumed slot incarnations = old:%#v replacement:%#v", oldSlot, replacement)
+	}
+	status, err := database.SlotPoolStatus(pool.PoolID, now())
+	capacity, capacityErr := database.EffectiveSlotCapacity(pool.PoolID, 1, now())
+	if err != nil || capacityErr != nil || status.Ready != 1 || capacity != 1 {
+		t.Fatalf("resumed pool status = %#v, capacity=%d, err=%v, capacity err=%v", status, capacity, err, capacityErr)
+	}
+	if err := database.ValidateDatabase(); err != nil {
+		t.Fatalf("resumed pool database invalid: %v", err)
+	}
+}

@@ -149,7 +149,7 @@ func validateSlotSessionControlTx(tx *bbolt.Tx) error {
 		if err := decode(value, &operation); err != nil {
 			return err
 		}
-		if string(key) != operation.OperationID || operation.OperationID == "" || operation.PoolID == "" || operation.SlotID == "" || !slotSessionStateValid(operation.State) || operation.Attempt < 1 || operation.RequestedAt.IsZero() || operation.UpdatedAt.IsZero() {
+		if string(key) != operation.OperationID || operation.OperationID == "" || operation.PoolID == "" || operation.SlotID == "" || !slotSessionStateValid(operation.State) || !slotSessionPhaseValid(operation.Phase) || !slotSessionFactStringValid(operation.FailureCode, 64) || !slotSessionFactStringValid(operation.SessionState, 32) || operation.WorkerReady && !operation.AgentReady || operation.Attempt < 1 || operation.RequestedAt.IsZero() || operation.UpdatedAt.IsZero() {
 			return fmt.Errorf("%w: invalid slot session operation", ErrCorruptData)
 		}
 		if !operation.Deadline.IsZero() && !operation.Deadline.After(operation.RequestedAt) {

@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet("Install", "Stop", "UpgradePrepare", "Backup", "Rollback", "CleanupBackup", "ConfirmResources", "ConfirmDataOwnership", "UninstallPrepare", "Repair", "Uninstall", "Status")]
+    [ValidateSet("Install", "Stop", "StopUI", "RepairFileAccess", "UpgradePrepare", "Backup", "Rollback", "CleanupBackup", "ConfirmResources", "ConfirmDataOwnership", "UninstallPrepare", "Repair", "Uninstall", "Status")]
     [string]$Operation,
     [string]$RuntimeRoot = "",
     [string]$DataRoot = "",
@@ -48,72 +48,178 @@ $managedComponentNames = @(
 )
 
 function Invoke-Sc([string[]]$Arguments) {
-    & "$env:SystemRoot\System32\sc.exe" @Arguments | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "service_control_failed" }
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" $Arguments
+    if ($result.ExitCode -ne 0) {
+        $action = if ($Arguments.Count -gt 0) { $Arguments[0] } else { "unknown" }
+        throw ("service_control_failed: action={0}; exit_code={1}" -f $action, $result.ExitCode)
+    }
+}
+
+function ConvertTo-NativeArgument([string]$Argument) {
+    if ($null -eq $Argument) { return '""' }
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') { return $Argument }
+    $builder = New-Object Text.StringBuilder
+    [void]$builder.Append('"')
+    $slashes = 0
+    foreach ($character in $Argument.ToCharArray()) {
+        if ($character -eq '\') {
+            $slashes++
+            continue
+        }
+        if ($character -eq '"') {
+            for ($index = 0; $index -lt (($slashes * 2) + 1); $index++) { [void]$builder.Append('\') }
+            [void]$builder.Append('"')
+            $slashes = 0
+            continue
+        }
+        for ($index = 0; $index -lt $slashes; $index++) { [void]$builder.Append('\') }
+        $slashes = 0
+        [void]$builder.Append($character)
+    }
+    for ($index = 0; $index -lt ($slashes * 2); $index++) { [void]$builder.Append('\') }
+    [void]$builder.Append('"')
+    return $builder.ToString()
+}
+
+function Invoke-NativeCapture([string]$FilePath, [string[]]$Arguments) {
+    # Windows PowerShell 5.1 promotes native stderr to a terminating error
+    # under ErrorActionPreference=Stop. Capture it out of process so expected
+    # not-found results remain idempotent and are classified by exit code.
+    $token = [guid]::NewGuid().ToString("N")
+    $stdoutPath = Join-Path ([IO.Path]::GetTempPath()) ("chuzi-native-$token.out")
+    $stderrPath = Join-Path ([IO.Path]::GetTempPath()) ("chuzi-native-$token.err")
+    try {
+        $argumentLine = (($Arguments | ForEach-Object { ConvertTo-NativeArgument ([string]$_) }) -join ' ')
+        $process = Start-Process -FilePath $FilePath -ArgumentList $argumentLine -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+        [pscustomobject]@{
+            ExitCode = [int]$process.ExitCode
+            StdOut = if (Test-Path -LiteralPath $stdoutPath) { Get-Content -Raw -LiteralPath $stdoutPath } else { "" }
+            StdErr = if (Test-Path -LiteralPath $stderrPath) { Get-Content -Raw -LiteralPath $stderrPath } else { "" }
+        }
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function Test-BrokerTask {
-    & "$env:SystemRoot\System32\schtasks.exe" /Query /TN $brokerTaskName 2>$null | Out-Null
-    return $LASTEXITCODE -eq 0
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Query', '/TN', $brokerTaskName)
+    return $result.ExitCode -eq 0
 }
 
 function Register-BrokerTask {
     # ONLOGON + /IT binds the signed broker to the operator's interactive
     # token. It is deliberately not an SCM service and never runs in Session 0.
     $taskCommand = '"' + $broker + '"'
-    & "$env:SystemRoot\System32\schtasks.exe" /Create /TN $brokerTaskName /TR $taskCommand /SC ONLOGON /IT /RL LIMITED /F | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "helper_registration_failed" }
-    & "$env:SystemRoot\System32\schtasks.exe" /Run /TN $brokerTaskName | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "helper_start_failed" }
+    $create = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Create', '/TN', $brokerTaskName, '/TR', $taskCommand, '/SC', 'ONLOGON', '/IT', '/RL', 'LIMITED', '/F')
+    if ($create.ExitCode -ne 0) { throw "helper_registration_failed" }
+    # Hosted Windows build agents run installers in session 0. The task is
+    # still registered there, but it cannot be started until an operator logs
+    # on. An interactive installer session must start it immediately so the
+    # UI can use the broker without requiring a second logon.
+    if ([Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0) { return }
+    $run = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Run', '/TN', $brokerTaskName)
+    if ($run.ExitCode -ne 0) { throw "helper_start_failed" }
 }
 
 function Stop-BrokerTask {
     if (-not (Test-BrokerTask)) { return }
-    & "$env:SystemRoot\System32\schtasks.exe" /End /TN $brokerTaskName 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 128) { throw "helper_stop_failed" }
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/End', '/TN', $brokerTaskName)
+    if ($result.ExitCode -ne 0 -and $result.ExitCode -ne 128) { throw "helper_stop_failed" }
 }
 
 function Remove-BrokerTask {
-    & "$env:SystemRoot\System32\schtasks.exe" /Delete /TN $brokerTaskName /F 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1) { throw "helper_delete_failed" }
-}
-
-function Remove-LegacyBrokerService {
-    # Older payloads registered the helper as a LocalSystem demand service.
-    # Remove that incompatible registration before creating the interactive
-    # logon task; a running legacy process is stopped and verified first.
-    $query = & "$env:SystemRoot\System32\sc.exe" query $brokerTaskName 2>$null | Out-String
-    if ($LASTEXITCODE -ne 0) { return }
-    if ($query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
-        & "$env:SystemRoot\System32\sc.exe" stop $brokerTaskName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
-        Wait-Stopped $brokerTaskName
-    }
-    & "$env:SystemRoot\System32\sc.exe" delete $brokerTaskName | Out-Null
-    if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
+    $result = Invoke-NativeCapture "$env:SystemRoot\System32\schtasks.exe" @('/Delete', '/TN', $brokerTaskName, '/F')
+    if ($result.ExitCode -ne 0 -and $result.ExitCode -ne 1) { throw "helper_delete_failed" }
 }
 
 function Wait-Stopped([string]$name) {
     for ($attempt = 0; $attempt -lt 60; $attempt++) {
-        $query = & "$env:SystemRoot\System32\sc.exe" query $name 2>$null | Out-String
-        if ($query -match 'STATE\s+:\s+\d+\s+STOPPED') { return }
+        $query = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $name)
+        if ($query.StdOut -match 'STATE\s+:\s+\d+\s+STOPPED') { return }
         Start-Sleep -Milliseconds 250
     }
     throw "service_stop_timeout"
 }
 
+function Assert-NoReparseParent([string]$path) {
+    $candidate = [IO.Path]::GetFullPath($path)
+    while (-not [string]::IsNullOrEmpty($candidate)) {
+        if (Test-Path -LiteralPath $candidate) {
+            $item = Get-Item -LiteralPath $candidate -Force -ErrorAction Stop
+            if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+        }
+        $candidate = Split-Path -Parent $candidate
+    }
+}
+
 function Set-ChuziAcl([string]$path, [bool]$Writable, [bool]$Recursive = $true) {
+    Assert-NoReparseParent $path
     if (-not (Test-Path -LiteralPath $path)) { New-Item -ItemType Directory -Force -Path $path | Out-Null }
-    # Use well-known SIDs so ACL setup is independent of the host UI locale.
-    $aclArguments = @($path, "/inheritance:r", "/grant:r", "*S-1-5-18:(OI)(CI)(F)", "*S-1-5-32-544:(OI)(CI)(F)", "*S-1-5-32-545:(OI)(CI)(RX)", "/C")
-    if ($Recursive) { $aclArguments += "/T" }
-    & "$env:SystemRoot\System32\icacls.exe" @aclArguments | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "runtime_acl_failed" }
-    if ($Writable) {
-        $writeArguments = @($path, "/grant:r", "*S-1-5-18:(OI)(CI)(M)", "/C")
-        if ($Recursive) { $writeArguments += "/T" }
-        & "$env:SystemRoot\System32\icacls.exe" @writeArguments | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "data_acl_failed" }
+    $root = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    $items = @($root)
+    if (($root.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    if ($Recursive -and $root.PSIsContainer) {
+        $items += @(Get-ChildItem -LiteralPath $path -Recurse -Force -ErrorAction Stop)
+    }
+    # Validate the complete tree before changing any permissions. Never follow
+    # a junction into a foreign Profile or another installation.
+    foreach ($item in $items) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    }
+    foreach ($item in $items) {
+        $acl = if ($item.PSIsContainer) { New-Object Security.AccessControl.DirectorySecurity } else { New-Object Security.AccessControl.FileSecurity }
+        $inheritance = if ($item.PSIsContainer) { [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit' } else { [Security.AccessControl.InheritanceFlags]::None }
+        $acl.SetAccessRuleProtection($true, $false)
+        $systemRights = if ($Writable) { 'Modify' } else { 'FullControl' }
+        foreach ($entry in @(@('S-1-5-18', $systemRights), @('S-1-5-32-544', 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))) {
+            $sid = New-Object Security.Principal.SecurityIdentifier($entry[0])
+            $rule = New-Object Security.AccessControl.FileSystemAccessRule($sid, [Security.AccessControl.FileSystemRights]$entry[1], $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+            $acl.AddAccessRule($rule)
+        }
+        # Only write the DACL. Reapplying a Get-Acl object can also request
+        # owner/audit privileges that an ordinary installer does not hold.
+        if ($item.PSIsContainer) { [IO.Directory]::SetAccessControl($item.FullName, $acl) } else { [IO.File]::SetAccessControl($item.FullName, $acl) }
+    }
+}
+
+function Repair-EmptyFileAcl([string]$path) {
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { return $null }
+    $item = Get-Item -LiteralPath $path -Force -ErrorAction Stop
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    $acl = Get-Acl -LiteralPath $path -ErrorAction Stop
+    if (-not $acl.AreAccessRulesProtected -or @($acl.Access).Count -ne 0) { return $null }
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $installer = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    if ($owner -notin @($installer, 'S-1-5-18', 'S-1-5-32-544')) { throw "resource_ownership_unknown" }
+    # The old icacls command removed all file ACEs. Recover only that exact
+    # failure shape; retain the owner and never reset arbitrary permissions.
+    Set-ChuziAcl $path $false $false
+    return $acl.Sddl
+}
+
+function Repair-ChuziFileAccess {
+    Assert-NoReparseParent $ownershipMarker
+    Assert-NoReparseParent $runtime
+    if (-not (Test-Path -LiteralPath $ownershipMarker -PathType Leaf)) { return }
+    $original = Repair-EmptyFileAcl $ownershipMarker
+    try {
+        Confirm-DataOwnership | Out-Null
+    } catch {
+        if ($null -ne $original) {
+            $acl = New-Object Security.AccessControl.FileSecurity
+            $acl.SetSecurityDescriptorSddlForm($original, [Security.AccessControl.AccessControlSections]::Access)
+            [IO.File]::SetAccessControl($ownershipMarker, $acl)
+        }
+        throw
+    }
+    Repair-EmptyFileAcl $config | Out-Null
+    if (-not (Test-Path -LiteralPath $runtime -PathType Container)) { return }
+    $items = @((Get-Item -LiteralPath $runtime -Force)) + @(Get-ChildItem -LiteralPath $runtime -Recurse -Force -ErrorAction Stop)
+    foreach ($item in $items) {
+        if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw "resource_ownership_unknown" }
+    }
+    foreach ($item in $items) {
+        if (-not $item.PSIsContainer) { Repair-EmptyFileAcl $item.FullName | Out-Null }
     }
 }
 
@@ -153,7 +259,7 @@ function Test-ResourceDirectory([string]$path) {
     }
     $probe = Join-Path $path (".chuzi-resource-probe-{0}.tmp" -f ([guid]::NewGuid().ToString("N")))
     try {
-        $handle = [IO.File]::OpenNew($probe)
+        $handle = [IO.File]::Open($probe, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
         $handle.Dispose()
         Remove-Item -LiteralPath $probe -Force -ErrorAction Stop
     } catch [IO.IOException] {
@@ -226,14 +332,32 @@ function Stop-AndConfirm {
 function Backup-Install {
     if (Test-Path -LiteralPath $backupMarker -PathType Leaf) { throw "upgrade_backup_pending" }
     Stop-AndConfirm
+    New-Item -ItemType Directory -Force -Path $data | Out-Null
     if (-not (Test-Path -LiteralPath $ownershipMarker -PathType Leaf)) {
-        if (-not (Test-Path -LiteralPath $config -PathType Leaf)) { throw "resource_ownership_unknown" }
-        try {
-            $legacyConfig = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
-        } catch {
-            throw "resource_ownership_unknown"
+        if (Test-Path -LiteralPath $config -PathType Leaf) {
+            try {
+                $legacyConfig = Get-Content -Raw -LiteralPath $config | ConvertFrom-Json
+            } catch {
+                throw "resource_ownership_unknown"
+            }
+            if ([string]$legacyConfig.data_dir -ne $data) { throw "resource_ownership_unknown" }
+        } else {
+            # A failed first install may have created only the fixed data
+            # directories before the service was registered. Treat that empty
+            # owned shape as recoverable; any unexpected or populated entry
+            # still fails closed because its ownership is unknown.
+            $topLevelAllowed = @(".chuzi", "db", "profiles", "runtime", "journal", "secrets")
+            $unexpected = @(Get-ChildItem -LiteralPath $data -Force -ErrorAction Stop |
+                Where-Object { $topLevelAllowed -notcontains $_.Name })
+            if ($unexpected.Count -gt 0) { throw "resource_ownership_unknown" }
+            foreach ($child in $topLevelAllowed) {
+                $childPath = Join-Path $data $child
+                if ((Test-Path -LiteralPath $childPath -PathType Container) -and
+                    (@(Get-ChildItem -LiteralPath $childPath -Force -Recurse -ErrorAction Stop).Count -gt 0)) {
+                    throw "resource_ownership_unknown"
+                }
+            }
         }
-        if ([string]$legacyConfig.data_dir -ne $data) { throw "resource_ownership_unknown" }
         Write-Utf8NoBom $ownershipMarker (([ordered]@{
             format = "chuzi-service-ownership/v1"
             data_dir = $data
@@ -269,8 +393,8 @@ function Backup-Install {
             Copy-Item -LiteralPath $management -Destination $rollbackManagement -Force -ErrorAction Stop
             Set-ChuziAcl $rollbackManagement $false $false
         }
-        & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-Null
-        $serviceExists = $LASTEXITCODE -eq 0
+        $serviceQuery = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+        $serviceExists = $serviceQuery.ExitCode -eq 0
         $brokerExists = Test-BrokerTask
         $state = [ordered]@{ format = "chuzi-upgrade-state/v1"; backup_root = $destination; install_root = $install; service_exists = $serviceExists; broker_exists = $brokerExists }
         Write-Utf8NoBom $backupMarker ($state | ConvertTo-Json -Depth 4)
@@ -311,8 +435,8 @@ function Rollback-Install {
         Install-ChuziServices
     } else {
         Remove-BrokerTask
-        & "$env:SystemRoot\System32\sc.exe" delete $serviceName | Out-Null
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
+        $delete = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('delete', $serviceName)
+        if ($delete.ExitCode -ne 0 -and $delete.ExitCode -ne 1060 -and $delete.ExitCode -ne 1072) { throw "service_delete_failed" }
     }
 }
 
@@ -328,16 +452,34 @@ function Cleanup-InstallBackup {
 }
 
 function Install-ChuziServices {
+    Repair-ChuziFileAccess
     if (-not (Test-Path -LiteralPath $core -PathType Leaf)) { throw "core_missing" }
     if (-not (Test-Path -LiteralPath $broker -PathType Leaf)) { throw "service_helper_missing" }
     if (-not (Test-Path -LiteralPath $management -PathType Leaf)) { throw "service_management_missing" }
     New-Item -ItemType Directory -Force -Path $data | Out-Null
     if (-not (Test-Path -LiteralPath $ownershipMarker -PathType Leaf)) {
-        $topLevelAllowed = @(".chuzi", "db", "profiles", "runtime", "journal", "secrets")
+        # Component installation runs before service registration and places
+        # the signed runtime files under the fixed data root. Accept only the
+        # package's known component shape plus the documented runtime data
+        # directories and logs; unexpected entries still fail closed.
+        $topLevelAllowed = @(
+            ".chuzi", "db", "profiles", "runtime", "journal", "secrets",
+            "browser-worker", "diagnostics", "environments",
+            "chuzi.exe", "chuzi-browser-launcher.exe", "chuzi-user-agent.exe",
+            "chuzi-session-broker.exe", "node.exe", "session-shell.ps1",
+            "windows-service-management.ps1", "core-config.json",
+            ".chuzi-ui-settings.json", "chuzi.db"
+        )
         $unexpected = @(Get-ChildItem -LiteralPath $data -Force -ErrorAction Stop |
-            Where-Object { $topLevelAllowed -notcontains $_.Name })
+            Where-Object {
+                ($topLevelAllowed -notcontains $_.Name) -and
+                ($_.Name -notmatch '^core-service\.log(?:\.\d+)?$')
+            })
         if ($unexpected.Count -gt 0) { throw "resource_ownership_unknown" }
-        foreach ($child in $topLevelAllowed) {
+        # Mutable service data directories must still be empty before their
+        # ownership marker is created. Installed component directories such as
+        # browser-worker and environments are expected to contain signed files.
+        foreach ($child in @('db', 'profiles', 'runtime', 'journal', 'secrets')) {
             $childPath = Join-Path $data $child
             if ((Test-Path -LiteralPath $childPath -PathType Container) -and
                 (@(Get-ChildItem -LiteralPath $childPath -Force -Recurse -ErrorAction Stop).Count -gt 0)) {
@@ -383,40 +525,120 @@ function Install-ChuziServices {
     }
     Set-ChuziAcl $runtime $false
     $validator = Join-Path $runtime "validate_windows_payload.ps1"
-    if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) { throw "service_payload_validator_missing" }
-    & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File $validator -PayloadDir $runtime -Production -DataRoot $data -Offline | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
+    $productionPayload = $true
+    $buildManifest = Join-Path $runtime "build-manifest.json"
+    if (Test-Path -LiteralPath $buildManifest -PathType Leaf) {
+        try {
+            $build = Get-Content -Raw -LiteralPath $buildManifest | ConvertFrom-Json
+            $version = [string]$build.version
+            # Only formal semver release payloads carry the production
+            # Authenticode gate. Nightly and test artifacts are unsigned
+            # validation builds and must use the non-production path.
+            $productionPayload = $version -match '^v[0-9]+\.[0-9]+\.[0-9]+$'
+        } catch {
+            # Build metadata contains only public package identity. Preserve
+            # the parser/IO failure so setup does not hide the actual cause.
+            throw ("service_build_manifest_invalid: {0}: {1}" -f $_.FullyQualifiedErrorId, $_.Exception.Message)
+        }
+    }
+    if (-not (Test-Path -LiteralPath $validator -PathType Leaf)) {
+        if ($productionPayload) { throw "service_payload_validator_missing" }
+    } elseif ($productionPayload) {
+        & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy AllSigned -File $validator -PayloadDir $runtime -Production -DataRoot $data -Offline | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
+    } else {
+        & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $validator -PayloadDir $runtime -Offline | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "service_payload_invalid" }
+    }
     $binPath = '"' + $core + '" -service -config "' + $config + '"'
-    & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) {
+    $serviceQuery = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+    if ($serviceQuery.ExitCode -ne 0) {
         Invoke-Sc @("create", $serviceName, "binPath=", $binPath, "start=", "auto", "obj=", "LocalSystem", "DisplayName=", "Chuzi Core Service")
     } else {
         Invoke-Sc @("config", $serviceName, "binPath=", $binPath, "start=", "auto", "obj=", "LocalSystem")
     }
+    # The desktop launcher runs as the signed-in operator. Grant that token
+    # only the SCM operations needed to query, start, and stop this fixed
+    # service; service creation/deletion remains installer-only.
+    $serviceSDDL = 'D:(A;;CCLCSWRPWPLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPLOCRRC;;;IU)'
+    try {
+        Invoke-Sc @("sdset", $serviceName, $serviceSDDL)
+    } catch {
+        throw "service_acl_failed: $($_.Exception.Message)"
+    }
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
     Invoke-Sc @("failure", $serviceName, "reset=", "86400", "actions=", "restart/5000/restart/30000/none/0")
     Invoke-Sc @("sidtype", $serviceName, "unrestricted")
-    Remove-LegacyBrokerService
     Register-BrokerTask
 }
 
 function Stop-ChuziServices {
-    Remove-LegacyBrokerService
-    Stop-BrokerTask
-    $query = & "$env:SystemRoot\System32\sc.exe" query $serviceName 2>$null | Out-String
-    if ($LASTEXITCODE -eq 0 -and $query -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
-        & "$env:SystemRoot\System32\sc.exe" stop $serviceName | Out-Null
-        if ($LASTEXITCODE -ne 0) { throw "service_stop_failed" }
+    Stop-ChuziUI
+    # Core shutdown needs the interactive broker to finish exact-session and
+    # credential cleanup. Keep the broker alive until SCM confirms Core stopped.
+    $query = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+    if ($query.ExitCode -eq 0 -and $query.StdOut -notmatch 'STATE\s+:\s+\d+\s+STOPPED') {
+        try {
+            Invoke-Sc @("stop", $serviceName)
+        } catch {
+            throw "service_stop_failed: $($_.Exception.Message)"
+        }
         Wait-Stopped $serviceName
+    }
+    Stop-BrokerTask
+}
+
+function Stop-ChuziUI {
+    $uiPath = [IO.Path]::GetFullPath((Join-Path $install "Chuzi.Native.Windows.exe"))
+    $candidates = @(Get-CimInstance -ClassName Win32_Process -Filter "Name='Chuzi.Native.Windows.exe'" -ErrorAction Stop)
+    $processes = @()
+    foreach ($candidate in $candidates) {
+        $candidatePath = [string]$candidate.ExecutablePath
+        if ([string]::IsNullOrWhiteSpace($candidatePath)) { continue }
+        try {
+            $candidatePath = [IO.Path]::GetFullPath($candidatePath)
+        } catch {
+            continue
+        }
+        if (-not [string]::Equals($candidatePath, $uiPath, [StringComparison]::OrdinalIgnoreCase)) { continue }
+
+        $process = Get-Process -Id ([int]$candidate.ProcessId) -ErrorAction SilentlyContinue
+        if ($null -eq $process) { continue }
+        $process.Refresh()
+        if ($process.HasExited) { continue }
+        $processes += $process
+    }
+    $deadline = [Diagnostics.Stopwatch]::StartNew()
+    foreach ($process in $processes) {
+        $process.Refresh()
+        if ($process.HasExited) { continue }
+        if ($process.MainWindowHandle -ne 0) {
+            try {
+                [void]$process.CloseMainWindow()
+            } catch {
+                throw "ui_close_failed"
+            }
+        }
+    }
+    foreach ($process in $processes) {
+        $process.Refresh()
+        if ($process.HasExited) { continue }
+        $remaining = 15000 - [int]$deadline.ElapsedMilliseconds
+        if ($remaining -le 0 -or -not $process.WaitForExit($remaining)) {
+            throw "ui_stop_timeout"
+        }
     }
 }
 
 switch ($Operation) {
     "Status" {
-        & "$env:SystemRoot\System32\sc.exe" query $serviceName
-        exit $LASTEXITCODE
+        $result = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('query', $serviceName)
+        if (-not [string]::IsNullOrWhiteSpace($result.StdOut)) { Write-Output $result.StdOut }
+        exit $result.ExitCode
     }
     "Stop" { Stop-ChuziServices }
+    "StopUI" { Stop-ChuziUI }
+    "RepairFileAccess" { Repair-ChuziFileAccess }
     "ConfirmResources" { Confirm-ResourcesReleased }
     "ConfirmDataOwnership" { Confirm-DataOwnership }
     "UpgradePrepare" {
@@ -439,10 +661,10 @@ switch ($Operation) {
     "Uninstall" {
         Stop-AndConfirm
         Remove-BrokerTask
-        & "$env:SystemRoot\System32\sc.exe" delete $serviceName | Out-Null
-        if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 1060 -and $LASTEXITCODE -ne 1072) { throw "service_delete_failed" }
+        $result = Invoke-NativeCapture "$env:SystemRoot\System32\sc.exe" @('delete', $serviceName)
+        if ($result.ExitCode -ne 0 -and $result.ExitCode -ne 1060 -and $result.ExitCode -ne 1072) { throw "service_delete_failed" }
     }
     "Install" { Install-ChuziServices }
-    "Repair" { Stop-AndConfirm; Install-ChuziServices }
+    "Repair" { Stop-ChuziServices; Repair-ChuziFileAccess; Stop-AndConfirm; Install-ChuziServices }
 }
 Write-Output "service management $Operation completed"

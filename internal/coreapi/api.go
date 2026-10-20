@@ -240,14 +240,17 @@ type DiagnosticSnapshotRequest struct {
 }
 
 type DiagnosticEvent struct {
-	At         time.Time `json:"at,omitempty"`
-	Component  string    `json:"component,omitempty"`
-	Operation  string    `json:"operation,omitempty"`
-	Outcome    string    `json:"outcome,omitempty"`
-	RequestID  string    `json:"request_id,omitempty"`
-	Resource   string    `json:"resource,omitempty"`
-	ErrorClass string    `json:"error_class,omitempty"`
-	DurationMS int64     `json:"duration_ms,omitempty"`
+	At              time.Time `json:"at,omitempty"`
+	Component       string    `json:"component,omitempty"`
+	Operation       string    `json:"operation,omitempty"`
+	Outcome         string    `json:"outcome,omitempty"`
+	RequestID       string    `json:"request_id,omitempty"`
+	Resource        string    `json:"resource,omitempty"`
+	ErrorClass      string    `json:"error_class,omitempty"`
+	FailureStage    string    `json:"failure_stage,omitempty"`
+	NativeErrorKind string    `json:"native_error_kind,omitempty"`
+	NativeErrorCode uint32    `json:"native_error_code,omitempty"`
+	DurationMS      int64     `json:"duration_ms,omitempty"`
 }
 
 // DiagnosticCoreStatus records the launcher-visible lifecycle state without
@@ -325,6 +328,27 @@ type JobPoolStatus struct {
 
 type JobPoolStatusAPI interface {
 	GetJobPoolStatus(context.Context, string) (JobPoolStatus, error)
+}
+
+// PoolModeRequest is the privileged, service-mediated mode transition input.
+// The service revalidates cleanup, revision, trust, and runtime readiness
+// against its own Store; callers never provide paths or platform identities.
+type PoolModeRequest struct {
+	Mode             string `json:"mode"`
+	PoolID           string `json:"pool_id,omitempty"`
+	ExpectedRevision uint64 `json:"expected_revision,omitempty"`
+}
+
+type PoolModeResult struct {
+	ConfiguredPoolMode string `json:"configured_pool_mode"`
+	Status             string `json:"status"`
+}
+
+// PoolModeAPI is optional so older Core implementations remain usable for
+// ordinary lifecycle operations while newer launchers can use the SYSTEM
+// service boundary for protected configuration writes.
+type PoolModeAPI interface {
+	ConfigurePoolMode(context.Context, PoolModeRequest) (PoolModeResult, error)
 }
 
 type JobPoolConfig struct {
@@ -447,6 +471,7 @@ type SlotSessionStatus struct {
 	EnvironmentGeneration uint64    `json:"environment_generation"`
 	SessionState          string    `json:"session_state"`
 	AgentReady            bool      `json:"agent_ready"`
+	WorkerReady           bool      `json:"worker_ready"`
 	ObservedAt            time.Time `json:"observed_at,omitempty"`
 	FreshUntil            time.Time `json:"fresh_until,omitempty"`
 }

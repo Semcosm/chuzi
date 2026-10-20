@@ -141,6 +141,36 @@ func TestSnapshotReportsEventWindowMetadata(t *testing.T) {
 	}
 }
 
+func TestSnapshotKeepsClassifiedFailureOutsideRecentEventWindow(t *testing.T) {
+	root := t.TempDir()
+	events := make([]observability.Event, 80)
+	events[0] = observability.Event{
+		At: time.Unix(1, 0).UTC(), Component: "windows_session", Operation: "provision",
+		Outcome: "failed", ErrorClass: "provision_failed", FailureStage: "profile_create",
+		NativeErrorKind: "hresult", NativeErrorCode: 0x80070005,
+	}
+	for index := 1; index < len(events); index++ {
+		events[index] = observability.Event{At: time.Unix(int64(index+1), 0).UTC(), Component: "queue", Operation: "claim", Outcome: "idle"}
+	}
+	service, err := New(Config{
+		Enabled: true, QueueDir: filepath.Join(root, "diagnostics"),
+		Events: func() []observability.Event { return events },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := service.Snapshot(context.Background(), ReportInput{Severity: SeverityError, Category: "core", Summary: "Session provisioning failed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.EventCount != len(events) || !report.EventsTruncated || len(report.Events) != 64 {
+		t.Fatalf("event metadata = count %d, truncated %v, events %d", report.EventCount, report.EventsTruncated, len(report.Events))
+	}
+	if first := report.Events[0]; first.FailureStage != "profile_create" || first.NativeErrorKind != "hresult" || first.NativeErrorCode != 0x80070005 {
+		t.Fatalf("failure event was omitted or reordered incorrectly: %#v", first)
+	}
+}
+
 func TestSubmitUploadsAndRemovesQueueItem(t *testing.T) {
 	root := t.TempDir()
 	var received map[string]any

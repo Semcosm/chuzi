@@ -340,14 +340,44 @@ func (s *Service) events() ([]observability.Event, int, bool) {
 	items := s.config.Events()
 	eventCount := len(items)
 	eventsTruncated := eventCount > 64
-	if len(items) > 64 {
-		items = items[len(items)-64:]
+	result := make([]observability.Event, len(items))
+	for index, item := range items {
+		result[index] = observability.SanitizeEvent(item, s.now())
 	}
-	result := make([]observability.Event, 0, len(items))
-	for _, item := range items {
-		result = append(result, observability.SanitizeEvent(item, s.now()))
+	if len(result) > 64 {
+		result = preserveFailureEvents(result, 64)
 	}
 	return result, eventCount, eventsTruncated
+}
+
+// preserveFailureEvents keeps the most recent diagnostic window while
+// replacing older low-priority events with classified failures. A busy
+// background loop must not hide the event that explains a failed operation.
+func preserveFailureEvents(events []observability.Event, limit int) []observability.Event {
+	if limit < 1 || len(events) <= limit {
+		return events
+	}
+	start := len(events) - limit
+	selected := append([]observability.Event(nil), events[start:]...)
+	for index := start - 1; index >= 0; index-- {
+		if !priorityDiagnosticEvent(events[index]) {
+			continue
+		}
+		for slot, current := range selected {
+			if !priorityDiagnosticEvent(current) {
+				selected[slot] = events[index]
+				break
+			}
+		}
+	}
+	sort.SliceStable(selected, func(left, right int) bool {
+		return selected[left].At.Before(selected[right].At)
+	})
+	return selected
+}
+
+func priorityDiagnosticEvent(event observability.Event) bool {
+	return event.Outcome == "failed" || event.ErrorClass != ""
 }
 func (s *Service) now() time.Time {
 	now := s.config.Clock()

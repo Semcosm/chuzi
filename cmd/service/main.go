@@ -448,7 +448,16 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 			return nil, err
 		}
 	}
-	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge, environmentRuntime, poolConfig)
+	eventBuffer := observability.NewEventBuffer(256)
+	var runtimeEventRecorder func(observability.Event)
+	recordProvisionEvent := func(event observability.Event) {
+		if runtimeEventRecorder != nil {
+			runtimeEventRecorder(event)
+			return
+		}
+		eventBuffer.Record(event)
+	}
+	slotReconciler, slotProfileAccess, err := newSlotReconciler(cfg, options, database, now, rdpBridge, environmentRuntime, poolConfig, recordProvisionEvent)
 	if err != nil {
 		_ = database.Close()
 		return nil, err
@@ -526,7 +535,6 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if loggerErr != nil {
 		return closeOnError(loggerErr)
 	}
-	eventBuffer := observability.NewEventBuffer(256)
 	sink := observability.MultiSink{metrics, logger, eventBuffer}
 	queueDir := cfg.Diagnostics.QueueDir
 	if strings.TrimSpace(queueDir) == "" {
@@ -690,16 +698,23 @@ func assembleRuntimeWithFactory(cfg config.Config, options serviceOptions, now f
 	if cfg.WindowsJobPool.Enabled {
 		executionMode = "windows"
 	}
-	coreAPI, coreErr := core.New(core.Dependencies{ExecutionMode: executionMode, Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, SlotSessions: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
+	coreService, coreErr := core.New(core.Dependencies{ExecutionMode: executionMode, Requests: requestService, Store: database, Views: viewRegistry, RDP: rdpBridge, Diagnostics: diagnosticService, JobPools: database, JobPoolControl: database, SlotSessions: database, Environments: environmentControl, EnvironmentExecutor: environmentExecutor, JobPoolID: poolConfig.PoolID, MaxConcurrency: options.maxConcurrency, Clock: now})
 	if coreErr != nil {
 		return closeOnError(coreErr)
 	}
+	var coreAPI coreapi.API = &servicePoolModeAPI{Service: coreService, configPath: options.configPath, cfg: cfg, database: database, environment: environmentManager}
 	runtime := &serviceRuntime{
 		store: database, environment: environmentManager, environmentID: poolConfig.EnvironmentID, environmentVersion: poolConfig.EnvironmentVersion, jobPoolID: poolConfig.PoolID, requests: requestService, credentials: credentials,
 		runner: sessionRunner, automation: automationAdapter, scheduler: scheduler, healthListen: cfg.Health.Listen, metrics: metrics, logger: logger, diagnostics: diagnosticService, eventBuffer: eventBuffer, coreAPI: coreAPI,
 		rdp: rdpBridge,
 	}
+	runtimeEventRecorder = runtime.record
 	runtime.slotReconciler = slotReconciler
+	if recorder, ok := slotReconciler.(interface {
+		SetEventRecorder(func(observability.Event))
+	}); ok {
+		recorder.SetEventRecorder(runtime.record)
+	}
 	if slotReconciler != nil {
 		runtime.slotHealth = newSlotLifecycleHealth()
 	}

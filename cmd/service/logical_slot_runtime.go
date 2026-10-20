@@ -163,6 +163,7 @@ func (p logicalSlotProvisioner) summary(request slot.ProvisionRequest) slot.Envi
 		AgentVersion:   "logical",
 		SessionState:   "ready",
 		DesktopReady:   true,
+		WorkerReady:    true,
 		AgentHandle:    "logical",
 		UpdatedAt:      p.now().UTC(),
 	}

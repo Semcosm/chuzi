@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 type slotReconciler interface {
@@ -16,6 +17,13 @@ type slotReconciler interface {
 // deleted.
 type allPoolReconciler interface {
 	ReconcileAll(context.Context) error
+}
+
+// slotOperationReconciler advances durable Start/Stop/Cancel operations under
+// an expiring controller claim. Implementations keep provider calls outside
+// bbolt transactions and fence completion by the claimed operation owner.
+type slotOperationReconciler interface {
+	ReconcileSlotSessionOperations(context.Context, string, time.Time) error
 }
 
 type slotProfileAccess interface {

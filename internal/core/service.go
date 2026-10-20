@@ -698,7 +698,9 @@ func (s *Service) GetDiagnosticSnapshot(ctx context.Context, input coreapi.Diagn
 			At: event.At, Component: event.Component, Operation: event.Operation,
 			Outcome: event.Outcome, RequestID: event.RequestID,
 			Resource: event.Resource, ErrorClass: event.ErrorClass,
-			DurationMS: durationMilliseconds(event.Duration),
+			FailureStage: event.FailureStage, NativeErrorKind: event.NativeErrorKind,
+			NativeErrorCode: event.NativeErrorCode,
+			DurationMS:      durationMilliseconds(event.Duration),
 		})
 	}
 	schema := report.Schema
@@ -1231,15 +1233,17 @@ func (s *Service) projectSlotSessionOperation(value store.SlotSessionOperation, 
 	result.Status.Status, result.Status.SessionState = string(item.Status), string(item.Status)
 	result.Status.EnvironmentGeneration = item.EnvironmentGeneration
 	result.Status.ObservedAt = item.HealthAt
+	result.Status.WorkerReady = value.WorkerReady
 	if !item.HealthAt.IsZero() {
 		result.Status.FreshUntil = item.HealthAt.Add(store.SlotSessionFreshnessWindow)
 	}
 	result.Status.AgentReady = s.executionMode == "windows" && (item.Status == slot.Ready || item.Status == slot.Leased) && item.SessionDesiredState != "stopped" && item.AgentHandle != "" && item.AgentHandle != "logical" && !item.HealthAt.IsZero() && (!s.clockProvided || s.clock().Before(item.HealthAt.Add(store.SlotSessionFreshnessWindow))) && item.EnvironmentGeneration != 0
+	result.Status.WorkerReady = result.Status.AgentReady && value.WorkerReady
 	return result
 }
 
 func projectSlotSessionOperation(value store.SlotSessionOperation, idempotent bool) coreapi.SlotSessionOperation {
-	status := coreapi.SlotSessionStatus{PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, Status: value.SessionState, EnvironmentGeneration: value.EnvironmentGeneration, SessionState: value.SessionState, AgentReady: value.AgentReady}
+	status := coreapi.SlotSessionStatus{PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, Status: value.SessionState, EnvironmentGeneration: value.EnvironmentGeneration, SessionState: value.SessionState, AgentReady: value.AgentReady, WorkerReady: value.WorkerReady}
 	return coreapi.SlotSessionOperation{OperationID: value.OperationID, PoolID: value.PoolID, SlotID: value.SlotID, Ordinal: value.Ordinal, State: string(value.State), Actor: observability.RedactIdentifier(value.Actor), ExpectedRevision: value.ExpectedRevision, RequestedAt: value.RequestedAt, UpdatedAt: value.UpdatedAt, CompletedAt: value.CompletedAt, FailureCode: stableSlotSessionFailureCode(value.FailureCode), EnvironmentGeneration: value.EnvironmentGeneration, Generation: value.EnvironmentGeneration, Phase: string(value.Phase), Attempt: value.Attempt, Revision: value.Revision, DesiredState: value.DesiredState, Deadline: value.Deadline, RetryBudget: value.RetryBudget, NextAttemptAt: value.NextAttemptAt, Status: status, Idempotent: idempotent}
 }
 

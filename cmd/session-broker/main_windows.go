@@ -37,32 +37,73 @@ func runSessionBroker() error {
 	if err != nil || sessionID == 0 || brokerSID == "S-1-5-18" || brokerSID == serviceSID {
 		return servicehost.ErrHostUnavailable
 	}
-	// The deployment adapter is intentionally fail-closed until a reviewed
-	// RDP/Winlogon implementation is installed. The listener and protocol are
-	// still real; no fabricated successful session can cross the pipe.
-	broker := slotwindows.NewSessionBroker(unavailableSessionAdapter{})
-	listener, err := slotwindows.NewSessionBrokerListenerWithExecutables(serviceSID, brokerSID, runtime.Core, runtime.Broker, broker)
+	// The signed payload is read/execute-only for the interactive operator.
+	// Keep broker-owned staging and its restart fence in the authenticated
+	// operator's fixed temporary state root instead of attempting to write
+	// beside the installed binaries. The root is derived only from the OS
+	// temp directory and the authenticated broker SID.
+	stateRoot := filepath.Join(os.TempDir(), "chuzi-session-broker", brokerSID)
+	if stateRoot == "" || filepath.Clean(stateRoot) != stateRoot || !filepath.IsAbs(stateRoot) {
+		return servicehost.ErrHostUnavailable
+	}
+	if err := os.MkdirAll(stateRoot, 0o700); err != nil {
+		return servicehost.ErrHostUnavailable
+	}
+	if err := slotwindows.ProtectSessionBrokerStateRoot(stateRoot, brokerSID); err != nil {
+		return servicehost.ErrHostUnavailable
+	}
+	// A no-share handle serializes all broker writers for this operator root.
+	lockPath, err := windows.UTF16PtrFromString(filepath.Join(stateRoot, "broker.lock"))
+	if err != nil {
+		return servicehost.ErrHostUnavailable
+	}
+	lock, err := windows.CreateFile(lockPath, windows.GENERIC_READ|windows.GENERIC_WRITE, 0, nil, windows.OPEN_ALWAYS, windows.FILE_ATTRIBUTE_NORMAL|windows.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return servicehost.ErrHostUnavailable
+	}
+	defer windows.CloseHandle(lock)
+	var lockInfo windows.ByHandleFileInformation
+	if windows.GetFileInformationByHandle(lock, &lockInfo) != nil || lockInfo.FileAttributes&windows.FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+		return servicehost.ErrHostUnavailable
+	}
+	journal, err := slotwindows.NewFileSessionBrokerJournal(filepath.Join(stateRoot, "session-broker-ownership.json"))
 	if err != nil {
 		return err
 	}
+	secrets := slotwindows.NewSessionBrokerSecretStore()
+	adapter, err := newRDPSessionAdapter(stateRoot, secrets)
+	if err != nil {
+		return err
+	}
+	broker, err := slotwindows.NewSessionBrokerWithJournal(adapter, journal)
+	if err != nil {
+		return err
+	}
+	secretListener, err := slotwindows.NewSessionBrokerSecretListener(serviceSID, brokerSID, runtime.Core, runtime.Broker, secrets)
+	if err != nil {
+		return err
+	}
+	listener, err := slotwindows.NewSessionBrokerListenerWithExecutables(serviceSID, brokerSID, runtime.Core, runtime.Broker, broker)
+	if err != nil {
+		_ = secretListener.Close()
+		return err
+	}
 	defer listener.Close()
+	defer secretListener.Close()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	return listener.Serve(ctx)
-}
-
-type unavailableSessionAdapter struct{}
-
-func (unavailableSessionAdapter) Start(context.Context, slotwindows.SessionBrokerOwnership) (slotwindows.BootstrapSession, error) {
-	return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
-}
-
-func (unavailableSessionAdapter) Stop(context.Context, slotwindows.SessionBrokerOwnership) error {
-	return slotwindows.ErrSessionUnavailable
-}
-
-func (unavailableSessionAdapter) Find(context.Context, string) (slotwindows.BootstrapSession, error) {
-	return slotwindows.BootstrapSession{}, slotwindows.ErrSessionUnavailable
+	errs := make(chan error, 2)
+	go func() { errs <- secretListener.Serve(ctx) }()
+	go func() { errs <- listener.Serve(ctx) }()
+	select {
+	case <-ctx.Done():
+		return nil
+	case serveErr := <-errs:
+		if serveErr != nil {
+			stop()
+		}
+		return serveErr
+	}
 }
 
 func currentInteractiveIdentity() (string, uint32, error) {

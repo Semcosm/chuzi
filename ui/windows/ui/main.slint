@@ -798,12 +798,14 @@ export component MainWindow inherits Window {
         TouchArea { clicked => { root.inspector-open = false; } }
     }
 
-    if root.page == "sessions" && root.inspector-collapsed && root.inspector-open: ChuziSessionInspector {
+    if root.page == "sessions" && root.inspector-collapsed: ChuziSessionInspector {
         x: root.width - self.width;
         y: root.compact-inspector-top;
         width: root.width < 360px ? root.width : 320px;
         height: root.height - root.compact-inspector-top;
         z: 60;
+        visible: root.inspector-open;
+        focus-close: root.inspector-open;
         compact: true;
         selected: root.session-inspector-selected;
         request-id: root.session-inspector-request-id;

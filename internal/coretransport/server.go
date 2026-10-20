@@ -19,6 +19,10 @@ type Config struct {
 	CloseTimeout             time.Duration
 	Authorizer               ConnectionAuthorizer
 	ExpectedServerExecutable string
+	// ExpectedServerPID is supplied only by the launcher after it has queried
+	// the installed service through SCM. It binds the endpoint to that service
+	// when an interactive operator cannot open the SYSTEM process for inspection.
+	ExpectedServerPID uint32
 }
 
 type Server struct {
@@ -409,6 +413,16 @@ func (s *Server) dispatch(ctx context.Context, method string, raw json.RawMessag
 		}
 		status, err := statusAPI.GetJobPoolStatus(ctx, params.PoolID)
 		return JobPoolStatusResult{Status: status}, err
+	case methodConfigurePoolMode:
+		modeAPI, ok := s.api.(coreapi.PoolModeAPI)
+		if !ok {
+			return nil, coreapi.NewError(coreapi.CodeUnavailable, "pool mode configuration is unavailable")
+		}
+		var params coreapi.PoolModeRequest
+		if err := decodeParams(raw, &params); err != nil {
+			return nil, err
+		}
+		return modeAPI.ConfigurePoolMode(ctx, params)
 	case methodListJobPools:
 		api, ok := s.api.(coreapi.JobPoolAPI)
 		if !ok {

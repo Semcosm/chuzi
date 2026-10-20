@@ -143,6 +143,7 @@ type EnvironmentSummary struct {
 	AgentVersion   string    `json:"agent_version,omitempty"`
 	SessionState   string    `json:"session_state,omitempty"`
 	DesktopReady   bool      `json:"desktop_ready,omitempty"`
+	WorkerReady    bool      `json:"worker_ready,omitempty"`
 	AgentHandle    string    `json:"agent_handle,omitempty"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }

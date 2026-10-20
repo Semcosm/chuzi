@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Semcosm/chuzi/internal/coreapi"
+	"golang.org/x/sys/windows"
 )
 
 type windowsTestAPI struct{}
@@ -77,8 +78,23 @@ func TestWindowsNamedPipeRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	if err := validatePipeServerIdentity(conn, ""); !errors.Is(err, ErrUnauthorized) {
+	if err := validatePipeServerIdentity(conn, "", 0); !errors.Is(err, ErrUnauthorized) {
 		t.Fatalf("test-user pipe server identity error = %v, want unauthorized", err)
+	}
+	pipe, ok := conn.(pipeHandleConn)
+	if !ok {
+		t.Fatal("native pipe connection does not expose a handle")
+	}
+	serverPID, err := namedPipeServerProcessID(windows.Handle(pipe.Fd()))
+	if err != nil || serverPID == 0 {
+		t.Fatalf("named pipe server PID = %d, err=%v", serverPID, err)
+	}
+	wrongConn, err := DialWithConfig(ctx, path, Config{ExpectedServerExecutable: filepath.Join(t.TempDir(), "chuzi.exe"), ExpectedServerPID: serverPID + 1})
+	if wrongConn != nil {
+		_ = wrongConn.Close()
+	}
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("mismatched SCM-bound server PID error = %v, want unauthorized", err)
 	}
 	if _, err := client.Hello(ctx); err != nil {
 		t.Fatal(err)

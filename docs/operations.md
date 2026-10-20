@@ -112,11 +112,33 @@ retiring slot 回收。UI 的 apply 和 Core 的 scale 都保留已有签名绑�
 -expected-revision <revision>`。错误仅返回稳定分类，不输出内部路径或凭据。
 launcher 启动保留已有合法部署配置；损坏或 data_dir 不匹配时拒绝覆盖。
 
-当前安装包不包含完整的 Windows session broker 登录适配器。模式保存成功仅代表
-配置通过离线检查；实际 provision 仍需要部署登录服务和 Windows 服务权限，缺失时
-会 fail closed。Start basic session 的 Windows Agent ready 表示最近一次 reconcile
+Windows 安装包的 session broker 已包含受控本机 RDP 登录适配器，但实际 provision
+仍需要注册交互 helper、Windows 服务权限和固定运行时目录 ACL；缺失时会 fail
+closed。固定 broker 的 ownership journal 与临时 `.rdp` profile 位于当前已认证
+operator SID 派生的受保护临时 state root，不写入只读安装 payload；该目录和
+journal 的创建或原子替换失败时 broker 必须保持 `session_unavailable`。Start basic
+session 的 Windows Agent ready 表示最近一次 reconcile
 记录的健康状态；历史 operation ready 不能替代当前健康状态，也不代表此刻完成
 WTS 探测。test 包构建通过仍不能替代真机生产验收。
+
+生产 broker 使用 interactive operator 身份，负责 Credential Manager、受控 `mstsc`
+及自身 journal；LocalSystem 服务负责 `CreateProfile`、WTS token 查询和精确 session 注销。
+WTS callback 使用服务认证的原始连接，不接受新的 SID 或任意注销目标。生产 target
+由持久化跨池 allocator 分配；不同池 ordinal=1 必须得到不同地址。
+
+升级前先用旧版本完成所有 session Stop，再通过服务 shutdown 路径停止 Agent、session
+和 helper，保留 bbolt、Profile、slot ownership、cleanup journal 和 broker state root。
+broker JSON、secret frame 和 broker ownership journal 升为 v2，固定 pipe 名称仍保留 v1 后缀；
+service slot ownership journal 继续使用其独立版本。
+旧 broker journal 缺少 pool fence 时拒绝自动迁移，必须保留记录并进行明确的操作者修复。
+清理顺序为 capability revoke、Profile access revoke、Agent/worker stop、精确 session Stop、
+WTS absence 及 broker credential/target cleanup 确认；任一步失败都保留 ownership，
+不能将查询失败或凭据删除失败视为 stopped。
+
+Session 07 交接前必须用该提交的 Windows 安装包验证：全新用户/冷 Profile、生产
+broker 登录、Stop/重新 Start、登录中 Cancel、服务重启恢复、shutdown 和两个池 ordinal=1
+并行。`-LocalRdp` 只验证 operator harness，不能替代这条生产服务链路；普通 Actions
+构建和 Windows 测试编译也不能替代真实 WTS、RDP、Credential Manager、ACL 与 Agent 验收。
 
 安装后的 Windows 主机可用只读 PowerShell 检查分别确认各层状态：
 
@@ -236,8 +258,9 @@ Windows job pool 的 readiness 必须按以下分类投影，不能将计数非�
 | `windows_platform_unavailable` | 非 Windows、权限不足或原生 smoke 未通过 | 不启用 OS 用户池 |
 
 RDP capability 仍由 credential boundary 管理，并只向 Core/UI 返回 opaque token。当前默认
-authorizer 是 deny-by-default；在提供受控 RDP broker、Windows API 权限和测试凭证边界之前，
-生产交互式 RDP 必须保持 `rdp_unavailable`。
+authorizer 是 deny-by-default；安装包已提供受控本机 RDP broker，但只有部署完成
+helper 注册、Windows ACL/API 权限并通过原生验收后才能启用生产交互式 RDP。验收之前
+必须保持 `rdp_unavailable`。
 
 ## 扩缩容、升级和恢复
 
@@ -525,7 +548,9 @@ CI smoke 继续使用 fake CDP fixture、假账号和本地页面，不代表生
   不要求远程诊断开启，不写发送队列，也不产生网络请求。文件只包含分类事件、平台/版本和脱敏摘要，
   不包含密码、Cookie、Token、Profile 路径、RDP endpoint 或原始日志。文件使用
   `chuzi.diagnostic/v2` schema，包含稳定的 `error_class`、`operation`、事件总数、
-  截断标志、事件耗时和 Core 生命周期状态。事件窗口最多保留最近 64 条，超过窗口时
+  截断标志、事件耗时和 Core 生命周期状态。Session provision 失败可包含固定的
+  `failure_stage`、`win32`/`hresult` 类型及原生数值错误码；slot ID 在导出前哈希。
+  事件窗口最多保留最近 64 条，超过窗口时
   `events_truncated=true` 且 `event_count` 保留原始总数。Core 不可用、返回旧 schema 或
   采集失败时，UI 保存包含 `capture_error_class` 的 v2 本地回退快照；失败分类只使用固定值，
   不写入原始错误文本。诊断文件还记录 capture_stage、Core schema/version、

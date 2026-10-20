@@ -346,6 +346,12 @@ jobs:
         run: ./scripts/build_windows_slint.ps1 -Mode InstallerExe -Configuration Release -OutputDir "$env:RUNNER_TEMP\chuzi-ui" -CorePayloadDir "$env:RUNNER_TEMP\chuzi-core-payload" -PrebuiltBinaryPath "$env:RUNNER_TEMP\chuzi-ui-prebuilt\chuzi-native-windows.exe"
         env:
           CHUZI_BUILD_VERSION: ${{ needs.release_context.outputs.version }}
+      - name: Test service ACLs and interrupted-install recovery
+        shell: powershell
+        run: ./scripts/test_windows_service_acl.ps1
+      - name: Test Windows service and task native argument boundaries
+        shell: powershell
+        run: ./scripts/test_windows_service_native.ps1
       - name: Test Windows Core named pipe
         shell: pwsh
         run: go test -count=1 -tags=coretransport_native_test ./internal/coretransport
@@ -355,7 +361,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $payload = Join-Path $env:RUNNER_TEMP 'chuzi-core-payload'
           $runtimeRoot = $payload
-          $dataRoot = Join-Path ${env:ProgramData} 'chuzi\data'
+          # Foreground smoke data must not enter the installer's fixed service
+          # root: its CI-only config/log files are not owned installation data.
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'chuzi-core-smoke-data'
           if (Test-Path $dataRoot) { Remove-Item -Recurse -Force $dataRoot }
           New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           $launcher = Join-Path $payload 'chuzi-launcher.exe'
@@ -401,6 +409,7 @@ jobs:
               Start-Sleep -Milliseconds 250
             }
             if (-not $healthy) { throw 'Core did not become healthy during lifecycle smoke test' }
+            $env:CHUZI_CORETRANSPORT_NATIVE_TEST_DATA_ROOT = $dataRoot
             $helloJson = & $launcher -root $runtimeRoot -source-root $payload -manifest $manifest -command core-call -core-method hello -core-params-json '{"version":"chuzi.core/v1"}'
             if ($LASTEXITCODE -ne 0) {
               $helloJson | Out-String | Write-Error
@@ -423,6 +432,7 @@ jobs:
               throw "Core payload is missing required capabilities: $($missingMethods -join ', ')"
             }
           } finally {
+            Remove-Item Env:CHUZI_CORETRANSPORT_NATIVE_TEST_DATA_ROOT -ErrorAction SilentlyContinue
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
@@ -522,6 +532,13 @@ jobs:
             throw "Inno Setup failed with exit code $($installProcess.ExitCode)"
           }
           Write-InstallerLogTail
+          if (Test-Path $installerLog) {
+            $setupExceptions = Select-String -LiteralPath $installerLog -Pattern 'raised an exception|service registration failed|安装已停止'
+            if ($setupExceptions) {
+              $setupExceptions | ForEach-Object { Write-Error $_.Line }
+              throw 'Inno Setup reported a script exception despite a zero exit code'
+            }
+          }
           if (Test-Path $installDir) {
             Write-Host "Installed files under ${installDir}:"
             Get-ChildItem -LiteralPath $installDir -Recurse -Force |
@@ -545,14 +562,9 @@ jobs:
             throw 'Installed Slint smoke test timed out after 60 seconds'
           }
           if ($smoke.ExitCode -ne 0) { throw "Installed Slint smoke test failed with exit code $($smoke.ExitCode)" }
-      - name: Upload Windows installer diagnostics
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: chuzi-windows-installer-diagnostics
-          path: ${{ runner.temp }}/chuzi-ui/installer-runtime.log
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Smoke test Windows uninstall and reinstall
+        shell: pwsh
+        run: ./scripts/test_windows_installer_lifecycle.ps1 -Installer "$env:RUNNER_TEMP\chuzi-ui\ChuziSetup.exe" -LogRoot "$env:RUNNER_TEMP\chuzi-ui"
       - name: Smoke test Core payload shipped inside installer
         shell: pwsh
         run: |
@@ -563,7 +575,8 @@ jobs:
             throw "Installed Slint package does not contain CorePayload launcher: $installedPayload"
           }
           $runtimeRoot = $installedPayload
-          $dataRoot = Join-Path ${env:ProgramData} 'chuzi\data'
+          # Preserve the service data verified by uninstall/reinstall above.
+          $dataRoot = Join-Path $env:RUNNER_TEMP 'chuzi-installed-core-smoke-data'
           if (Test-Path $dataRoot) { Remove-Item -Recurse -Force $dataRoot }
           New-Item -ItemType Directory -Force -Path $dataRoot | Out-Null
           $launcher = Join-Path $installedPayload 'chuzi-launcher.exe'
@@ -602,6 +615,30 @@ jobs:
             $process.Refresh()
             if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
           }
+      - name: Collect Windows installer manifest diagnostics
+        if: always()
+        shell: pwsh
+        run: |
+          $diagnostics = Join-Path $env:RUNNER_TEMP 'chuzi-ui/diagnostics'
+          New-Item -ItemType Directory -Force -Path $diagnostics | Out-Null
+          $sourceManifest = Join-Path $env:RUNNER_TEMP 'chuzi-ui/payload/CorePayload/build-manifest.json'
+          if (Test-Path -LiteralPath $sourceManifest -PathType Leaf) {
+            Copy-Item -LiteralPath $sourceManifest -Destination (Join-Path $diagnostics 'source-build-manifest.json')
+          }
+          $installedManifest = Join-Path ${env:ProgramFiles} 'Chuzi/CorePayload/build-manifest.json'
+          if (Test-Path -LiteralPath $installedManifest -PathType Leaf) {
+            Copy-Item -LiteralPath $installedManifest -Destination (Join-Path $diagnostics 'installed-build-manifest.json')
+          }
+      - name: Upload Windows installer diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: chuzi-windows-installer-diagnostics
+          path: |
+            ${{ runner.temp }}/chuzi-ui/*-runtime.log
+            ${{ runner.temp }}/chuzi-ui/diagnostics/*.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload Windows installer EXE
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:

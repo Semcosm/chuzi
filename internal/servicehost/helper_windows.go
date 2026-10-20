@@ -47,7 +47,7 @@ func NewWindowsHelperStarter() *WindowsHelperStarter {
 }
 
 func (s *WindowsHelperStarter) Start(ctx context.Context, runtime TrustedRuntime, sid string, session uint32) (HelperProcess, error) {
-	if s == nil || ctx == nil || ctx.Err() != nil || runtime.Validate() != nil || !validSIDText(sid) || session == 0 {
+	if s == nil || ctx == nil || ctx.Err() != nil || runtime.Validate() != nil || (sid != "" && !validSIDText(sid)) {
 		return nil, ErrHelperUnavailable
 	}
 	s.mu.Lock()
@@ -137,7 +137,7 @@ func findInteractiveOperator(excludedSID string, excludedSession uint32) (string
 	var candidateSID string
 	var candidateSession uint32
 	for _, entry := range unsafe.Slice(raw, count) {
-		if entry.SessionID == 0 || entry.SessionID == excludedSession || entry.State != helperWTSActive {
+		if entry.SessionID == 0 || (excludedSession != 0 && entry.SessionID == excludedSession) || entry.State != helperWTSActive {
 			continue
 		}
 		var token windows.Token
@@ -150,7 +150,7 @@ func findInteractiveOperator(excludedSID string, excludedSession uint32) (string
 			continue
 		}
 		sid := user.User.Sid.String()
-		if sid == excludedSID || sid == "S-1-5-18" || strings.HasPrefix(sid, "S-1-5-80-") {
+		if (excludedSID != "" && sid == excludedSID) || sid == "S-1-5-18" || strings.HasPrefix(sid, "S-1-5-80-") {
 			continue
 		}
 		if candidateSID != "" {

@@ -21,6 +21,17 @@ type resetTestLauncher struct{ job Job }
 
 func (l resetTestLauncher) Start(context.Context, Request) (Job, error) { return l.job, nil }
 
+func TestRuntimeHandlerHealthRequiresWorkerProbe(t *testing.T) {
+	handler := &RuntimeHandler{Launcher: resetTestLauncher{job: resetTestJob{}}}
+	response, err := handler.HandleAgentCommand(context.Background(), Request{Command: Health})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.OK || response.WorkerReady || response.Failure != "worker_unavailable" {
+		t.Fatalf("health response=%#v", response)
+	}
+}
+
 func TestRuntimeHandlerRestoresBootstrapLeaseAfterStop(t *testing.T) {
 	leases := &LeaseState{}
 	if err := leases.Update("pool-001", 2, "provision-pool-001", "maintenance-pool-001", "maintenance-pool-001", "token"); err != nil {

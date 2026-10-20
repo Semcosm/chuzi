@@ -209,6 +209,7 @@ func (m *Metrics) sampleLocked(name, canonical string, labels []Label) *metricSa
 // resource identifiers are deliberately excluded to prevent cardinality and
 // secret leakage through the metrics endpoint.
 func (m *Metrics) Record(event Event) {
+	event = SanitizeEvent(event, time.Now().UTC())
 	labels := make([]Label, 0, 4)
 	if component := safeField(event.Component); component != "" {
 		labels = append(labels, Label{Name: "component", Value: component})
@@ -221,6 +222,9 @@ func (m *Metrics) Record(event Event) {
 	}
 	if class := safeField(event.ErrorClass); class != "" {
 		labels = append(labels, Label{Name: "error_class", Value: class})
+	}
+	if event.Attempt > 0 {
+		labels = append(labels, Label{Name: "attempt", Value: strconv.Itoa(event.Attempt)})
 	}
 	m.Inc("chuzi_events_total", labels...)
 	if event.Component == "request" && event.Operation == "submit" && event.ErrorClass == "rate_limited" {

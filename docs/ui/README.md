@@ -79,6 +79,9 @@ only slot ordinal, redacted slot/session state, environment generation, agent
 readiness, idempotent result, and stable failure classes. This execution slot
 session is separate from the business request Sessions list and does not expose
 Windows identities, Profile paths, RDP endpoints, or credentials.
+In logical mode the card keeps this action disabled and labels the capacity as
+test-only because logical readiness does not establish a Windows session or
+Agent.
 
 RDP is a Session Workspace capability. The default host is the main window;
 `DesktopRdpWindow` is the optional floating host for the same RDP runtime.

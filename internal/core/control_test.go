@@ -429,18 +429,18 @@ func (p *currentControlSlotSessions) GetSlot(string) (slot.Slot, error) {
 func TestSlotSessionRefreshUsesCurrentRuntimeFacts(t *testing.T) {
 	for _, mode := range []string{"logical", "windows", "unknown"} {
 		t.Run(mode, func(t *testing.T) {
-			port := &currentControlSlotSessions{controlSlotSessions: controlSlotSessions{operation: store.SlotSessionOperation{OperationID: "op-a", SlotID: "slot-a", PoolID: "pool-a", State: store.SlotSessionReady, EnvironmentGeneration: 7, SessionState: "ready", AgentReady: true}}, current: slot.Slot{SlotID: "slot-a", Status: slot.Ready, AgentHandle: "native-handle", HealthAt: controlTestTime, EnvironmentGeneration: 7}}
+			port := &currentControlSlotSessions{controlSlotSessions: controlSlotSessions{operation: store.SlotSessionOperation{OperationID: "op-a", SlotID: "slot-a", PoolID: "pool-a", State: store.SlotSessionReady, EnvironmentGeneration: 7, SessionState: "ready", AgentReady: true, WorkerReady: true}}, current: slot.Slot{SlotID: "slot-a", Status: slot.Ready, AgentHandle: "native-handle", HealthAt: controlTestTime, EnvironmentGeneration: 7}}
 			svc, err := New(Dependencies{Requests: viewServiceRequests{}, Store: viewServiceStore{}, SlotSessions: port, ExecutionMode: mode})
 			if err != nil {
 				t.Fatal(err)
 			}
 			result, err := svc.GetSlotSessionOperation(context.Background(), "op-a")
-			if err != nil || result.Status.ExecutionMode != mode || result.Status.AgentReady != (mode == "windows") {
+			if err != nil || result.Status.ExecutionMode != mode || result.Status.AgentReady != (mode == "windows") || result.Status.WorkerReady != (mode == "windows") {
 				t.Fatalf("projection: %#v %v", result, err)
 			}
 			port.current.EnvironmentGeneration = 8
 			result, _ = svc.GetSlotSessionOperation(context.Background(), "op-a")
-			if result.Status.EnvironmentGeneration != 8 || result.Status.AgentReady != (mode == "windows") {
+			if result.Status.EnvironmentGeneration != 8 || result.Status.AgentReady != (mode == "windows") || result.Status.WorkerReady != (mode == "windows") {
 				t.Fatalf("current generation not projected: %#v", result)
 			}
 			port.current.AgentHandle = "logical"

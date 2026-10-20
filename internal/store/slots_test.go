@@ -181,7 +181,7 @@ func TestSlotReadyCommitRejectsStaleGenerationAndRequirementCannotEscapePool(t *
 	}
 }
 
-func TestDeletedSlotIsNotRevivedByPoolTargetChange(t *testing.T) {
+func TestDeletedSlotIsNotRevivedAndPoolCreatesNewOrdinalIncarnation(t *testing.T) {
 	database, _ := openTestStore(t)
 	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
 		t.Fatal(err)
@@ -204,6 +204,30 @@ func TestDeletedSlotIsNotRevivedByPoolTargetChange(t *testing.T) {
 	if item.Status != slot.Deleted {
 		t.Fatalf("deleted slot revived after target change: %s", item.Status)
 	}
+	slots, err := database.ListSlots("pool-test")
+	if err != nil || len(slots) != 2 {
+		t.Fatalf("slots after target change = %#v, err=%v", slots, err)
+	}
+	var replacement slot.Slot
+	for _, current := range slots {
+		if current.Status != slot.Deleted {
+			replacement = current
+		}
+	}
+	if replacement.SlotID != "pool-test-001-inc-2" || replacement.Ordinal != 1 || replacement.Status != slot.Unprovisioned || replacement.EnvironmentVersion != changed.EnvironmentVersion {
+		t.Fatalf("replacement incarnation = %#v", replacement)
+	}
+	status, err := database.SlotPoolStatus("pool-test", storeTestTime.Add(3*time.Second))
+	if err != nil || status.Unprovisioned != 1 || status.Ready != 0 {
+		t.Fatalf("replacement slot projection = %#v, err=%v", status, err)
+	}
+	if err := database.ReconcileJobPool(changed, storeTestTime.Add(4*time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	repeated, err := database.ListSlots("pool-test")
+	if err != nil || len(repeated) != 2 || repeated[1].SlotID != replacement.SlotID {
+		t.Fatalf("repeated reconcile created another incarnation: %#v, err=%v", repeated, err)
+	}
 }
 
 func TestJobPoolScaleDownUnprovisionedSlotRemainsValid(t *testing.T) {
@@ -221,6 +245,23 @@ func TestJobPoolScaleDownUnprovisionedSlotRemainsValid(t *testing.T) {
 	}
 	if err := database.ValidateDatabase(); err != nil {
 		t.Fatalf("scaled-down unprovisioned slot validation = %v", err)
+	}
+}
+
+func TestGenerationZeroSlotCanBeMarkedStoppedAfterBootOnlyCleanup(t *testing.T) {
+	database, _ := openTestStore(t)
+	if err := database.ReconcileJobPool(testPoolConfig(1), storeTestTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.SetSlotStatus("pool-test-001", slot.Stopped, storeTestTime.Add(time.Second)); err != nil {
+		t.Fatalf("generation-zero stopped status: %v", err)
+	}
+	value, err := database.GetSlot("pool-test-001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if value.Status != slot.Stopped || value.EnvironmentGeneration != 0 {
+		t.Fatalf("stopped boot-only slot = %#v", value)
 	}
 }
 
@@ -523,6 +564,37 @@ func TestExpiredAgentSlotAcquireWaitsForExplicitFence(t *testing.T) {
 	current, exists, err := database.GetSlotLease(value.SlotID)
 	if err != nil || !exists || current.LeaseID != first.LeaseID {
 		t.Fatalf("expired agent lease after competing acquire = %#v exists=%t err=%v", current, exists, err)
+	}
+}
+
+func TestAgentSlotAcquireRequiresFreshHealth(t *testing.T) {
+	database, _ := openTestStore(t)
+	now := storeTestTime
+	if err := database.ReconcileJobPool(testPoolConfig(1), now); err != nil {
+		t.Fatal(err)
+	}
+	items, err := database.ListSlots("pool-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	summary := testEnvironmentSummary(1)
+	summary.AgentHandle = "slot:pool-test-001"
+	if err := database.MarkSlotReady(items[0].SlotID, summary, now); err != nil {
+		t.Fatal(err)
+	}
+	staleAt := now.Add(SlotSessionFreshnessWindow)
+	if _, _, err := database.AcquireSlotLease(staleAt, "pool-test", testPoolConfig(1).Requirement(), "request-stale", "account-stale", "owner-stale", "lease-stale", time.Minute); !errors.Is(err, slot.ErrSlotUnavailable) {
+		t.Fatalf("stale agent slot acquire = %v, want slot unavailable", err)
+	}
+	if err := database.MarkSlotReady(items[0].SlotID, summary, staleAt); err != nil {
+		t.Fatal(err)
+	}
+	lease, value, err := database.AcquireSlotLease(staleAt, "pool-test", testPoolConfig(1).Requirement(), "request-fresh", "account-fresh", "owner-fresh", "lease-fresh", time.Minute)
+	if err != nil {
+		t.Fatalf("fresh agent slot acquire: %v", err)
+	}
+	if lease.SlotID != items[0].SlotID || value.Status != slot.Leased {
+		t.Fatalf("fresh agent lease = %#v slot=%#v", lease, value)
 	}
 }
 

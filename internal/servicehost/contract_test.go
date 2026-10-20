@@ -3,6 +3,7 @@ package servicehost
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -23,6 +24,41 @@ func TestTrustedRuntimeDerivesFixedExecutables(t *testing.T) {
 	for _, bad := range []TrustedRuntime{{Root: runtime.Root, Core: "/tmp/other.exe", Broker: runtime.Broker, Agent: runtime.Agent, Node: runtime.Node, Shell: runtime.Shell}, {Root: runtime.Root, Core: runtime.Core, Broker: runtime.Broker, Agent: runtime.Agent, Node: runtime.Node, Shell: filepath.Join(runtime.Root, "..", "shell.ps1")}} {
 		if err := bad.Validate(); err == nil {
 			t.Fatal("untrusted runtime path accepted")
+		}
+	}
+}
+
+func TestRuntimeSignaturePolicyFailsClosed(t *testing.T) {
+	root := t.TempDir()
+	if requireAuthenticode, err := RuntimeSignaturePolicy(root); err != nil || !requireAuthenticode {
+		t.Fatalf("missing build manifest policy = %v, %v; want Authenticode required", requireAuthenticode, err)
+	}
+	manifest := filepath.Join(root, "build-manifest.json")
+	for _, test := range []struct {
+		version string
+		want    bool
+	}{
+		{version: "test-20261016-818963bb7388", want: false},
+		{version: "nightly-1234-0123456789ab", want: false},
+		{version: "dev", want: true},
+		{version: "v1.2.3", want: true},
+	} {
+		t.Run(test.version, func(t *testing.T) {
+			if err := os.WriteFile(manifest, []byte(`{"version":"`+test.version+`"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := RuntimeSignaturePolicy(root)
+			if err != nil || got != test.want {
+				t.Fatalf("RuntimeSignaturePolicy() = %v, %v; want %v", got, err, test.want)
+			}
+		})
+	}
+	for _, malformed := range []string{"", `{"version":"test-1-0123456789ab"} {}`, `{"version":42}`} {
+		if err := os.WriteFile(manifest, []byte(malformed), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RuntimeSignaturePolicy(root); err == nil {
+			t.Fatalf("malformed build manifest %q was accepted", malformed)
 		}
 	}
 }
@@ -73,6 +109,58 @@ func TestPreflightRedactsAndClassifies(t *testing.T) {
 	report, err := RunPreflight(context.Background(), fakeFacts{}, func() time.Time { return now })
 	if err != nil || !report.Ready || report.Schema != PreflightSchema || report.Facts[0].ObservedAt != now.UTC() {
 		t.Fatalf("report=%#v err=%v", report, err)
+	}
+}
+
+func TestPreflightFailureRetainsFactsAndRetryClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		state     FactState
+		reason    string
+		retryable bool
+	}{
+		{name: "deterministic failure", state: FactFail, reason: "rdp_certificate_missing"},
+		{name: "unavailable check", state: FactSkip, reason: "helper_unavailable", retryable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(100, 0)
+			report, err := RunPreflight(context.Background(), FactSourceFunc(func(context.Context) ([]Fact, error) {
+				facts := make([]Fact, 0, len(RequiredFactNames))
+				for _, name := range RequiredFactNames {
+					fact := Fact{Name: name, State: FactPass, Reason: "supported"}
+					if name == "certificate_policy" {
+						fact.State, fact.Reason = tc.state, tc.reason
+					}
+					facts = append(facts, fact)
+				}
+				return facts, nil
+			}), func() time.Time { return now })
+			if !errors.Is(err, ErrPreflight) || report.Ready {
+				t.Fatalf("report=%#v err=%v, want failed preflight", report, err)
+			}
+			var failure *PreflightFailure
+			if !errors.As(err, &failure) {
+				t.Fatalf("error %T does not retain a PreflightFailure", err)
+			}
+			if got := failure.Retryable(); got != tc.retryable {
+				t.Fatalf("Retryable()=%v, want %v", got, tc.retryable)
+			}
+			retained := failure.Report()
+			if retained.Schema != report.Schema || len(retained.Facts) != len(report.Facts) {
+				t.Fatalf("retained report=%#v, original=%#v", retained, report)
+			}
+			if retained.Facts[6].Reason != tc.reason || retained.Facts[6].State != tc.state {
+				t.Fatalf("retained certificate fact=%#v", retained.Facts[6])
+			}
+			retained.Facts[6].Reason = "mutated"
+			if failure.Report().Facts[6].Reason != tc.reason {
+				t.Fatal("Report returned mutable backing facts")
+			}
+			report.Facts[6].Reason = "mutated returned report"
+			if failure.Report().Facts[6].Reason != tc.reason {
+				t.Fatal("failure retained the caller's mutable report slice")
+			}
+		})
 	}
 }
 

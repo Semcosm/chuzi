@@ -33,10 +33,15 @@ type sessionBrokerNativeCallerValidator struct {
 	acl                SessionBrokerACL
 	serviceExecutable  string
 	expectedExecutable string
+	serviceOnly        bool
 }
 
 func newSessionBrokerCallerValidator(acl SessionBrokerACL, serviceExecutable, expectedExecutable string) sessionBrokerCallerValidator {
 	return sessionBrokerNativeCallerValidator{acl: acl, serviceExecutable: serviceExecutable, expectedExecutable: expectedExecutable}
+}
+
+func newSessionBrokerServiceCallerValidator(acl SessionBrokerACL, serviceExecutable, expectedExecutable string) sessionBrokerCallerValidator {
+	return sessionBrokerNativeCallerValidator{acl: acl, serviceExecutable: serviceExecutable, expectedExecutable: expectedExecutable, serviceOnly: true}
 }
 
 func (v sessionBrokerNativeCallerValidator) Validate(ctx context.Context, conn net.Conn) error {
@@ -50,7 +55,7 @@ func (v sessionBrokerNativeCallerValidator) Validate(ctx context.Context, conn n
 	}
 	identity, err := authenticatedSessionBrokerCaller(conn)
 	serviceCaller := identity.SID == "S-1-5-18" && identity.SessionID == 0 && containsSessionBrokerSID(identity.ServiceSIDs, v.acl.ServiceSID)
-	if err != nil || (!v.acl.Allows(identity.SID) && !serviceCaller) {
+	if err != nil || (v.serviceOnly && !serviceCaller) || (!v.acl.Allows(identity.SID) && !serviceCaller) {
 		return ErrSessionBrokerInvalidRequest
 	}
 	expectedExecutable := v.expectedExecutable

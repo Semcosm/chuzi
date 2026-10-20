@@ -19,15 +19,15 @@ func TestSessionBrokerExchangeRejectsInvalidAndMismatchedResponses(t *testing.T)
 		want      BootstrapSession
 		ok        bool
 	}{
-		{name: "start", operation: SessionBrokerStart, response: `{"version":1,"operation":"start","code":"ok","session_id":44,"state":"active"}` + "\n", want: BootstrapSession{ID: 44, State: "active"}, ok: true},
-		{name: "stop", operation: SessionBrokerStop, response: `{"version":1,"operation":"stop","code":"ok","state":"stopped"}` + "\n", want: BootstrapSession{State: "stopped"}, ok: true},
-		{name: "stop missing state", operation: SessionBrokerStop, response: `{"version":1,"operation":"stop","code":"ok"}` + "\n"},
-		{name: "stop still active", operation: SessionBrokerStop, response: `{"version":1,"operation":"stop","code":"ok","state":"active"}` + "\n"},
-		{name: "wrong operation", operation: SessionBrokerStop, response: `{"version":1,"operation":"start","code":"ok","session_id":44,"state":"active"}` + "\n"},
-		{name: "inactive", operation: SessionBrokerStart, response: `{"version":1,"operation":"start","code":"ok","session_id":44,"state":"disconnected"}` + "\n"},
-		{name: "missing provider", operation: SessionBrokerStart, response: `{"version":1,"operation":"start","code":"session_unavailable"}` + "\n"},
-		{name: "unknown field", operation: SessionBrokerStart, response: `{"version":1,"operation":"start","code":"session_unavailable","detail":"private provider text"}` + "\n"},
-		{name: "truncated", operation: SessionBrokerStart, response: `{"version":1`},
+		{name: "start", operation: SessionBrokerStart, response: `{"version":2,"operation":"start","code":"ok","session_id":44,"state":"active"}` + "\n", want: BootstrapSession{ID: 44, State: "active"}, ok: true},
+		{name: "stop", operation: SessionBrokerStop, response: `{"version":2,"operation":"stop","code":"ok","state":"stopped"}` + "\n", want: BootstrapSession{State: "stopped"}, ok: true},
+		{name: "stop missing state", operation: SessionBrokerStop, response: `{"version":2,"operation":"stop","code":"ok"}` + "\n"},
+		{name: "stop still active", operation: SessionBrokerStop, response: `{"version":2,"operation":"stop","code":"ok","state":"active"}` + "\n"},
+		{name: "wrong operation", operation: SessionBrokerStop, response: `{"version":2,"operation":"start","code":"ok","session_id":44,"state":"active"}` + "\n"},
+		{name: "inactive", operation: SessionBrokerStart, response: `{"version":2,"operation":"start","code":"ok","session_id":44,"state":"disconnected"}` + "\n"},
+		{name: "missing provider", operation: SessionBrokerStart, response: `{"version":2,"operation":"start","code":"session_unavailable"}` + "\n"},
+		{name: "unknown field", operation: SessionBrokerStart, response: `{"version":2,"operation":"start","code":"session_unavailable","detail":"private provider text"}` + "\n"},
+		{name: "truncated", operation: SessionBrokerStart, response: `{"version":2`},
 		{name: "oversized", operation: SessionBrokerStart, response: strings.Repeat("x", 8192) + "\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -40,7 +40,7 @@ func TestSessionBrokerExchangeRejectsInvalidAndMismatchedResponses(t *testing.T)
 				_, _ = bufio.NewReader(server).ReadBytes('\n')
 				_, _ = io.WriteString(server, test.response)
 			}()
-			request := SessionBrokerRequest{Version: 1, Operation: test.operation, SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}
+			request := SessionBrokerRequest{PoolID: "pool-a", Version: SessionBrokerProtocolVersion, Operation: test.operation, SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"}
 			if request.Operation == SessionBrokerStop {
 				request.SessionID = 44
 			}
@@ -71,7 +71,7 @@ func TestSessionBrokerExchangeCancellationUnblocksReadAndWrite(t *testing.T) {
 			enteredWrite := make(chan struct{})
 			result := make(chan error, 1)
 			go func() {
-				_, err := exchangeSessionBroker(ctx, brokerObservedWrite{Conn: client, entered: enteredWrite}, SessionBrokerRequest{Version: 1, Operation: SessionBrokerStart, SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"})
+				_, err := exchangeSessionBroker(ctx, brokerObservedWrite{Conn: client, entered: enteredWrite}, SessionBrokerRequest{PoolID: "pool-a", Version: SessionBrokerProtocolVersion, Operation: SessionBrokerStart, SlotID: "slot-001", Ordinal: 1, Generation: 1, SID: "S-1-5-21-1", Owner: "owner-1"})
 				result <- err
 			}()
 			<-enteredWrite

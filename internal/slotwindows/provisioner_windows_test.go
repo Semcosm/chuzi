@@ -23,6 +23,114 @@ func TestStopSlotLeaseRequiresOwnedAgentAfterRestart(t *testing.T) {
 	}
 }
 
+func TestRecordRequestFenceRejectsStaleOrForeignCleanup(t *testing.T) {
+	request := slot.ProvisionRequest{SlotID: "slot-1", PoolID: "pool-1", Ordinal: 1, Owner: "owner-1", EnvironmentGeneration: 4}
+	record := ownershipRecord{SlotID: request.SlotID, PoolID: request.PoolID, Ordinal: request.Ordinal, Owner: request.Owner, Generation: request.EnvironmentGeneration}
+	if err := validateRecordRequestFence(record, request); err != nil {
+		t.Fatalf("matching record rejected: %v", err)
+	}
+	legacy := record
+	legacy.PoolID, legacy.Owner = "", ""
+	if err := validateRecordRequestFence(legacy, request); err != nil {
+		t.Fatalf("legacy SID/generation record rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*ownershipRecord){
+		"owner":              func(value *ownershipRecord) { value.Owner = "owner-2" },
+		"pool":               func(value *ownershipRecord) { value.PoolID = "pool-2" },
+		"generation":         func(value *ownershipRecord) { value.Generation++ },
+		"generation_missing": func(value *ownershipRecord) { value.Generation = 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			value := record
+			mutate(&value)
+			if err := validateRecordRequestFence(value, request); !errors.Is(err, ErrOwnership) {
+				t.Fatalf("fence error = %v, want ErrOwnership", err)
+			}
+		})
+	}
+}
+
+func TestJournalAuthorizesOnlyExactActiveSession(t *testing.T) {
+	record := ownershipRecord{Version: 1, SlotID: "slot-1", Ordinal: 1, SID: "S-1-5-21-1", Generation: 2, SessionID: 41}
+	for _, tc := range []struct {
+		name   string
+		phase  string
+		id     uint32
+		state  string
+		wanted bool
+	}{
+		{name: "worker exact", phase: "worker", id: 41, state: "active", wanted: true},
+		{name: "profile phase", phase: "profile", id: 41, state: "active"},
+		{name: "reused session", phase: "worker", id: 42, state: "active"},
+		{name: "disconnected", phase: "worker", id: 41, state: "disconnected"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record.Phase = tc.phase
+			if got := journalAuthorizesActiveSession(record, Session{ID: tc.id, State: tc.state}, record.SID); got != tc.wanted {
+				t.Fatalf("authorized=%v, want %v", got, tc.wanted)
+			}
+		})
+	}
+}
+
+func TestOwnershipRecordAcceptsHostPreflightPhase(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "ownership.json")
+	data := `{"version":1,"pool_id":"pool-1","slot_id":"slot-1","ordinal":1,"sid":"S-1-5-21-1","generation":2,"owner":"service","phase":"host_preflight"}`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	record, err := readOwnership(path)
+	if err != nil || record.Phase != "host_preflight" {
+		t.Fatalf("host preflight ownership record = %#v, %v", record, err)
+	}
+}
+
+type preflightRetryClassification struct {
+	retryable bool
+}
+
+func (e preflightRetryClassification) Error() string   { return "redacted preflight failure" }
+func (e preflightRetryClassification) Retryable() bool { return e.retryable }
+
+func TestHostPreflightProvisionFailurePreservesRetryClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		retryable bool
+	}{
+		{name: "deterministic failure"},
+		{name: "unavailable fact", retryable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := hostPreflightProvisionFailure(preflightRetryClassification{retryable: tc.retryable})
+			if !errors.Is(err, ErrHostPreflight) {
+				t.Fatalf("error=%v, want ErrHostPreflight", err)
+			}
+			var classification interface{ Retryable() bool }
+			if !errors.As(err, &classification) || classification.Retryable() != tc.retryable {
+				t.Fatalf("retry classification=%v, want %v", classification, tc.retryable)
+			}
+		})
+	}
+}
+
+func TestCleanupJournalPersistsPostRootDeletionSteps(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cleanup", "slot-1.json")
+	record := ownershipRecord{Version: 1, SlotID: "slot-1", Ordinal: 1, SID: "S-1-5-21-1", Generation: 2, Owner: "service", Phase: "stopping", CleanupStep: "begin", Revision: 1}
+	if err := writeCleanupJournal(path, record); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := advanceCleanupJournal(path, record, "root_deleted"); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := advanceCleanupJournal(path, record, "user_deleted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.CleanupStep != "user_deleted" || updated.Revision <= record.Revision {
+		t.Fatalf("updated journal=%#v", updated)
+	}
+}
+
 func TestIdentityAllocationRejectsOrphanSlotRoot(t *testing.T) {
 	dataDir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dataDir, "job-slots", "orphan"), 0o700); err != nil {

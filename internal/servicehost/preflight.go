@@ -2,7 +2,12 @@ package servicehost
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -35,6 +40,50 @@ type PreflightReport struct {
 const PreflightSchema = "chuzi.host-preflight/v1"
 
 var ErrPreflight = errors.New("servicehost: host preflight failed")
+
+// PreflightFailure retains the redacted facts from a completed preflight and
+// classifies whether another automatic attempt can reasonably change the
+// result. Deterministic failed facts require operator action; unavailable
+// facts may be retried after the underlying host service recovers.
+type PreflightFailure struct {
+	report PreflightReport
+}
+
+func (e *PreflightFailure) Error() string { return ErrPreflight.Error() }
+
+func (e *PreflightFailure) Unwrap() error { return ErrPreflight }
+
+func clonePreflightReport(report PreflightReport) PreflightReport {
+	report.Facts = append([]Fact(nil), report.Facts...)
+	return report
+}
+
+func (e *PreflightFailure) Report() PreflightReport {
+	if e == nil {
+		return PreflightReport{}
+	}
+	return clonePreflightReport(e.report)
+}
+
+func (e *PreflightFailure) Retryable() bool {
+	if e == nil || e.report.Validate() != nil {
+		return false
+	}
+	unavailable := false
+	for _, fact := range e.report.Facts {
+		switch fact.State {
+		case FactFail:
+			return false
+		case FactSkip:
+			unavailable = true
+		}
+	}
+	return unavailable
+}
+
+var validationBuildVersion = regexp.MustCompile(`^(?:test|nightly)-[1-9][0-9]*-[0-9a-f]{12}$`)
+
+const maxBuildManifestSize = 16 * 1024
 
 func (r PreflightReport) Validate() error {
 	if r.Schema != PreflightSchema || r.ObservedAt.IsZero() || len(r.Facts) == 0 {
@@ -99,7 +148,7 @@ func RunPreflight(ctx context.Context, source FactSource, now func() time.Time) 
 		return PreflightReport{}, err
 	}
 	if !ready {
-		return report, ErrPreflight
+		return report, &PreflightFailure{report: clonePreflightReport(report)}
 	}
 	return report, nil
 }
@@ -122,6 +171,53 @@ type WindowsPreflightOptions struct {
 	MaxSessions      int
 	LogonSID         string
 	Helper           HelperMonitor
+	// RequireAuthenticode is true for stable (and development) payloads. The
+	// installer explicitly classifies test/nightly payloads as validation
+	// builds, whose Go/Node executables are intentionally unsigned.
+	RequireAuthenticode bool
+}
+
+// RuntimeSignaturePolicy reads the immutable build classification selected by
+// the installer. Missing metadata fails closed to the production signature
+// requirement; only explicit test-/nightly- versions use the unsigned
+// validation path.
+func RuntimeSignaturePolicy(root string) (bool, error) {
+	rawRoot := strings.TrimSpace(root)
+	cleanRoot := filepath.Clean(rawRoot)
+	if rawRoot == "" || rawRoot != cleanRoot || !filepath.IsAbs(cleanRoot) {
+		return true, ErrInvalidConfig
+	}
+	manifestPath := filepath.Join(cleanRoot, "build-manifest.json")
+	info, err := os.Lstat(manifestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBuildManifestSize {
+		return true, ErrInvalidConfig
+	}
+	data, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return true, ErrInvalidConfig
+	}
+	var manifest struct {
+		Version string `json:"version"`
+	}
+	decoder := json.NewDecoder(strings.NewReader(string(data)))
+	if err := decoder.Decode(&manifest); err != nil {
+		return true, ErrInvalidConfig
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return true, ErrInvalidConfig
+	}
+	version := strings.TrimSpace(manifest.Version)
+	if version == "" {
+		return true, ErrInvalidConfig
+	}
+	if validationBuildVersion.MatchString(version) {
+		return false, nil
+	}
+	return true, nil
 }
 
 // RunWindowsPreflight executes the platform source and returns the stable,
