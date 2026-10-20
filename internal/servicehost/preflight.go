@@ -41,6 +41,46 @@ const PreflightSchema = "chuzi.host-preflight/v1"
 
 var ErrPreflight = errors.New("servicehost: host preflight failed")
 
+// PreflightFailure retains the redacted facts from a completed preflight and
+// classifies whether another automatic attempt can reasonably change the
+// result. Deterministic failed facts require operator action; unavailable
+// facts may be retried after the underlying host service recovers.
+type PreflightFailure struct {
+	report PreflightReport
+}
+
+func (e *PreflightFailure) Error() string { return ErrPreflight.Error() }
+
+func (e *PreflightFailure) Unwrap() error { return ErrPreflight }
+
+func clonePreflightReport(report PreflightReport) PreflightReport {
+	report.Facts = append([]Fact(nil), report.Facts...)
+	return report
+}
+
+func (e *PreflightFailure) Report() PreflightReport {
+	if e == nil {
+		return PreflightReport{}
+	}
+	return clonePreflightReport(e.report)
+}
+
+func (e *PreflightFailure) Retryable() bool {
+	if e == nil || e.report.Validate() != nil {
+		return false
+	}
+	unavailable := false
+	for _, fact := range e.report.Facts {
+		switch fact.State {
+		case FactFail:
+			return false
+		case FactSkip:
+			unavailable = true
+		}
+	}
+	return unavailable
+}
+
 var validationBuildVersion = regexp.MustCompile(`^(?:test|nightly)-[1-9][0-9]*-[0-9a-f]{12}$`)
 
 const maxBuildManifestSize = 16 * 1024
@@ -108,7 +148,7 @@ func RunPreflight(ctx context.Context, source FactSource, now func() time.Time) 
 		return PreflightReport{}, err
 	}
 	if !ready {
-		return report, ErrPreflight
+		return report, &PreflightFailure{report: clonePreflightReport(report)}
 	}
 	return report, nil
 }

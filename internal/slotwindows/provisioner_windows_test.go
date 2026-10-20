@@ -85,6 +85,34 @@ func TestOwnershipRecordAcceptsHostPreflightPhase(t *testing.T) {
 	}
 }
 
+type preflightRetryClassification struct {
+	retryable bool
+}
+
+func (e preflightRetryClassification) Error() string   { return "redacted preflight failure" }
+func (e preflightRetryClassification) Retryable() bool { return e.retryable }
+
+func TestHostPreflightProvisionFailurePreservesRetryClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		retryable bool
+	}{
+		{name: "deterministic failure"},
+		{name: "unavailable fact", retryable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := hostPreflightProvisionFailure(preflightRetryClassification{retryable: tc.retryable})
+			if !errors.Is(err, ErrHostPreflight) {
+				t.Fatalf("error=%v, want ErrHostPreflight", err)
+			}
+			var classification interface{ Retryable() bool }
+			if !errors.As(err, &classification) || classification.Retryable() != tc.retryable {
+				t.Fatalf("retry classification=%v, want %v", classification, tc.retryable)
+			}
+		})
+	}
+}
+
 func TestCleanupJournalPersistsPostRootDeletionSteps(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cleanup", "slot-1.json")
 	record := ownershipRecord{Version: 1, SlotID: "slot-1", Ordinal: 1, SID: "S-1-5-21-1", Generation: 2, Owner: "service", Phase: "stopping", CleanupStep: "begin", Revision: 1}

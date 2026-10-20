@@ -13,6 +13,7 @@ import (
 	"github.com/Semcosm/chuzi/internal/config"
 	"github.com/Semcosm/chuzi/internal/environment"
 	"github.com/Semcosm/chuzi/internal/observability"
+	"github.com/Semcosm/chuzi/internal/servicehost"
 	"github.com/Semcosm/chuzi/internal/slot"
 	"github.com/Semcosm/chuzi/internal/slotlifecycle"
 	"github.com/Semcosm/chuzi/internal/slotwindows"
@@ -179,10 +180,13 @@ func (retryableHostPreflightFailure) Error() string   { return "host preflight u
 func (retryableHostPreflightFailure) Unwrap() error   { return slotwindows.ErrHostPreflight }
 func (retryableHostPreflightFailure) Retryable() bool { return true }
 
-type hostPreflightFailureProvisioner struct{ *dynamicPoolProvisioner }
+type hostPreflightFailureProvisioner struct {
+	*dynamicPoolProvisioner
+	err error
+}
 
-func (*hostPreflightFailureProvisioner) Provision(context.Context, slot.ProvisionRequest) (slot.ProvisionResult, error) {
-	return slot.ProvisionResult{}, retryableHostPreflightFailure{}
+func (p *hostPreflightFailureProvisioner) Provision(context.Context, slot.ProvisionRequest) (slot.ProvisionResult, error) {
+	return slot.ProvisionResult{}, p.err
 }
 
 func (p *failingInspectProvisioner) Inspect(context.Context, slot.ProvisionRequest) (slot.EnvironmentSummary, error) {
@@ -482,7 +486,44 @@ func TestSlotSessionNonRetryableReadinessFailureCleansRuntime(t *testing.T) {
 func TestSlotSessionHostPreflightFailureIsDurablyClassified(t *testing.T) {
 	database, pool, operation, now := prepareSessionRuntimeTest(t, "host-preflight", 1)
 	defer database.Close()
-	provisioner := &hostPreflightFailureProvisioner{dynamicPoolProvisioner: &dynamicPoolProvisioner{calls: make(map[string]int)}}
+	preflightReport, preflightErr := servicehost.RunPreflight(context.Background(), servicehost.FactSourceFunc(func(context.Context) ([]servicehost.Fact, error) {
+		facts := make([]servicehost.Fact, 0, len(servicehost.RequiredFactNames))
+		for _, name := range servicehost.RequiredFactNames {
+			fact := servicehost.Fact{Name: name, State: servicehost.FactPass, Reason: "supported"}
+			if name == "certificate_policy" {
+				fact.State, fact.Reason = servicehost.FactFail, "rdp_certificate_missing"
+			}
+			facts = append(facts, fact)
+		}
+		return facts, nil
+	}), func() time.Time { return now })
+	if !errors.Is(preflightErr, servicehost.ErrPreflight) || preflightReport.Ready {
+		t.Fatalf("preflight report=%#v err=%v", preflightReport, preflightErr)
+	}
+	provisioner := &hostPreflightFailureProvisioner{
+		dynamicPoolProvisioner: &dynamicPoolProvisioner{calls: make(map[string]int)},
+		err:                    errors.Join(slotwindows.ErrHostPreflight, preflightErr),
+	}
+	reconciler := newSessionRuntimeTestReconciler(database, provisioner, pool, now)
+	if err := reconciler.ReconcileSlotSessionOperations(context.Background(), "service", now); err != nil && !errors.Is(err, slotwindows.ErrHostPreflight) {
+		t.Fatalf("host preflight reconcile error = %v", err)
+	}
+	updated, err := database.GetSlotSessionOperation(operation.OperationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.State != store.SlotSessionFailed || updated.Phase != store.SlotSessionPhaseHost || updated.FailureCode != "rdp_certificate_missing" || updated.CompletedAt.IsZero() {
+		t.Fatalf("host preflight operation = %#v", updated)
+	}
+}
+
+func TestSlotSessionUnavailableHostFactSchedulesRetry(t *testing.T) {
+	database, pool, operation, now := prepareSessionRuntimeTest(t, "host-preflight-unavailable", 1)
+	defer database.Close()
+	provisioner := &hostPreflightFailureProvisioner{
+		dynamicPoolProvisioner: &dynamicPoolProvisioner{calls: make(map[string]int)},
+		err:                    retryableHostPreflightFailure{},
+	}
 	reconciler := newSessionRuntimeTestReconciler(database, provisioner, pool, now)
 	if err := reconciler.ReconcileSlotSessionOperations(context.Background(), "service", now); err != nil && !errors.Is(err, slotwindows.ErrHostPreflight) {
 		t.Fatalf("host preflight reconcile error = %v", err)
@@ -492,7 +533,7 @@ func TestSlotSessionHostPreflightFailureIsDurablyClassified(t *testing.T) {
 		t.Fatal(err)
 	}
 	if updated.State != store.SlotSessionRetrying || updated.Phase != store.SlotSessionPhaseHost || updated.FailureCode != "host_preflight_failed" || !updated.CompletedAt.IsZero() {
-		t.Fatalf("host preflight operation = %#v", updated)
+		t.Fatalf("unavailable host fact operation = %#v", updated)
 	}
 }
 

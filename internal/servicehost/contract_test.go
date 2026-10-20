@@ -112,6 +112,58 @@ func TestPreflightRedactsAndClassifies(t *testing.T) {
 	}
 }
 
+func TestPreflightFailureRetainsFactsAndRetryClassification(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		state     FactState
+		reason    string
+		retryable bool
+	}{
+		{name: "deterministic failure", state: FactFail, reason: "rdp_certificate_missing"},
+		{name: "unavailable check", state: FactSkip, reason: "helper_unavailable", retryable: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Unix(100, 0)
+			report, err := RunPreflight(context.Background(), FactSourceFunc(func(context.Context) ([]Fact, error) {
+				facts := make([]Fact, 0, len(RequiredFactNames))
+				for _, name := range RequiredFactNames {
+					fact := Fact{Name: name, State: FactPass, Reason: "supported"}
+					if name == "certificate_policy" {
+						fact.State, fact.Reason = tc.state, tc.reason
+					}
+					facts = append(facts, fact)
+				}
+				return facts, nil
+			}), func() time.Time { return now })
+			if !errors.Is(err, ErrPreflight) || report.Ready {
+				t.Fatalf("report=%#v err=%v, want failed preflight", report, err)
+			}
+			var failure *PreflightFailure
+			if !errors.As(err, &failure) {
+				t.Fatalf("error %T does not retain a PreflightFailure", err)
+			}
+			if got := failure.Retryable(); got != tc.retryable {
+				t.Fatalf("Retryable()=%v, want %v", got, tc.retryable)
+			}
+			retained := failure.Report()
+			if retained.Schema != report.Schema || len(retained.Facts) != len(report.Facts) {
+				t.Fatalf("retained report=%#v, original=%#v", retained, report)
+			}
+			if retained.Facts[6].Reason != tc.reason || retained.Facts[6].State != tc.state {
+				t.Fatalf("retained certificate fact=%#v", retained.Facts[6])
+			}
+			retained.Facts[6].Reason = "mutated"
+			if failure.Report().Facts[6].Reason != tc.reason {
+				t.Fatal("Report returned mutable backing facts")
+			}
+			report.Facts[6].Reason = "mutated returned report"
+			if failure.Report().Facts[6].Reason != tc.reason {
+				t.Fatal("failure retained the caller's mutable report slice")
+			}
+		})
+	}
+}
+
 func TestPreflightRejectsMissingRequiredFact(t *testing.T) {
 	_, err := RunPreflight(context.Background(), FactSourceFunc(func(context.Context) ([]Fact, error) {
 		return []Fact{{Name: "os_edition", State: FactPass, Reason: "supported"}}, nil

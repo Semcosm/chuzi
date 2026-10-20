@@ -185,8 +185,24 @@ type serviceWindowsHostPreflight struct {
 func (p serviceWindowsHostPreflight) Check(ctx context.Context, managedSID string) error {
 	options := p.options
 	options.LogonSID = managedSID
+	// RunWindowsPreflight retains the redacted report in PreflightFailure so
+	// callers can distinguish a deterministic failed fact from an unavailable
+	// check without exposing native error text.
 	_, err := servicehost.RunWindowsPreflight(ctx, options, time.Now)
 	return err
+}
+
+func hostPreflightFailureCode(err error) string {
+	var failure *servicehost.PreflightFailure
+	if !errors.As(err, &failure) {
+		return "host_preflight_failed"
+	}
+	for _, fact := range failure.Report().Facts {
+		if fact.State != servicehost.FactPass && fact.Reason != "" {
+			return safeServiceDiagnosticToken(fact.Reason, "host_preflight_failed")
+		}
+	}
+	return "host_preflight_failed"
 }
 
 func newSlotReconciler(cfg config.Config, options serviceOptions, database *store.Store, now func() time.Time, revoker slotCapabilityRevoker, environmentRuntime *serviceEnvironmentRuntime, pool slot.PoolConfig, recordProvisionFailure func(observability.Event)) (slotReconciler, slotProfileAccess, error) {
@@ -640,7 +656,7 @@ func (r *windowsAllPoolReconciler) advanceClaimedSlotSession(ctx context.Context
 			}
 		}
 		if errors.Is(err, slotwindows.ErrHostPreflight) {
-			return retryOperation(store.SlotSessionPhaseHost, "host_preflight_failed", err)
+			return retryOperation(store.SlotSessionPhaseHost, hostPreflightFailureCode(err), err)
 		}
 		return retryOperation(store.SlotSessionPhaseEnvironment, "provision_failed", err)
 	}

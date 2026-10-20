@@ -63,6 +63,15 @@ func (e retryableProvisionFailure) Error() string   { return e.cause.Error() }
 func (e retryableProvisionFailure) Unwrap() error   { return e.cause }
 func (e retryableProvisionFailure) Retryable() bool { return true }
 
+func hostPreflightProvisionFailure(err error) error {
+	cause := errors.Join(ErrHostPreflight, err)
+	var retryable interface{ Retryable() bool }
+	if errors.As(err, &retryable) && retryable.Retryable() {
+		return retryableProvisionFailure{cause: cause}
+	}
+	return cause
+}
+
 type retryableSessionFailure struct{ cause error }
 
 func (e retryableSessionFailure) Error() string   { return e.cause.Error() }
@@ -1110,8 +1119,10 @@ func (p *windowsProvisioner) Provision(ctx context.Context, request slot.Provisi
 		if err := p.options.HostPreflight.Check(ctx, sid); err != nil {
 			// Keep the proven identity and host_preflight journal for retry or
 			// explicit Stop. A failed host gate must not erase its recovery fence.
+			// Only unavailable facts are retryable; deterministic failed facts
+			// need operator action and should not burn the operation deadline.
 			cleanupOnFailure = false
-			return slot.ProvisionResult{}, retryableProvisionFailure{cause: errors.Join(ErrHostPreflight, err)}
+			return slot.ProvisionResult{}, hostPreflightProvisionFailure(err)
 		}
 	}
 	// Existing managed users do not retain a password in the ownership
