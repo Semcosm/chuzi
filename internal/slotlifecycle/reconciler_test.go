@@ -112,6 +112,21 @@ type fakeProvisioner struct {
 	owner                               string
 }
 
+type packageGenerationFakeProvisioner struct {
+	*fakeProvisioner
+	packageGeneration uint64
+	retireRequests    []slot.ProvisionRequest
+}
+
+func (f *packageGenerationFakeProvisioner) PackageGeneration() uint64 {
+	return f.packageGeneration
+}
+
+func (f *packageGenerationFakeProvisioner) Retire(ctx context.Context, request slot.ProvisionRequest) error {
+	f.retireRequests = append(f.retireRequests, request)
+	return f.fakeProvisioner.Retire(ctx, request)
+}
+
 type retryableProvisionError struct{}
 
 func (retryableProvisionError) Error() string   { return "session unavailable" }
@@ -336,6 +351,28 @@ func TestReconcileRetiresDrainingPoolWithoutReadyAuthority(t *testing.T) {
 	}
 	if db.items["pool-001"].Status != slot.Deleted || len(provisioner.calls) != 1 || provisioner.calls[0] != "retire" {
 		t.Fatalf("draining cleanup state=%#v calls=%v", db.items["pool-001"], provisioner.calls)
+	}
+}
+
+func TestReconcileRetireUsesCurrentPackageGenerationWithoutEnvironmentAuthority(t *testing.T) {
+	db := &memorySlots{items: map[string]slot.Slot{"pool-001": slotRecord(slot.Ready, 1)}, leases: map[string]slot.Lease{}}
+	provisioner := &packageGenerationFakeProvisioner{
+		fakeProvisioner:   &fakeProvisioner{},
+		packageGeneration: 9,
+	}
+	authority := environmentAuthority{err: errors.New("environment was removed")}
+	r, err := New(db, provisioner, validPool(0), func() time.Time { return lifecycleNow }, time.Minute, time.Minute, authority)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Reconcile(context.Background()); err != nil {
+		t.Fatalf("draining reconcile failed after environment removal: %v", err)
+	}
+	if db.items["pool-001"].Status != slot.Deleted || len(provisioner.retireRequests) != 1 {
+		t.Fatalf("draining cleanup state=%#v retire requests=%#v", db.items["pool-001"], provisioner.retireRequests)
+	}
+	if got := provisioner.retireRequests[0].PackageGeneration; got != 9 {
+		t.Fatalf("retire package generation = %d, want provisioner's selected generation 9", got)
 	}
 }
 

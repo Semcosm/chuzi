@@ -194,6 +194,15 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		targetSlots = 0
 	}
 	var packageGeneration uint64
+	if cleanupOnly {
+		// Cleanup must remain available when the signed package is missing or no
+		// longer trusted, so do not resolve it through EnvironmentAuthority here.
+		// A provisioner that already holds a verified runtime can still require
+		// its request fence to match that handoff before Retire touches resources.
+		if provider, ok := r.provisioner.(interface{ PackageGeneration() uint64 }); ok {
+			packageGeneration = provider.PackageGeneration()
+		}
+	}
 	if r.authority != nil && !cleanupOnly {
 		record, authorityErr := r.authority.GetEnvironmentRecord(pool.EnvironmentID, pool.EnvironmentVersion)
 		if authorityErr != nil || !record.IsReady() || record.EnvironmentID != pool.EnvironmentID || record.Version != pool.EnvironmentVersion || pool.ManifestDigest == "" || !strings.EqualFold(record.ManifestDigest, pool.ManifestDigest) || pool.Signer == "" || record.Signer != pool.Signer || !containsAll(record.Capabilities, pool.Capabilities) {
