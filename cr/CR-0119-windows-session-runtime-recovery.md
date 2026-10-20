@@ -1,16 +1,16 @@
 # CR-0119: integrate Windows session runtime orchestration and recovery
 
 Base: main
-Head or Range: 1e9b8fd909de05dc7f5b87f4b06adfa3c1eb5e78
+Head or Range: 3fbb027a175118e65ef5d645148d516db4ab16ff..7ce8978106a9ff00d2a7bfcee02978d5d76392d1
 Integration Strategy: rebase-ff
 Review Evidence: trailers
 Title: Windows session runtime orchestration and recovery
-Revision: 35
+Revision: 37
 Status: pending
 Decision: pending
 Policy Version: v0.3
 Base OID: 3fbb027a175118e65ef5d645148d516db4ab16ff
-Head OID: 1e9b8fd909de05dc7f5b87f4b06adfa3c1eb5e78
+Head OID: 7ce8978106a9ff00d2a7bfcee02978d5d76392d1
 Integrated Result: pending
 
 ## Summary
@@ -379,6 +379,54 @@ Its embedded Core build manifest identifies the full implementation SHA
 above. The Go service and package contents were built from that commit; the
 unchanged Slint UI binary was reused from the currently installed package
 (`ab586f882287bc62ad6ddc9cdb2f677fe6c2665299ef59dede0c0b71d4970775`).
+
+Revision 36 records the native Windows host-preflight failure from the operator's
+`pool-basic-direct` test. The operation spent about 96 seconds repeating five
+host checks because every preflight error was treated as retryable. Signed
+implementation `7ce8978106a9ff00d2a7bfcee02978d5d76392d1` preserves the redacted
+preflight report in a typed error, exposes the stable failed fact as the
+operation failure code, and retries only when checks are unavailable without a
+deterministic failed fact. Missing or untrusted certificate facts now fail
+immediately and retain the ownership journal for explicit repair or retry.
+
+The Windows test host has no RDP listener certificate binding. Its only
+`LocalMachine\My` certificate is expired, self-issued, has a private key, and
+lacks the Server Authentication EKU. The host is not domain joined, this shell
+is not elevated, and the service config currently has `rdp_enabled=false`. The
+broker allocates 1,024 loopback IP targets from `127.0.1.2` through
+`127.0.5.13`; the listener certificate must match those IP endpoints, chain to
+an explicitly trusted test or organization CA, be bound to RDP-Tcp, and grant
+NETWORK SERVICE read access to its private key. No certificate, trust-store,
+listener, or service-config change was made in this revision. The local-RDP
+session flow requires `rdp_enabled=true`.
+
+Windows validation passed: `go test -count=1 ./...`,
+`go test -count=1 -race ./...`, `go vet ./...`, and Windows amd64 test-binary
+compilation for `cmd/service`, `cmd/session-broker`, and `internal/slotwindows`.
+The six repository checks passed; the policy and quality scripts used a local
+Git Bash `jq` shim to remove CR characters emitted by the Windows jq executable.
+`git diff --check` passed. These Go tests and cross-compiles do not establish
+native RDP, WTS, Profile, Credential Manager, helper ACL, Agent/worker, restart,
+shutdown, or Retire acceptance; those remain pending for Sessions 09/10.
+
+Revision 37 packages the fail-fast preflight fix from implementation commit
+`7ce8978106a9ff00d2a7bfcee02978d5d76392d1` as test version
+`test-20261020-7ce8978106a9`. The Windows Core components and browser Worker
+were built locally, assembled with the pinned PresentMon 2.6.0 payload, and
+packaged by Inno Setup 6.7.3 at
+`dist/windows-session-runtime-recovery-test-20261020-7ce8978106a9/ChuziSetup.exe`.
+The installer SHA-256 is
+`406f36dc4a908d715d3f19ae3c363002f72de5b3af53d4e06d47b8ff16fd046b`; its
+sidecar matches. The embedded Core build and release manifests identify the
+same version, target, and full implementation commit. The staged payload passed
+`chuzi-launcher.exe -verify` with `{"valid":true}`. The package reused
+the currently installed UI binary, SHA-256
+`c9a06c3ca7f3b64c94070d40ff9d37a1e4687f3564fd58a3d6580ed255891e26`; that
+binary matches the local `test-20261020-418b94e19a72` package, and no UI source
+changed between its commit and this implementation. The installer is awaiting
+operator installation. Package verification does not establish an installed
+Core session or native WTS/RDP/Profile/Credential Manager/ACL/Agent/restart/
+shutdown/Retire acceptance.
 
 Revision 29 records the operator's final UI verification of the replacement package
 `test-20261016-9bdf43d1974d`. The operator confirmed that saving Settings
@@ -967,56 +1015,32 @@ native session acceptance.
 
 ## Risk
 
-At the latest installed observation, `ChuziCore` was running and the UI reported
-Core ready. The installed Core build manifest identifies
-`test-20261018-d34d4b73cc56`. The pool remained at desired/logical ready `1/0`,
-effective capacity `0`, with operation `op_ff844a3b3f43a167` failed because the
-Core restarted while it was running; the old `pool-test-001` ID is a deleted
-tombstone. The new incarnation fix is in the local installer recorded in
-Revision 35 and awaits operator installation. Since the current configured pool
-mode is `logical`, no Windows session is expected. No native session acceptance
-is claimed.
+The latest native test attempt did not create a Windows session. Core failed at
+host preflight because the RDP listener has no bound certificate; the previous
+retry policy consumed about 96 seconds before quarantining the slot. The source
+fix now reports the specific redacted fact and fails promptly. Test installer
+`test-20261020-7ce8978106a9` is built and awaits operator installation; it has
+not yet been installed or used for a native session attempt.
 
-At Revision 29, the then-installed `test-20261016-9bdf43d1974d` package matched
-implementation `9bdf43d1974ddfdebd189463604c0b91874378d1`; `ChuziCore` was
-running and the operator reported that UI Core start/stop worked. The user-scoped
-settings file existed with an owner FullControl ACL, while the installed service
-data root remained read-only for `BUILTIN\Users`. The operator confirmed the UI
-Save changes success message and settings persistence after reopening.
-Setup Log #007 from the prior installation also recorded `forced_shutdown`,
-but it does not identify which
-ordered shutdown hook failed or exceeded the five-second deadline. Record the
-individual hook outcome before claiming the stop path is reliable.
+The host has one expired self-issued machine certificate without Server
+Authentication EKU, no RDP-Tcp certificate binding, and no domain CA enrollment.
+The service config has Windows pool enabled but `rdp_enabled=false`; this
+prevents the disposable user from receiving the Remote Desktop Users membership
+needed by the selected local-RDP login adapter. The shell is not elevated, so no
+certificate, trust-store, listener, or config changes have been applied.
 
-The empty-file-DACL regression and the Windows PowerShell native argument
-splitting failure are reproduced and fixed on owned test inputs. The replacement
-installer has been applied to the user's preserved installation and the UI
-state and Core lifecycle checks passed.
-Recovery intentionally refuses unknown
-ownership, nonempty or unprotected file ACLs, and reparse paths; those cases
-remain explicit repair failures rather than permission resets. A successful
-temporary-file regression does not establish installed-service, helper-pipe
-ACL, or production session acceptance.
+Before retrying, install a short-lived test certificate trusted by this isolated
+machine or an organization-issued certificate, with IP SANs covering the
+broker's loopback targets, bind it to RDP-Tcp, grant NETWORK SERVICE read access
+to its private key, and enable `rdp_enabled`. Keep NLA and server authentication
+enabled; do not accept an untrusted certificate warning automatically. Native
+WTS/RDP, Profile, Credential Manager, helper ACL/identity, Agent/worker,
+restart, shutdown, and Retire acceptance remain pending for Sessions 09/10.
 
-The main remaining risk is unexecuted native Windows behavior. WTS and RDP
-transitions, cold Profile initialization, Credential Manager deletion, helper
-identity and named-pipe ACLs, service SID policy, Agent/worker heartbeat and
-shutdown, broker/service restart recovery, service shutdown, and Retire cleanup
-still require a disposable Windows installation in Sessions 09/10. These can
-differ from cross-compiled and fake-provider tests. Until that native
-acceptance passes, deployment must report the runtime unavailable and must not
-claim production session support.
-
-Cleanup deliberately favors preservation over availability. An ambiguous or
-malformed record, active same-SID session without an exact session ID, failed
-capability revoke, or failed user/Profile deletion can leave a slot quarantined
-for explicit repair. This may reduce pool capacity, but prevents adoption or
-deletion of resources whose ownership is not proven.
-
-The broker state root is derived from the authenticated operator SID under the
-Windows temporary directory. Deployment ACL or atomic-replace failure makes the
-session unavailable. The broker journal is not a substitute for the service
-slot journal or bbolt operation record.
+Cleanup continues to preserve unknown or unproven ownership. A failed
+certificate, trust, session, or cleanup check may keep a slot quarantined until
+an operator repairs the preflight condition and explicitly retries or retires
+the owned slot.
 
 ## Rollback
 
